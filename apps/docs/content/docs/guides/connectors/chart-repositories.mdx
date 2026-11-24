@@ -66,7 +66,7 @@ Alethia picks the credential from the chart's host, and takes the most specific 
 - An HTTPS chart repository must match exactly.
 
 ArgoCD uses the same rule. So one credential serves both the
-[safety scan](/guides/design-project/bring-your-own-charts#the-safety-scan) when you attach a chart
+[safety scan](/guides/design-project/bring-your-own-charts#read-the-safety-scan) when you attach a chart
 and ArgoCD's pull at deploy time. A chart whose host matches nothing is read without a credential:
 that works for a public chart and fails with an authentication error for a private one.
 

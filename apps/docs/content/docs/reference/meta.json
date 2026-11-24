@@ -6,6 +6,8 @@
 		"cli",
 		"api",
 		"limits",
+		"node-pools",
+		"ingress-nginx-annotations",
 		"sandbox-configuration",
 		"control-catalog",
 		"standards",
