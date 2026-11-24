@@ -17,6 +17,7 @@ import {
   type EnterprisePackage,
 } from "@alethia/enterprise-api";
 import type { BetterAuthOptions } from "better-auth";
+import type { EnterpriseAgentPolicy } from "@/lib/approvals/enterprise-policy";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { enforceDecision, recordActivity } from "@/lib/authz/activity";
 import { checksFor, denyChecksFor } from "@/lib/authz/fga-mapping";
@@ -228,6 +229,12 @@ export interface EnterpriseModule extends EnterpriseEditionReporter {
    * org's billing record drives it (hosted). Community (no ee/) = all-off baseline.
    */
   resolveEntitlements?: (orgId: string) => Promise<Entitlements>;
+  /**
+   * The enterprise agent-policy toggles (agent surface §4.9: a different approver, the OAuth client
+   * allow-list), read by the approval engine through lib/approvals/enterprise-policy.ts. Community
+   * (absent) = core's answers: the click is the approval, any client, self-approval allowed.
+   */
+  agentPolicy?: EnterpriseAgentPolicy;
 }
 
 /** `@alethia/ee`'s entry point: receives core capabilities, returns its module. */

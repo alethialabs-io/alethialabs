@@ -9,11 +9,15 @@ import type { Actor } from "@/lib/authz/types";
 import { cliServiceTokens, orgAgentPolicy, projectEnvironments } from "@/lib/db/schema";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import type { Executor } from "./binding";
+import type { StoredEnterpriseToggles } from "./enterprise-policy";
 import { type AgentPolicyToggles, DEFAULT_AGENT_POLICY } from "./policy";
 
-/** The org's agent policy as the engine reads it: the table's toggles plus the approval TTL. */
-export interface AgentPolicy extends AgentPolicyToggles {
-	requireDifferentApprover: boolean;
+/**
+ * The org's agent policy as the engine reads it: the table's toggles, the approval TTL, and the
+ * enterprise toggles as stored — which only the enterprise agent policy interprets
+ * (enterprise-policy.ts); core never acts on them itself.
+ */
+export interface AgentPolicy extends AgentPolicyToggles, StoredEnterpriseToggles {
 	approvalTtlMinutes: number;
 }
 
@@ -29,17 +33,24 @@ export async function readAgentPolicy(db: Executor, orgId: string): Promise<Agen
 			agents_may_not_apply_to_production: orgAgentPolicy.agents_may_not_apply_to_production,
 			require_different_approver: orgAgentPolicy.require_different_approver,
 			approval_ttl_minutes: orgAgentPolicy.approval_ttl_minutes,
+			allowed_oauth_client_ids: orgAgentPolicy.allowed_oauth_client_ids,
 		})
 		.from(orgAgentPolicy)
 		.where(eq(orgAgentPolicy.org_id, orgId))
 		.limit(1);
 	if (!row) {
-		return { ...DEFAULT_AGENT_POLICY, requireDifferentApprover: false, approvalTtlMinutes: DEFAULT_APPROVAL_TTL_MINUTES };
+		return {
+			...DEFAULT_AGENT_POLICY,
+			requireDifferentApprover: false,
+			allowedOauthClientIds: null,
+			approvalTtlMinutes: DEFAULT_APPROVAL_TTL_MINUTES,
+		};
 	}
 	return {
 		agentAccessEnabled: row.agent_access_enabled,
 		agentsMayNotApplyToProduction: row.agents_may_not_apply_to_production,
 		requireDifferentApprover: row.require_different_approver,
+		allowedOauthClientIds: row.allowed_oauth_client_ids ?? null,
 		approvalTtlMinutes: Math.min(Math.max(row.approval_ttl_minutes, 1), MAX_APPROVAL_TTL_MINUTES),
 	};
 }
