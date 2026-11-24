@@ -294,15 +294,6 @@ const ANCHORS = [
  * of these score NOT MEASURED on F7 — the honest verdict for a behaviour nothing ran.
  */
 export const F7_UNDRIVEN = /** @type {const} */ ({
-	readJobsPage: {
-		file: "apps/console/lib/rpc/procedures/jobs.ts",
-		owner: "#3796",
-		why:
-			"a read procedure's reader that opens its own transaction and resolves the actor before it " +
-			"reads, rather than a `lib/queries` builder taking `(orgId, query)`. Driving it needs the " +
-			"auth bootstrap `tests/actions/list-page-reads.test.ts` mocks, which is a second fixture " +
-			"shape, not a second row in this one.",
-	},
 	queryProjects: {
 		file: "apps/console/app/server/actions/projects.ts",
 		owner: "#3796",
