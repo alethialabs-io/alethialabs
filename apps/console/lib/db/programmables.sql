@@ -3780,6 +3780,29 @@ CREATE TRIGGER promotion_approvals_notify_change_insdel
   AFTER INSERT OR DELETE ON public.promotion_approvals
   FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
 
+-- apply_approvals (AGT-L5, #6862): an agent's deploy/destroy approval request was recorded, decided,
+-- used, or replaced by a newer plan. The in-conversation approval card reads it through a query the
+-- `environments` topic invalidates (IN_APP_APPROVAL_KEY, lib/query/topics.ts), so a teammate's
+-- decision reaches the requester's card without a poll. The row carries id, project_id and a NOT NULL
+-- org_id, so the promotion notifier serves it as written. Not listed: decided_at and consumed_at (they
+-- move with status), approver_session_id (moves with approver_user_id), and the request's own columns,
+-- written once. `expired` is computed at read time (lib/approvals/read.ts), not written, so no
+-- trigger can announce it; the card re-reads once at `expires_at` itself.
+DROP TRIGGER IF EXISTS apply_approvals_notify_change_upd ON public.apply_approvals;
+CREATE TRIGGER apply_approvals_notify_change_upd
+  AFTER UPDATE ON public.apply_approvals
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.approver_user_id, OLD.consumed_job_id)
+    IS DISTINCT FROM
+    (NEW.status, NEW.approver_user_id, NEW.consumed_job_id)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS apply_approvals_notify_change_insdel ON public.apply_approvals;
+CREATE TRIGGER apply_approvals_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.apply_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
 -- environment_protection_rules: the gates the env card summarises and the rules drawer edits. Not
 -- listed: updated_at (stamped on every save, change or not), user_id, org_id.
 DROP TRIGGER IF EXISTS environment_protection_rules_notify_change_upd ON public.environment_protection_rules;
