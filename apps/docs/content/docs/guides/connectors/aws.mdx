@@ -3,8 +3,6 @@ title: AWS Connector
 description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up in AWS CloudShell or with OpenTofu.
 ---
 
-# AWS Connector
-
 Connecting AWS registers a **cloud identity** (`cloud_identities`) that is **keyless and issuer-direct**: your account registers an **IAM OIDC provider** that trusts
 Alethia's OIDC issuer, plus an IAM role Alethia assumes via **`AssumeRoleWithWebIdentity`** — no access keys, no
 external id, and no trust in an Alethia AWS account. This is the same model GCP and Azure use. See
