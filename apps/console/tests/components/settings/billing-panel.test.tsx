@@ -108,8 +108,9 @@ beforeEach(() => {
 	reads.liveAiPrices.mockRejectedValue(failed());
 	reads.paymentMethods.mockResolvedValue([]);
 	reads.planHistory.mockResolvedValue([]);
-	reads.transactions.mockResolvedValue([]);
-	reads.invoices.mockResolvedValue([]);
+	// Both are keyset pages since #7493: an empty, final first page.
+	reads.transactions.mockResolvedValue({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
+	reads.invoices.mockResolvedValue({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 });
 
 describe("BillingPanel", () => {

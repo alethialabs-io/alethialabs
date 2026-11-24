@@ -6,8 +6,9 @@
 // recent mirrored invoices (reusing the shared InvoicesTable + preview dialog) under an
 // Invoices section whose action links to the full invoices page.
 //
-// The read is `billing.invoices` with `RECENT_INVOICES_INPUT`, over GET, prefetched by the route
-// (#6127). A failed read is an error with a retry: it used to be set to `[]` and rendered as
+// The read is the FIRST PAGE of `billing.invoices` with `RECENT_INVOICES_INPUT` (a page of five),
+// over GET, prefetched by the route (#6127). A preview, not a list: it never pages, and its link is
+// the way to the rest (#7493). A failed read is an error with a retry: it used to be set to `[]` and rendered as
 // "No invoices yet", a statement about the account made on the strength of a failed request.
 
 import { useQuery } from "@tanstack/react-query";
@@ -28,7 +29,11 @@ import { InvoicesTable } from "./invoices-table";
 export function RecentInvoices() {
 	const { org } = useParams<{ org: string }>();
 	const rows = useQuery(
-		orpc.billing.invoices.queryOptions({ input: RECENT_INVOICES_INPUT, retry: retryUnlessRefused }),
+		orpc.billing.invoices.queryOptions({
+			input: RECENT_INVOICES_INPUT,
+			retry: retryUnlessRefused,
+			select: (page) => page.rows,
+		}),
 	);
 	const refusal = rows.isError ? refusalOf(rows.error) : null;
 
@@ -60,7 +65,6 @@ export function RecentInvoices() {
 				<InvoicesTable
 					rows={rows.data}
 					onPreview={openPreview}
-					pageSize={5}
 					emptyMessage="No invoices yet — they appear here after your first payment."
 				/>
 			) : refusal ? (
