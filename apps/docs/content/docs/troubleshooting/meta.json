@@ -8,6 +8,7 @@
 		"deploy",
 		"destroy",
 		"cluster-access",
+		"mcp",
 		"billing"
 	]
 }

@@ -1,135 +1,105 @@
 ---
-title: Fleet Pools
-description: Configure a managed warm pool of runners for a cloud so the fleet controller keeps capacity sized to demand.
+title: Run a warm pool of runners
+description: On a self-hosted console, configure a warm pool of managed runners for a cloud, so the fleet controller keeps capacity sized to demand.
 ---
 
-A **warm pool** is a declarative target for one cloud's managed runners: a floor of always-ready
-runners, a ceiling on spend, and a version to converge to. The **fleet controller** — a 60-second
-loop — reads every pool each tick and provisions, drains, or replaces runners to match. Editing a
-pool in the console takes effect on the next tick, with no redeploy.
+Keep ready runners waiting for jobs, within a spend ceiling, on one version. A **warm pool** states
+the target for one cloud's managed runners. The **fleet controller** reads every pool every 60
+seconds and provisions, drains or replaces runners to match. A change to a pool takes effect on the
+next tick, with no redeploy.
 
-Pools live in the **Pools** panel on the [Runners](/guides/runners) page. For the runner agent
-itself, see [Runners](/guides/runners).
+Pools are for managed runners, which the controller creates and removes for you. To add a runner you
+operate yourself, use **Add Runner** on the [Runners](/guides/runners) page.
 
-<Callout type="info">
-Warm pools apply to **managed** runners only — the fleet Alethia operates and bills by provisioned
-hours. You don't register or deploy them yourself; you configure a pool and the controller keeps it
-sized. Self-operated runners are added from **Add Runner** instead.
-</Callout>
+## Before you begin
 
-## Before you start
-
-- **This is a self-managed deployment.** The Pools panel is shown only on self-managed installs,
-  where the operator is you. On the hosted SaaS the panel is hidden and the fleet actions refuse.
-- **You can manage the fleet.** Creating, editing, pausing, and deleting pools is gated to
-  owner/admin. Without that capability the panel is read-only and the **Add pool** button is hidden.
-- **A cloud provider is wired for real VMs.** Set `FLEET_PROVIDER=hcloud` to provision runners on the
-  Hetzner VM fleet. Until then a pool is **advisory** — the controller logs the actions it *would*
-  take but creates nothing, and the panel shows a "pools are advisory" notice.
-
-## Open the Pools panel
-
-1. Go to the [Runners](/guides/runners) page.
-2. Find the **Pools** panel in the left column. It lists one card per configured pool, or an empty
-   state when none exist.
+- You run your own console. The **Pools** panel is not shown on the hosted service.
+- You are an owner or admin. Others see the panel read-only, and **Add pool** is disabled with the
+  reason.
+- `FLEET_PROVIDER=hcloud` is set, so that runners are real Hetzner servers. Without it, a pool is
+  advisory: the controller logs what it would do and creates nothing, and the panel says so.
 
 ## Add a pool
 
-Click **Add pool** to open the wizard. It walks five steps — **Cloud → Placement → Capacity →
-Version → Review** — and validates each before you advance.
-
-<Callout type="info">
-There is **one pool per cloud**. A cloud that already has a pool is disabled in the picker, and a
-pool's cloud can't change after creation — edit or delete the existing pool instead.
-</Callout>
+There is one pool per cloud. A cloud that has a pool is disabled in the picker, and a pool's cloud
+cannot change later.
 
 <Steps>
 
-### Choose the cloud
+### Open the wizard
+On the **Runners** page, find **Pools** in the left column and select **Add pool**. The wizard has
+five steps: **Cloud**, **Placement**, **Capacity**, **Version** and **Review**.
 
-Pick the **cloud provider** whose runners this pool manages. Optionally set a **display name** shown
-on the pool card; it defaults to the provider name.
+### Choose the cloud
+Pick the **Cloud provider**. A **Display name (optional)** names the pool card. It defaults to the
+cloud's name.
 
 ### Set placement
-
-Enter **locations** as comma-separated region codes for that cloud (for example, Hetzner `fsn1,
-nbg1`). The controller spreads runners across them, so a degraded region doesn't take the pool down.
-At least one location is required.
-
-Set a **minimum per location** to keep that many runners in every listed location. Leave it `0` for
-no per-region floor.
+Enter **Locations** as region codes separated by commas, such as `fsn1,nbg1` on Hetzner. The
+controller spreads runners across them, so one bad region does not take the pool down. Set a
+**Minimum per location** to keep that many runners in each, or `0` for none.
 
 ### Set capacity
 
 | Field | Meaning |
 | --- | --- |
-| **Warm minimum** | Runners kept booted and ready at all times, even with zero queued jobs. |
-| **Maximum** | The hard ceiling — the most runners the pool will ever provision, no matter how deep the queue. |
-| **Idle buffer** | Extra idle runners kept above current demand (N+1 headroom) so a new job rarely waits for a boot. `0` scales exactly to demand. |
-| **Slots / runner** | How many jobs one runner executes at once. Higher packs more work per VM but shares its CPU and memory. |
+| **Warm minimum** | Runners kept ready at all times, even with no jobs queued. |
+| **Maximum** | The most runners the pool ever runs, however long the queue. |
+| **Idle buffer** | Spare runners kept above demand, so a new job rarely waits for a boot. `0` matches demand exactly. |
+| **Slots / runner** | Jobs one runner runs at once. More slots share one server's CPU and memory. |
 
-A live preview reads the numbers back in plain English. When a runner takes more than one slot, it
-also shows the maximum concurrent jobs (maximum × slots per runner).
+The maximum must be at least the warm minimum, and the idle buffer cannot exceed the maximum. If
+the minimum per location times the number of locations exceeds the maximum, the wizard warns you.
+A preview says what the numbers mean, including the most jobs at once (maximum × slots).
 
-Two rules are enforced: the maximum must be at least the warm minimum, and the idle buffer can't
-exceed the maximum. If the per-location minimum times the number of locations exceeds the maximum,
-the wizard warns you to raise the maximum or lower the floor.
-
-Expand **Advanced scaling** for two more knobs:
+Under **Advanced scaling**:
 
 | Field | Meaning |
 | --- | --- |
-| **Rollout surge** | Extra runners the controller may run above the ceiling during a version rollout, so it replaces old runners without dropping capacity. |
-| **Scale-down grace** | Consecutive 60-second ticks a runner must sit idle before it's removed. Higher avoids flapping on spiky demand. |
+| **Rollout surge** | Extra runners allowed above the maximum during a version change, so capacity does not drop. |
+| **Scale-down grace** | Idle 60-second ticks before a runner is removed. More ticks stop the pool from shrinking and growing on spiky demand. |
 
-### Choose a version source
+### Choose the version source
+- **Channel** follows a release stream, usually `stable`. Each tick, the controller picks the newest
+  release on it.
+- **Pinned** holds one version until you change it.
 
-Pick how the pool tracks runner versions:
-
-- **Channel** — track a moving release stream (usually `stable`). The controller resolves the
-  channel to the newest release each tick and auto-updates the pool.
-- **Pinned** — hold one exact version until you change it.
-
-### Review and create
-
-Check the summary and click **Create pool**. The controller wakes immediately and begins converging
-the pool toward its target.
+### Create the pool
+Check the summary and select **Create pool**. The controller starts at once.
 
 </Steps>
 
-New capacity is always created at the target version. When you change the version, the controller
-rolls runners over one step per tick — draining an outdated runner only while it can surge a
-replacement first, so online capacity never drops below the warm floor.
+New runners always start at the target version. When the version changes, the controller replaces
+runners one step per tick. It drains an old runner only when it can start a new one first, so online
+capacity never drops below the warm minimum.
 
-## Read a pool card
+## Edit, pause or delete a pool
 
-Each card derives its numbers from the pool's configured target joined with the runners it observes:
+Open **Pool actions** (**⋮**) on the pool card:
 
-- **Warm capacity** — online runners over the target, drawn as a segmented meter. Filled segments are
-  online runners, hatched segments are online-and-busy, dashed segments are the gap to target. A note
-  line shows how many are below floor, busy, and draining.
-- **Rollout** — the percentage of live runners already on the target version, with the target and a
-  progress bar while a rollout is in flight.
-- **Versions** and **Locations** — how live runners are distributed; a tally is flagged when it's off
-  the target version or a location has an offline runner.
-- **Health** — **Healthy**, or **Degraded** when the pool is below its warm floor or any runner is
-  offline. A paused pool is dimmed and labelled **Paused**.
-- **Economics** (manager-only) — a month-to-date footer with provisioned hours, estimated cost, and
-  utilization.
+| Action | What happens |
+| --- | --- |
+| **Edit** | Opens the wizard on the pool. Everything but the cloud can change. |
+| **Pause** | Drains every runner to zero and closes each runner's usage session, so nothing keeps billing. **Resume** rebuilds the warm minimum over the next few ticks. |
+| **Delete** | Drains and removes the pool's runners on the next tick, then the pool. It cannot be undone. |
 
-## Edit, pause, or delete a pool
+Pause and delete drain a busy runner first: it stops taking new jobs and finishes the one it runs.
+No running job is dropped.
 
-Open the **⋮** menu on a pool card (visible to managers):
+## Check that it worked
 
-- **Edit** reopens the wizard on that pool. Its cloud is fixed; every other knob is editable, and
-  changes converge live on the next tick.
-- **Pause** stops the pool. The controller reconciles a paused pool as a teardown target — it drains
-  every runner to zero and closes each runner's usage session, so pausing leaves no billable orphans.
-  **Resume** rebuilds the warm floor over the next few ticks.
-- **Delete** removes the pool. The controller drains and reaps its runners on the next tick before
-  the row is removed. This cannot be undone.
+The pool card shows:
 
-<Callout type="warn">
-Pausing and deleting both drain a pool to zero. A busy runner is drained first — it stops claiming
-new work and finishes its in-flight job — before it's destroyed, so no running job is dropped.
-</Callout>
+- **Warm capacity**: online runners against the target, as a meter of online, busy and missing
+  runners, with how many are below the floor, busy or draining.
+- **Rollout**: the share of runners on the target version, with progress during a change.
+- **Versions** and **Locations**: where the runners are, flagged when one is on another version or a
+  location has an offline runner.
+- **Healthy**, or **Degraded** when the pool is below its warm minimum or a runner is offline. A
+  paused pool is dimmed and marked **Paused**.
+- For managers, this month's provisioned hours, estimated cost and use.
+
+## Related
+
+- [Runners](/guides/runners)
+- [Self-operated runners](/guides/runners/self-operated)

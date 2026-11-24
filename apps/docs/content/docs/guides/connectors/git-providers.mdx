@@ -1,59 +1,51 @@
 ---
-title: Git Providers
-description: GitHub, GitLab, and Bitbucket OAuth integration with automatic token refresh.
+title: Connect a Git provider
+description: Connect GitHub, GitLab or Bitbucket over OAuth so that Alethia can list your repositories and ArgoCD can deploy from them.
 ---
 
-Git provider connectors give Alethia access to your repositories for GitOps. Three providers are supported, each through OAuth.
+Connect a Git provider so that Alethia can list your repositories and ArgoCD can watch them. All
+three providers connect over OAuth, and Alethia refreshes the token for you.
 
-## Supported Providers
+## Before you begin
 
-| Provider | Auth Method | Token Refresh |
-|----------|-----------|---------------|
-| GitHub | OAuth 2.0 | Automatic via refresh token |
-| GitLab | OAuth 2.0 | Automatic via refresh token |
-| Bitbucket | OAuth 2.0 | Automatic via refresh token |
+- You have an account on GitHub, GitLab or Bitbucket that can read the repositories you deploy.
+- This console has an OAuth app for the provider. If it does not, the card reads
+  **Not enabled on this instance**. A self-hosted console sets this up in
+  [Configuration](/self-host/configuration).
 
-## Connection Flow
+## Steps
 
-<Steps>
+1. Open **Connectors** and find the provider under **Source**.
+2. Select **Connect**.
+3. On the provider's page, approve access. GitHub asks for the `repo` scope.
 
-### Click Connect
-Click "Connect" on the provider card in the Connectors page.
+The provider sends you back to **Connectors**.
 
-### OAuth Authorization
-You're redirected to the provider's authorization page. Grant the application access to your repositories.
+## What the token is used for
 
-### Callback
-The provider redirects back to Alethia with an authorization code. Better Auth exchanges it for access and refresh tokens.
+| Use | Detail |
+| --- | --- |
+| Repository lists | The project form and the canvas list repositories from the provider. |
+| GitOps | ArgoCD reads your repositories with the token and syncs changes. |
+| Templates | Alethia can read infrastructure templates from your repositories. |
 
-### Token Storage
-Better Auth stores the provider tokens in its `account` table — one row per linked account.
+When the access token expires, Alethia uses the stored refresh token to get a new one the next time
+it needs the provider. If that fails, the card reads **Needs reconnection**: select **Reconnect**.
 
-</Steps>
+## Check that it worked
 
-## Token Refresh
+The card reads **Connected**, and the repository picker in a project lists your repositories.
 
-Git tokens have limited lifetimes. The `getValidProviderToken()` server action wraps Better Auth's `getAccessToken`, which handles refresh transparently:
+## Disconnect a Git provider
 
-1. Better Auth reads the linked account from the `account` table
-2. If the access token has expired, it refreshes using the stored refresh token against the provider's token endpoint
-3. It returns a valid access token and persists the refreshed one
-
-This happens transparently whenever a Git operation is needed.
-
-## What Tokens Are Used For
-
-- **Repository listing** — the Design a Project form shows repos from your connected provider
-- **ArgoCD access** — after deploying, ArgoCD uses the token to watch repositories for changes
-- **Template cloning** — infrastructure templates can be sourced from your repositories
-
-## Disconnecting
-
-Disconnecting a Git provider:
-
-1. Calls `deleteProviderToken()`, which unlinks the account via Better Auth (`unlinkAccount`) — deleting its `account` row
-2. Existing ArgoCD installations that use this token will lose repository access
+Select **Manage** on the card, then **Disconnect**. Alethia deletes the stored tokens.
 
 <Callout type="warn">
-Disconnecting a Git provider affects all projects that use repositories from that provider. ArgoCD will show "sync failed" until a new token is provided.
+Every project that deploys from this provider loses repository access. ArgoCD shows its sync as
+failed until you connect the provider again.
 </Callout>
+
+## Related
+
+- [Repositories](/guides/design-project/repositories): pick the repositories a project deploys.
+- [GitOps with ArgoCD](/concepts/gitops-argocd): how ArgoCD uses the repository.
