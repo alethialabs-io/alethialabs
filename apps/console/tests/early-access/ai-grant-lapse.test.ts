@@ -17,7 +17,9 @@ function row(over: Partial<AiTierBillingFields> = {}): AiTierBillingFields {
 		aiTier: "ai_plus",
 		aiSubscriptionStatus: "active",
 		aiStripeSubscriptionId: null,
+		aiPaddleSubscriptionId: null,
 		stripeSubscriptionId: null,
+		paddleSubscriptionId: null,
 		currentPeriodEnd: FUTURE,
 		...over,
 	};

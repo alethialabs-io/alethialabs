@@ -744,6 +744,9 @@ jobs:
       # run-step env. The webhook secret is any test-mode `whsec_`: nothing reaches CI, and the
       # card-less trial syncs deterministically without one. NEVER `ALETHIA_DEPLOYMENT_MODE=hosted`
       # here — packages/email then refuses the OTP log fallback and nothing can sign in.
+      # The sales provider (apps/console/lib/billing/provider/select.ts) FAILS CLOSED: without it the
+      # console treats billing as off even with the Stripe test key below, so a `stripe` leg names it.
+      BILLING_PROVIDER: ${{ contains(matrix.capabilities, 'stripe') && 'stripe' || '' }}
       STRIPE_SECRET_KEY: ${{ contains(matrix.capabilities, 'stripe') && secrets.STRIPE_TEST_SECRET_KEY || '' }}
       STRIPE_WEBHOOK_SECRET: ${{ contains(matrix.capabilities, 'stripe') && secrets.STRIPE_TEST_WEBHOOK_SECRET || '' }}
       STRIPE_PRICE_TEAM: ${{ contains(matrix.capabilities, 'stripe') && vars.STRIPE_TEST_PRICE_TEAM || '' }}

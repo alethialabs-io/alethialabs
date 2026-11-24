@@ -65,7 +65,7 @@ import {
 } from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
 import { personTrialAvailable, releaseTrial, reserveTrial, trialSalesOpen } from "@/lib/billing/trial";
-import { isManualGrantExpired, resolvePlanEntitlements } from "@/lib/billing/plan";
+import { hasPlanSubscription, isManualGrantExpired, resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf, setBackupOrder } from "@/lib/billing/payment-methods";
@@ -1196,15 +1196,16 @@ async function liveOrgPlanCheck(customerId: string): Promise<string | null> {
  * org-plan flow (`createSubscriptionIntent`, `createCheckoutSession`, `startProTrial`) may start another.
  * Each caller runs it on a fresh row read before any Stripe call. Answers the refusal's copy, or null:
  *
- * - a row naming a Stripe subscription that is `active` or `trialing`: "change the plan instead";
- * - a row naming a Stripe subscription that is `past_due` (Stripe's `past_due` or `unpaid`): D7's copy;
+ * - a row naming a plan subscription (Stripe or Paddle) that is `active` or `trialing`: "change the
+ *   plan instead";
+ * - a row naming a plan subscription that is `past_due` (Stripe's `past_due` or `unpaid`): D7's copy;
  * - a row naming NO subscription is judged by D5 alone, whatever its status: a live grant (`active`,
  *   `trialing` or `past_due`) whose term has not lapsed (`isManualGrantExpired`) gets the contract copy,
  *   and a lapsed one does not refuse, because buying is the way back to a plan.
  */
 function orgRowBlocksNewPlan(row: OrgPlanRow | null, now: Date = new Date()): string | null {
 	if (!row) return null;
-	if (row.stripeSubscriptionId) {
+	if (hasPlanSubscription(row)) {
 		if (row.status === "active" || row.status === "trialing") return LIVE_PLAN_REFUSAL;
 		if (row.status === "past_due") return UNPAID_PLAN_REFUSAL;
 		return null;
@@ -1215,16 +1216,18 @@ function orgRowBlocksNewPlan(row: OrgPlanRow | null, now: Date = new Date()): st
 /** The org-plan columns of an `organization_billing` row that the row predicate reads. */
 interface OrgPlanRow {
 	stripeSubscriptionId: string | null;
+	paddleSubscriptionId: string | null;
 	status: string;
 	currentPeriodEnd: Date | null;
 }
 
 /**
- * Whether the row is a live off-Stripe grant (ADR 0004 §2, D5): it names no Stripe subscription, its
+ * Whether the row is a live off-provider grant (ADR 0004 §2, D5): it names no plan subscription at any
+ * provider (`hasPlanSubscription`), its
  * status is `active`, `trialing` or `past_due`, and its term has not lapsed (`isManualGrantExpired`).
  */
 function isLiveGrant(row: OrgPlanRow | null, now: Date = new Date()): boolean {
-	if (!row || row.stripeSubscriptionId) return false;
+	if (!row || hasPlanSubscription(row)) return false;
 	const grantStatus = row.status === "active" || row.status === "trialing" || row.status === "past_due";
 	return grantStatus && !isManualGrantExpired(row, now);
 }
@@ -3866,12 +3869,12 @@ export async function confirmCardSaved(setupIntentId: string): Promise<{ ok: tru
 	// either can repeat (a reload of the landing URL, a retried request), so the SetupIntent id is
 	// claimed in the Stripe exactly-once ledger the webhook already uses (`stripe_webhook_event`, PK
 	// insert). A `seti_…` id cannot collide with an `evt_…` one. A second claim records nothing.
-	const claim = await claimWebhookEvent(setupIntentId, SETUP_INTENT_RECORDED);
+	const claim = await claimWebhookEvent("stripe", setupIntentId, SETUP_INTENT_RECORDED);
 	if (!claim.claimed) return { ok: true };
 	// Recorded under its own name so the feed can say what happened; emitted as `manage_billing`, so
 	// an org's alert rule on billing changes still fires on a card being added.
 	recordAllowed(actor, "manage_billing", { type: "billing" }, { recordAs: "add_payment_method" });
-	await markWebhookEventDone(setupIntentId);
+	await markWebhookEventDone("stripe", setupIntentId);
 	return { ok: true };
 }
 

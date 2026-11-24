@@ -55,6 +55,7 @@ export const organizationBilling = pgTable("organization_billing", {
 	status: text().notNull(),
 	stripeCustomerId: text(),
 	stripeSubscriptionId: text(),
+	paddleSubscriptionId: text(),
 	seats: integer(),
 	currentPeriodStart: timestamp({ withTimezone: true }),
 	currentPeriodEnd: timestamp({ withTimezone: true }),

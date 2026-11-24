@@ -81,6 +81,16 @@ EMAIL_PROVIDER_JSON="$json" bash "$(dirname "$0")/check-email-provider-keys.sh"
 # Not a secret. The default is the events topic infra/email-ses-account creates; its checks.tftest.hcl
 # pins the same literal. Emitted whichever transport is selected, so the webhook is ready before
 # the subscription exists.
+# The SALES provider (apps/console/lib/billing/provider/select.ts). The console FAILS CLOSED on it:
+# unset or unknown means no provider, and billing goes dark even with Stripe keys present. So it is
+# defaulted HERE, to stripe — production's provider until the Paddle go-live switch — and a vault value
+# (stripe | paddle) overrides it. Anything else is refused before the .env is written, because a typo
+# would silently take billing down on deploy.
+SALES_PROVIDER="$(val BILLING_PROVIDER)"; SALES_PROVIDER="${SALES_PROVIDER:-stripe}"
+case "$SALES_PROVIDER" in
+  stripe|paddle) ;;
+  *) echo "::error::BILLING_PROVIDER must be stripe or paddle (got '$SALES_PROVIDER')."; exit 1 ;;
+esac
 SES_TOPIC_ARNS="$(val ALETHIA_SES_EVENTS_TOPIC_ARNS)"
 SES_TOPIC_ARNS="${SES_TOPIC_ARNS:-arn:aws:sns:eu-central-1:604925221417:alethia-ses-events}"
 
@@ -284,6 +294,21 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   # so tax stays off. Set STRIPE_TAX_ENABLED=true in the vault ONLY after the Stripe
   # account's Tax origin + registrations are configured, else Checkout errors on session create.
   emit STRIPE_TAX_ENABLED
+  # The sales provider, validated above (defaults to stripe). Existing subscriptions keep following
+  # their own row's provider whatever this says.
+  echo "BILLING_PROVIDER=$SALES_PROVIDER"
+  # Paddle Billing (merchant of record). Emitted empty until the vault holds them; an empty
+  # PADDLE_API_KEY means Paddle is not configured (lib/billing/paddle/config.ts). When set, the key
+  # prefix, PADDLE_ENVIRONMENT and the client token must agree or the console refuses the config.
+  emit PADDLE_ENVIRONMENT
+  emit PADDLE_API_KEY
+  emit PADDLE_WEBHOOK_SECRET
+  emit NEXT_PUBLIC_PADDLE_CLIENT_TOKEN
+  emit PADDLE_PRICE_TEAM
+  emit PADDLE_PRICE_AI_PLUS
+  emit PADDLE_PRICE_AI_MAX
+  emit PADDLE_PRODUCT_RUNNER_MINUTES
+  emit PADDLE_PRODUCT_AI_CREDITS
   # Transactional email: the vault-selected transport (ses unless the vault says smtp; validated
   # above). Both transports' keys are emitted so the two stay one vault edit apart. The SES ones
   # are the alethia-email account's (infra/email-ses-account); the SMTP ones are empty unless the

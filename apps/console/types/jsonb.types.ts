@@ -1911,3 +1911,23 @@ export interface FacturaSnapshot {
 	/** Stripe's own number for the paid invoice, printed as a reference. */
 	stripeInvoiceNumber: string | null;
 }
+
+// ── Paddle Billing (L1) ───────────────────────────────────────────────────────
+
+/**
+ * `paddle_transaction.custom_data` — what the console puts on a Paddle transaction when it creates
+ * one server-side, echoed back by Paddle on every `transaction.*` event. Checkout always opens a
+ * server-created transaction, so this cannot be set or altered client-side.
+ */
+export interface PaddleTransactionCustomData {
+	/** The organization the purchase is for (uuid). */
+	organizationId: string;
+	/** What is being bought. */
+	kind: "plan" | "ai_tier" | "credit_pack" | "usage_charge";
+	/** The plan (`team`, …) or AI tier (`ai_plus`, …) ordered; absent for packs and charges. */
+	plan?: string;
+	/** The `commerce_order` row the checkout was opened for, when there is one (uuid). */
+	commerceOrderId?: string;
+	/** The user who opened the checkout (uuid). */
+	userId?: string;
+}

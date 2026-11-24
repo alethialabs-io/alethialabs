@@ -25,7 +25,11 @@ const { currentActor, authorize, authorizeQuiet, authorizeRead, isStripeConfigur
 	}));
 vi.mock("@/lib/authz/guard", () => ({ currentActor, authorize, authorizeQuiet, authorizeRead }));
 vi.mock("@/lib/billing/eligibility", () => ({ hasAcceptedCurrentDocuments: async () => true, paidSalesOpen }));
-vi.mock("@/lib/billing/config", () => ({ isStripeConfigured, aiPaidTiersEnabled: () => false }));
+vi.mock("@/lib/billing/config", () => ({
+	isStripeConfigured,
+	isBillingConfigured: () => isStripeConfigured(),
+	aiPaidTiersEnabled: () => false,
+}));
 vi.mock("@/lib/billing/pricing", () => ({ getAllAiPrices, getPlanPrice: vi.fn() }));
 // A PARTIAL mock: with the enterprise module built (CI), `loadEnterprise` reads other exports of
 // this module (`resolveOrgEntitlements`) on the auth path, so only the billing-row read is stubbed.
