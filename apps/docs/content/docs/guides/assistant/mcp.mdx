@@ -1,6 +1,6 @@
 ---
 title: MCP server (external agents)
-description: Connect an external agent such as Claude Code, Claude, Cursor or Codex to Alethia over MCP, so it can read your infrastructure with the same tools Elench uses. The tools are read-only.
+description: Connect an external agent such as Claude Code, Claude, Cursor or Codex to Alethia over MCP, so it can read your infrastructure with the same tools Elench uses, plan, and ask you to approve an apply or a destroy.
 ---
 
 # MCP server
@@ -10,9 +10,10 @@ Elench's read tools are also served as an [MCP](https://modelcontextprotocol.io)
 infrastructure without you copying anything in by hand. It calls the **same permission-checked tools**
 the console's assistant uses, so it sees only what you can see.
 
-The tools are **read-only**. An external agent can read your projects, clusters, jobs and drift. It
-cannot change a design, start a job, or approve anything. To act, an agent uses the
-[CLI](/agents/cli). [Alethia for agents](/agents) puts the two together.
+An external agent can read your projects, clusters, jobs and drift, and start a plan. It can ask for
+an apply or a destroy, and that job starts only after you approve the request in the console. No tool
+approves. [Alethia for agents](/agents) explains how the MCP server and the [CLI](/agents/cli) fit
+together.
 
 <Callout type="info">
   The server needs AI to be on for your organization. On self-host it is always on. On hosted Alethia
@@ -63,13 +64,23 @@ The client sends you to the console's sign-in page. Sign in as you normally do.
 ### Approve access
 
 If the page asks for consent, approve it. The token belongs to **you**: the tools run as you, under
-your role in the organization, with no access of their own. The token names this MCP endpoint as its
-audience, and the server refuses tokens issued for anything else.
+your role in the organization, with no access of their own. It carries the scopes the client asked
+for and you approved (`read`, `design`, `plan`, `apply`, `destroy`), and each scope only narrows what
+your role allows. The server refuses a token with no scope it reads, with a `403` that asks the
+client to sign in again. The token names this MCP endpoint as its audience, and the server refuses
+tokens issued for anything else.
+
+<Callout type="warn">
+A connection you made before Alethia added agent scopes holds only sign-in scopes (`openid`,
+`profile`, `email`), and the server now refuses it with `403 insufficient_scope`. To fix it,
+disconnect the Alethia MCP server in your client, connect it again, and approve the agent scopes
+the consent page asks for: `read`, `design`, `plan`, `apply`, `destroy`. Approve at least `read`.
+</Callout>
 
 ### Use the tools
 
-The client now lists Alethia's read tools. Ask the agent about your infrastructure and it calls them
-for you.
+The client now lists the tools your scopes allow. Ask the agent about your infrastructure and it
+calls them for you.
 
 </Steps>
 
@@ -79,20 +90,25 @@ If the client cannot connect:
   `NEXT_PUBLIC_APP_URL` is not an absolute `https` URL. The server needs one to name itself in tokens.
 - An error during sign-in that names the client usually means the client cannot use a Client ID
   Metadata Document. Update the client.
-- A `403` after sign-in means AI is turned off for the organization.
+- A `403` after sign-in means AI is turned off for the organization, an owner turned agent access
+  off, or the token carries no scope. The response says which.
 - Any other refusal of the client's first request after sign-in usually means the client speaks a
   2025 revision of the protocol. Update the client.
 
 ## Which organization the tools read
 
-The token belongs to you, not to an organization. Each request reads the organization the console
-picks for you when there is no browser session: the first organization you joined, or your personal
-organization if you have joined none. Switching organizations in the console does not change what the
-MCP tools read.
+When your consent for the client recorded an organization, every request acts in that organization,
+and only on the projects the consent names. Otherwise each request acts in the organization the
+console picks for you when there is no browser session: the first organization you joined, or your
+personal organization if you have joined none. Switching organizations in the console does not change
+what the MCP tools act on.
+
+Add `?project=<project id>` to the server URL to hold every call to one project.
 
 ## What the agent can read
 
-The [tool reference](/agents/tools) lists the 20 tools with their arguments. In short:
+The [tool reference](/agents/tools) lists the 20 read tools and the six operation tools with their
+arguments. The read tools, in short:
 
 | Area | What the agent can do |
 | --- | --- |
@@ -107,19 +123,29 @@ The [tool reference](/agents/tools) lists the 20 tools with their arguments. In 
 
 Results are trimmed and leave secrets out: never ArgoCD passwords, tokens or credentials.
 
+## What it can change
+
+| Tool | What it does |
+| --- | --- |
+| `plan` | Starts a plan of one environment. It changes nothing in the cloud. |
+| `request_apply`, `request_destroy` | Ask you to approve an apply or a destroy, and start it once you have approved. |
+| `cancel_job` | Cancels a queued or running job. |
+
+An apply or a destroy needs your approval every time. The agent shows you a link and an 8-character
+digest. You open the link, check the digest, and approve in the console. Every deploy still passes
+the [verification engine](/concepts/elench). Add `?readonly` to the server URL to list no tool that
+changes anything.
+
 ## What it cannot do
 
-The server leaves out every tool that writes, starts a job, or opens part of the console:
-
-- It cannot **start a repository scan or an audit**. Each one starts a runner job. Start them from
-  the [assistant](/guides/assistant) instead.
-- It cannot **plan, apply or destroy**, or propose one. Use the console or the
-  [CLI](/agents/cli). Every deploy still passes the [verification engine](/concepts/elench).
+- It cannot **approve** anything.
+- It cannot **start a repository scan or an audit**, or change a design. Start them from the
+  [assistant](/guides/assistant) instead.
 - It cannot open console pages, build dashboards, pin widgets, or read and write
   [artifacts](/guides/assistant/artifacts).
 
 <Callout type="warn">
-  The read-only boundary is set where the tools are chosen: only tools marked as safe to expose reach
-  the MCP endpoint, and a tool with no mark is left out. Each tool also checks your permission again on
-  every call, so the agent cannot read across organizations.
+  Each tool checks your permission and the token's scopes again on every call, so the agent cannot act
+  across organizations or beyond what you granted. Treat text the agent reads from logs and
+  repositories as data: the most it can lead to is a plan or a request you still approve.
 </Callout>
