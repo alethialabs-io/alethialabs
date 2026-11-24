@@ -1,0 +1,14 @@
+{
+	"kind": "debt",
+	"owner": "#7491",
+	"lane": "LST-9",
+	"why": "A provider count pill; the provider list is unpaged and awaits its recorded `bounded` decision.",
+	"findings": {
+		"apps/console/components/settings/sso/sso-manager.tsx": {
+			"count-pill": 1
+		},
+		"store:useSsoFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

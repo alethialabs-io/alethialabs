@@ -1,0 +1,14 @@
+{
+	"kind": "debt",
+	"owner": "#7488",
+	"lane": "LST-6",
+	"why": "A result-count pill on the section heading. The one-row-per-environment roll-up is unpaged by design and awaits its recorded `bounded` decision.",
+	"findings": {
+		"apps/console/components/evidence/evidence-client.tsx": {
+			"count-pill": 1
+		},
+		"store:useEvidenceFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

@@ -1,0 +1,16 @@
+{
+	"kind": "debt",
+	"owner": "#7484",
+	"lane": "LST-2",
+	"why": "The whole fleet is shipped to the browser and paged there: `.slice` over 9-card pages driven by `?page=`, with a result-count pill on the section heading.",
+	"findings": {
+		"apps/console/app/(private)/[org]/~/runners/runners-client.tsx": {
+			"count-pill": 1,
+			"page-url": 1,
+			"page-slice": 1
+		},
+		"store:useRunnerFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

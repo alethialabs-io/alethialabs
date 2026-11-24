@@ -1,0 +1,15 @@
+{
+	"kind": "debt",
+	"owner": "#7490",
+	"lane": "LST-8",
+	"why": "Every team is fetched and paged by a client-mode DataTable (20 rows), with a count pill.",
+	"findings": {
+		"apps/console/components/settings/teams/teams-list.tsx": {
+			"count-pill": 1,
+			"client-table": 1
+		},
+		"store:useTeamsFilters": {
+			"keyset-contract": 1
+		}
+	}
+}
