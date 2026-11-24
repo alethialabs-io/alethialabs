@@ -25,6 +25,9 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/elench/drafts-sweep", () => ({
 	sweepElenchDrafts: vi.fn(async () => ({ settled: 0, settleFailed: 0, discardedDeleted: 0, staleDeleted: 0 })),
 }));
+vi.mock("@/lib/reconcile/state-locks", () => ({
+	releaseCancelledStateLocks: vi.fn(async () => ({ jobs: 0, released: 0 })),
+}));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -48,6 +51,7 @@ import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/g
 import { __resetHeartbeats, getHeartbeats } from "@/lib/reconcile/heartbeat";
 import { startReconcileLoop, tick } from "@/lib/reconcile/loop";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
+import { releaseCancelledStateLocks } from "@/lib/reconcile/state-locks";
 
 const G = globalThis as unknown as { __alethiaReconcileLoop?: unknown };
 const ORIGINAL_URL = process.env.ALETHIA_DATABASE_URL;
@@ -130,6 +134,7 @@ describe("tick — fan-out", () => {
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		expect(sweepExpiredRateLimitBuckets).toHaveBeenCalledTimes(1);
 		expect(sweepElenchDrafts).toHaveBeenCalledTimes(1);
+		expect(releaseCancelledStateLocks).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -145,6 +150,7 @@ describe("tick — fan-out", () => {
 			"probe-schedule",
 			"rate-limit-sweep",
 			"release-ai-holds",
+			"release-cancelled-state-locks",
 		]);
 	});
 
@@ -169,6 +175,8 @@ describe("tick — fan-out", () => {
 		expect(reapExpiredEphemeralEnvs).toHaveBeenCalledTimes(1);
 		// The mint sweep is hot (1m) too: an uncollected ciphertext must not outlive its window by more.
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
+		// So is the cancelled-lock release (1m): its gap is added to the drain window a DESTROY waits.
+		expect(releaseCancelledStateLocks).toHaveBeenCalledTimes(1);
 		expect(sweepProbeSchedule).not.toHaveBeenCalled();
 		expect(sweepDriftSchedule).not.toHaveBeenCalled();
 		// The rate-limit sweep (5m) only bounds dead rows, so it is not hot.
