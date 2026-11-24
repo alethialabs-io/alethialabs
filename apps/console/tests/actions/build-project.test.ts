@@ -161,7 +161,7 @@ function snapshotSelect(envStatus: string, services: Rows) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1", credential: "session" } as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 });

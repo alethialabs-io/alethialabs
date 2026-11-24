@@ -218,14 +218,18 @@ export function insufficientScope(reason: string | undefined): Response {
 /**
  * `actor` with the scope ceiling a service-token payload carries, or `null` when the payload's
  * scopes or project list cannot be read — absent, empty, or holding an unknown scope. A `null` is a
- * refusal: a service token is never served without its limit.
+ * refusal: a service token is never served without its limit. The token's id rides along as
+ * `credentialRef`, which the approval engine binds approvals to (lib/approvals).
  *
  * The builders that turn a service token into an actor call this: {@link authorizeCli} and
  * `resolveCliProvider` (lib/cli/providers.ts).
  */
 export function withServiceTokenCeiling(actor: Actor, payload: CliTokenPayload): Actor | null {
 	const ceiling = ceilingFrom(payload.service_token_scopes, payload.service_token_project_ids);
-	return ceiling ? { ...actor, ceiling } : null;
+	if (!ceiling) return null;
+	return payload.service_token_id
+		? { ...actor, ceiling, credentialRef: payload.service_token_id }
+		: { ...actor, ceiling };
 }
 
 /**

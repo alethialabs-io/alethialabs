@@ -27,6 +27,7 @@
 
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { planDigestOf } from "@/lib/approvals/plan-binding";
+import { requireApplyAuthorization } from "@/lib/approvals/types";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getPreviousEnvironmentCost } from "@/lib/cost/previous-environment-cost";
@@ -380,6 +381,14 @@ async function applyGateDecision(
 				status: "QUEUED",
 			}))
 			.returning({ id: jobs.id });
+		// The promotion's gates (its approvals among them) passed for this exact plan.
+		await requireApplyAuthorization(db, { kind: "system", origin: "promotion" }, "deploy", {
+			orgId: promotion.org_id ?? promotion.user_id,
+			projectId: promotion.project_id,
+			environmentId: promotion.target_environment_id,
+			jobId: job.id,
+			planJobId: planJob.id,
+		});
 		await db
 			.update(environmentPromotions)
 			.set({ status: "DEPLOYING", deploy_job_id: job.id, gate_evaluations: evaluation, updated_at: now })
