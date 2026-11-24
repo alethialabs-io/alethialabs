@@ -10,6 +10,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 import { type McpActorRefusal, resolveMcpActor } from "@/lib/ai/mcp/actor";
 import { buildMcpServer } from "@/lib/ai/mcp/server";
 import { parseSurfaceQuery } from "@/lib/ai/mcp/surface";
+import { AGENT_SCOPES } from "@/lib/approvals/types";
 import { auth, mcpResourceUrl } from "@/lib/auth";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
@@ -44,15 +45,22 @@ function jsonError(status: number, error: string, headers: Record<string, string
 	});
 }
 
+/**
+ * What a token with no agent scope is told: typically a connection made before the agent scopes
+ * existed, holding only OIDC scopes. Names the fix and every scope there is to grant.
+ */
+const INSUFFICIENT_SCOPE_MESSAGE = `This connection was authorized without any Alethia agent scope, so it can use no tools. Disconnect this MCP server in your client, then connect it again and approve the agent scopes it asks for: ${AGENT_SCOPES.join(", ")}. Approve at least read; each scope only narrows what your role allows.`;
+
 /** The response for a token that resolved into no actor. */
 function refusalResponse(reason: McpActorRefusal): Response {
 	switch (reason) {
 		case "no_subject":
 			return jsonError(401, "Access token carries no subject.");
 		case "insufficient_scope":
-			// RFC 6750 §3.1: a client may step up by asking for the scope again.
-			return jsonError(403, "The access token carries no Alethia scope. Reconnect and grant at least read.", {
-				"www-authenticate": 'Bearer error="insufficient_scope", scope="read"',
+			// RFC 6750 §3.1: a client may step up by asking for the scope again. Connections made before
+			// the agent scopes existed hold only OIDC scopes, so the body names the fix for a person.
+			return jsonError(403, INSUFFICIENT_SCOPE_MESSAGE, {
+				"www-authenticate": `Bearer error="insufficient_scope", scope="${AGENT_SCOPES.join(" ")}"`,
 			});
 		case "org_not_permitted":
 			return jsonError(403, "The organization this connection was granted in is not one you belong to. Reconnect.");

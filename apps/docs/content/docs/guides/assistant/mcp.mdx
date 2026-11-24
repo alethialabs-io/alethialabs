@@ -70,6 +70,13 @@ your role allows. The server refuses a token with no scope it reads, with a `403
 client to sign in again. The token names this MCP endpoint as its audience, and the server refuses
 tokens issued for anything else.
 
+<Callout type="warn">
+A connection you made before Alethia added agent scopes holds only sign-in scopes (`openid`,
+`profile`, `email`), and the server now refuses it with `403 insufficient_scope`. To fix it,
+disconnect the Alethia MCP server in your client, connect it again, and approve the agent scopes
+the consent page asks for: `read`, `design`, `plan`, `apply`, `destroy`. Approve at least `read`.
+</Callout>
+
 ### Use the tools
 
 The client now lists the tools your scopes allow. Ask the agent about your infrastructure and it

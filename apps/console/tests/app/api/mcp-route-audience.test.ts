@@ -102,6 +102,25 @@ describe("the actor an MCP access token is resolved into", () => {
 		expect(runWithActor).not.toHaveBeenCalled();
 	});
 
+	it("tells a token holding only OIDC scopes to disconnect and reconnect, naming every agent scope", async () => {
+		await import("@/app/api/mcp/route");
+		const { resolveMcpActor } = await import("@/lib/ai/mcp/actor");
+		vi.mocked(resolveMcpActor).mockResolvedValue({ ok: false, reason: "insufficient_scope" });
+
+		const res = await callTokenHandler(new Request("https://alethialabs.io/api/mcp", { method: "POST" }), {
+			sub: "user-1",
+			scope: "openid profile email offline_access",
+		});
+		expect(res?.status).toBe(403);
+		const body: { error: string } = await res?.json();
+		expect(body.error).toMatch(/Disconnect this MCP server/);
+		expect(body.error).toMatch(/connect it again/);
+		for (const scope of ["read", "design", "plan", "apply", "destroy"]) {
+			expect(body.error).toContain(scope);
+		}
+		expect(res?.headers.get("www-authenticate")).toContain('scope="read design plan apply destroy"');
+	});
+
 	it("answers 403 while the organization's agent access is off", async () => {
 		await import("@/app/api/mcp/route");
 		const { resolveMcpActor } = await import("@/lib/ai/mcp/actor");
