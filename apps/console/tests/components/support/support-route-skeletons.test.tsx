@@ -277,10 +277,10 @@ describe("~/support/my-cases: the answered list is a list, in the skeleton's fra
 
 	it("renders the cases as `ul > li` rows, framed and ruled as the skeleton's rows are", async () => {
 		const { container } = renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) =>
-			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, [
-				item("c1", 1042, "Runner cannot reach the registry"),
-				item("c2", 1043, "Invoice address is wrong"),
-			]),
+			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, {
+				rows: [item("c1", 1042, "Runner cannot reach the registry"), item("c2", 1043, "Invoice address is wrong")],
+				facets: { severity: [], type: [] },
+			}),
 		);
 		await act(async () => {});
 		const list = container.querySelector("ul");

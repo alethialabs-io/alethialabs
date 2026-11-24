@@ -44,7 +44,7 @@ describe("case actions refresh the bell (#6114)", () => {
 		const list = orpc.support.cases.queryOptions({ input: { bucket: "active" } }).queryKey;
 		const detail = orpc.support.case.queryOptions({ input: { id: CASE } }).queryKey;
 		client.setQueryData(bell, []);
-		client.setQueryData(list, []);
+		client.setQueryData(list, { rows: [], facets: null });
 		client.getQueryCache().build(client, { queryKey: detail });
 		render(
 			<QueryClientProvider client={client}>
