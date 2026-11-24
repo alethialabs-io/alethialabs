@@ -14,32 +14,30 @@
 // The last-error line came off its own `col-span-full` row and now sits inside the Event
 // cell, because a `<tr>` has no honest place for a second row about the same delivery.
 //
-// The result count is NOT in the bar: it renders in the count pill beside the section
-// heading, which is where the console filter standard puts it. It is the number of deliveries
-// that MATCH, not the number on screen: the ledger returns the newest 50, and when more match it
-// says so under the table rather than letting the window pass for the whole answer.
+// The ledger is a KEYSET list (lib/query/README.md → "Paging", #7489): `<DataTable keyset={…}>`
+// renders every loaded page and `ListFooter` under it — a scroll sentinel plus an always-visible
+// "Load more", a busy state, and "Couldn't load more · Try again" with the rows kept. It used to be
+// the newest 50 (at most 200) deliveries, client-paged 20 at a time by DataTable's default, with a
+// "Showing the newest N of M" line in place of any way to reach an older delivery. There is no
+// result count anywhere now: the console carries no list counts (README → "Counts").
 //
 // #6125: the ledger is server-rendered with its rows now, so "When" — which reads the browser's
 // time zone — renders after hydration in a width-reserving slot (React #418 otherwise). And the
-// panel follows its view's READ STATE: the ledger's skeleton while the first answer is in flight, a
-// region error when it failed, so "No activity yet" is only ever the answer to a read that found
-// nothing.
+// panel follows its list's FIRST-PAGE read state: the ledger's skeleton while the first answer is in
+// flight, a region error when it failed with nothing to show, so "No activity yet" is only ever the
+// answer to a read that found nothing — and it is the first-run copy only when `universeEmpty` says
+// the org's ledger holds nothing at all, whatever the filters.
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { Activity, SearchX } from "lucide-react";
 import { useMemo } from "react";
 import type { DeliveryDTO } from "@/app/server/actions/alerts";
 import { ActivityFilterBar } from "@/components/alerts/alerts-filter-bar";
-import type { ActivityView } from "@/components/alerts/alerts-filters";
-import {
-	type ActivityFilters,
-	DEFAULT_ACTIVITY_FILTERS,
-} from "@/components/alerts/alerts-query";
+import type { ActivityView } from "@/components/alerts/activity-view";
 import { deliveryBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { DataTable } from "@/components/data-table";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
-import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useAlertActivityFilters } from "@/lib/stores/use-alerts-filters";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -68,17 +66,16 @@ const WHEN_SIZER = "Sep 30, 2026, 12:00 PM";
 export function ActivityPanel({
 	view,
 }: {
-	/** The filter standard's resolved view — rows, facets, result count, staleness. */
+	/** The filter standard's resolved view — the keyset list, facets, staleness. */
 	view: ActivityView;
 }) {
-	const { rows, facets, stale, state } = view;
-	const filters = useAlertActivityFilters((s) => s.filters);
+	const { list, facets, stale } = view;
+	const rows = list.rows;
+	const state =
+		list.query.data !== undefined ? "ready" : list.query.isError ? "error" : "loading";
 	const resetFilters = useAlertActivityFilters((s) => s.reset);
-	const filtered =
-		countActiveFilters<ActivityFilters>(filters, DEFAULT_ACTIVITY_FILTERS) > 0;
 	// One batched query hydrates every delivery row's classification chips (read-only). The
-	// ledger is filtered and windowed SERVER-side, so the subject set is the rows on screen —
-	// it used to be the bootstrap's whole 50-row window, which is neither.
+	// ledger is filtered and paged SERVER-side, so the subject set is the rows loaded so far.
 	const { data: classMap = NO_ASSIGNMENTS } = useAssignmentsForKind(
 		"alert_delivery",
 		rows.map((d) => d.id),
@@ -94,7 +91,7 @@ export function ActivityPanel({
 			{state === "loading" ? (
 				<AlertsPanelSkeleton kind="activity" />
 			) : state === "error" ? (
-				<RegionError title="Couldn't load activity" onRetry={view.retry} />
+				<RegionError title="Couldn't load activity" onRetry={() => void list.query.refetch()} />
 			) : (
 				<>
 			<ActivityFilterBar facets={facets} />
@@ -106,9 +103,9 @@ export function ActivityPanel({
 				{/* An empty ledger is the SHARED empty state, not the table's muted empty row — the
 				    same answer every console list gives, and the one the audit's F10 reads
 				    (`[data-slot="empty"]`, #4939). It says which empty it is: nothing delivered
-				    yet, or nothing matching, and only the second offers Reset. */}
+				    yet (`universeEmpty`), or nothing matching, and only the second offers Reset. */}
 				{rows.length === 0 ? (
-					filtered ? (
+					list.universeEmpty === false ? (
 						<EmptyState
 							className="border"
 							icon={<SearchX />}
@@ -129,17 +126,7 @@ export function ActivityPanel({
 						/>
 					)
 				) : (
-					<>
-						<DataTable columns={columns} data={rows} />
-						{view.count > rows.length && (
-							<p
-								data-slot="activity-window"
-								className="mt-2 text-ui-sm text-muted-foreground"
-							>
-								{`Showing the newest ${rows.length} of ${view.count} ${view.count === 1 ? "delivery" : "deliveries"}${filtered ? " that match" : ""}. Narrow the filters to find older ones.`}
-							</p>
-						)}
-					</>
+					<DataTable columns={columns} keyset={list} />
 				)}
 			</div>
 				</>
