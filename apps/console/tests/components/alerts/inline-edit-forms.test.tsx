@@ -105,15 +105,13 @@ const base = { stale: false, busy: false, state: "ready" as const, refreshFailed
 const policiesView: PoliciesView = {
 	...base,
 	rows: [policy],
-	count: 1,
-	total: 1,
+	universeEmpty: false,
 	facets: { status: [], kinds: [], channels: [] },
 };
 const channelsView: ChannelsView = {
 	...base,
 	rows: [mail, hook],
-	count: 2,
-	total: 2,
+	universeEmpty: false,
 	facets: { types: [], status: [] },
 };
 
