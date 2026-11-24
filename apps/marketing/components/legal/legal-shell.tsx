@@ -50,6 +50,7 @@ export const DOCUMENTS: readonly LegalDocumentLink[] = [
 	{ label: "Privacy", href: "/privacy", description: "What we collect, why, and for how long.", group: "Policies" },
 	{ label: "Privacy requests", href: "/privacy/requests", description: "Exercise a data-protection right.", group: "Data protection" },
 	{ label: "Terms", href: "/terms", description: "The agreement for using the hosted service.", group: "Policies" },
+	{ label: "Refunds", href: "/refunds", description: "When we refund a payment, and how to ask for one.", group: "Policies" },
 	{ label: "Acceptable use", href: "/acceptable-use", description: "What the service may not be used for.", group: "Policies" },
 	{ label: "Cookies", href: "/cookies", description: "The cookies and similar technologies we use.", group: "Policies" },
 	{ label: "DPA", href: "/legal/dpa", description: "GDPR processing terms for business customers.", group: "Data protection" },

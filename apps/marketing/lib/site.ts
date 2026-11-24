@@ -31,6 +31,7 @@ export const MARKETING_SITEMAP_PATHS = [
 	"/cookies",
 	"/acceptable-use",
 	"/consumer-rights",
+	"/refunds",
 	"/ai-transparency",
 	"/legal/data-act",
 	"/legal/dpa",
