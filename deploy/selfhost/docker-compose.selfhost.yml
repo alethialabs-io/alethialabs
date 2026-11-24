@@ -14,16 +14,37 @@
 #     published to the host;
 #   - every `required` entry of deploy/selfhost/secrets.manifest is referenced as `${NAME:?…}`.
 #     A missing or empty secret stops compose before any container starts, naming the variable.
-#     No secret in this file has a default, and none may be given one.
+#     No secret in this file has a default, and none may be given one;
+#   - a one-shot `preflight` service runs before `migrate` and refuses, naming the variable, a
+#     secret that holds a template placeholder or a published sample value.
 #
 # The hosted service's overlay is deploy/prod/docker-compose.prod.yml; this file does not
 # inherit from it. Layout, lifecycle and the lanes that wire this in: deploy/selfhost/README.md.
 name: alethia
 
 services:
+  # One-shot check ahead of `migrate`: every instance secret in secrets.manifest is set and none is
+  # a template placeholder. It exits non-zero and names each unusable variable, and nothing after
+  # it starts. `${NAME:?…}` below already stops an EMPTY required secret at render time; this also
+  # catches a placeholder or a published sample value, and an optional entry set to one. It runs
+  # deploy/selfhost/preflight.sh from the checkout in the console-migrate image, so it needs no
+  # image of its own and moves with ALETHIA_VERSION.
+  preflight:
+    image: "ghcr.io/alethialabs-io/console-migrate:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
+    pull_policy: always
+    entrypoint: ["sh", "/alethia/selfhost/preflight.sh"]
+    command: []
+    env_file: .env
+    volumes:
+      - ./deploy/selfhost:/alethia/selfhost:ro
+    restart: "no"
+
   migrate:
     image: "ghcr.io/alethialabs-io/console-migrate:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
     pull_policy: always
+    depends_on:
+      preflight:
+        condition: service_completed_successfully
     environment:
       ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:?ALETHIA_APP_DB_PASSWORD is not set in .env. Every instance secret is generated per install; see deploy/selfhost/secrets.manifest}"
@@ -101,7 +122,7 @@ services:
       ALETHIA_DOMAIN: "${ALETHIA_DOMAIN:-}"
       ALETHIA_ACME_EMAIL: "${ALETHIA_ACME_EMAIL:-}"
     volumes: !override
-      # The single-domain TLS Caddyfile both overlays share today.
-      - ./deploy/prod/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The self-host ingress; the hosted service keeps its own Caddyfile in deploy/prod/.
+      - ./deploy/selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config

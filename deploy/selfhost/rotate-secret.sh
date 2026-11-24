@@ -46,7 +46,7 @@ command -v openssl >/dev/null 2>&1 || die "openssl is required"
 # shellcheck source=SCRIPTDIR/secrets.sh
 . deploy/selfhost/secrets.sh
 
-COMPOSE_FILES="${ALETHIA_COMPOSE_FILES:--f docker-compose.yml -f deploy/prod/docker-compose.prod.yml}"
+COMPOSE_FILES="${ALETHIA_COMPOSE_FILES:--f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml}"
 # compose ARGS… — docker compose with the stack's files. COMPOSE_FILES is split on purpose.
 compose() {
 	# shellcheck disable=SC2086
