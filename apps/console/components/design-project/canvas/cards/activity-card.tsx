@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useInfiniteQuery } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
-import { useEffect, useRef } from "react";
-import { Button } from "@repo/ui/button";
+import { useMemo } from "react";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { RegionError } from "@/components/errors/region-error";
+import { ListFooter } from "@/components/list/list-footer";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import { orgHref } from "@/lib/routing";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
@@ -18,7 +18,7 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { JobList } from "./job-list";
 import { SheetCard } from "./sheet-card";
 
-/** Rows per page. Small: the card is one column, and "Show more" is one click. */
+/** Rows per page. Small: the card is one column, and "Load more" is one click. */
 const PAGE = 20;
 
 /**
@@ -27,8 +27,8 @@ const PAGE = 20;
  *
  * This replaces a floating list pinned to the board's top-left corner that showed the newest
  * eight jobs with no scroll, no paging and no route to the rest: an environment's history ended
- * wherever the list did, over the cards it was about. Here it pages on a keyset cursor and
- * follows the environment: the read is the `canvas.environmentJobs` GET procedure, and a job that is
+ * wherever the list did, over the cards it was about. Here it pages on the console's one keyset
+ * contract (`useKeysetList` + `ListFooter`, LST-10 #7492) and follows the environment: the read is the `canvas.environmentJobs` GET procedure, and a job that is
  * queued, starts or finishes is a `jobs` hint on the org's change stream that invalidates it
  * (`lib/query/topics.ts`) — it used to poll every 4 s while a job ran and every 30 s otherwise.
  */
@@ -44,34 +44,12 @@ export function ActivityCard({
 	const orgSlug = useActiveOrgSlug();
 	const env = useEnvironmentStatus();
 
-	const query = useInfiniteQuery(
-		orpc.canvas.environmentJobs.infiniteOptions({
-			input: (before: string | null) => ({
-				projectId,
-				environmentId,
-				limit: PAGE,
-				before: before ?? undefined,
-			}),
-			initialPageParam: null,
-			getNextPageParam: (last) => last.nextCursor,
-		}),
-	);
-
-	const jobs = query.data?.pages.flatMap((p) => p.jobs) ?? [];
-
-	// Scrolling to the tail loads the next page; the button stays for keyboards and for a page
-	// whose tail is already in view.
-	const sentinel = useRef<HTMLDivElement | null>(null);
-	const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
-	useEffect(() => {
-		const el = sentinel.current;
-		if (!el || !hasNextPage || typeof IntersectionObserver === "undefined") return;
-		const io = new IntersectionObserver((entries) => {
-			if (entries.some((e) => e.isIntersecting) && !isFetchingNextPage) void fetchNextPage();
-		});
-		io.observe(el);
-		return () => io.disconnect();
-	}, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+	// The environment is scope, and the page size is fixed: together they are the whole key; the
+	// cursor is the page param. A `jobs` hint invalidates the walk, which refetches from page one,
+	// and rows are joined keeping each id once, so a job that moved up is never drawn twice.
+	const scope = useMemo(() => ({ projectId, environmentId, limit: PAGE }), [projectId, environmentId]);
+	const list = useKeysetList(orpc.canvas.environmentJobs, scope);
+	const jobs = list.rows;
 
 	return (
 		<SheetCard
@@ -84,7 +62,9 @@ export function ActivityCard({
 			}
 			onClose={closeCard}
 		>
-			{query.isPending ? (
+			{/* A switched environment's first page is a skeleton, never the previous environment's
+			    rows held over as placeholder data: those would attribute its jobs to this one. */}
+			{list.isPending || list.isPlaceholderData ? (
 				<ul className="space-y-1" aria-busy="true" aria-label="Loading the activity">
 					{[0, 1, 2, 3].map((i) => (
 						<li key={i}>
@@ -92,11 +72,11 @@ export function ActivityCard({
 						</li>
 					))}
 				</ul>
-			) : query.isError && query.data === undefined ? (
+			) : list.query.isError && list.query.data === undefined ? (
 				<RegionError
 					title="Couldn't load the activity"
 					description="This environment's job history did not load."
-					onRetry={() => void query.refetch()}
+					onRetry={() => void list.query.refetch()}
 				/>
 			) : jobs.length === 0 ? (
 				<EmptyState
@@ -106,18 +86,7 @@ export function ActivityCard({
 			) : (
 				<div className="space-y-3">
 					<JobList jobs={jobs} jobHref={(id) => `${orgHref(orgSlug)}/~/jobs?job=${id}`} />
-					{hasNextPage && (
-						<div ref={sentinel} className="flex justify-center">
-							<Button
-								size="sm"
-								variant="outline"
-								disabled={isFetchingNextPage}
-								onClick={() => void fetchNextPage()}
-							>
-								{isFetchingNextPage ? "Loading…" : "Show more"}
-							</Button>
-						</div>
-					)}
+					<ListFooter list={list} />
 				</div>
 			)}
 		</SheetCard>
