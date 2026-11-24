@@ -4,7 +4,7 @@
 // Mocked-boundary tests for the Activity reads (`activity.page` / `activity.permissions`, whose bodies
 // moved to lib/rpc/procedures/activity.ts in #6129) and the CSV export action: stub currentActor +
 // entitlements + a thenable drizzle chain, and spy the drizzle operators (kept otherwise real) so we
-// can assert the cursor `limit+1` pagination math and that each filter adds the expected WHERE
+// can assert the keyset `limit+1` pagination math and that each filter adds the expected WHERE
 // condition. The export is a `defineAction`: its refusals are results, not throws.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,6 +32,7 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 
 import { eq, gte, ilike, inArray, lt, lte, or } from "drizzle-orm";
 import { getActivityExportCsv } from "@/app/server/actions/activity";
+import { decodeKeysetCursor } from "@/lib/queries/keyset";
 import {
 	readActivityPage as getActivityLog,
 	readActivityPermissions as getActivityPermissions,
@@ -138,7 +139,7 @@ describe("activity.page — authorization", () => {
 	});
 });
 
-describe("activity.page — pagination", () => {
+describe("activity.page — pagination (the shared keyset contract, LST-10 #7492)", () => {
 	it("returns no cursor when the page isn't full and stringifies ids + ISO timestamps", async () => {
 		mockDb([dbRow({ id: 2 }), dbRow({ id: 1 })]);
 		const page = await getActivityLog({});
@@ -147,19 +148,22 @@ describe("activity.page — pagination", () => {
 		expect(page.rows[0]).toMatchObject({ id: "2", ts: "2026-06-20T10:00:00.000Z" });
 	});
 
-	it("fetches limit+1 and derives the next cursor from the last kept row", async () => {
+	it("fetches limit+1 and mints the next cursor from the last kept row's (ts, id)", async () => {
 		// limit 2 → fetch 3; the extra row signals a further page.
 		const calls = mockDb([dbRow({ id: 5 }), dbRow({ id: 4 }), dbRow({ id: 3 })]);
-		const page = await getActivityLog({ limit: 2 });
+		const page = await getActivityLog({}, { limit: 2 });
 		expect(calls.limit).toBe(3);
 		expect(page.rows.map((r) => r.id)).toEqual(["5", "4"]);
-		expect(page.nextCursor).toBe(4);
+		expect(decodeKeysetCursor(page.nextCursor ?? "", "integer")).toEqual({
+			at: "2026-06-20T10:00:00.000Z",
+			id: "4",
+		});
 	});
 
-	it("applies the cursor as a strict id upper bound", async () => {
+	it("applies the cursor as one row-value predicate, never the old id-only bound", async () => {
 		mockDb([dbRow()]);
-		await getActivityLog({ cursor: 10 });
-		expect(vi.mocked(lt)).toHaveBeenCalled();
+		await getActivityLog({}, { limit: 50, cursor: { at: "2026-06-20T10:00:00.000Z", id: "10" } });
+		expect(vi.mocked(lt)).not.toHaveBeenCalled();
 	});
 
 	it("always scopes by org and defaults the page size to 50 (+1)", async () => {
@@ -167,7 +171,6 @@ describe("activity.page — pagination", () => {
 		await getActivityLog({});
 		expect(vi.mocked(eq)).toHaveBeenCalled(); // org scope
 		expect(calls.limit).toBe(51);
-		expect(vi.mocked(lt)).not.toHaveBeenCalled(); // no cursor
 	});
 });
 

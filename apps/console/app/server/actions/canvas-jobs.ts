@@ -32,6 +32,7 @@ import {
 	type ProvisionJobStatus,
 	type ProvisionJobType,
 } from "@/lib/db/schema";
+import type { KeysetListPage } from "@/lib/queries/keyset";
 import { notifyScaler } from "@/lib/scaler";
 import { withActorScope } from "@/lib/db";
 
@@ -318,9 +319,9 @@ export interface EnvironmentJob {
 	error: string | null;
 }
 
-/** One page of an environment's jobs, newest first, with the cursor for the page after it. */
-export interface EnvironmentJobsPage {
-	jobs: EnvironmentJob[];
-	/** Pass back as `before` for the next page; null when this was the last one. */
-	nextCursor: string | null;
-}
+/**
+ * One page of an environment's jobs, newest first: the shared keyset page (`lib/queries/keyset.ts`,
+ * LST-10 #7492) — `nextCursor` is the opaque cursor for the page after it (null on the last), there
+ * are no facets, and `universeEmpty` answers on page one only.
+ */
+export type EnvironmentJobsPage = KeysetListPage<EnvironmentJob, null>;
