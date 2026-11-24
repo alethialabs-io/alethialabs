@@ -274,10 +274,11 @@ list page filters in SQL.
 `searchParams → RSC → props` model instead of store→key→`useQuery`, and that is the
 CORRECT form of this standard when the grid itself is server-rendered: the URL is the
 store (shareable by construction, non-default-only params — the same codec
-`useFilterUrlSync` emits), the RSC re-resolves `queryProjects` server-side with facets
-over the unfiltered universe, `useTransition`'s `isPending` plays the `keepPreviousData`
-dim, the search box debounces its draft before touching the URL, and the paging and counts
-rules below apply unchanged. A pristine `/{org}` URL means pristine filters, which since #6814
+`useFilterUrlSync` emits), the RSC prefetches the FIRST keyset page of `queryProjectsPage`
+(facets over the unfiltered universe) under the infinite key `useKeysetList` asks for, the
+browser reads every later page itself (LST-4 #7486), `useTransition`'s `isPending` plays the
+`keepPreviousData` dim, the search box debounces its draft before touching the URL, and the
+paging and counts rules below apply unchanged. A pristine `/{org}` URL means pristine filters, which since #6814
 is what the store form does by default too. Use the TanStack form for client-fetched lists; use URL→RSC when the page is an
 RSC that renders the rows itself. Do not convert one into the other without a reason.
 

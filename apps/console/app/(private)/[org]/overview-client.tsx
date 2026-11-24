@@ -5,25 +5,30 @@
 // The org root: the organization's overview. A search and filter toolbar over the project grid
 // (right, cards or a table), beside the Usage, Alerts and Recent-jobs cards (left).
 //
-// The grid's search, filters, sort and view live in the address. The grid itself is a query
-// (`useOverviewProjects`) that the route prefetches for that address, so it paints with its rows
-// and then follows the organization's change stream: a project created elsewhere, or a status a
-// deploy moved, arrives without a reload (lib/realtime/README.md, rule 1).
+// The grid's search, filters, sort and view live in the address. The grid itself is a keyset walk
+// (`useOverviewProjects`, one page at a time) whose first page the route prefetches for that
+// address, so it paints with its rows and then follows the organization's change stream: a project
+// created elsewhere, or a status a deploy moved, arrives without a reload (lib/realtime/README.md,
+// rule 1). Its summary (`useOverviewProjectsSummary`) carries what is not a property of a page:
+// the create permission, the connected and offered clouds, and the Usage card's project count.
 
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useTransition } from "react";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
-import { MANAGE_DENIED_REASON, MANAGE_PENDING_REASON } from "@/components/errors/manage-gate";
 import { AlertsCard } from "@/components/overview/alerts-card";
 import { type OverviewState, overviewSearch } from "@/components/overview/overview-state";
 import { OverviewToolbar } from "@/components/overview/overview-toolbar";
 import { PROJECTS_HEADING, ProjectsGrid } from "@/components/overview/projects-grid";
 import { RecentJobsCard } from "@/components/overview/recent-jobs-card";
 import { UsageCard } from "@/components/overview/usage-card";
-import { useOverviewProjects } from "@/components/overview/use-overview-projects";
+import {
+	createProjectReason,
+	useOverviewProjects,
+	useOverviewProjectsSummary,
+} from "@/components/overview/use-overview-projects";
 
-/** No facets: what the toolbar's filter lists while the grid's read has not answered. */
+/** No facets: what the toolbar's filter lists while the grid's first page has not answered. */
 const NO_FACETS = { clouds: [], repos: [] };
 
 /** The overview page for one address: `state` is the grid's state as the route read it. */
@@ -43,7 +48,8 @@ export function OverviewClient({
 	const router = useRouter();
 	const pathname = usePathname();
 	const [navigating, startTransition] = useTransition();
-	const grid = useOverviewProjects(state);
+	const list = useOverviewProjects(state);
+	const summary = useOverviewProjectsSummary();
 
 	// Merge a partial change into the address. The route re-reads the grid for the new address and
 	// hands it down, so the browser's read of the same input is answered from that.
@@ -56,24 +62,13 @@ export function OverviewClient({
 	);
 	const clearFilters = useCallback(() => onChange({ q: "", clouds: [], repos: [] }), [onChange]);
 
-	// Disabled with a reason until the server has said the viewer may create a project. A read
-	// that failed says nothing either way, so the entry is left usable: `~/new` decides for itself.
-	const createProjectReason =
-		grid.data === undefined
-			? grid.isError
-				? null
-				: MANAGE_PENDING_REASON
-			: grid.data.canCreate
-				? null
-				: MANAGE_DENIED_REASON;
-
 	return (
 		<div className="space-y-5">
 			<OverviewToolbar
 				orgSlug={orgSlug}
 				state={state}
-				facets={grid.data?.facets ?? NO_FACETS}
-				createProjectReason={createProjectReason}
+				facets={list.facets ?? NO_FACETS}
+				createProjectReason={createProjectReason(summary)}
 				onChange={onChange}
 			/>
 
@@ -81,18 +76,24 @@ export function OverviewClient({
 				{/* Left column: usage, alerts, recent jobs. Each card owns its own read and its own
 				    failure, so none of them can take the page down. */}
 				<div className="flex flex-col gap-4">
-					<UsageCard orgSlug={orgSlug} projectCount={grid.data?.total} />
+					<UsageCard orgSlug={orgSlug} projectCount={summary.data?.projectCount} />
 					<AlertsCard orgSlug={orgSlug} />
 					<RecentJobsCard orgSlug={orgSlug} prefetched={jobsPrefetched} />
 				</div>
 
 				{/* Right column: the projects. "Projects" names a SECTION of the overview, not the route
-				    (the breadcrumb says "Overview"). The count is the number of projects shown, in the
-				    shared count pill beside the heading, where the console filter standard puts it. */}
+				    (the breadcrumb says "Overview"). No count beside it: the list carries none
+				    (lib/query/README.md → "Counts", the maintainer's 2026-11-24 ruling, #7481). */}
 				<section aria-label={PROJECTS_HEADING}>
-					<SectionHeading title={PROJECTS_HEADING} count={grid.data?.projects.length} className="mb-3" />
+					<SectionHeading title={PROJECTS_HEADING} className="mb-3" />
 					<div className={cn("transition-opacity", navigating && "opacity-60")}>
-						<ProjectsGrid orgSlug={orgSlug} state={state} grid={grid} onClearFilters={clearFilters} />
+						<ProjectsGrid
+							orgSlug={orgSlug}
+							state={state}
+							list={list}
+							summary={summary}
+							onClearFilters={clearFilters}
+						/>
 					</div>
 				</section>
 			</div>
