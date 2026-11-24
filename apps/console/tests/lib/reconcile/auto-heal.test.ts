@@ -60,10 +60,10 @@ const fake = vi.hoisted(() => {
 		/** Records an INSERT's row. */
 		insert(table: unknown) {
 			return {
-				/** Records the row. */
-				values(payload: unknown): Promise<void> {
+				/** Records the row; `returning` answers the inserted job's id. */
+				values(payload: unknown) {
 					writes.push({ op: "insert", table, payload });
-					return Promise.resolve();
+					return { returning: () => Promise.resolve([{ id: "heal-job" }]) };
 				},
 			};
 		},

@@ -60,6 +60,12 @@ vi.mock("@/lib/authz", async (importOriginal) => ({
 	getPdp: () => ({ can: pdpCan }),
 }));
 vi.mock("@/lib/db", () => ({ withActorScope: vi.fn(), withScope: vi.fn(), getServiceDb: vi.fn() }));
+// The queue gate's own answers are tests/lib/approvals/gate.test.ts; here it admits the job so the
+// delegation to the console's actions is what is under test.
+vi.mock("@/lib/approvals/types", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/types")>()),
+	requireApplyAuthorization: vi.fn(async () => ({ approvalId: null })),
+}));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));

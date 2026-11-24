@@ -7,6 +7,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";
+import { requireApplyAuthorization } from "@/lib/approvals/types";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
@@ -131,6 +132,14 @@ export async function enqueueDeployAfterBuild(buildJobId: string) {
 			status: "QUEUED",
 		}))
 		.returning({ id: jobs.id });
+	// The deploy a successful BUILD chains: authorized when the BUILD was queued (buildProject), so
+	// it is a named system origin here.
+	await requireApplyAuthorization(db, { kind: "system", origin: "build_chain" }, "deploy", {
+		orgId: buildJob.org_id ?? buildJob.user_id,
+		projectId: buildJob.project_id,
+		environmentId: buildJob.environment_id,
+		jobId: deploy.id,
+	});
 
 	notifyScaler();
 	return { deployJobId: deploy.id };
