@@ -1,14 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// "My cases" pages by keyset (#7389): `support.cases` answers one page per cursor, and the list
-// walks them with "Load more". Pinned here, against the REAL CaseList over a fake read router:
-//   - a full first page offers "Load more", and a short one does not (it is the end);
-//   - "Load more" asks for the page after page one's LAST row (its activity and id) in the same
-//     bucket, and appends that page under the first;
-//   - the walk continues from the second page's last row and stops at a short page;
+// "My cases" pages by keyset (#7389), on the shared list contract since #7494: `support.cases`
+// answers one page per opaque cursor with the cursor of the page after it, and the list walks them
+// through `useKeysetList` + `ListFooter`. Pinned here, against the REAL CaseList over a fake read router:
+//   - a page with a `nextCursor` offers "Load more", and one without does not (it is the end);
+//   - "Load more" sends back exactly the `nextCursor` the server answered, in the same bucket, and
+//     appends that page under the first;
+//   - the walk continues from the second page's cursor and stops at a page with none;
 //   - a case both pages hold (a reply lifted it while the reader paged) is drawn once;
-//   - the toolbar shows no count until the last page is in — a loaded count is not the total;
+//   - no count is ever shown — not while more may exist, not once the end is in (#7481);
+//   - a filtered empty in an org with no cases at all is the first-run empty (`universeEmpty`);
 //   - a filter is SENT to the server (#7396): a case beyond page one that matches it is on the
 //     filtered first page, and the facet options are the server's counts, labelled in label order.
 
@@ -16,7 +18,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CASE_PAGE_SIZE, type CaseFacets, type CaseListItem, type CasePage } from "@/lib/queries/support";
+import { encodeKeysetCursor, KEYSET_DEFAULT_LIMIT as CASE_PAGE_SIZE } from "@/lib/queries/keyset";
+import type { CaseFacets, CaseListItem, CasePage } from "@/lib/queries/support";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
 
 vi.mock("next/navigation", () => ({
@@ -45,10 +48,29 @@ const FACETS: CaseFacets = {
 	type: [{ value: "technical", label: null, count: CASE_PAGE_SIZE + 1 }],
 };
 
-/** One page as `support.cases` answers it: the facets on a first page (no cursor) only. */
-function asPage(rows: CaseListItem[], input: unknown): CasePage {
-	const later = typeof input === "object" && input !== null && "cursor" in input && input.cursor;
-	return { rows, facets: later ? null : FACETS };
+/** The cursor the server mints for the page after one ending at `row`. */
+function cursorAfter(row: CaseListItem | undefined): string {
+	if (row === undefined) throw new Error("no row to page after");
+	return encodeKeysetCursor({ at: row.last_message_at, id: row.id });
+}
+
+/** The cursor a request carries, or undefined on a first page. */
+function cursorOf(input: unknown): unknown {
+	return typeof input === "object" && input !== null && "cursor" in input ? input.cursor : undefined;
+}
+
+/**
+ * One page as `support.cases` answers it: its rows, the cursor of the page after it (`more`), and
+ * the facets and universe probe on a first page (no cursor) only.
+ */
+function asPage(rows: CaseListItem[], input: unknown, more = false, universeEmpty = false): CasePage {
+	const later = cursorOf(input) !== undefined;
+	return {
+		rows,
+		nextCursor: more ? cursorAfter(rows.at(-1)) : null,
+		facets: later ? null : FACETS,
+		universeEmpty: later ? null : universeEmpty,
+	};
 }
 
 /** A case whose activity is `minute` minutes after a fixed instant — larger is newer. */
@@ -99,49 +121,42 @@ beforeEach(() => {
 });
 
 describe("CaseList paging", () => {
-	it("a short first page is the whole list: no Load more, and the count is shown", async () => {
+	it("a first page with no next cursor is the whole list: no Load more, and no count", async () => {
 		rpc.handlers["support.cases"] = async (input) => asPage(tiedPage(1, 3, 10), input);
 		renderWithClient(<CaseList orgSlug="acme" />);
 		await screen.findByText("Case subject 3");
 
 		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
 		expect(screen.getAllByRole("listitem")).toHaveLength(3);
+		expect(screen.queryByText("3")).toBeNull();
 		expect(casesAsked()).toEqual([{ bucket: "all" }]);
 	});
 
-	it("Load more asks for the page after page one's last row and appends it, until a short page", async () => {
+	it("Load more sends back the server's next cursor and appends the page, until a page with none", async () => {
 		// Page one: CASE_PAGE_SIZE cases, all at one timestamp — the boundary falls inside a tie.
 		const first = tiedPage(100, CASE_PAGE_SIZE, 30);
 		// Page two: full again; it repeats page one's top case (a reply lifted it meanwhile — the
 		// list must draw it once) and continues the tie.
 		const second = [first[0], ...tiedPage(40, CASE_PAGE_SIZE - 1, 30)];
-		// Page three: short — the end.
+		// Page three: no next cursor — the end.
 		const third = tiedPage(1, 2, 5);
 		rpc.handlers["support.cases"] = async (input) => {
-			if (typeof input !== "object" || input === null || !("cursor" in input) || !input.cursor) {
-				return asPage(first, input);
-			}
-			const cursor = input.cursor;
-			if (typeof cursor === "object" && cursor !== null && "id" in cursor && cursor.id === first.at(-1)?.id) {
-				return asPage(second, input);
-			}
+			const cursor = cursorOf(input);
+			if (cursor === undefined) return asPage(first, input, true);
+			if (cursor === cursorAfter(first.at(-1))) return asPage(second, input, true);
 			return asPage(third, input);
 		};
 
 		const { container } = renderWithClient(<CaseList orgSlug="acme" />);
 		await screen.findByText("Case subject 149");
 		expect(screen.getAllByRole("listitem")).toHaveLength(CASE_PAGE_SIZE);
-		// More may exist, so no count yet: a pill reading 50 would claim to be the total.
+		// No count: a pill reading 50 would claim to be the total.
 		expect(within(container).queryByText(String(CASE_PAGE_SIZE))).toBeNull();
 
 		fireEvent.click(screen.getByRole("button", { name: "Load more" }));
 		await screen.findByText("Case subject 40");
 
-		const last = first.at(-1);
-		expect(casesAsked()[1]).toEqual({
-			bucket: "all",
-			cursor: { at: last?.last_message_at.toISOString(), id: last?.id },
-		});
+		expect(casesAsked()[1]).toEqual({ bucket: "all", cursor: cursorAfter(first.at(-1)) });
 		// 50 + 49 new; the repeated case is drawn once.
 		expect(screen.getAllByRole("listitem")).toHaveLength(CASE_PAGE_SIZE * 2 - 1);
 		expect(screen.getAllByText("Case subject 149")).toHaveLength(1);
@@ -150,15 +165,11 @@ describe("CaseList paging", () => {
 		await screen.findByText("Case subject 1");
 		await settle();
 
-		const secondLast = second.at(-1);
-		expect(casesAsked()[2]).toEqual({
-			bucket: "all",
-			cursor: { at: secondLast?.last_message_at.toISOString(), id: secondLast?.id },
-		});
+		expect(casesAsked()[2]).toEqual({ bucket: "all", cursor: cursorAfter(second.at(-1)) });
 		expect(screen.getAllByRole("listitem")).toHaveLength(CASE_PAGE_SIZE * 2 + 1);
-		// A short page is the end: the control goes, and the total is now known.
+		// A page with no next cursor is the end: the control goes, and still no count (#7481).
 		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
-		expect(within(container).getByText(String(CASE_PAGE_SIZE * 2 + 1))).toBeInTheDocument();
+		expect(within(container).queryByText(String(CASE_PAGE_SIZE * 2 + 1))).toBeNull();
 		expect(casesAsked()).toHaveLength(3);
 	});
 
@@ -174,7 +185,7 @@ describe("CaseList paging", () => {
 				"severity" in input &&
 				Array.isArray(input.severity) &&
 				input.severity.includes("urgent");
-			return asPage(wantsUrgent ? [urgent] : first, input);
+			return wantsUrgent ? asPage([urgent], input) : asPage(first, input, true);
 		};
 
 		renderWithClient(<CaseList orgSlug="acme" />);
@@ -188,8 +199,36 @@ describe("CaseList paging", () => {
 		// The filter reached the read's input (so its key), with no cursor: it is a first page.
 		expect(casesAsked().at(-1)).toEqual({ bucket: "all", severity: ["urgent"] });
 		expect(screen.getAllByRole("listitem")).toHaveLength(1);
-		// The filtered result is the whole of it: no Load more, and the count is the total.
+		// The filtered result is the whole of it: no Load more.
 		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+	});
+
+	it("a filtered empty is the first-run empty when the server says nothing is in scope at all", async () => {
+		rpc.handlers["support.cases"] = async (input) => asPage([], input, false, true);
+		renderWithClient(<CaseList orgSlug="acme" />);
+		await screen.findByText("No cases yet");
+
+		act(() => useSupportFilters.getState().set("severity", ["urgent"]));
+		await settle();
+
+		// The filtered page landed (a filter is active) and the server says the scope holds nothing.
+		expect(casesAsked().at(-1)).toEqual({ bucket: "all", severity: ["urgent"] });
+		expect(screen.getByText("No cases yet")).toBeInTheDocument();
+		expect(screen.queryByText("No cases match these filters")).toBeNull();
+	});
+
+	it("a filtered empty in an org that has cases offers to reset the filters", async () => {
+		rpc.handlers["support.cases"] = async (input) =>
+			cursorOf(input) === undefined && !(typeof input === "object" && input !== null && "severity" in input)
+				? asPage(tiedPage(1, 3, 10), input)
+				: asPage([], input);
+		renderWithClient(<CaseList orgSlug="acme" />);
+		await screen.findByText("Case subject 3");
+
+		act(() => useSupportFilters.getState().set("severity", ["urgent"]));
+
+		expect(await screen.findByText("No cases match these filters")).toBeInTheDocument();
+		expect(screen.queryByText("No cases yet")).toBeNull();
 	});
 });
 
