@@ -329,7 +329,7 @@ The predicates are defined in `docs/beta/README.md`; this section only evaluates
 - **B7** ? not measured
   - off-box backup: ✅ met — newest complete copy `20261123T144753Z` finished 2026-11-23T14:47:59Z, 5.8 h before 2026-11-23T20:40:05Z (backup-status.yml run 45239283153 at 2026-11-23T19:12:00Z)
   - restore drill: ✅ met — `docs/beta/evidence/b7/2026-11-23-restore-drill.md` (2026-11-23T19:19:31Z) · 159s · tombstones replayed
-  - public hosts: ? not measured — the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)
+  - public hosts: ? not measured — no post-deploy smoke report in the snapshot (deploy-console.yml's `smoke` job publishes one per production deploy)
 - **B8** ❌ not met
   - hosted: ❌ not met — no B8 record
   - enterprise: ❌ not met — no B8 record
