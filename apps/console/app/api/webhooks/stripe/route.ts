@@ -60,7 +60,7 @@ export async function POST(req: Request): Promise<Response> {
 	}
 
 	// Exactly-once claim: fast-skip an already-processed delivery (no double emails).
-	const claim = await claimWebhookEvent(event.id, event.type);
+	const claim = await claimWebhookEvent("stripe", event.id, event.type);
 	if (!claim.claimed && claim.alreadyDone) {
 		return Response.json({ received: true, duplicate: true });
 	}
@@ -70,7 +70,7 @@ export async function POST(req: Request): Promise<Response> {
 		// Serialize deliveries of THIS event id under a per-event advisory lock and run the handler
 		// (which sends the non-idempotent email) inside it, so a network-duplicated / retried delivery
 		// that arrives while the first is still IN-FLIGHT blocks and is then skipped — never double-mails.
-		const outcome = await runWebhookEventExactlyOnce(event.id, event.type, async () => {
+		const outcome = await runWebhookEventExactlyOnce("stripe", event.id, event.type, async () => {
 			nudged = (await handleStripeEvent(event)).nudged;
 		});
 		if (outcome !== "handled") {
@@ -79,7 +79,7 @@ export async function POST(req: Request): Promise<Response> {
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		log.error("[stripe] handler error", { event_type: event.type, err });
-		await markWebhookEventError(event.id, message);
+		await markWebhookEventError("stripe", event.id, message);
 		await captureServerException(err, {
 			props: { source: "stripe_webhook", event_type: event.type },
 		});

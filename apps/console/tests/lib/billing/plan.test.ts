@@ -4,6 +4,9 @@
 import { describe, expect, it } from "vitest";
 import {
 	COMMUNITY_ENTITLEMENTS,
+	hasAiSubscription,
+	hasPlanSubscription,
+	hasProviderSubscription,
 	isBillingActive,
 	isManualGrantExpired,
 	planEntitlements,
@@ -99,7 +102,7 @@ describe("isManualGrantExpired", () => {
 	it("lapses an off-Stripe grant whose term end has passed", () => {
 		expect(
 			isManualGrantExpired(
-				{ stripeSubscriptionId: null, currentPeriodEnd: past },
+				{ stripeSubscriptionId: null, paddleSubscriptionId: null, currentPeriodEnd: past },
 				now,
 			),
 		).toBe(true);
@@ -108,7 +111,7 @@ describe("isManualGrantExpired", () => {
 	it("keeps an off-Stripe grant whose term is still running", () => {
 		expect(
 			isManualGrantExpired(
-				{ stripeSubscriptionId: null, currentPeriodEnd: future },
+				{ stripeSubscriptionId: null, paddleSubscriptionId: null, currentPeriodEnd: future },
 				now,
 			),
 		).toBe(false);
@@ -117,7 +120,7 @@ describe("isManualGrantExpired", () => {
 	it("never lapses an open-ended grant (no term end)", () => {
 		expect(
 			isManualGrantExpired(
-				{ stripeSubscriptionId: null, currentPeriodEnd: null },
+				{ stripeSubscriptionId: null, paddleSubscriptionId: null, currentPeriodEnd: null },
 				now,
 			),
 		).toBe(false);
@@ -128,9 +131,64 @@ describe("isManualGrantExpired", () => {
 		// must not flicker them down to community. Only off-Stripe grants lapse here.
 		expect(
 			isManualGrantExpired(
-				{ stripeSubscriptionId: "sub_123", currentPeriodEnd: past },
+				{ stripeSubscriptionId: "sub_123", paddleSubscriptionId: null, currentPeriodEnd: past },
 				now,
 			),
 		).toBe(false);
+	});
+
+	it("never touches a Paddle-backed subscription, even past its period end", () => {
+		// The Paddle webhook maintains a Paddle subscriber's renewal date exactly as Stripe's does.
+		expect(
+			isManualGrantExpired(
+				{ stripeSubscriptionId: null, paddleSubscriptionId: "sub_01paddle", currentPeriodEnd: past },
+				now,
+			),
+		).toBe(false);
+	});
+
+	it("lapses an expired provider-less trial grant", () => {
+		// A card-less local trial has no provider object at all — its term end is the only thing
+		// that ends it.
+		expect(
+			isManualGrantExpired(
+				{ stripeSubscriptionId: null, paddleSubscriptionId: null, currentPeriodEnd: past },
+				now,
+			),
+		).toBe(true);
+	});
+});
+
+describe("provider subscription helpers", () => {
+	const none = {
+		stripeSubscriptionId: null,
+		paddleSubscriptionId: null,
+		aiStripeSubscriptionId: null,
+		aiPaddleSubscriptionId: null,
+	};
+
+	it("a row with no subscription id has no provider subscription in any slot", () => {
+		expect(hasProviderSubscription(none)).toBe(false);
+		expect(hasPlanSubscription(none)).toBe(false);
+		expect(hasAiSubscription(none)).toBe(false);
+	});
+
+	it("any one of the four subscription id columns counts as a provider subscription", () => {
+		for (const key of Object.keys(none)) {
+			expect(hasProviderSubscription({ ...none, [key]: "sub_x" })).toBe(true);
+		}
+	});
+
+	it("keeps the slots apart: an AI subscription does not make the plan provider-backed", () => {
+		const aiOnly = { ...none, aiPaddleSubscriptionId: "sub_ai" };
+		expect(hasPlanSubscription(aiOnly)).toBe(false);
+		expect(hasAiSubscription(aiOnly)).toBe(true);
+		// So an expired off-provider plan grant on that row still lapses.
+		expect(
+			isManualGrantExpired(
+				{ ...aiOnly, currentPeriodEnd: new Date("2026-07-01T00:00:00Z") },
+				new Date("2026-07-13T00:00:00Z"),
+			),
+		).toBe(true);
 	});
 });

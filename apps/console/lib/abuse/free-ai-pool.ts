@@ -148,7 +148,9 @@ export async function readFreeAiPoolUsed(
 			aiTier: organizationBilling.aiTier,
 			aiSubscriptionStatus: organizationBilling.aiSubscriptionStatus,
 			aiStripeSubscriptionId: organizationBilling.aiStripeSubscriptionId,
+			aiPaddleSubscriptionId: organizationBilling.aiPaddleSubscriptionId,
 			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			paddleSubscriptionId: organizationBilling.paddleSubscriptionId,
 			currentPeriodEnd: organizationBilling.currentPeriodEnd,
 		})
 		.from(aiUsageLedger)
@@ -160,7 +162,9 @@ export async function readFreeAiPoolUsed(
 			organizationBilling.aiTier,
 			organizationBilling.aiSubscriptionStatus,
 			organizationBilling.aiStripeSubscriptionId,
+			organizationBilling.aiPaddleSubscriptionId,
 			organizationBilling.stripeSubscriptionId,
+			organizationBilling.paddleSubscriptionId,
 			organizationBilling.currentPeriodEnd,
 		);
 	return sumFreeAiPoolUsed(

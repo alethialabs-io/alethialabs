@@ -2729,6 +2729,25 @@ CREATE POLICY early_access_request_insert ON public.early_access_request FOR INS
               AND vies_valid IS NULL AND vies_name IS NULL AND vies_address IS NULL
               AND vies_request_id IS NULL AND vies_checked_at IS NULL);
 
+-- ── Paddle Billing mirrors (L1) ──────────────────────────────────────────────────
+-- paddle_transaction (the Paddle transaction mirror) and usage_charge (the overage ledger) are
+-- written ONLY by the service role (the Paddle webhook, the overage sweeper), which bypasses RLS.
+-- A member may READ their own org's rows — the billing page lists them — and nothing else: an
+-- org-scoped SELECT policy (current_org, or current_owner for a personal org, as early_access_request
+-- above) and deliberately NO insert/update/delete policy, so an app-role session can neither forge a
+-- paid transaction nor rewrite or erase a charge it owes.
+ALTER TABLE public.paddle_transaction ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS paddle_transaction_select ON public.paddle_transaction;
+CREATE POLICY paddle_transaction_select ON public.paddle_transaction FOR SELECT
+  USING (organization_id = current_setting('app.current_org', true)::uuid
+         OR organization_id = current_setting('app.current_owner', true)::uuid);
+
+ALTER TABLE public.usage_charge ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS usage_charge_select ON public.usage_charge;
+CREATE POLICY usage_charge_select ON public.usage_charge FOR SELECT
+  USING (organization_id = current_setting('app.current_org', true)::uuid
+         OR organization_id = current_setting('app.current_owner', true)::uuid);
+
 -- ── Privacy operations (#2373) ────────────────────────────────────────────────────
 -- privacy_case / privacy_case_event / privacy_erasure_tombstone hold the record of who
 -- exercised a right and what was done about it. Service-role only: RLS enabled with NO
