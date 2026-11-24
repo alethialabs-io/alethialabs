@@ -49,6 +49,7 @@ const ENTITLEMENTS: Entitlements = {
 	advancedAlerting: true,
 	byoRunners: true,
 	managedPools: true,
+	agentPolicy: true,
 	quotas: {
 		maxConcurrentJobs: null,
 		priorityLevel: 30,

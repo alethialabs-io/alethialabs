@@ -47,6 +47,7 @@ const NO_PLAN: Entitlements = {
 	advancedAlerting: false,
 	byoRunners: false,
 	managedPools: false,
+	agentPolicy: false,
 	quotas: {
 		maxConcurrentJobs: 2,
 		priorityLevel: 0,
@@ -67,6 +68,7 @@ const ENTERPRISE_PLAN: Entitlements = {
 	advancedAlerting: true,
 	byoRunners: true,
 	managedPools: true,
+	agentPolicy: true,
 };
 
 /** A paid plan that does not carry teams. */
