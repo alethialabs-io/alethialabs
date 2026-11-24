@@ -600,9 +600,9 @@ export async function POST(req: Request) {
 			if (e instanceof EnvStateConflictError) {
 				return NextResponse.json({ error: e.message }, { status: 409 });
 			}
-			// The apply or destroy was not authorized for this caller. A refusal, with the reason as
-			// a `code` a client can branch on. Nothing throws it while lib/approvals/types.ts allows
-			// every call.
+			// The apply or destroy was not authorized for this caller (lib/approvals/types.ts): a CLI
+			// login or service token presented no approval, or one that does not cover this job. A
+			// refusal, with the reason as a `code` a client can branch on.
 			if (e instanceof ApplyAuthorizationError) {
 				return NextResponse.json(
 					{ error: e.message, code: e.code },

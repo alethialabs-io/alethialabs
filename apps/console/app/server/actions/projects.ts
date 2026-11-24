@@ -2312,7 +2312,8 @@ export type QueueJobResult<T extends object> = ({ ok: true } & T) | ProjectRefus
  *
  * Exactly five types are refusals, each already written as a sentence for a person:
  *   · `ApplyAuthorizationError` — the apply or destroy was not authorized for this caller
- *     (lib/approvals/types.ts; nothing throws it while that module allows every call);
+ *     (lib/approvals/types.ts): a credential that needs a person's approval presented none, or one
+ *     that does not cover this job;
  *   · {@link JobRefusalError} — the deploy-time gates (no cloud account, a dangling binding, a WAF
  *     the cloud cannot provide, a Hetzner node name, no network selected, an unscanned IaC source…);
  *   · `EnvStateConflictError` — a job is already in flight on the environment; the same request

@@ -19,6 +19,7 @@ import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
 import { jobs, projectEnvironments } from "@/lib/db/schema";
 import { signedJob } from "@/lib/db/signed-job";
+import { requireApplyAuthorization } from "@/lib/approvals/types";
 import { newTraceparent } from "@/lib/observability/trace";
 import { notifyScaler } from "@/lib/scaler";
 
@@ -102,7 +103,7 @@ export async function maybeAutoHeal(
 			.update(projectEnvironments)
 			.set({ last_auto_heal_at: new Date() })
 			.where(eq(projectEnvironments.id, environmentId));
-		await tx.insert(jobs).values(signedJob({
+		const [heal] = await tx.insert(jobs).values(signedJob({
 			user_id: env.user_id,
 			org_id: env.org_id ?? undefined,
 			project_id: projectId,
@@ -116,7 +117,14 @@ export async function maybeAutoHeal(
 			status: "QUEUED",
 			// An auto-heal re-apply is a fresh operation → a new trace root.
 			traceparent: newTraceparent(),
-		}));
+		})).returning({ id: jobs.id });
+		// The org switched auto-heal on for this environment; it re-applies what was last deployed.
+		await requireApplyAuthorization(tx, { kind: "system", origin: "auto_heal" }, "deploy", {
+			orgId: env.org_id ?? env.user_id,
+			projectId,
+			environmentId,
+			jobId: heal.id,
+		});
 		return true;
 	});
 	// Only wake the scaler once the whole enqueue committed (a rolled-back tx queued nothing).

@@ -136,6 +136,8 @@ describe("POST /api/jobs — the credential kind bound on the actor", () => {
 				credential: "service_token",
 				// The token's limit rides on the actor, so every decision the action asks is held to it.
 				ceiling: { scopes: ["read", "design", "plan", "apply", "destroy"], projectIds: null },
+				// Which token: an approval is bound to it, and its automatic-deploy list is read by it.
+				credentialRef: "st-1",
 			},
 			expect.any(Function),
 		);
