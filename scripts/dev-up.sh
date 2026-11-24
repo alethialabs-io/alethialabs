@@ -23,10 +23,8 @@ STRIPE_LOG=/tmp/alethia-stripe.log
 PORT="${PORT:-3000}"
 DEV_URL="http://localhost:${PORT}"
 
-if [[ ! -f .env ]]; then
-  echo "✗ no .env found — run: cp .env.example .env" >&2
-  exit 1
-fi
+# Create .env, or fill any instance secret it lacks, from deploy/selfhost/secrets.manifest.
+bash scripts/dev-env.sh
 
 # ── One shared console across windows/worktrees (mirrors scripts/compose-up.sh) ──
 # next dev binds :3000; running it twice races the port + env. A second `pnpm dev:up`
