@@ -19,6 +19,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import { CLIENT_TOOL_ACCEPTED_STATUS, isClientToolName } from "@/lib/ai/client-tools";
+import { isInAppApprovalToolName } from "./approval-output";
 
 /**
  * The text a turn is compared by (ADR 0003 §5.2, the one definition ADR 0001 imports): the
@@ -100,8 +101,20 @@ const outputStatusSchema = z.object({ status: z.string() });
  * count: it was applied to the canvas in the browser and queued nothing server-side, so its
  * tool has no accepted status. Only the `status` is read, not the full schema, so a stored
  * output that predates validation still counts: refusing a regenerate is the safe direction.
+ *
+ * A recorded approval request (`request_apply` / `request_destroy` with output status
+ * `requested`, lib/agent/approval-output.ts) counts too. It is a server tool, so its outcome is
+ * not in the transcript: whether a person approved it and the job started is the approval row's
+ * state, which this pure function cannot read. The answer holds the only card that decides and
+ * starts it, so it is kept whatever that state is.
  */
 export function hasAcceptedApproval(message: UIMessage): boolean {
+	for (const part of message.parts) {
+		if (!isToolUIPart(part) || part.state !== "output-available") continue;
+		if (!isInAppApprovalToolName(getToolName(part))) continue;
+		const parsed = outputStatusSchema.safeParse(part.output);
+		if (parsed.success && parsed.data.status === "requested") return true;
+	}
 	for (const step of clientToolPartsBySteps(message)) {
 		for (const part of step) {
 			if (part.state !== "output-available") continue;
