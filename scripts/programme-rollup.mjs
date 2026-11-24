@@ -74,6 +74,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { validateReaperResult } from "./e2e/reaper-result.mjs";
 import { validateBackupStatus, runSelfTest as backupStatusSelfTest } from "./backup-status-result.mjs";
+import { validateSmokeSummary, SMOKE_HOST_CHECKS, runSelfTest as smokeSummarySelfTest } from "./post-deploy-smoke-result.mjs";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
@@ -769,6 +770,7 @@ export function deriveBoard(snapshot) {
 			observedGate: () => null,
 			reaperObservation: () => null,
 			backupStatusObservation: null,
+			smokeObservation: null,
 			derivedAt: null,
 			needsHuman: [],
 			// Empty, not "no contradictions". With no snapshot there is nothing to contradict the
@@ -928,6 +930,8 @@ export function deriveBoard(snapshot) {
 		reaperObservation: (cloud) => reaperObservations.get(cloud) ?? null,
 		/** The newest backup-status.yml result from `main` (B7's off-box backup), or null. */
 		backupStatusObservation: snapshot.backup_status_observation ?? null,
+		/** The newest deploy-console.yml run on `main` whose smoke job ran (B7's public hosts), or null. */
+		smokeObservation: snapshot.post_deploy_smoke_observation ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 		/**
 		 * Every OPEN nightly-red issue, parsed out of its title, as `{cloud, dimension, number, date}`.
@@ -1882,7 +1886,12 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	if (backupStatus.integrityFailure !== null) {
 		console.error(`::notice::${backupStatus.integrityFailure} — B7's off-box backup part is not measured until a later result replaces it.`);
 	}
-	const betaView = beta === null ? null : deriveBeta({ ...beta, spine, reaper, backup: backupStatus, at: board.derivedAt });
+	// B7's public-hosts reading, the same way and for the same reason.
+	const smokeStatus = deriveSmokeFreshness(board.smokeObservation, board.derivedAt);
+	if (smokeStatus.integrityFailure !== null) {
+		console.error(`::notice::${smokeStatus.integrityFailure} — B7's public-hosts part is not measured until a later deploy's smoke replaces it.`);
+	}
+	const betaView = beta === null ? null : deriveBeta({ ...beta, spine, reaper, backup: backupStatus, smoke: smokeStatus, at: board.derivedAt });
 	if (betaView !== null) failures.push(...betaView.failures);
 
 	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
@@ -2591,6 +2600,68 @@ export function deriveBackupFreshness(observation, snapshotAt) {
 		: said(unmet(`newest complete copy \`${r.newest}\` finished ${r.finishedAt}, ${age} before ${snapshotAt} — not less than ${BETA_B7_BACKUP_MAX_AGE_HOURS} h (${run})`));
 }
 
+/**
+ * B7 public hosts: the newest smoke report must be NO MORE than this many days older than T. It is
+ * the `post-deploy-smoke` artifact's retention-days in deploy-console.yml: past it the report the
+ * observation summarises no longer exists to be re-read, so a carried-forward observation older than
+ * that is a claim nothing can check.
+ */
+export const BETA_B7_SMOKE_MAX_AGE_DAYS = 14;
+
+/**
+ * B7's "public hosts" part, from the snapshot's `post_deploy_smoke_observation` (#7392).
+ *
+ * The observation is the newest deploy-console.yml run on `main` whose smoke job ran, copied by
+ * programme-fetch.sh as `{run_id, event_name, head_branch, head_sha, completed_at, smoke_conclusion,
+ * report_missing, result}`, where `result` is post-deploy-smoke-result.mjs's summary of the report
+ * (null, with `report_missing` saying why, when the job ran and left no readable report). Judged
+ * against the snapshot instant T, pure, like deriveBackupFreshness.
+ *
+ * @returns {{state: "met"|"unmet"|"unmeasured", why: string, integrityFailure: string|null}}
+ */
+export function deriveSmokeFreshness(observation, snapshotAt) {
+	const said = (r, integrityFailure = null) => ({ ...r, integrityFailure });
+	if (observation === null || observation === undefined) {
+		return said(unmeasured("no post-deploy smoke report in the snapshot (deploy-console.yml's `smoke` job publishes one per production deploy)"));
+	}
+	const run = `deploy-console.yml run ${observation.run_id ?? "?"} at ${observation.completed_at ?? "?"}`;
+	if (observation.head_branch !== "main") {
+		return said(unmeasured(`${run} ran from \`${observation.head_branch}\`; only a deploy from \`main\` is production`), `post-deploy smoke observation is from branch ${observation.head_branch}, not main`);
+	}
+	const at = instantMs(snapshotAt);
+	const completed = instantMs(observation.completed_at);
+	if (at === null || completed === null) return said(unmeasured(`${run}: there is no snapshot instant to measure the smoke's age from`));
+	// The same grace as the backup reading's, for the same reason.
+	const GRACE_MS = 60 * 60_000;
+	if (completed > at + GRACE_MS) return said(unmeasured(`${run} cannot be reconciled with the snapshot`), "post-deploy smoke observation completed after its snapshot");
+	if (observation.result === null || observation.result === undefined) {
+		// The newest deploy's smoke ran and left nothing to read. That is not "unmeasured": the deploy
+		// happened and its check did not report, which is the failure the smoke exists to catch.
+		const why = typeof observation.report_missing === "string" && observation.report_missing !== "" ? observation.report_missing : "no report";
+		return said(unmet(`the newest deploy's smoke (${run}, job ${observation.smoke_conclusion ?? "?"}) left no readable report: ${why}`));
+	}
+	const v = validateSmokeSummary(observation.result);
+	if (!v.ok) return said(unmeasured(`${run} carries a malformed smoke summary`), `post-deploy smoke observation is malformed: ${v.errors.join("; ")}`);
+	const r = observation.result;
+	if (r.runId !== String(observation.run_id)) return said(unmeasured(`${run} carries the report of run ${r.runId}`), "post-deploy smoke observation's run id disagrees with its report");
+	if (r.ref !== "refs/heads/main") return said(unmeasured(`${run} carries a report from \`${r.ref}\``), `post-deploy smoke report is from ${r.ref}, not refs/heads/main`);
+	if (r.sha !== observation.head_sha) return said(unmeasured(`${run} carries a report about ${r.sha.slice(0, 7)}`), "post-deploy smoke report's sha disagrees with its run");
+	const ran = instantMs(r.at);
+	if (ran > at + GRACE_MS) return said(unmeasured(`${run} carries a report from after the snapshot`), "post-deploy smoke report ran after its snapshot");
+	const days = Math.max(0, at - ran) / 86_400_000;
+	// Floored, so a met report never prints as "14 d".
+	const age = `${Math.floor(days * 10) / 10} d`;
+	const what = `${r.ran}/${r.checks} checks against ${r.baseUrl} at ${r.at}, ${age} before ${snapshotAt} (${run}, ${r.sha.slice(0, 7)})`;
+	if (r.verdict !== "pass") {
+		const failed = r.failed.length > 0 ? `; failed: ${r.failed.join(", ")}` : "";
+		const missing = r.missingHostChecks.length > 0 ? `; did not run: ${r.missingHostChecks.join(", ")}` : "";
+		return said(unmet(`the newest deploy's smoke did not pass — ${what}${failed}${missing}`));
+	}
+	return days > BETA_B7_SMOKE_MAX_AGE_DAYS
+		? said(unmet(`the newest smoke passed, but ${age} ago — more than ${BETA_B7_SMOKE_MAX_AGE_DAYS} days before T (${what})`))
+		: said(met(`every check passed, including ${SMOKE_HOST_CHECKS.join(" and ")} — ${what}`));
+}
+
 /** Unquote and type one YAML scalar of the small subset evidence records use. */
 function frontMatterScalar(raw) {
 	const v = raw.trim();
@@ -2809,7 +2880,7 @@ function foldStates(parts) {
  *   at: string | null,
  * }} input
  */
-export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, paidMarketsText, launchText, legalSet, reaper, backup = null, at }) {
+export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, paidMarketsText, launchText, legalSet, reaper, backup = null, smoke = null, at }) {
 	const failures = [];
 	const clouds = spine.clouds;
 	const atMs = at === null ? null : instantMs(at);
@@ -3012,7 +3083,8 @@ export function deriveBeta({ spine, schema, tsCatalogText, records, bundles, pai
 					: ageDays(instantMs(d.date)) > BETA_WINDOW_DAYS.B7_DRILL
 						? unmet(`newest pass ${recordRef(d)} is more than ${BETA_WINDOW_DAYS.B7_DRILL} days before ${atRef}`)
 						: met(`${recordRef(d)} · ${d.durationSeconds}s · tombstones replayed`);
-		const hosts = unmeasured("the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)");
+		// deriveSmokeFreshness, computed in derive() from the snapshot, as the backup reading is.
+		const hosts = smoke === null ? unmeasured("no post-deploy smoke reading was passed in") : { state: smoke.state, why: smoke.why };
 		const parts = [part("off-box backup", offBox), part("restore drill", drill), part("public hosts", hosts)];
 		out.B7 = { state: foldStates(parts), parts };
 	}
@@ -5026,6 +5098,55 @@ function runSelfTest() {
 		ok("beta fixture: no backup reading passed in leaves the part unmeasured", pick(clean, "B7").parts.find((p) => p.label === "off-box backup").state === "unmeasured");
 		const viaBoard = deriveBoard({ derived_at: T, backup_status_observation: bsObs() });
 		ok("board: backup_status_observation is read from the snapshot", viaBoard.backupStatusObservation?.run_id === "77" && deriveBoard(null).backupStatusObservation === null);
+
+		// B7 public hosts (#7392): judged against T, from the snapshot's post_deploy_smoke_observation.
+		ok("beta: the post-deploy smoke summary format passes its own self-test", (() => {
+			try {
+				smokeSummarySelfTest({ quiet: true });
+				return true;
+			} catch (e) {
+				console.error(String(e));
+				return false;
+			}
+		})());
+		ok("beta: the B7 smoke age bound is the artifact's retention in deploy-console.yml", (() => {
+			const wf = fs.readFileSync(".github/workflows/deploy-console.yml", "utf8");
+			const m = wf.match(/name: post-deploy-smoke\n(?:\s+[a-z-]+:.*\n)*?\s+retention-days: (\d+)/);
+			return m !== null && Number(m[1]) === BETA_B7_SMOKE_MAX_AGE_DAYS && readme.includes(`no more than ${BETA_B7_SMOKE_MAX_AGE_DAYS} days before *T*`);
+		})());
+		const smSha = "b".repeat(40);
+		const smResult = (over = {}) => ({ schemaVersion: 1, check: "post-deploy-smoke", verdict: "pass", baseUrl: "https://alethialabs.io", at: "2026-12-18T10:00:00.000Z", sha: smSha, ref: "refs/heads/main", runId: "88", checks: 13, ran: 13, failed: [], missingHostChecks: [], ...over });
+		const smObs = (over = {}, result = {}) => ({ run_id: "88", event_name: "push", head_branch: "main", head_sha: smSha, completed_at: "2026-12-18T10:05:00Z", smoke_conclusion: "success", report_missing: null, result: smResult(result), ...over });
+		const green = deriveSmokeFreshness(smObs(), T);
+		ok("B7 hosts: a green smoke 1.5 d before T is met", green.state === "met" && green.integrityFailure === null && /1\.5 d/.test(green.why) && /installer and status-page/.test(green.why), green.why);
+		const redSmoke = deriveSmokeFreshness(smObs({ smoke_conclusion: "failure" }, { verdict: "fail", failed: ["status-page"] }), T);
+		ok("B7 hosts: a red smoke is not met, and names the failed check", redSmoke.state === "unmet" && /status-page/.test(redSmoke.why), redSmoke.why);
+		const abortedSmoke = deriveSmokeFreshness(smObs({}, { verdict: "fail", ran: 1, failed: ["controls"], missingHostChecks: ["installer", "status-page"] }), T);
+		ok("B7 hosts: an aborted smoke is not met, and says the host checks did not run", abortedSmoke.state === "unmet" && /did not run: installer, status-page/.test(abortedSmoke.why), abortedSmoke.why);
+		const noReport = deriveSmokeFreshness(smObs({ smoke_conclusion: "failure", report_missing: "the smoke job concluded failure and no unexpired post-deploy-smoke artifact exists", result: null }), T);
+		ok("B7 hosts: the newest deploy's smoke ran with no report is not met (never walked past)", noReport.state === "unmet" && /no unexpired/.test(noReport.why), noReport.why);
+		ok("B7 hosts: no observation is not measured, never met", deriveSmokeFreshness(null, T).state === "unmeasured" && deriveSmokeFreshness(undefined, T).state === "unmeasured");
+		const staleSmoke = deriveSmokeFreshness(smObs({ completed_at: "2026-12-05T10:05:00Z" }, { at: "2026-12-05T10:00:00.000Z" }), T);
+		ok("B7 hosts: a green smoke more than 14 d before T is not met", staleSmoke.state === "unmet" && /more than 14 days/.test(staleSmoke.why), staleSmoke.why);
+		const edge = deriveSmokeFreshness(smObs({ completed_at: "2026-12-06T00:00:00Z" }, { at: "2026-12-06T00:00:00.000Z" }), T);
+		ok("B7 hosts: exactly 14 d before T is still met (the README says no more than)", edge.state === "met", edge.why);
+		ok("B7 hosts: a report from another run is refused", deriveSmokeFreshness(smObs({ run_id: "89" }), T).integrityFailure !== null);
+		ok("B7 hosts: a report about another sha is refused", deriveSmokeFreshness(smObs({ head_sha: "c".repeat(40) }), T).integrityFailure !== null);
+		ok("B7 hosts: a report from another ref is refused", deriveSmokeFreshness(smObs({}, { ref: "refs/heads/dev" }), T).integrityFailure !== null);
+		ok("B7 hosts: a run from another branch is refused", deriveSmokeFreshness(smObs({ head_branch: "dev" }), T).state === "unmeasured");
+		ok("B7 hosts: a malformed summary is not measured with an integrity notice", (() => {
+			const m = deriveSmokeFreshness(smObs({}, { results: [] }), T);
+			return m.state === "unmeasured" && m.integrityFailure !== null;
+		})());
+		ok("B7 hosts: a summary edited to pass over a failed check is refused", deriveSmokeFreshness(smObs({}, { failed: ["installer"] }), T).state === "unmeasured");
+		ok("B7 hosts: a run completed hours after T is refused", deriveSmokeFreshness(smObs({ completed_at: "2026-12-20T05:00:00Z" }), T).integrityFailure !== null);
+		ok("B7 hosts: with no snapshot instant the age is not guessed", deriveSmokeFreshness(smObs(), null).state === "unmeasured");
+		const b7hosts = deriveBeta(fx({ backup: fresh, smoke: green }));
+		ok("beta fixture: the public hosts part carries deriveSmokeFreshness's verdict", pick(b7hosts, "B7").parts.find((p) => p.label === "public hosts").state === "met");
+		ok("beta fixture: no smoke reading passed in leaves the part unmeasured", pick(clean, "B7").parts.find((p) => p.label === "public hosts").state === "unmeasured");
+		ok("beta fixture: a red smoke makes B7 unmet", pick(deriveBeta(fx({ backup: fresh, smoke: redSmoke })), "B7").parts.find((p) => p.label === "public hosts").state === "unmet");
+		const viaBoardSmoke = deriveBoard({ derived_at: T, post_deploy_smoke_observation: smObs() });
+		ok("board: post_deploy_smoke_observation is read from the snapshot", viaBoardSmoke.smokeObservation?.run_id === "88" && deriveBoard(null).smokeObservation === null);
 
 		const rendered = renderBeta(sched);
 		ok("beta: the rendered section lists nine predicates and one row per scored cloud", (rendered.match(/^\| B\d \|/gm) ?? []).length === 9 && /\| \*\*north\*\* \|/.test(rendered) && /\| \*\*south\*\* \|/.test(rendered));
