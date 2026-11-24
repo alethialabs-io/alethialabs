@@ -6,7 +6,9 @@
 // and only then does the requester's click start the job. A refused decision (the org requires a
 // different approver) starts nothing.
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +18,7 @@ vi.mock("@/lib/agent/approval-actions", () => ({ readInAppApproval: vi.fn(), sta
 import { decideApplyApproval } from "@/app/server/actions/approvals";
 import { InAppApprovalCard } from "@/components/agent/approval/in-app-approval-card";
 import { type InAppApprovalDetail, readInAppApproval, startInAppApproval } from "@/lib/agent/approval-actions";
+import { TOPIC_KEYS } from "@/lib/query/topics";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
 
 const APPROVAL = "00000000-0000-4000-8000-000000000050";
@@ -65,7 +68,15 @@ function detail(status: InAppApprovalDetail["approval"]["status"], requestedByRe
 	};
 }
 
+let queryClient: QueryClient;
+
+/** Renders `ui` under a fresh QueryClient, as the console shell provides one. */
+function render(ui: ReactElement) {
+	return rtlRender(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
 beforeEach(() => {
+	queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	vi.clearAllMocks();
 	vi.mocked(readInAppApproval).mockResolvedValue({ ok: true, data: detail("pending") });
 	vi.mocked(startInAppApproval).mockResolvedValue({ ok: true, data: { jobId: JOB } });
@@ -129,5 +140,36 @@ describe("InAppApprovalCard", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /view logs/i }));
 		expect(useArtifactStore.getState().artifact).toEqual({ projectId: PROJECT, jobId: JOB });
 		expect(screen.queryByRole("button", { name: /approve/i })).toBeNull();
+	});
+});
+
+describe("InAppApprovalCard — live without a poll", () => {
+	it("a teammate's decision reaches the card through the environments topic", async () => {
+		render(<InAppApprovalCard request={REQUEST} />);
+		expect(await screen.findByRole("button", { name: /approve and deploy/i })).toBeInTheDocument();
+		vi.mocked(readInAppApproval).mockResolvedValue({ ok: true, data: detail("approved") });
+		// What the change stream does on an `environments` hint (lib/realtime/client).
+		await act(async () => {
+			for (const key of TOPIC_KEYS.environments()) await queryClient.invalidateQueries({ queryKey: key });
+		});
+		expect(await screen.findByRole("button", { name: /start deploy/i })).toBeInTheDocument();
+	});
+
+	it("re-reads once when the request's window closes", async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			const soon = { ...REQUEST, expires_at: new Date(Date.now() + 5_000).toISOString() };
+			render(<InAppApprovalCard request={soon} />);
+			await screen.findByText(/acme \/ staging/);
+			const reads = vi.mocked(readInAppApproval).mock.calls.length;
+			vi.mocked(readInAppApproval).mockResolvedValue({ ok: true, data: detail("expired") });
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(7_000);
+			});
+			await waitFor(() => expect(vi.mocked(readInAppApproval).mock.calls.length).toBe(reads + 1));
+			expect(await screen.findByText(/expired before it was decided/i)).toBeInTheDocument();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
