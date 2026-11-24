@@ -26,7 +26,6 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
-import { CountPill } from "@repo/ui/count-pill";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -285,24 +284,14 @@ export function ClassificationManager() {
 					placeholder="Search dimensions & values"
 					className="w-[240px]"
 				/>
+				{/* No count pill: the list standard draws none (#7481). The taxonomy is read whole and
+				    unpaged because it is bounded on the server: CLASSIFICATION_DIMENSIONS_MAX per org
+				    and CLASSIFICATION_VALUES_MAX per dimension, enforced by the create actions. */}
 				{searching && isFetching ? (
 					<span className="text-text-tertiary">
 						<Spinner size={13} />
 					</span>
-				) : (
-					// The result count is the filter standard's count pill, never prose (F-28). Nothing
-					// while the first read is pending: no number is not the number 0.
-					isPending ? null : (
-						<span>
-							<CountPill count={dims.length} />
-							<span className="sr-only">
-								{searching
-									? ` match${dims.length === 1 ? "" : "es"}`
-									: ` dimension${dims.length === 1 ? "" : "s"}`}
-							</span>
-						</span>
-					)
-				)}
+				) : null}
 				<div className="flex-1" />
 				<a
 					href="/docs/guides/classification"
