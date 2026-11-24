@@ -28,7 +28,7 @@ again.
 | 404 | the cluster was not found in the active organization | Run `alethia org switch`, or pass `--org`. |
 | 409 | The cluster has not been provisioned, so there is nothing to mint a kubeconfig for | Deploy the environment. Drafts and environments being destroyed cannot get a kubeconfig. |
 | 422 | This cluster's cloud cannot mint a kubeconfig through Alethia | The cluster is not on AWS, GCP, Azure or Hetzner. Use the cloud's own CLI. |
-| 429 | too many kubeconfig requests — try again in … | More than 20 requests in 10 minutes in this organization; each new exec token counts. Wait the time shown. |
+| 429 | too many kubeconfig requests — try again in … | You made more than 20 requests in 10 minutes in this organization (the limit is per person); each new exec token counts. Wait the time shown. |
 
 ## The CLI gives up while it waits
 
@@ -78,7 +78,7 @@ The console uses the same checks and the same rate limit as the CLI.
 | This cluster was not found. | Reload the page. The cluster may have been removed. |
 | This cluster has not finished provisioning, so there is no kubeconfig to mint yet. | Deploy the environment, or wait for the deploy to finish. |
 | This cluster's cloud cannot mint a kubeconfig through Alethia. | Use the cloud's own CLI. |
-| Too many kubeconfig requests. Try again in a few minutes. | Wait. CLI and console requests count together. |
+| Too many kubeconfig requests. Try again in a few minutes. | Wait. Your CLI and console requests count together. |
 | No runner finished the kubeconfig in time. … | Check that a runner is online, then try again. |
 | Still waiting for a runner to mint it. | Shown after 20 seconds. Check the runners, or select **Cancel**. |
 | This browser cannot create the X25519 key the download is sealed to. … | Use Chrome 133, Firefox 130, Safari 17 or later, or the CLI. |
