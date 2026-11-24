@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 /** Public GDPR privacy notice for Alethia's website and hosted service. */
 export default function PrivacyPage() {
 	return (
-		<LegalShell title="Privacy Policy" lastUpdated="November 21, 2026">
+		<LegalShell title="Privacy Policy" lastUpdated="November 24, 2026">
 			<p>
 				This notice explains how <strong>{CURRENT_LEGAL_OPERATOR}</strong>, EIK{" "}
 				{LEGAL_ENTITY.registrationNumber}, at {LEGAL_ENTITY.registeredAddress}{" "}
@@ -54,18 +54,36 @@ export default function PrivacyPage() {
 			</p>
 			<h3>Billing and payment data</h3>
 			<p>
-				Paid plans are billed through <strong>Stripe</strong>, which acts as our
-				payment processor. When you subscribe we process your billing contact
-				details, organization, plan, invoice, transaction and tax metadata.{" "}
+				Card purchases — subscriptions, usage charges and AI credit packs — are
+				sold by our reseller <strong>Paddle</strong> (Paddle.com Market Ltd, or
+				Paddle.com Inc. for buyers in the United States), which is the merchant
+				of record. Paddle processes your payment, tax and invoice details as an{" "}
+				<strong>independent controller</strong>, under{" "}
+				<a
+					href="https://www.paddle.com/legal/privacy"
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					its own privacy notice
+				</a>
+				, not on our behalf.{" "}
 				<strong>
-					Card details are entered directly into Stripe and are never received
-					or stored by Alethia
+					Card details are entered directly into Paddle’s checkout and are never
+					received or stored by Alethia
 				</strong>{" "}
-				— the payment fields are Stripe-hosted, so card numbers do not pass
-				through our systems. We retain invoices and transaction records for the
-				period statutory accounting rules require. See{" "}
-				<Link href="/legal/subprocessors">Subprocessors</Link> for Stripe’s role
-				and location.
+				— card numbers do not pass through our systems. From Paddle we receive
+				what we need to provide what you bought: the organization, plan, order
+				and subscription status, amounts, and the country used for tax.
+			</p>
+			<p>
+				Enterprise contracts are invoiced by us directly and paid by bank
+				transfer; for those we process billing contact details, organization,
+				invoice, and payment records. Subscriptions started before card sales
+				moved to Paddle are billed through <strong>Stripe</strong>, which acts as
+				our payment processor for them. We retain invoices and transaction
+				records for the period statutory accounting rules require. See{" "}
+				<Link href="/legal/subprocessors">Subprocessors</Link> for each
+				provider’s role and location.
 			</p>
 			<h3>Device, security, and optional telemetry data</h3>
 			<p>
@@ -130,8 +148,10 @@ export default function PrivacyPage() {
 			<p>
 				We disclose data only to service providers needed to run the Service, to
 				connected providers at your direction, during a lawful corporate
-				transaction, to protect rights or safety, or when legally required. Some
-				providers may process data outside the EEA. A restricted transfer is
+				transaction, to protect rights or safety, or when legally required.
+				Paddle, as the seller of a card purchase, collects checkout data from
+				you directly and processes it in the United Kingdom and the United
+				States. Some providers may process data outside the EEA. A restricted transfer is
 				enabled only where an applicable transfer mechanism and supplementary
 				safeguards have been recorded. Contact us for the applicable mechanism
 				and a copy of the relevant safeguards, subject to lawful redactions.
