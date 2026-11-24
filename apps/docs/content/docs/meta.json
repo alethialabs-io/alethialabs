@@ -1,15 +1,17 @@
 {
 	"title": "Documentation",
-	"root": true,
 	"pages": [
 		"index",
 		"get-started",
 		"tutorials",
 		"guides",
+		"concepts",
 		"reference",
 		"troubleshooting",
-		"concepts",
+		"---Run and extend---",
+		"self-host",
 		"agents",
+		"---Product---",
 		"editions",
 		"changelog"
 	]

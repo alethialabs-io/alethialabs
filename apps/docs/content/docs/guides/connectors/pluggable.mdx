@@ -28,7 +28,7 @@ The catalog is data-driven — each provider is one row in the `connectors` tabl
 
 ## How credentials are stored
 
-Secret fields (tokens, passwords) are **encrypted at rest** with AES-256-GCM before being written to the `connector_credentials` table; non-secret fields (a Vault address, a Docker Hub username) are stored in clear. The encryption key comes from `ALETHIA_CRED_ENCRYPTION_KEY` (see [Configuration](/guides/self-hosting/configuration)).
+Secret fields (tokens, passwords) are **encrypted at rest** with AES-256-GCM before being written to the `connector_credentials` table; non-secret fields (a Vault address, a Docker Hub username) are stored in clear. The encryption key comes from `ALETHIA_CRED_ENCRYPTION_KEY` (see [Configuration](/self-host/configuration)).
 
 <Callout type="info">
 Secrets are **never** placed in a Project's `config_snapshot`. They are decrypted and attached to a job only at **claim time**, then injected into the runner's OpenTofu variables in memory — preserving the [zero-credential model](/concepts/security).
