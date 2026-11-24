@@ -9,7 +9,8 @@ import "server-only";
 // page's first paint carries its data and the client fetches nothing on mount.
 //
 // The bodies MOVED here from the `"use server"` modules that used to serve them as actions:
-//   · readPromotions          ← app/server/actions/promotions.ts listPromotions
+//   · readPromotionsPage      ← app/server/actions/promotions.ts listPromotions (a keyset page
+//                               since LST-3 #7485, through lib/queries/promotions.ts)
 //   · readPromotionDetail     ← app/server/actions/promotions.ts getPromotionDetail
 //   · readPromotionPreview    ← app/server/actions/promotions.ts previewPromotion
 //   · readProtectionSummaries ← app/server/actions/protection.ts listProtectionRules
@@ -57,13 +58,14 @@ import { readGitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import {
 	type EnvironmentsPage,
 	type EnvironmentsQuery,
-	environmentsPage,
+	queryEnvironmentsPage,
 } from "@/lib/queries/environments";
+import { KEYSET_DEFAULT_LIMIT, type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
+import { type PromotionsPage, queryPromotionsPage } from "@/lib/queries/promotions";
 import { diffDesigns } from "@/lib/promotions/diff";
 import { IN_FLIGHT, type PromotionRow, type ProtectionRow } from "@/lib/promotions/lifecycle";
 import { assertProjectInActorOrg, promotionInActorOrg } from "@/lib/promotions/org-binding";
 import { query } from "@/lib/rpc/base";
-import { arrayIncludes } from "@/lib/type-guards";
 import type { ByoAdmissionNamespaceReport, GateResult, PromotionDiff } from "@/types/jsonb.types";
 
 /** One environment row as the page shows it (`updated_at` is an ISO string). */
@@ -83,15 +85,8 @@ export interface EnvRow {
 	byo_admission_pending: boolean;
 }
 
-/** A promotion row projected for the client. */
-export interface PromotionRowView {
-	id: string;
-	source_environment_id: string;
-	target_environment_id: string;
-	status: string;
-	error_message: string | null;
-	created_at: string;
-}
+/** A promotion row projected for the client — one row of the promotions history's page. */
+export type { PromotionHistoryRow as PromotionRowView } from "@/lib/queries/promotions";
 
 /** One approval slot, enriched with the approver's display name for the UI. */
 export interface PromotionApprovalSlot {
@@ -133,14 +128,11 @@ export interface EnvironmentsOverview {
 	canManage: boolean;
 	/** Whether the viewer may promote, approve, reject or cancel (`project:deploy`). */
 	canPromote: boolean;
-	/** EVERY environment of the project, whatever the filter bar selects. */
+	/** EVERY environment of the project, whatever the filter bar selects. The TABLE's rows are a
+	 *  separate keyset read (`environments.page`), joined to these by id. */
 	envs: EnvRow[];
-	/** Which of `envs` the list shows for the read's filters, and the facet options (the filter
-	 *  standard's server half, lib/queries/environments.ts). */
-	page: EnvironmentsPage;
 	consistency: EnvConsistency;
 	reconcile: EnvReconcileState[];
-	promotions: PromotionRowView[];
 	/** The in-flight promotion, hydrated (gates + approval slots + diff); null when none. */
 	activePromotion: PromotionDetail | null;
 	/** Each environment's protection-rule summary, keyed by environment id (unset → absent). */
@@ -207,15 +199,41 @@ async function assertEnvsInProject(actor: Actor, projectId: string, envIds: stri
 
 // ── Promotions ────────────────────────────────────────────────────────────────────────────────
 
-/** A project's promotions, newest first. The caller has bound and authorized the project. */
-async function readPromotions(actor: Actor, projectId: string): Promise<PromotionRow[]> {
-	return withActorScope(actor, (tx) =>
+/**
+ * The project's in-flight promotion, or null — one row, never the history. At most one promotion is
+ * active per TARGET environment (`env_promotions_one_active_per_target`), so a project with several
+ * targets could hold more than one; the newest is the one the page shows, as before. The caller has
+ * bound and authorized the project.
+ */
+async function readActivePromotion(actor: Actor, projectId: string): Promise<PromotionRow | null> {
+	const [row] = await withActorScope(actor, (tx) =>
 		tx
 			.select()
 			.from(environmentPromotions)
-			.where(eq(environmentPromotions.project_id, projectId))
-			.orderBy(desc(environmentPromotions.created_at)),
+			.where(
+				and(
+					eq(environmentPromotions.project_id, projectId),
+					inArray(environmentPromotions.status, [...IN_FLIGHT]),
+				),
+			)
+			.orderBy(desc(environmentPromotions.created_at))
+			.limit(1),
 	);
+	return row ?? null;
+}
+
+/**
+ * One keyset page of the project `slug` names: its promotions, newest first (the history table,
+ * LST-3 #7485). Bound to the addressed org by slug, then gated on project `view`, exactly as the
+ * overview is; the page itself reads in SQL through `queryPromotionsPage` on the actor's RLS scope.
+ */
+async function readPromotionsPage(
+	slug: string,
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): Promise<PromotionsPage> {
+	const projectId = await resolveProjectInOrg(await currentActor(), slug);
+	const actor = await authorizeRead("view", { type: "project", id: projectId });
+	return withActorScope(actor, (tx) => queryPromotionsPage(tx, projectId, request));
 }
 
 /** Two-letter initials from a display name (e.g. "Ivo Karadzhov" → "IK"). */
@@ -396,7 +414,7 @@ async function mayOnProject(actor: Actor, action: "edit" | "deploy", projectId: 
  * Everything the Environments page paints for the project `slug` names in the addressed org.
  *
  * What may degrade and what may not:
- *  - The environment list, the promotions, the in-flight promotion's detail and the protection rules
+ *  - The environment list, the in-flight promotion's detail and the protection rules
  *    are FACTS a person acts on. If any of them fails, the read fails and the page renders its error
  *    — never an empty list, never "no promotion in flight" over a promotion that is, never "no
  *    protection" over gates that exist.
@@ -404,10 +422,7 @@ async function mayOnProject(actor: Actor, action: "edit" | "deploy", projectId: 
  *    for a reason unrelated to the page (a since-deleted cloud identity). They degrade: the matrix to
  *    no rows (it is then not rendered), the badges to "never scanned".
  */
-export async function readEnvironmentsOverview(
-	slug: string,
-	query: EnvironmentsQuery = {},
-): Promise<EnvironmentsOverview> {
+export async function readEnvironmentsOverview(slug: string): Promise<EnvironmentsOverview> {
 	const projectId = await resolveProjectInOrg(await currentActor(), slug);
 	const actor = await authorizeRead("view", { type: "project", id: projectId });
 	const [canManage, canPromote] = await Promise.all([
@@ -416,7 +431,7 @@ export async function readEnvironmentsOverview(
 	]);
 
 	const { environments } = await getProjectEnvironments(projectId);
-	const [consistency, reconcile, promotions, protectionByEnv] = await Promise.all([
+	const [consistency, reconcile, active, protectionByEnv] = await Promise.all([
 		getEnvConsistency(projectId).catch(
 			(): EnvConsistency => ({
 				envs: environments.map((e) => ({ id: e.id, name: e.name, stage: e.stage })),
@@ -424,7 +439,7 @@ export async function readEnvironmentsOverview(
 			}),
 		),
 		getEnvReconcileStates(projectId).catch((): EnvReconcileState[] => []),
-		readPromotions(actor, projectId),
+		readActivePromotion(actor, projectId),
 		readProtectionSummaries(actor, projectId),
 	]);
 
@@ -435,14 +450,12 @@ export async function readEnvironmentsOverview(
 		new Map(environments.map((e) => [e.id, e.byo_admission_enforce])),
 	).catch(() => new Map<string, ByoAdmissionCardState>());
 
-	const active = promotions.find((p) => arrayIncludes(IN_FLIGHT, p.status));
 	const activePromotion = active ? await readPromotionDetail(active.id) : null;
 
 	return {
 		projectId,
 		canManage,
 		canPromote,
-		page: environmentsPage(environments, query),
 		envs: environments.map((e) => ({
 			id: e.id,
 			name: e.name,
@@ -456,17 +469,33 @@ export async function readEnvironmentsOverview(
 		})),
 		consistency,
 		reconcile,
-		promotions: promotions.map((p) => ({
-			id: p.id,
-			source_environment_id: p.source_environment_id,
-			target_environment_id: p.target_environment_id,
-			status: p.status,
-			error_message: p.error_message,
-			created_at: p.created_at.toISOString(),
-		})),
 		activePromotion,
 		protectionByEnv,
 	};
+}
+
+/**
+ * One keyset page of the Environments TABLE for the project `slug` names (LST-3 #7485): the
+ * environments matching `query`, newest first, paged IN MEMORY on the server by
+ * `queryEnvironmentsPage` (lib/queries/environments.ts — the source is an in-process module call,
+ * not a table), with the facets over every environment of the project on the first page. Bound to
+ * the addressed org and gated on project `view` exactly as the overview is.
+ */
+async function readEnvironmentsPage(
+	slug: string,
+	{ cursor, limit = KEYSET_DEFAULT_LIMIT, ...query }: EnvironmentsQuery & Partial<KeysetPageRequest> = {},
+): Promise<EnvironmentsPage> {
+	const projectId = await resolveProjectInOrg(await currentActor(), slug);
+	await authorizeRead("view", { type: "project", id: projectId });
+	const { environments } = await getProjectEnvironments(projectId);
+	const facts = environments.map((e) => ({
+		id: e.id,
+		name: e.name,
+		stage: e.stage,
+		status: e.status,
+		created_at: e.created_at.toISOString(),
+	}));
+	return queryEnvironmentsPage(facts, query, { cursor, limit });
 }
 
 // ── BYO admission report ──────────────────────────────────────────────────────────────────────
@@ -499,33 +528,54 @@ export async function readByoAdmissionReport(
 
 const values = z.array(z.string().min(1).max(200)).max(200).optional();
 
+/** The project an Environments read is for: its slug, from the route (the SCOPE, never a filter). */
+const projectSlug = z.string().min(1).max(200);
+
+/** The Environments page's overview input: the project alone. Its panels need every environment. */
+export const environmentsOverviewInput = z.object({ project: projectSlug });
+
 /**
- * The Environments page's read input: the project (the route's SCOPE) and the bar's filters.
- * Normalized (trimmed, sorted, empty → absent) by the caller, so a pristine list's input is
- * `{ project }` alone and equal views are one query key.
+ * The environments TABLE's query: the project and the bar's filters. Normalized (trimmed, sorted,
+ * empty → absent) by the caller, so a pristine list's query is `{ project }` alone and equal views
+ * are one query key.
  */
-export const environmentsOverviewInput = z.object({
-	project: z.string().min(1).max(200),
+const environmentsListQuery = z.object({
+	project: projectSlug,
 	search: z.string().max(200).optional(),
 	stages: values,
 	statuses: values,
 });
 
-/** The validated shape of {@link environmentsOverviewInput}. */
-export type EnvironmentsOverviewInput = z.infer<typeof environmentsOverviewInput>;
+/** One keyset page of the environments table: the query plus the opaque cursor and the page size. */
+export const environmentsPageInput = environmentsListQuery.extend(keysetPageInput());
+
+/** What the environments table is asked, without the paging fields — the normalized query, and the key. */
+export type EnvironmentsListQuery = z.infer<typeof environmentsListQuery>;
+
+/** One keyset page of the promotions history: the project plus the cursor and the page size. */
+export const promotionsPageInput = z.object({ project: projectSlug, ...keysetPageInput() });
 
 /**
  * The environments domain's read procedures (ADR 0005 D1, #6120). Every one is a GET (the `query`
- * base). `overview` is prefetched by the Environments page; the two dialog reads are fetched when
- * their dialog opens. All three are invalidated by the real-time bus (`lib/query/topics.ts`) —
- * an environment, a promotion, an approval slot or a protection rule changing is an `environments`
- * hint (`lib/db/programmables.sql`) — instead of polled.
+ * base). `overview`, the first page of `page` and the first page of `promotions` are prefetched by
+ * the Environments page; the dialog reads are fetched when their dialog opens. All of them are
+ * invalidated by the real-time bus (`lib/query/topics.ts` → `orpc.environments.key()`, a prefix of
+ * every key here, the infinite ones included) — an environment, a promotion, an approval slot or a
+ * protection rule changing is an `environments` hint (`lib/db/programmables.sql`) — instead of polled.
  */
 export const environmentsRouter = {
-	/** The page: environments, consistency, reconcile, promotions, the active one, protection. */
+	/** The page's panels: every environment, consistency, reconcile, the active promotion, protection. */
 	overview: query
 		.input(environmentsOverviewInput)
-		.handler(({ input: { project, ...filters } }) => readEnvironmentsOverview(project, filters)),
+		.handler(({ input: { project } }) => readEnvironmentsOverview(project)),
+	/** The environments TABLE: one keyset page of the filtered list, facets on the first page. */
+	page: query
+		.input(environmentsPageInput)
+		.handler(({ input: { project, ...rest } }) => readEnvironmentsPage(project, rest)),
+	/** The promotions history: one keyset page, newest first. */
+	promotions: query
+		.input(promotionsPageInput)
+		.handler(({ input: { project, cursor, limit } }) => readPromotionsPage(project, { cursor, limit })),
 	/** One environment's latest BYO admission report (the BYO admission drawer, #6541). */
 	byoAdmissionReport: query
 		.input(z.object({ projectId: z.uuid(), environmentId: z.uuid() }))

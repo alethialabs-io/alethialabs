@@ -8,7 +8,9 @@
 // led by the environment. A refresh that fails after data arrived keeps the rows.
 //
 // And the list is on the filter standard: the read's input is the normalized query, a project is a
-// SCOPE in that input and never a filter, and the open row is in the URL.
+// SCOPE in that input and never a filter, and the open row is in the URL. And on the list standard
+// (LST-3 #7485): the read is `useKeysetList(orpc.clusters.page, query)`, the table is in server
+// mode with its footer, there is no count and no `?page=`.
 
 import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -26,12 +28,30 @@ const h = vi.hoisted(() => ({
 	search: new URLSearchParams(),
 	project: undefined as string | undefined,
 	handlers: {} as Record<string, FakeHandler>,
+	loadMore: vi.fn(),
+	loadMoreFailed: false,
 }));
 
-vi.mock("@/lib/query/use-clusters-page-query", () => ({
-	useClustersPageQuery: (input: unknown) => {
+/** The list's state, as `useKeysetList` would derive it from `h.query` (the first page's status). */
+vi.mock("@/lib/query/use-keyset-list", () => ({
+	useKeysetList: (_procedure: unknown, input: unknown) => {
 		h.inputs.push(input);
-		return h.query;
+		const q = h.query as {
+			data?: { rows: unknown[]; facets: unknown; universeEmpty: boolean | null; nextCursor: string | null };
+			isPlaceholderData?: boolean;
+		};
+		return {
+			rows: q.data?.rows ?? [],
+			facets: q.data?.facets ?? null,
+			universeEmpty: q.data?.universeEmpty ?? null,
+			query: h.query,
+			isPending: q.data === undefined,
+			isPlaceholderData: q.isPlaceholderData ?? false,
+			hasMore: q.data?.nextCursor != null,
+			loadingMore: false,
+			loadMoreFailed: h.loadMoreFailed,
+			loadMore: h.loadMore,
+		};
 	},
 }));
 vi.mock("@/lib/rpc/client", async () => {
@@ -65,9 +85,14 @@ const FACETS = {
 	regions: [{ value: "eu-central-1", label: null, count: 3 }],
 };
 
-/** The read's answer for `rows`, out of `total` clusters in scope. */
-function page(rows: ClusterListItem[], total = rows.length) {
-	return { rows, resultCount: rows.length, total, facets: FACETS };
+/** The read's first page for `rows`; `universeEmpty` unless the scope holds `total` clusters. */
+function page(rows: ClusterListItem[], total = rows.length, nextCursor: string | null = null) {
+	return {
+		rows: rows.map((cluster) => ({ id: cluster.project_cluster.id, cluster })),
+		nextCursor,
+		facets: FACETS,
+		universeEmpty: total === 0,
+	};
 }
 
 /** A cluster `id` of environment `environment` in project `projectName`. */
@@ -95,6 +120,7 @@ beforeEach(() => {
 	h.inputs.length = 0;
 	h.search = new URLSearchParams();
 	h.project = undefined;
+	h.loadMoreFailed = false;
 	h.query = { data: undefined, isError: false, isLoading: true, isPlaceholderData: false, error: null, refetch };
 	act(() => useClustersFilters.getState().reset());
 });
@@ -170,7 +196,31 @@ describe("ClustersClient — the table", () => {
 		expect(screen.getByRole("button", { name: "Open staging in shop" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Open production in search" })).toBeInTheDocument();
 		expect(screen.getByRole("columnheader", { name: /project/i })).toBeInTheDocument();
-		expect(document.querySelector('[data-slot="page-toolbar"]')).toHaveTextContent("3");
+		// No count anywhere in the toolbar (lib/query/README.md → "Counts").
+		expect(document.querySelector('[data-slot="page-toolbar"]')?.textContent).not.toMatch(/\d/);
+	});
+
+	it("pages by keyset: a further page is the footer's Load more, never page numbers", async () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE, 3, "next") };
+		renderList();
+		expect(screen.queryByRole("button", { name: /next page|previous page/i })).toBeNull();
+		await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+		expect(h.loadMore).toHaveBeenCalledOnce();
+		expect(h.replace).not.toHaveBeenCalled(); // the cursor never enters the URL
+	});
+
+	it("at the end there is no footer at all", () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE) };
+		renderList();
+		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+	});
+
+	it("a failed later page keeps the rows and offers the retry line", () => {
+		h.loadMoreFailed = true;
+		h.query = { ...h.query, isLoading: false, data: page(THREE, 3, "next") };
+		renderList();
+		expect(rowEnvironments()).toHaveLength(3);
+		expect(screen.getByText("Couldn't load more")).toBeInTheDocument();
 	});
 
 	it("links each row's project, on the organization's list", () => {

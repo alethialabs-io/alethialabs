@@ -20,6 +20,15 @@
 // handed the scoped universe and never the query. `tests/lib/queries/clusters-page.test.ts`
 // asserts both halves: the option set does not shrink as the query narrows, and it does shrink to
 // the project's rows when the scope narrows.
+//
+// ── WHY IT PAGES IN MEMORY ──────────────────────────────────────────────────────────────────
+//
+// The list standard's keyset contract (lib/query/README.md → "Paging"; LST-3 #7485). A SQL keyset
+// is impossible here for the reason above: the status a row is filtered under is derived, not a
+// column, so no `WHERE` can apply the filter before the cursor. The universe is composed on the
+// server and paged there through `keysetPageInMemory` — the same order (the cluster's creation
+// instant truncated to ms, then its id, both descending) and the same strictly-after cursor as a
+// SQL builder. The browser receives one page at a time; the universe never leaves the server.
 
 import {
 	type ClusterStatusKey,
@@ -29,6 +38,14 @@ import {
 	clusterStatusKey,
 } from "@/components/clusters/cluster-posture";
 import { type FacetOption, asOptions, orderedOptions, tally } from "@/lib/queries/facets";
+// Type-only, so erased at build: the procedure module imports THIS one at runtime, never the reverse.
+import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetPageInMemory,
+} from "@/lib/queries/keyset";
 
 /** The clusters list's normalized query (the `normalizeClustersQuery()` output). */
 export interface ClustersQuery {
@@ -62,23 +79,35 @@ export interface ClusterFacts extends PostureFacts {
 	environment_stage: string;
 	region: string;
 	cloud_identities: { provider: string } | null;
-	project_cluster: PostureFacts["project_cluster"] & { cluster_name: string | null };
-}
-
-/** Rows + the facet options behind the clusters filter bar. */
-export interface ClustersPage<Row extends ClusterFacts = ClusterFacts> {
-	/** Clusters matching the query, in the universe's order. */
-	rows: Row[];
-	resultCount: number;
-	/** Every cluster in scope that this actor can see — the "no clusters yet" test, not "none match". */
-	total: number;
-	/** Counts over the scoped, UNFILTERED universe, so an option never disappears once selected. */
-	facets: {
-		clouds: FacetOption[];
-		statuses: FacetOption[];
-		regions: FacetOption[];
+	project_cluster: PostureFacts["project_cluster"] & {
+		/** The cluster's own id — the row's identity and the keyset tiebreaker. */
+		id: string;
+		/** When the cluster row was created (ISO) — the list's sort key. */
+		created_at: string;
+		cluster_name: string | null;
 	};
 }
+
+/** The facet options behind the clusters filter bar: counts over the scoped, UNFILTERED universe. */
+export interface ClusterFacetSet {
+	clouds: FacetOption[];
+	statuses: FacetOption[];
+	regions: FacetOption[];
+}
+
+/**
+ * One row of a clusters page. The cluster is wrapped because its own `id` is its PROJECT's (the
+ * project drilldown filters on it), and a project with a cluster per environment would then hand
+ * the client two rows with one id — which the page join (`useKeysetList`) keeps once. The row's
+ * `id` is the cluster's own (`project_cluster.id`).
+ */
+export interface ClusterPageRow<Row extends ClusterFacts = ClusterFacts> {
+	id: string;
+	cluster: Row;
+}
+
+/** One keyset page of the clusters list (lib/queries/keyset.ts → `KeysetListPage`). */
+export type ClustersPage<Row extends ClusterFacts = ClusterFacts> = KeysetListPage<ClusterPageRow<Row>, ClusterFacetSet>;
 
 /** The cloud-facet value of a cluster whose cloud account is not known. */
 export const UNKNOWN_CLOUD = "unknown";
@@ -127,7 +156,7 @@ export function matchesClustersQuery(row: ClusterFacts, query: ClustersQuery): b
  * and its caller hands it the scoped, unfiltered rows: "the facet pass never saw the filter" is
  * then a property of the signature, not a promise in a comment.
  */
-export function clusterFacets(all: readonly ClusterFacts[]): ClustersPage["facets"] {
+export function clusterFacets(all: readonly ClusterFacts[]): ClusterFacetSet {
 	const rows = [...all];
 	return {
 		clouds: asOptions(tally(rows, cloudKey)),
@@ -138,24 +167,35 @@ export function clusterFacets(all: readonly ClusterFacts[]): ClustersPage["facet
 }
 
 /**
- * Resolve `query` against the composed cluster universe: the rows in scope that match, the result
- * count, the size of the scope, and the facet counts over every row in scope.
+ * One keyset page of `query` over the composed cluster universe: the rows in scope that match,
+ * newest cluster first, strictly after `request.cursor`; and, on the FIRST page only, the facet
+ * counts over every row in scope and whether the scope holds any cluster at all (`universeEmpty`,
+ * the first-run test — never a count). Paged in memory because the universe is composed (see the
+ * header); the order and the cursor are the SQL contract's (`keysetPageInMemory`).
  *
- * @param all every cluster this actor can see, already composed and ordered
+ * @param all every cluster this actor can see, already composed
  * @param query the normalized filter query; `{}` is the pristine view
  * @param scope what the ROUTE narrows the list to; `{}` is the organization
+ * @param request the decoded cursor (absent on page one) and the page size
  */
-export function clustersPage<Row extends ClusterFacts>(
-	all: readonly Row[],
+export function queryClustersPage(
+	all: readonly ClusterListItem[],
 	query: ClustersQuery = {},
 	scope: ClustersScope = {},
-): ClustersPage<Row> {
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): ClustersPage<ClusterListItem> {
 	const scoped = all.filter((row) => inScope(row, scope));
-	const rows = scoped.filter((row) => matchesClustersQuery(row, query));
+	const matched = scoped.filter((row) => matchesClustersQuery(row, query));
+	const page = keysetPageInMemory(matched, request, (row) => ({
+		at: row.project_cluster.created_at,
+		id: row.project_cluster.id,
+	}));
+	const first = request.cursor === undefined;
 	return {
-		rows,
-		resultCount: rows.length,
-		total: scoped.length,
-		facets: clusterFacets(scoped),
+		rows: page.rows.map((cluster) => ({ id: cluster.project_cluster.id, cluster })),
+		nextCursor: page.nextCursor,
+		// The facet pass is handed the scoped universe, never `matched`: it cannot see the filter.
+		facets: first ? clusterFacets(scoped) : null,
+		universeEmpty: first ? scoped.length === 0 : null,
 	};
 }
