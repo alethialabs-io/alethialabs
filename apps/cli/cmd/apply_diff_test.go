@@ -298,8 +298,17 @@ func (f *diffFake) UpsertComponent(_, kind, env string, fields map[string]interf
 	return &api.Component{Kind: kind, Name: kind}, nil
 }
 func (f *diffFake) QueueJobWithParams(p api.QueueJobParams) (*api.ProvisionJob, error) {
+	// A deploy previews its environment first; the preview is not a deploy and is not recorded.
+	if p.JobType == string(types.JobTypePlan) {
+		return &api.ProvisionJob{ID: "plan-" + p.EnvironmentID, Status: "QUEUED"}, nil
+	}
 	f.jobs = append(f.jobs, p.EnvironmentID)
 	return &api.ProvisionJob{ID: "j-" + p.EnvironmentID, Status: "QUEUED"}, nil
+}
+
+// GetJob reports every job as succeeded, so a preview a deploy waits for finishes at once.
+func (f *diffFake) GetJob(id string) (*api.ProvisionJob, error) {
+	return &api.ProvisionJob{ID: id, Status: string(types.JobStatusSuccess)}, nil
 }
 
 // diffManifest parses a manifest the way planFromFile does, without the schema check.
