@@ -14,7 +14,7 @@
 
 import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
@@ -121,6 +121,7 @@ beforeEach(() => {
 	h.search = new URLSearchParams();
 	h.project = undefined;
 	h.loadMoreFailed = false;
+	delete h.handlers["clusters.detail"];
 	h.query = { data: undefined, isError: false, isLoading: true, isPlaceholderData: false, error: null, refetch };
 	act(() => useClustersFilters.getState().reset());
 });
@@ -308,6 +309,49 @@ describe("ClustersClient — the open row is in the URL", () => {
 	it("a link that names a row opens its record", () => {
 		h.search = new URLSearchParams("selected=c2");
 		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")]) };
+		renderList();
+		expect(screen.getByRole("dialog", { name: "staging · shop" })).toBeInTheDocument();
+	});
+
+	it("a deep link to a cluster that is not on a loaded page (page 3) opens it at once, read by id", async () => {
+		const FAR = "33333333-3333-4333-8333-333333333333";
+		h.search = new URLSearchParams(`selected=${FAR}`);
+		// Two rows loaded and more to come: the selected cluster's row is pages away.
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")], 120, "next") };
+		const asked: unknown[] = [];
+		h.handlers["clusters.detail"] = async (input) => {
+			asked.push(input);
+			return cluster(FAR, "qa", "billing");
+		};
+		renderList();
+		expect(await screen.findByRole("dialog", { name: "qa · billing" })).toBeInTheDocument();
+		expect(asked).toEqual([{ clusterId: FAR }]);
+		// Nothing was paged to get there.
+		expect(h.loadMore).not.toHaveBeenCalled();
+	});
+
+	it("on a project's list the by-id read carries the project as its scope", async () => {
+		const FAR = "33333333-3333-4333-8333-333333333333";
+		h.project = "shop";
+		h.search = new URLSearchParams(`selected=${FAR}`);
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")], 120, "next") };
+		const asked: unknown[] = [];
+		h.handlers["clusters.detail"] = async (input) => {
+			asked.push(input);
+			return null;
+		};
+		renderList("p2");
+		await waitFor(() => expect(asked).toEqual([{ clusterId: FAR, projectId: "p2" }]));
+		// The cluster is not visible in this scope: nothing opens.
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("a loaded row opens from the page, with no by-id read", () => {
+		h.search = new URLSearchParams("selected=c2");
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")]) };
+		h.handlers["clusters.detail"] = async () => {
+			throw new Error("must not be asked");
+		};
 		renderList();
 		expect(screen.getByRole("dialog", { name: "staging · shop" })).toBeInTheDocument();
 	});

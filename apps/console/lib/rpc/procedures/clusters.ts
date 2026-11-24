@@ -451,6 +451,34 @@ export async function readClustersPage(
 	return queryClustersPage(await readClusterList(actor), filters, { projectId }, { cursor, limit });
 }
 
+/** One cluster, by its own id, as the list's drawer shows it — {@link readClusterDetail}'s input. */
+const clusterDetailInput = z.object({
+	/** The cluster's own id (`project_cluster.id`) — what `?selected=` carries. */
+	clusterId: z.uuid(),
+	/** The project a project route lists; absent on the org route. A SCOPE, as on the page. */
+	projectId: z.uuid().optional(),
+});
+
+/**
+ * One cluster of the list, by its own id: what a `?selected=` link opens when that cluster's row
+ * is not among the pages loaded so far (LST-3 #7485). The SAME composed read as the page
+ * ({@link readClusterList}: `project:view`, the org predicate, the PDP's per-project visibility),
+ * narrowed to one row, so a link can never open a cluster the page itself would not list. Null —
+ * not a refusal — for a cluster the actor cannot see, of another project when `projectId` scopes
+ * the read, or that no longer exists: the drawer then opens nothing, as it did for a stale link.
+ */
+async function readClusterDetail(
+	actor: Actor,
+	{ clusterId, projectId }: z.infer<typeof clusterDetailInput>,
+): Promise<ClusterListItem | null> {
+	const all = await readClusterList(actor);
+	return (
+		all.find(
+			(c) => c.project_cluster.id === clusterId && (projectId === undefined || c.id === projectId),
+		) ?? null
+	);
+}
+
 /**
  * The clusters domain's reads (ADR 0005 D1, #6122), resolved for the actor the entry point bound
  * from the request's ADDRESS — never the session's org. `page` serves `/~/clusters` and a project's
@@ -462,4 +490,8 @@ export const clustersRouter = {
 	page: query
 		.input(clustersPageInput)
 		.handler(({ context, input }) => readClustersPage(context.actor, input)),
+	/** One cluster for the drawer a `?selected=` link opens, whether or not its row is loaded. */
+	detail: query
+		.input(clusterDetailInput)
+		.handler(({ context, input }) => readClusterDetail(context.actor, input)),
 };

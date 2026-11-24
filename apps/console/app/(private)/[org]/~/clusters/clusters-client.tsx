@@ -10,8 +10,9 @@
 // in the URL (`?selected=`), so a link to one cluster is a link.
 //
 // Paged by the list standard's keyset contract (LST-3 #7485): `useKeysetList` + `<DataTable
-// keyset>` and its `ListFooter`, one server page at a time, and no count. A `?selected=` row that
-// is not among the loaded pages opens nothing until it is loaded.
+// keyset>` and its `ListFooter`, one server page at a time, and no count. A `?selected=` cluster
+// whose row is not among the loaded pages is read on its own (`clusters.detail`, the page's
+// visibility narrowed to one row), so a deep link opens its drawer at once, never after paging.
 //
 // LIVE, with no poll: a cluster that changes is a `clusters` hint, and its environment's lifecycle
 // and data services are `environments` hints; both invalidate every `clusters.*` key — a prefix of
@@ -24,6 +25,7 @@ import { cn } from "@repo/ui/utils";
 import { SearchX, Server } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import {
 	buildClusterColumns,
@@ -32,6 +34,7 @@ import {
 	clusterRows,
 } from "@/components/clusters/cluster-columns";
 import { ClusterDetailSheet } from "@/components/clusters/cluster-detail";
+import { clusterPosture } from "@/components/clusters/cluster-posture";
 import { ClustersFilterBar } from "@/components/clusters/clusters-filter-bar";
 import { DEFAULT_CLUSTER_FILTERS, normalizeClustersQuery } from "@/components/clusters/clusters-query";
 import { CLUSTERS_REGION, ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
@@ -49,9 +52,12 @@ import {
 	selectionPatch,
 } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
-import { readRefusalOf } from "@/lib/rpc/refusal";
+import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import { useClustersFilters } from "@/lib/stores/use-clusters-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+
+/** The shape of a cluster id — what a `?selected=` value must be before it is asked of the server. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** What a filter change clears from the URL: the open row, which the new filters may exclude. */
 const FILTER_RESET_PARAMS: readonly string[] = [SELECTION_PARAM];
@@ -92,7 +98,20 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	// The table renders the loaded rows with their posture; the paging state is the list's own.
 	const table = useMemo(() => ({ ...list, rows }), [list, rows]);
 	const selectedId = selectionFromUrl(searchParams);
-	const selected = rows.find((row) => row.id === selectedId) ?? null;
+	const loadedSelection = rows.find((row) => row.id === selectedId) ?? null;
+	// The drawer must not wait for the row to be paged in: a selection that is not loaded is read by
+	// id. Only an id that can BE a cluster id is asked; anything else opens nothing, as before.
+	const lookup = selectedId !== null && loadedSelection === null && UUID.test(selectedId) ? selectedId : null;
+	const detail = useQuery(
+		orpc.clusters.detail.queryOptions({
+			input: { clusterId: lookup ?? "", ...(projectId ? { projectId } : {}) },
+			enabled: lookup !== null,
+			retry: retryUnlessRefused,
+		}),
+	);
+	const fetched = lookup !== null ? (detail.data ?? null) : null;
+	const selected =
+		loadedSelection ?? (fetched ? { id: fetched.project_cluster.id, cluster: fetched, posture: clusterPosture(fetched) } : null);
 
 	/** Writes one view param into the URL, leaving the filters and every other param as they are. */
 	const patchUrl = (patch: Record<string, string | null>) => {
