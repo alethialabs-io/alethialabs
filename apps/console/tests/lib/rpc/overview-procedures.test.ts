@@ -30,9 +30,10 @@ vi.mock("@/app/server/actions/billing", () => ({
 	}),
 }));
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
-// The project grid's read (#6817) calls the projects domain's readers, the connectors read, the
-// PDP and the offered-clouds list in-process; each is replaced, so this file loads none of them.
-vi.mock("@/app/server/actions/projects", () => ({ queryProjects: vi.fn(), getProjects: vi.fn() }));
+// The project grid's reads (#6817, LST-4 #7486) call the projects page builder and count, the
+// connectors read, the PDP and the offered-clouds list in-process; each is replaced, so this file
+// loads none of them.
+vi.mock("@/lib/queries/projects", () => ({ queryProjectsPage: vi.fn(), countProjects: vi.fn() }));
 vi.mock("@/lib/rpc/procedures/connectors", () => ({ readConnectedCloudProviders: vi.fn() }));
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can: h.can }) }));
 vi.mock("@/lib/cloud-providers/availability", () => ({ offeredClouds: () => ["aws", "gcp", "azure", "hetzner"] }));
@@ -40,6 +41,8 @@ vi.mock("@/lib/authz/guard", () => ({ authorize: vi.fn() }));
 vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: vi.fn() }));
 vi.mock("@/lib/billing/config", () => ({ isStripeConfigured: () => true }));
 vi.mock("@/lib/db", () => ({
+	// The actor-scoped transaction the grid's reads run in: the builder receives this marker.
+	withActorScope: (_actor: unknown, fn: (tx: unknown) => unknown) => fn("scoped-tx"),
 	getServiceDb: () => ({
 		select: () => ({
 			from: () => ({
@@ -65,12 +68,13 @@ import { resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import type { OrganizationBilling } from "@/lib/db/schema";
 import { money } from "@repo/format";
-import { getProjects, queryProjects } from "@/app/server/actions/projects";
+import { countProjects, queryProjectsPage } from "@/lib/queries/projects";
 import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
 import {
 	OVERVIEW_ALERT_ROWS,
 	readOverviewAlerts,
-	readOverviewProjects,
+	readOverviewProjectsPage,
+	readOverviewProjectsSummary,
 	readOverviewUsage,
 } from "@/lib/rpc/procedures/overview";
 
@@ -229,62 +233,79 @@ describe("overview.alerts", () => {
 	});
 });
 
-describe("readOverviewProjects (#6817)", () => {
+describe("readOverviewProjectsPage (#6817, LST-4 #7486)", () => {
 	const PRISTINE = { q: "", clouds: [], repos: [], sort: "activity" as const };
+	const PAGE = { rows: [], nextCursor: null, facets: { clouds: [], repos: [] }, universeEmpty: true };
+	const CURSOR = { at: "2026-11-20T10:00:00.000Z", id: "00000000-0000-4000-8000-000000000001" };
+
+	beforeEach(() => {
+		vi.mocked(queryProjectsPage).mockReset();
+		vi.mocked(queryProjectsPage).mockResolvedValue(PAGE);
+		vi.mocked(authorize).mockReset();
+		vi.mocked(authorize).mockResolvedValue(orgActor);
+	});
+
+	it("authorizes view on projects, then reads ONE page in the actor's scoped transaction", async () => {
+		const out = await readOverviewProjectsPage({ ...PRISTINE, cursor: CURSOR, limit: 20 });
+		expect(out).toBe(PAGE);
+		expect(authorize).toHaveBeenCalledWith("view", { type: "project" });
+		expect(queryProjectsPage).toHaveBeenCalledWith("scoped-tx", PRISTINE, { cursor: CURSOR, limit: 20 });
+	});
+
+	it("page one with no limit: no cursor, the contract's default page size, and the query untouched", async () => {
+		await readOverviewProjectsPage({ ...PRISTINE, q: "shop", ids: ["00000000-0000-4000-8000-000000000002"] });
+		expect(queryProjectsPage).toHaveBeenCalledWith(
+			"scoped-tx",
+			{ ...PRISTINE, q: "shop", ids: ["00000000-0000-4000-8000-000000000002"] },
+			{ cursor: undefined, limit: 50 },
+		);
+	});
+
+	it("a refused projects read refuses the page, and nothing is read", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		await expect(readOverviewProjectsPage(PRISTINE)).rejects.toThrow("forbidden");
+		expect(queryProjectsPage).not.toHaveBeenCalled();
+	});
+});
+
+describe("readOverviewProjectsSummary (#6817, LST-4 #7486)", () => {
 	const can = h.can;
 
 	beforeEach(() => {
-		vi.mocked(queryProjects).mockReset();
-		vi.mocked(getProjects).mockReset();
+		vi.mocked(countProjects).mockReset();
+		vi.mocked(countProjects).mockResolvedValue(7);
 		vi.mocked(readConnectedCloudProviders).mockReset();
-		can.mockReset();
-		// Two rows, as a length: the read passes the rows through and only counts them.
-		vi.mocked(queryProjects).mockResolvedValue({
-			projects: Object.assign([], { length: 2 }),
-			facets: { clouds: [], repos: [] },
-		});
 		vi.mocked(readConnectedCloudProviders).mockResolvedValue(["aws"]);
+		vi.mocked(authorize).mockReset();
+		vi.mocked(authorize).mockResolvedValue(orgActor);
+		can.mockReset();
 		can.mockResolvedValue({ allowed: true });
 	});
 
-	it("unfiltered: the rows are the total, and the organization's list is not read a second time", async () => {
-		const out = await readOverviewProjects(orgActor, PRISTINE);
-		expect(out.total).toBe(2);
-		expect(getProjects).not.toHaveBeenCalled();
-		expect(queryProjects).toHaveBeenCalledWith(PRISTINE);
+	it("the organization's project count, counted in the scoped transaction", async () => {
+		const out = await readOverviewProjectsSummary(orgActor);
+		expect(out.projectCount).toBe(7);
+		expect(countProjects).toHaveBeenCalledWith("scoped-tx");
 	});
 
-	it("filtered: the total is the organization's, not the matching rows'", async () => {
-		vi.mocked(getProjects).mockResolvedValue(Object.assign([], { length: 7 }));
-		const out = await readOverviewProjects(orgActor, { ...PRISTINE, q: "shop" });
-		expect(out.projects).toHaveLength(2);
-		expect(out.total).toBe(7);
-	});
-
-	it("filtered, and the total could not be counted: `null`, and the grid still answers", async () => {
-		vi.mocked(getProjects).mockRejectedValue(new Error("boom"));
-		const out = await readOverviewProjects(orgActor, { ...PRISTINE, clouds: ["aws"] });
-		expect(out.total).toBeNull();
-		expect(out.projects).toHaveLength(2);
-	});
-
-	it("the connected clouds could not be read: `null`, and the grid still answers", async () => {
+	it("the connected clouds could not be read: `null`, and the summary still answers", async () => {
 		vi.mocked(readConnectedCloudProviders).mockRejectedValue(new Error("boom"));
-		const out = await readOverviewProjects(orgActor, PRISTINE);
+		const out = await readOverviewProjectsSummary(orgActor);
 		expect(out.connectedProviders).toBeNull();
-		expect(out.projects).toHaveLength(2);
+		expect(out.projectCount).toBe(7);
 	});
 
 	it("carries the offered clouds and the viewer's create decision, asked quietly of the PDP", async () => {
 		can.mockResolvedValue({ allowed: false });
-		const out = await readOverviewProjects(orgActor, PRISTINE);
+		const out = await readOverviewProjectsSummary(orgActor);
 		expect(out.offeredClouds).toEqual(["aws", "gcp", "azure", "hetzner"]);
 		expect(out.canCreate).toBe(false);
 		expect(can).toHaveBeenCalledWith(orgActor, "create", { type: "project" });
 	});
 
-	it("a refused projects read refuses the grid: it is the grid", async () => {
-		vi.mocked(queryProjects).mockRejectedValue(new Error("forbidden"));
-		await expect(readOverviewProjects(orgActor, PRISTINE)).rejects.toThrow("forbidden");
+	it("a refused projects read refuses the summary, as it refuses the page", async () => {
+		vi.mocked(authorize).mockRejectedValue(new Error("forbidden"));
+		await expect(readOverviewProjectsSummary(orgActor)).rejects.toThrow("forbidden");
+		expect(countProjects).not.toHaveBeenCalled();
 	});
 });
