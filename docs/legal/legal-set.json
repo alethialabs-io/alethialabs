@@ -145,6 +145,19 @@
 			"owner": "LEG-L4"
 		},
 		{
+			"id": "refunds",
+			"title": "Refund policy",
+			"kind": "public-page",
+			"route": "/refunds",
+			"source": "apps/marketing/app/refunds/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": null,
+			"owner": "LEG-L2"
+		},
+		{
 			"id": "consumer-rights",
 			"title": "Consumer rights",
 			"kind": "public-page",
@@ -1568,6 +1581,27 @@
 			"requires": "A person opening and fulfilling the erasure when the 30-day retrieval window ends. Nothing in the repository schedules it, and no screen calls fulfilErasure yet (#7222).",
 			"owner": "LEG-L1",
 			"verifiedOn": "2026-11-22"
+		},
+		{
+			"id": "refunds.not-on-sale",
+			"document": "refunds",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "has not yet opened paid plans in any country",
+			"evidence": [
+				{
+					"path": "packages/legal/src/paid-markets.ts",
+					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
+					"shows": "No market is open."
+				},
+				{
+					"path": "apps/marketing/app/refunds/page.tsx",
+					"pattern": "const onSale = PAID_MARKETS\\.length > 0;",
+					"shows": "The sentence is shown only while no paid market exists."
+				}
+			],
+			"owner": "LEG-L2",
+			"verifiedOn": "2026-11-24"
 		},
 		{
 			"id": "consumer-rights.no-consumer-market",
