@@ -223,6 +223,20 @@
 			"owner": "REL-L4"
 		},
 		{
+			"id": "nra-file-formats",
+			"title": "NRA VAT e-filing file formats",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/NRA_FILE_FORMATS.md",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Written by board issue #7457 (the NRA filing generator). No LEG unit audits it; the generator's tests (apps/console/tests/lib/billing/nra/) hold the field layout to it, and the accountant reviews it before the first filing."
+		},
+		{
 			"id": "tax-market-preconditions",
 			"title": "Tax and market preconditions",
 			"kind": "internal-record",
