@@ -27,6 +27,17 @@ export const slugSchema = z
 /** The resource-kind enum as a zod enum (shared by the assignment schemas). */
 export const resourceKindSchema = z.enum(resourceKind.enumValues);
 
+/**
+ * The most classification dimensions one organization may define, and the most values one
+ * dimension may hold. They are the server-side bounds the settings page's unpaged taxonomy read is
+ * recorded against (`apps/console/list-standard/classification.json`, LST-9 #7491): the create
+ * actions refuse past them under a per-org / per-dimension transaction lock, so the read returns
+ * every row and never cuts one off.
+ */
+export const CLASSIFICATION_DIMENSIONS_MAX = 50;
+/** @see CLASSIFICATION_DIMENSIONS_MAX */
+export const CLASSIFICATION_VALUES_MAX = 100;
+
 // ── Dimensions ────────────────────────────────────────────────────────────────────
 
 /** Create/update a dimension. `key` is immutable-friendly but validated on both paths. */
