@@ -536,8 +536,8 @@ export type PaidUnavailability = Exclude<PaidAvailability, { readonly status: "o
 /** The billing lines, which every state carries. */
 interface BillingLines {
 	/**
-	 * How Pro is billed. Names Stripe only when the state is `open`: until a sale can be taken,
-	 * "billed monthly through Stripe" describes a payment nobody can make.
+	 * How Pro is billed. Names the reseller (Paddle) only when the state is `open`: until a sale can
+	 * be taken, "billed monthly through Paddle" describes a payment nobody can make.
 	 */
 	readonly proBilling: string;
 	/** How AI Plus and AI Max are billed, under the same rule as `proBilling`. */
@@ -557,7 +557,7 @@ export interface NotOnSaleCopy extends BillingLines {
 
 /**
  * The sentences for the open state: a notice naming the stage and the open markets, no heading, and
- * Stripe named in the billing lines.
+ * the reseller, Paddle, named in the billing lines.
  */
 export interface OnSaleCopy extends BillingLines {
 	readonly onSale: true;
@@ -677,7 +677,7 @@ export function paidAvailabilityCopy(
 		notice: openStageLine(wording),
 		heading: null,
 		body: null,
-		proBilling: `${pro} is billed per active member of your organization, monthly through Stripe.`,
-		aiBilling: "AI plans are billed monthly through Stripe, separately from your workspace plan.",
+		proBilling: `${pro} is billed per active member of your organization, monthly, through our reseller Paddle.`,
+		aiBilling: "AI plans are billed monthly through our reseller Paddle, separately from your workspace plan.",
 	};
 }

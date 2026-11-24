@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 /** Public hosted-service terms, distinct from the software licences. */
 export default function TermsPage() {
 	return (
-		<LegalShell title="Terms of Service" lastUpdated="August 12, 2026">
+		<LegalShell title="Terms of Service" lastUpdated="November 24, 2026">
 			<p>
 				These Terms govern the hosted Alethia control plane, websites, support,
 				and related services (the “Service”) provided by{" "}
@@ -68,16 +68,51 @@ export default function TermsPage() {
 				conversion is enabled per country and per payer capacity, and only where
 				the tax, payment, contractual, and consumer-rights conditions for that
 				combination are in place; where it is not enabled, no order can be
-				placed. Before any order, we show the total price payable including tax,
-				the billing period, whether the subscription renews, and how to end it.
+				placed. Before any order, the checkout shows the total price payable
+				including tax, the billing period, whether the subscription renews, and
+				how to end it.
+			</p>
+
+			<h3>Who sells to you</h3>
+			<p>
+				Card purchases made through the Service — subscriptions, usage charges,
+				and AI credit packs — are sold to you by our reseller,{" "}
+				<strong>Paddle</strong> (Paddle.com Market Ltd, or Paddle.com Inc. if you
+				are in the United States), which is the merchant of record for those
+				orders. The purchase itself is governed by{" "}
+				<a
+					href="https://www.paddle.com/legal/checkout-buyer-terms"
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					Paddle’s Buyer Terms
+				</a>
+				: Paddle charges you, calculates and remits the applicable sales tax or
+				VAT, issues your invoice, and processes refunds and chargebacks. We
+				provide the Service you bought under these Terms and remain responsible
+				to you for it.
 			</p>
 			<p>
+				Enterprise subscriptions and professional services agreed in a signed
+				order are concluded directly with {CURRENT_LEGAL_OPERATOR} and paid by
+				bank transfer against our invoice. Paddle is not a party to those
+				orders.
+			</p>
+
+			<h3>Cancellation and refunds</h3>
+			<p>
 				Ordinary cancellation stops the next renewal and access continues to the
-				end of the period already paid for; there is no refund for the unused
-				part and we do not offer discretionary refunds. If you are a consumer,
-				this is separate from — and does not replace — your statutory right to
-				withdraw, described in section 13 and on the{" "}
-				<Link href="/consumer-rights">Consumer rights</Link> page.
+				end of the period already paid for. Refunds follow our{" "}
+				<Link href="/refunds">Refund Policy</Link>: a first subscription payment
+				and an annual renewal are refunded in full if you ask within 14 days; a
+				monthly renewal is not refunded, but you can cancel it so that it ends at
+				the end of the period; an unused AI credit pack is refunded if you ask
+				within 14 days of buying it; usage and overage charges are not refunded,
+				except for a billing error; and a billing error is always refunded. You
+				can ask us or Paddle, and Paddle returns the money to the payment method
+				you used. If you are a consumer, this is in addition to — and does not
+				replace — your statutory right to withdraw, described in section 13 and
+				on the <Link href="/consumer-rights">Consumer rights</Link> page.
 			</p>
 
 			<h2>6. Open-source and enterprise software</h2>
@@ -162,8 +197,10 @@ export default function TermsPage() {
 				the contract within 14 days without giving a reason. If you ask us to
 				begin the service during those 14 days and confirm that you understand
 				the consequence, you pay only for the part supplied before you withdraw;
-				if we did not ask you to confirm it, you owe nothing. Full details,
-				including how to withdraw and where to take a dispute, are on the{" "}
+				if we did not ask you to confirm it, you owe nothing. For a card
+				purchase you can withdraw through Paddle, or by writing to us and we
+				pass it on to Paddle. Full details, including how to withdraw and where
+				to take a dispute, are on the{" "}
 				<Link href="/consumer-rights">Consumer rights</Link> page. We do not
 				commit to any particular alternative dispute resolution body.
 			</p>
@@ -176,7 +213,8 @@ export default function TermsPage() {
 				for delay caused by events outside reasonable control. If a provision is
 				unenforceable, the remaining provisions continue. Failure to enforce is
 				not a waiver. These Terms, the AUP, DPA, order, and referenced policies
-				form the entire agreement.
+				form the entire agreement between you and us; a card purchase is also
+				governed by Paddle’s Buyer Terms, as described in section 5.
 			</p>
 
 			<h2>15. Contact and changes</h2>

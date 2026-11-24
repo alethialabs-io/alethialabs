@@ -324,7 +324,7 @@ The predicates are defined in `docs/beta/README.md`; this section only evaluates
   - paid state: ❌ not met — `PAID_MARKETS` is empty, so `paidLaunchState()` is not `open` (announced for: no date); decision M15 counts `announced` as not met
   - live evidence: ❌ not met — no B5 live-billing record
 - **B6** ? not measured
-  - sealed register: ✅ met — `terms` is sealed at 2026-08-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
+  - sealed register: ✅ met — `terms` is sealed at 2026-11-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
   - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
 - **B7** ? not measured
   - off-box backup: ✅ met — newest complete copy `20261123T144753Z` finished 2026-11-23T14:47:59Z, 5.8 h before 2026-11-23T20:40:05Z (backup-status.yml run 45239283153 at 2026-11-23T19:12:00Z)

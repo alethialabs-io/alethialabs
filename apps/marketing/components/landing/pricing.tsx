@@ -288,7 +288,8 @@ function TierBox({
 				</div>
 				<AiAddOns currency={currency} paid={paid} />
 				<p className="mt-6 text-[12.5px] leading-[1.6] text-text-tertiary">
-					Every plan provisions into your own cloud account. {paid.proBilling}
+					Every plan provisions into your own cloud account. {paid.proBilling}{" "}
+					{TAX_LINE}
 				</p>
 			</Wrap>
 		</section>
@@ -543,8 +544,15 @@ function OpenCore() {
 	);
 }
 
+/**
+ * How tax is shown. Card purchases are sold by Paddle as reseller and merchant of record, so the
+ * listed prices are net and Paddle's checkout adds the tax for the buyer's country before payment.
+ */
+const TAX_LINE =
+	"Prices exclude VAT and sales tax. Our reseller Paddle adds the applicable tax and shows the total before you pay.";
+
 /* ============ FAQ ============ */
-/** The FAQ, with the billing answer taken from the launch state: Stripe only once it is open. */
+/** The FAQ, with the billing answer taken from the launch state: the reseller named only once it is open. */
 function faqFor(paid: PaidAvailabilityCopy): { q: string; a: string }[] {
 	return [
 		FAQ[0],
@@ -560,6 +568,7 @@ function faqFor(paid: PaidAvailabilityCopy): { q: string; a: string }[] {
 
 const FAQ: [{ q: string; a: string }, ...{ q: string; a: string }[]] = [
 	{ q: "Is the free tier really free?", a: "Yes. The core is open source under AGPL-3.0, so you can self-host it in your own cloud and pay nothing." },
+	{ q: "Do prices include tax?", a: TAX_LINE },
 	{ q: "Can I self-host the paid features?", a: "Yes, with Enterprise. It includes a self-managed license for SSO, custom roles and audit in your own environment." },
 	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP and Azure, no: the runner mints short-lived federated credentials per job, and no access key is written to disk or held in our database. Hetzner has no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job — run a self-managed runner there and it never reaches us at all." },
 ];

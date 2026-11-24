@@ -37,7 +37,7 @@ export default function ConsumerRightsPage() {
 	const sellsToConsumers = PAID_MARKETS.some((c) => c.capacity === "consumer");
 
 	return (
-		<LegalShell title="Consumer rights" lastUpdated="November 23, 2026">
+		<LegalShell title="Consumer rights" lastUpdated="November 24, 2026">
 			<p>
 				This page is for people buying Alethia as an individual, outside a trade,
 				business or profession. If you are buying on behalf of a company, these
@@ -88,6 +88,15 @@ export default function ConsumerRightsPage() {
 				takes effect. You can also withdraw from the billing settings in the
 				console, which shows what you will get back before you confirm.
 			</p>
+			<p>
+				A card purchase is sold to you by our reseller, Paddle, so you can also
+				withdraw directly with Paddle, at{" "}
+				<a href="https://www.paddle.net" rel="noopener noreferrer" target="_blank">
+					paddle.net
+				</a>{" "}
+				or through Paddle’s buyer support. If you write to us instead, we pass
+				your withdrawal on to Paddle for you — you never have to do it twice.
+			</p>
 
 			<h3>What withdrawing costs you</h3>
 			<p>
@@ -119,15 +128,27 @@ export default function ConsumerRightsPage() {
 				same payment method you paid with, without a fee. If we cannot refund
 				automatically, for example because there was no card payment to refund
 				against, we contact you within 14 days to arrange it.
+				For a card purchase, the refund is issued by Paddle, the seller of that
+				purchase.
 			</p>
 
 			<h2>Cancelling is a different thing</h2>
 			<p>
 				After the {WITHDRAWAL_PERIOD_DAYS} days, you can still cancel at any
 				time. Cancelling stops the next renewal and your access continues to the
-				end of the period you have already paid for — you keep what you paid for,
-				and there is no refund for the unused part. We do not offer discretionary
-				refunds, because a refund that depends on who asks is not a right.
+				end of the period you have already paid for — you keep what you paid
+				for.
+			</p>
+			<p>
+				In addition to these statutory rights, our{" "}
+				<Link href="/refunds">Refund Policy</Link> gives everyone the same
+				voluntary money-back: a first subscription payment or an annual renewal
+				is refunded in full if you ask within 14 days, and an unused credit pack
+				within 14 days of buying it. A monthly renewal is not refunded, and usage
+				charges are refunded only for a billing error, which we always correct.
+				Where both the statutory right and the policy apply, you get whichever
+				gives you more. The policy applies in the same way to everyone, because
+				a refund that depends on who asks is not a right.
 			</p>
 
 			<h2>If something goes wrong</h2>
@@ -157,7 +178,22 @@ export default function ConsumerRightsPage() {
 				cited on other traders’ sites.
 			</p>
 
-			<h2>Who you are contracting with</h2>
+			<h2>Who sells to you, and who provides the service</h2>
+			<p>
+				A card purchase — a subscription, usage charges or a credit pack — is
+				sold to you by Paddle.com Market Ltd (Paddle.com Inc. if you are in the
+				United States), our reseller and merchant of record. Paddle takes your
+				payment, adds and pays the tax, issues your invoice and processes
+				refunds, under{" "}
+				<a
+					href="https://www.paddle.com/legal/checkout-buyer-terms"
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					Paddle’s Buyer Terms
+				</a>
+				. The service itself is provided to you by:
+			</p>
 			<p>
 				{LEGAL_ENTITY.legalName}, {LEGAL_ENTITY.legalForm.toLowerCase()},
 				registered in {LEGAL_ENTITY.jurisdiction} under EIK{" "}
@@ -221,6 +257,16 @@ export default function ConsumerRightsPage() {
 					конзолата, които показват какво ще получите обратно, преди да
 					потвърдите.
 				</p>
+				<p>
+					Покупката с карта Ви се продава от нашия препродавач Paddle, затова
+					можете да се откажете и директно чрез Paddle — на{" "}
+					<a href="https://www.paddle.net" rel="noopener noreferrer" target="_blank">
+						paddle.net
+					</a>{" "}
+					или чрез службата за поддръжка на купувачи на Paddle. Ако вместо това
+					ни пишете на нас, ние предаваме отказа Ви на Paddle — никога не се
+					налага да го правите два пъти.
+				</p>
 
 				<h4>Какво Ви струва отказът</h4>
 				<p>
@@ -254,6 +300,8 @@ export default function ConsumerRightsPage() {
 					можем да възстановим сумата автоматично, например защото няма плащане
 					с карта, срещу което да я възстановим, се свързваме с Вас в срок от 14
 					дни, за да уредим възстановяването.
+					При покупка с карта сумата се възстановява от Paddle — продавача по
+					тази покупка.
 				</p>
 
 				<h3>Прекратяването е нещо различно</h3>
@@ -261,9 +309,20 @@ export default function ConsumerRightsPage() {
 					След изтичането на {WITHDRAWAL_PERIOD_DAYS}-те дни можете да
 					прекратите абонамента по всяко време. Прекратяването спира следващото
 					подновяване, а достъпът Ви продължава до края на вече платения период
-					— запазвате това, за което сте платили, и неизползваната част не се
-					възстановява. Не предлагаме възстановяване по преценка, защото
-					възстановяване, което зависи от това кой пита, не е право.
+					— запазвате това, за което сте платили.
+				</p>
+				<p>
+					В допълнение към тези законови права нашата{" "}
+					<Link href="/refunds">Политика за възстановяване на суми</Link> дава
+					на всички еднаква доброволна възможност за връщане на парите: първото
+					плащане по абонамент или годишното подновяване се възстановява
+					изцяло, ако поискате в срок от 14 дни, а неизползван пакет кредити — в
+					срок от 14 дни от покупката. Месечното подновяване не се възстановява,
+					а таксите за използване се възстановяват само при грешка в
+					таксуването, която винаги коригираме. Когато се прилагат и законовото
+					право, и политиката, получавате по-благоприятното за Вас. Политиката
+					се прилага еднакво за всички, защото възстановяване, което зависи от
+					това кой пита, не е право.
 				</p>
 
 				<h3>Ако нещо се обърка</h3>
@@ -294,7 +353,23 @@ export default function ConsumerRightsPage() {
 					сайтовете на други търговци.
 				</p>
 
-				<h3>С кого сключвате договора</h3>
+				<h3>Кой Ви продава и кой предоставя услугата</h3>
+				<p>
+					Покупката с карта — абонамент, такси за използване или пакет кредити —
+					Ви се продава от Paddle.com Market Ltd (Paddle.com Inc., ако се
+					намирате в Съединените щати), наш препродавач и търговец по
+					продажбата (merchant of record). Paddle приема плащането Ви, начислява
+					и внася данъка, издава Вашата фактура и извършва възстановяванията
+					съгласно{" "}
+					<a
+						href="https://www.paddle.com/legal/checkout-buyer-terms"
+						rel="noopener noreferrer"
+						target="_blank"
+					>
+						Условията за купувачи на Paddle
+					</a>
+					. Самата услуга Ви се предоставя от:
+				</p>
 				<p>
 					{LEGAL_ENTITY.legalNameBulgarian},{" "}
 					{LEGAL_ENTITY.legalFormBulgarian.toLowerCase()}, регистрирано в{" "}

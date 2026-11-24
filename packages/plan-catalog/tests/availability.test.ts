@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // #6906 (REL-L3) — the one set of sentences every pricing and upgrade surface shows for the launch
-// state. One test per state, plus the rules that hold across them: Stripe is named only when open,
+// state. One test per state, plus the rules that hold across them: the reseller (Paddle) is named only when open,
 // and no state promises to notify anyone.
 //
 // EA-4 (#7326) adds the stage: the open state names the stage and the open markets it is GIVEN,
@@ -39,16 +39,16 @@ const STATES: readonly PaidAvailability[] = [
 ];
 
 describe("paidAvailabilityCopy — open", () => {
-	it("is on sale, names the stage and the open markets, and names Stripe in the billing lines", () => {
+	it("is on sale, names the stage and the open markets, and names the reseller, Paddle, in the billing lines", () => {
 		const copy = paidAvailabilityCopy({ status: "open" }, day, OPEN);
 		expect(copy.onSale).toBe(true);
 		expect(copy.notice).toBe("<stage> is open to <markets>, with no uptime SLA");
 		expect(copy.heading).toBeNull();
 		expect(copy.body).toBeNull();
 		expect(copy.proBilling).toBe(
-			"Pro is billed per active member of your organization, monthly through Stripe.",
+			"Pro is billed per active member of your organization, monthly, through our reseller Paddle.",
 		);
-		expect(copy.aiBilling).toContain("through Stripe");
+		expect(copy.aiBilling).toContain("through our reseller Paddle");
 	});
 
 	it("still names the stage and the SLA when no market can be named", () => {
@@ -86,11 +86,12 @@ describe("paidAvailabilityCopy — closed", () => {
 });
 
 describe("paidAvailabilityCopy — across the states", () => {
-	it("names Stripe only when the state is open", () => {
+	it("names the reseller, Paddle, only when the state is open", () => {
 		for (const state of STATES) {
 			const copy = paidAvailabilityCopy(state, day, OPEN);
 			const lines = `${copy.proBilling} ${copy.aiBilling}`;
-			expect(lines.includes("Stripe")).toBe(state.status === "open");
+			expect(lines.includes("Paddle")).toBe(state.status === "open");
+			expect(lines.includes("Stripe")).toBe(false);
 		}
 	});
 
