@@ -26,6 +26,7 @@ import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
 import { gcAuthzActivityLog, gcFleetActions, gcJobLogs, gcSupportCases } from "@/lib/reconcile/gc";
 import { getHeartbeats, isDue, runTask } from "@/lib/reconcile/heartbeat";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
+import { releaseCancelledStateLocks } from "@/lib/reconcile/state-locks";
 
 const llog = log.child({ component: "reconcile" });
 
@@ -72,6 +73,10 @@ const INTERVALS = {
 	// paged at day 3, so an hourly retry leaves ample room; each retry reads Stripe once per owed
 	// invoice (lib/billing/factura/sweeper.ts).
 	"factura-sweep": 60 * 60_000,
+	// 1m — a cancelled job whose runner died holds its state lock until this releases it, and the
+	// next job on that state object waits behind it: the wait is the drain window plus at most one
+	// gap between runs here (lib/reconcile/state-locks.ts).
+	"release-cancelled-state-locks": 60_000,
 } as const;
 
 declare global {
@@ -146,6 +151,11 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// for a turn that was never recorded.
 		if (isDue("release-ai-holds", INTERVALS["release-ai-holds"], now)) {
 			await runTask("release-ai-holds", () => releaseStrandedAiHolds(db));
+		}
+		// Cancelled-job state locks (#7387): release the lock of a CANCELLED job past its drain window
+		// whose runner never reported terminal, so the next job on that state object can be claimed.
+		if (isDue("release-cancelled-state-locks", INTERVALS["release-cancelled-state-locks"], now)) {
+			await runTask("release-cancelled-state-locks", () => releaseCancelledStateLocks(db));
 		}
 		// Kubeconfig mint expiry (#5281): null the ciphertext of every mint past its poll window, cancel
 		// its job if no runner has claimed it, and delete rows one window after that.
