@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// No hosted-domain literal in the call sites EDN-H7 (#6904) cleared of hosted defaults. The rule,
+// No hosted-domain literal in the call sites EDN-H7 (#6904) and #7417 cleared of hosted defaults. The rule,
 // its boundary and the detector live in scripts/lib/hosted-default-literals.ts; this file runs it
 // over the real files and checks the detector against the shapes those files used to carry.
 
@@ -42,7 +42,8 @@ describe("hosted-default literals under the EDN-H7 paths (#6904)", () => {
 		]);
 	});
 
-	it("guards exactly the four EDN-H7 call sites", () => {
-		expect(HOSTED_DEFAULT_GUARDED).toHaveLength(4);
+	it("guards the four EDN-H7 call sites and lib/org-url.ts (#7450)", () => {
+		expect(HOSTED_DEFAULT_GUARDED).toHaveLength(5);
+		expect(HOSTED_DEFAULT_GUARDED).toContain("lib/org-url.ts");
 	});
 });
