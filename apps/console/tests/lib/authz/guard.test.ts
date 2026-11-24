@@ -848,6 +848,8 @@ describe("authorizeCli with a service-account token", () => {
 				...SERVICE_ACTOR,
 				credential: "service_token",
 				ceiling: { scopes: ["read", "design", "plan", "apply", "destroy"], projectIds: null },
+				// Which token, so an approval can be bound to it (lib/approvals).
+				credentialRef: "tok-1",
 			},
 			credential: "service_token",
 			serviceTokenId: "tok-1",
@@ -868,6 +870,8 @@ describe("authorizeCli with a service-account token", () => {
 				...SERVICE_ACTOR,
 				credential: "service_token",
 				ceiling: { scopes: ["read", "design", "plan", "apply", "destroy"], projectIds: null },
+				// Which token, so an approval can be bound to it (lib/approvals).
+				credentialRef: "tok-1",
 			},
 			credential: "service_token",
 			serviceTokenId: "tok-1",

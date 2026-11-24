@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { z } from "zod";
-import { AGENT_SCOPES } from "@/lib/approvals/types";
+import { AGENT_SCOPES, APPLY_OPERATIONS } from "@/lib/approvals/types";
 import {
 	addonMode,
 	alertChannelType,
@@ -241,6 +241,14 @@ export const createGrantBody = z.object({
 	permission_key: z.string().nullable().optional(),
 	resource_type: z.string().min(1).default("org"),
 	resource_id: z.uuid().nullable().optional(),
+});
+
+/** Body of POST /api/approvals — request a person's approval to deploy or destroy a reviewed plan. */
+export const requestApprovalBody = z.object({
+	plan_job_id: z.uuid(),
+	operation: z.enum(APPLY_OPERATIONS),
+	/** The requester's note, untrusted text (lib/approvals/request.ts keeps at most 500 characters). */
+	reason: z.string().max(500).nullish(),
 });
 
 /** Body of POST /api/cli/tokens — mint a service token. */

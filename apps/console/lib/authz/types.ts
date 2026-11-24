@@ -103,6 +103,13 @@ export interface Actor {
 	 * a service token); absent means the actor's own grants are the whole answer.
 	 */
 	ceiling?: ScopeCeiling;
+	/**
+	 * Which credential of its kind this actor was built from, when the kind has more than one per
+	 * person: the `cli_service_tokens.id` of a service token. Set beside {@link ceiling} by
+	 * `withServiceTokenCeiling` (lib/authz/guard.ts). The approval engine (lib/approvals) binds an
+	 * approval to it and reads the token's automatic-deploy environments by it.
+	 */
+	credentialRef?: string;
 }
 
 /**

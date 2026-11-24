@@ -2,117 +2,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @vitest-environment node
 
-// The apply-authorization seam (lib/approvals/types.ts), in two halves.
+// Where the apply-authorization question (lib/approvals/types.ts) is asked. What it answers is
+// tests/lib/approvals/policy.test.ts (table 4.2) and tests/lib/approvals/gate.test.ts (the gate).
 //
-// 1. What `requireApplyAuthorization` answers today: it allows every call. That is stated as a
-//    test so that the day it stops being true, this file is where the change is announced.
+// Every file under app/ and lib/ that inserts a job is listed below with what it may insert, and the
+// list is checked against the tree in BOTH directions: a new file that inserts a job fails until it is
+// classified, and an entry whose file stopped inserting fails until it is removed. Every file that
+// inserts a DEPLOY or a DESTROY asks — for an actor, or under its named system origin.
 //
-// 2. Where it is asked. Every file under app/ and lib/ that inserts a job is listed below with
-//    what it may insert, and the list is checked against the tree in BOTH directions: a new file
-//    that inserts a job fails until it is classified, and an entry whose file stopped inserting
-//    fails until it is removed.
-//
-// WHAT THE SECOND HALF DOES NOT PROVE. It reads source text. It finds a job insert by the spelling
+// WHAT THIS DOES NOT PROVE. It reads source text. It finds a job insert by the spelling
 // `.insert(jobs)`, an applying job by the spelling `job_type: "DEPLOY"` / `job_type: "DESTROY"`,
 // and a copied job type by `job_type: <name>.job_type`. An insert through a differently named
 // table binding, a job type held in a variable, raw SQL, and anything outside app/ and lib/ are
 // not seen. It also cannot tell whether a `requireApplyAuthorization` call is handed the right
-// arguments: it checks that the call sits between the insert and the environment's transition.
+// arguments: for a gated file it checks that the call sits between the insert and the environment's
+// transition, and for a system file that every call names that file's own origin.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-	APPLY_OPERATIONS,
-	ApplyAuthorizationError,
-	type ApplyRequester,
-	requireApplyAuthorization,
-	SYSTEM_APPLY_ORIGINS,
-	type SystemApplyOrigin,
-} from "@/lib/approvals/types";
-import { CREDENTIAL_KINDS } from "@/lib/authz/types";
-import type { Tx } from "@/lib/db";
+import { SYSTEM_APPLY_ORIGINS, type SystemApplyOrigin } from "@/lib/approvals/types";
 import { rerunRouteOf } from "@/lib/jobs/operation";
 
-// ── 1. What it answers today ─────────────────────────────────────────────────────────────────
-
-/**
- * A transaction that fails the test if it is touched: today's function must not read or write
- * through it, and a stand-in that quietly accepted a query would hide the day it starts to.
- */
-function untouchableTx(): Tx {
-	const refuse = (): never => {
-		throw new Error("requireApplyAuthorization used the transaction");
-	};
-	return new Proxy<Tx>(Object.create(null), { get: refuse, apply: refuse });
-}
-
-const TARGET = { orgId: "org-1", projectId: "project-1", environmentId: "env-1", jobId: "job-1" };
-
-const REQUESTERS: ApplyRequester[] = [
-	...CREDENTIAL_KINDS.map(
-		(credential): ApplyRequester => ({
-			kind: "actor",
-			actor: { userId: "user-1", orgId: "org-1", credential },
-		}),
-	),
-	...SYSTEM_APPLY_ORIGINS.map((origin): ApplyRequester => ({ kind: "system", origin })),
-];
-
-/** A short name for a requester, for the test title. */
-function nameOf(requester: ApplyRequester): string {
-	return requester.kind === "actor" ? requester.actor.credential : `system:${requester.origin}`;
-}
-
-describe("requireApplyAuthorization, while it allows everything", () => {
-	const cases = REQUESTERS.flatMap((requester) =>
-		APPLY_OPERATIONS.map((operation) => ({ who: nameOf(requester), requester, operation })),
-	);
-
-	it("is asked about every credential kind and every system origin", () => {
-		expect(cases).toHaveLength(
-			(CREDENTIAL_KINDS.length + SYSTEM_APPLY_ORIGINS.length) * APPLY_OPERATIONS.length,
-		);
-	});
-
-	it.each(cases)("allows $operation for $who, with no approval", async ({ requester, operation }) => {
-		await expect(
-			requireApplyAuthorization(untouchableTx(), requester, operation, TARGET),
-		).resolves.toEqual({ approvalId: null });
-	});
-
-	it("does not yet check an approval a caller presents", async () => {
-		await expect(
-			requireApplyAuthorization(
-				untouchableTx(),
-				{ kind: "system", origin: "ephemeral_reap" },
-				"destroy",
-				TARGET,
-				"not-an-approval",
-			),
-		).resolves.toEqual({ approvalId: null });
-	});
-});
-
-describe("ApplyAuthorizationError", () => {
-	it("carries its code and its sentence, and is an Error an edge can match by class", () => {
-		const err = new ApplyAuthorizationError("approval_required", "This apply needs an approval.");
-		expect(err).toBeInstanceOf(Error);
-		expect(err).toBeInstanceOf(ApplyAuthorizationError);
-		expect(err.name).toBe("ApplyAuthorizationError");
-		expect(err.code).toBe("approval_required");
-		expect(err.message).toBe("This apply needs an approval.");
-	});
-});
-
-// ── 2. Where it is asked ─────────────────────────────────────────────────────────────────────
+// ── Where it is asked ─────────────────────────────────────────────────────────────────────
 
 /**
  * How a file that inserts jobs stands toward the question.
  *
  * - `gated` — queues an apply or destroy for an actor, and asks.
- * - `system` — queues one with no actor behind the request, under a named origin. Does not call
- *   the function yet; it is on this list instead.
+ * - `system` — queues one with no actor behind the request, and asks under its named origin.
  * - `copies` — inserts a copy of an existing job, whatever its type. What keeps an apply out is
  *   `rerunRouteOf`, which the last test below asks directly.
  * - `seed` — writes fixture rows for a seeded environment.
@@ -200,8 +118,7 @@ function expectedOf(site: Site): Partial<SiteFacts> {
 		case "gated":
 			return { applies: true, asks: true };
 		case "system":
-			// When one of these starts asking it becomes `gated`, and this is what says so.
-			return { applies: true, asks: false };
+			return { applies: true, asks: true };
 		case "copies":
 			return { applies: false, copies: true, asks: false, bounded: true };
 		case "seed":
@@ -226,6 +143,16 @@ describe("every file that inserts a job is accounted for", () => {
 	it("names every system origin, and no origin twice", () => {
 		const origins = Object.values(SITES).flatMap((site) => (site.kind === "system" ? [site.origin] : []));
 		expect([...origins].sort()).toEqual([...SYSTEM_APPLY_ORIGINS].sort());
+	});
+
+	it.each(
+		Object.entries(SITES).flatMap(([path, site]) => (site.kind === "system" ? [[path, site.origin] as const] : [])),
+	)("%s asks under its own origin, %s, and no other", (path, origin) => {
+		const src = found.get(path) ?? "";
+		const named = [...src.matchAll(/kind: "system", origin: "(\w+)"/g)].map((m) => m[1]);
+		expect(named.length).toBeGreaterThan(0);
+		expect(new Set(named)).toEqual(new Set([origin]));
+		expect(src.split(ASKS).length - 1).toBe(named.length);
 	});
 
 	it.each(Object.entries(SITES))("%s is what the list says it is", (path, site) => {

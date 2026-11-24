@@ -182,7 +182,8 @@ function withRepoAndAddons(appsRepo: string, addons: Rows, envStatus = "ACTIVE",
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+	// A person at the console (`authorize` resolves the cookie session): table 4.2 needs no approval.
+	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1", credential: "session" } as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 });
