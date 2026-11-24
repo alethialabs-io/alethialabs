@@ -57,6 +57,8 @@ vi.mock("@/lib/rpc/client", async () => {
 	// The Activity feed's pages and the SSO bootstrap are GET reads since #6129.
 	rpc.handlers["activity.page"] = () => new Promise(() => {});
 	rpc.handlers["sso.bootstrap"] = () => new Promise(() => {});
+	// The roles rail's custom roles page through `useKeysetList(orpc.members.roles, …)` (LST-8).
+	rpc.handlers["members.roles"] = () => new Promise(() => {});
 	return { orpc: fakeOrpc(rpc.handlers, rpc.calls).orpc };
 });
 
@@ -65,8 +67,13 @@ const evidenceAsked = () => rpc.calls.filter((c) => c.path === "evidence.page").
 vi.mock("@/app/server/actions/activity", () => ({ getActivityExportCsv: vi.fn() }));
 vi.mock("@/app/server/actions/members", () => ({ getMembers: vi.fn(() => new Promise(() => {})) }));
 
-/** Every search `useRolesQuery` / `useSsoProvidersQuery` was called with, in render order. */
-const asked = vi.hoisted(() => ({ roles: [] as Array<string | undefined>, sso: [] as Array<string | undefined> }));
+/** Every search `useSsoProvidersQuery` was called with, in render order. */
+const asked = vi.hoisted(() => ({ sso: [] as Array<string | undefined> }));
+/** Every search the roles rail's `members.roles` read was asked for, in order. */
+const rolesAsked = () =>
+	rpc.calls
+		.filter((c) => c.path === "members.roles")
+		.map((c) => (typeof c.input === "object" && c.input !== null && "search" in c.input ? c.input.search : undefined));
 /** The role catalog the route prefetches (#6129) — a viewer's, with one built-in role. */
 const catalog = vi.hoisted(() => ({
 	data: {
@@ -86,10 +93,6 @@ const catalog = vi.hoisted(() => ({
 	},
 }));
 vi.mock("@/lib/query/use-roles-query", () => ({
-	useRolesQuery: (search?: string) => {
-		asked.roles.push(search);
-		return { data: [], error: null, isFetching: false, isPending: false, isPlaceholderData: false };
-	},
 	useRoleCatalogQuery: () => ({ data: catalog.data, error: null, isPending: false, isError: false }),
 }));
 vi.mock("@/lib/query/use-sso-query", () => ({
@@ -167,7 +170,6 @@ beforeEach(() => {
 	vi.useFakeTimers();
 	vi.clearAllMocks();
 	sessionStorage.clear();
-	asked.roles.length = 0;
 	asked.sso.length = 0;
 	rpc.calls.length = 0;
 	useEvidenceFilters.getState().reset();
@@ -290,7 +292,7 @@ describe("RolesManager — ~/settings/roles?search=…", () => {
 		renderWithClient(<RolesManager />);
 		await settleWithoutTime();
 
-		expect(asked.roles).toContain("deployer");
+		expect(rolesAsked()).toContain("deployer");
 	});
 });
 

@@ -41,9 +41,9 @@ import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
 /** A one-team page. */
 const PAGE: TeamsPage = {
 	rows: [{ id: "t1", name: "Networking", memberCount: 0, members: [] }],
-	resultCount: 1,
-	total: 1,
+	nextCursor: null,
 	facets: { sizes: [] },
+	universeEmpty: false,
 };
 
 /** The list inside a fresh query provider. */

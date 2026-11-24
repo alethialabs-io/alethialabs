@@ -43,7 +43,9 @@ import {
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { INVITE_ROLES } from "@/lib/members/roles";
 import { type AccessGrantsPage, queryAccessGrantsPage } from "@/lib/queries/access-grants";
+import { type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
 import { type MembersPage, queryMembersPage } from "@/lib/queries/members";
+import { grantCountsByRole, permissionKeysByRole, queryRolesPage, type RolesPage } from "@/lib/queries/roles";
 import { queryTeamsPage, type TeamsPage } from "@/lib/queries/teams";
 import { query } from "@/lib/rpc/base";
 import { typedKeys } from "@/lib/typed-object";
@@ -69,31 +71,45 @@ import { typedKeys } from "@/lib/typed-object";
 /** A filter list as the console's filter standard sends it: short strings, bounded. */
 const filterValues = z.array(z.string().min(1).max(200)).max(200).optional();
 
+// Each LIST read's input is its filter fields plus the paging contract (`keysetPageInput`, LST-8
+// #7490): an opaque cursor — a malformed one is a 400 at this boundary — and a `limit` defaulting to
+// 50 and refused above 100. Every id these lists page by is a uuid.
+
 /** The members page's filter query (`normalizeMembersQuery()`), validated. */
-const membersPageInput = z.object({
+const membersFilterFields = {
 	search: z.string().max(200).optional(),
 	statuses: filterValues,
 	roles: filterValues,
 	teams: filterValues,
-});
+};
+const membersPageInput = z.object({ ...membersFilterFields, ...keysetPageInput("uuid") });
 
 /** The teams page's filter query (`normalizeTeamsQuery()`), validated. */
-const teamsPageInput = z.object({
+const teamsFilterFields = {
 	search: z.string().max(200).optional(),
 	sizes: filterValues,
-});
+};
+const teamsPageInput = z.object({ ...teamsFilterFields, ...keysetPageInput("uuid") });
 
-/** The roles rail's server-side search. Absent or empty is the unsearched universe. */
-const rolesInput = z.object({ search: z.string().max(200).optional() });
+/** The roles rail's filter query (`normalizeRolesQuery()`): search, and which kinds it shows. */
+const rolesFilterFields = {
+	search: z.string().max(200).optional(),
+	kinds: filterValues,
+};
+const rolesInput = z.object({ ...rolesFilterFields, ...keysetPageInput("uuid") });
 
 /** The access page's filter query (`normalizeAccessQuery()`), validated. */
-const grantsPageInput = z.object({
+const grantsFilterFields = {
 	projectId: z.string().uuid().optional(),
 	search: z.string().max(200).optional(),
 	scopes: filterValues,
 	roles: filterValues,
 	effects: filterValues,
-});
+};
+const grantsPageInput = z.object({ ...grantsFilterFields, ...keysetPageInput("uuid") });
+
+/** A list read's filter half, validated (the paging half travels separately, as a request). */
+type FiltersOf<T extends z.ZodRawShape> = z.infer<z.ZodObject<T>>;
 
 // ── Members ─────────────────────────────────────────────────────────────────────────────────
 
@@ -198,13 +214,17 @@ export async function listOrgMembers(): Promise<MemberRow[]> {
 }
 
 /**
- * The Members PAGE read: member rows AND pending invitations filtered server-side, plus the
- * status/role/team facets over the org's unfiltered universe (the console filter standard). Any
- * member reads it; the personal-scope fallback is synthesized from the caller alone.
+ * One page of the Members list: member rows AND pending invitations filtered server-side, newest
+ * first, plus (first page) the status/role/team facets over the org's unfiltered universe (the
+ * console filter standard). Any member reads it; the personal-scope fallback is synthesized from the
+ * caller alone, and the "You" row is the caller's.
  */
-export async function readMembersPage(input: z.infer<typeof membersPageInput>): Promise<MembersPage> {
+export async function readMembersPage(
+	filters: FiltersOf<typeof membersFilterFields>,
+	request?: KeysetPageRequest,
+): Promise<MembersPage> {
 	const actor = await currentActor();
-	return queryMembersPage(actor.orgId, actor.userId, input);
+	return queryMembersPage(actor.orgId, actor.userId, filters, request);
 }
 
 /**
@@ -307,12 +327,16 @@ export async function readInviteContext(): Promise<InviteContext> {
 // ── Teams ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * The Teams PAGE read: rows filtered server-side, plus size-facet counts over the org's unfiltered
- * teams. Any member reads it; every predicate is on the addressed org.
+ * One page of the Teams list: rows filtered server-side, newest first, plus (first page) size-facet
+ * counts over the org's unfiltered teams. Any member reads it; every predicate is on the addressed
+ * org.
  */
-export async function readTeamsPage(input: z.infer<typeof teamsPageInput>): Promise<TeamsPage> {
+export async function readTeamsPage(
+	filters: FiltersOf<typeof teamsFilterFields>,
+	request?: KeysetPageRequest,
+): Promise<TeamsPage> {
 	const actor = await currentActor();
-	return queryTeamsPage(actor.orgId, input);
+	return queryTeamsPage(actor.orgId, filters, request);
 }
 
 // ── Roles ───────────────────────────────────────────────────────────────────────────────────
@@ -324,40 +348,6 @@ const ORDER: BuiltInRole[] = ["owner", "admin", "operator", "viewer"];
 function builtinKeys(name: BuiltInRole): string[] {
 	const grant = BUILT_IN_ROLES[name];
 	return grant === "*" ? ALL_KEYS : grant;
-}
-
-/**
- * Distinct-USER grant counts per role in an org. Counts only `user` principals (team grants
- * contribute 0) and de-duplicates a principal holding the role both org-wide and scoped, so
- * "N members affected" is accurate. Roles with no grants are absent (→ 0).
- */
-async function grantCountsByRole(orgId: string): Promise<Map<string, number>> {
-	const rows = await getServiceDb()
-		.select({
-			roleId: grants.role_id,
-			n: sql<number>`count(distinct case when ${grants.principal_type} = 'user' then ${grants.principal_id} end)`,
-		})
-		.from(grants)
-		.where(and(eq(grants.org_id, orgId), isNotNull(grants.role_id)))
-		.groupBy(grants.role_id);
-	const map = new Map<string, number>();
-	for (const r of rows) if (r.roleId) map.set(r.roleId, Number(r.n));
-	return map;
-}
-
-/** Groups `role_permission` rows into a role id → permission keys map. */
-async function permissionKeysByRole(roleIds: string[]): Promise<Map<string, string[]>> {
-	const perms = await getServiceDb()
-		.select({ roleId: rolePermission.role_id, key: rolePermission.permission_key })
-		.from(rolePermission)
-		.where(inArray(rolePermission.role_id, roleIds));
-	const byRole = new Map<string, string[]>();
-	for (const p of perms) {
-		const list = byRole.get(p.roleId) ?? [];
-		list.push(p.key);
-		byRole.set(p.roleId, list);
-	}
-	return byRole;
 }
 
 /**
@@ -406,9 +396,23 @@ export async function readRolesCatalog(): Promise<RolesBootstrap> {
 }
 
 /**
- * The addressed org's custom roles, filtered server-side by `search` over the role name,
- * description or any of its permission keys (LIKE-escaped), each with its permission keys and
- * distinct-user grant count. `member:view` gated.
+ * One page of the roles rail's custom roles, alphabetical, filtered server-side by `search` (name,
+ * description, or a permission key) and `kinds`, plus (first page) the Kind facet over the unfiltered
+ * universe (`queryRolesPage`, LST-8 #7490). `member:view` gated, quietly — as the catalog is.
+ */
+export async function readRolesPage(
+	filters: FiltersOf<typeof rolesFilterFields>,
+	request?: KeysetPageRequest,
+): Promise<RolesPage> {
+	const actor = await authorizeQuiet("view", { type: "member" });
+	return queryRolesPage(actor.orgId, filters, request);
+}
+
+/**
+ * The addressed org's custom roles, every one, filtered by `search` over the role name, description
+ * or any of its permission keys (LIKE-escaped), each with its permission keys and distinct-user grant
+ * count. `member:view` gated. An in-process read for the artifact-sharing picker's role choices; the
+ * Roles page's rail pages through {@link readRolesPage} instead.
  */
 export async function listRoles(search?: string): Promise<RoleRow[]> {
 	const actor = await authorizeQuiet("view", { type: "member" });
@@ -462,19 +466,18 @@ export async function listRoles(search?: string): Promise<RoleRow[]> {
 // ── Access grants ───────────────────────────────────────────────────────────────────────────
 
 /**
- * The Access PAGE read: grants filtered server-side, plus scope/role/effect facets over the
- * unfiltered grants of the same scope. `query.projectId` selects the universe (the project-scoped
- * Access surface), matched inside the addressed org. Enumerating grants requires `member:view`,
- * ENFORCED (a denial is recorded) — mirroring the CLI `GET /api/cli/grants` gate.
+ * One page of the Access list: grants filtered server-side, newest first, plus (first page)
+ * scope/role/effect facets over the unfiltered grants of the same scope. `projectId` selects the
+ * universe (the project-scoped Access surface), matched inside the addressed org. Each row carries
+ * the read's `asOf`. Enumerating grants requires `member:view`, ENFORCED (a denial is recorded) —
+ * mirroring the CLI `GET /api/cli/grants` gate.
  */
 export async function readGrantsPage(
-	input: z.infer<typeof grantsPageInput>,
-): Promise<AccessGrantsPage & { asOf: string }> {
+	filters: FiltersOf<typeof grantsFilterFields>,
+	request?: KeysetPageRequest,
+): Promise<AccessGrantsPage> {
 	const actor = await authorize("view", { type: "member" });
-	const page = await queryAccessGrantsPage(actor.orgId, input);
-	// The instant of the read, so "Granted 3 hours ago" is computed against the same clock on the
-	// server render and on the hydrating client (React #418) — the members page's `asOf` rule.
-	return { ...page, asOf: new Date().toISOString() };
+	return queryAccessGrantsPage(actor.orgId, filters, request);
 }
 
 /**
@@ -523,13 +526,21 @@ export async function readGrantOptions(): Promise<GrantOptions> {
  * pages render as their no-access state — never as an empty list.
  */
 export const membersRouter = {
-	page: query.input(membersPageInput).handler(({ input }) => readMembersPage(input)),
+	page: query
+		.input(membersPageInput)
+		.handler(({ input: { cursor, limit, ...filters } }) => readMembersPage(filters, { cursor, limit })),
 	list: query.handler(() => listOrgMembers()),
 	gate: query.handler(() => readMembersGate()),
 	inviteContext: query.handler(() => readInviteContext()),
-	teams: query.input(teamsPageInput).handler(({ input }) => readTeamsPage(input)),
-	roles: query.input(rolesInput).handler(({ input }) => listRoles(input.search)),
+	teams: query
+		.input(teamsPageInput)
+		.handler(({ input: { cursor, limit, ...filters } }) => readTeamsPage(filters, { cursor, limit })),
+	roles: query
+		.input(rolesInput)
+		.handler(({ input: { cursor, limit, ...filters } }) => readRolesPage(filters, { cursor, limit })),
 	roleCatalog: query.handler(() => readRolesCatalog()),
-	grants: query.input(grantsPageInput).handler(({ input }) => readGrantsPage(input)),
+	grants: query
+		.input(grantsPageInput)
+		.handler(({ input: { cursor, limit, ...filters } }) => readGrantsPage(filters, { cursor, limit })),
 	grantOptions: query.handler(() => readGrantOptions()),
 };

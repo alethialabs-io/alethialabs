@@ -7,7 +7,7 @@ import {
 	isPeopleRead,
 	retryUnlessRefused,
 } from "@/components/settings/members/people-reads";
-import { rolesSearchFromUrl } from "@/components/settings/roles/roles-filters";
+import { type NormalizedRolesQuery, rolesQueryFromUrl } from "@/components/settings/roles/roles-filters";
 import { RolesManager } from "@/components/settings/roles/roles-manager";
 import { RolesNoAccess } from "@/components/settings/roles/roles-no-access";
 import { getQueryClient } from "@/lib/query/client";
@@ -22,8 +22,9 @@ export const metadata = pageMetadata({
 
 /**
  * Roles route (#6129, the jobs slice's shape). Prefetches the role catalog (built-ins with their
- * grant counts, the permission catalog, the entitlement, the manage check) and the custom roles —
- * unsearched, and for the link's search — in-process through the read router, so the rail and the
+ * grant counts, the permission catalog, the entitlement, the manage check) and the FIRST PAGE of the
+ * custom roles' walk — unfiltered, and for the link's search and kinds, under the infinite key
+ * `useKeysetList` builds (LST-8 #7490) — in-process through the read router, so the rail and the
  * detail paint with data and the browser fetches nothing on mount.
  *
  * Both reads require `member:view`. A viewer without it gets the no-access notice from HERE, on the
@@ -35,21 +36,23 @@ export default async function RolesPage({
 	params: Promise<{ org: string }>;
 	searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-	const search = rolesSearchFromUrl(paramReader(await searchParams));
+	const filtered = rolesQueryFromUrl(paramReader(await searchParams));
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
 	// A refusal is not retried: it answers the same the second time, and the retry's back-off would
 	// hold the no-access render up for a second.
 	const catalog = rpc.members.roleCatalog.queryOptions({ input: undefined, retry: retryUnlessRefused });
-	await Promise.all([
-		queryClient.prefetchQuery(catalog),
-		queryClient.prefetchQuery(rpc.members.roles.queryOptions({ input: {}, retry: retryUnlessRefused })),
-		search
-			? queryClient.prefetchQuery(
-					rpc.members.roles.queryOptions({ input: { search }, retry: retryUnlessRefused }),
-				)
-			: Promise.resolve(),
-	]);
+	/** The first page of one filter's walk, under the infinite key `useKeysetList` reads. */
+	const firstPage = (filter: NormalizedRolesQuery) =>
+		queryClient.prefetchInfiniteQuery(
+			rpc.members.roles.infiniteOptions({
+				input: (cursor: string | null) => (cursor === null ? filter : { ...filter, cursor }),
+				initialPageParam: null,
+				getNextPageParam: (last) => last.nextCursor,
+				retry: retryUnlessRefused,
+			}),
+		);
+	await Promise.all([queryClient.prefetchQuery(catalog), firstPage({}), firstPage(filtered)]);
 
 	if (isForbiddenRead(queryClient.getQueryState(catalog.queryKey)?.error)) {
 		return <RolesNoAccess />;

@@ -30,8 +30,12 @@ vi.mock("@/lib/actions/use-action-mutation", () => ({
 }));
 vi.mock("@/lib/query/use-roles-query", () => ({
 	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
-	useRolesQuery: () => ({ data: [], isFetching: false, isPending: false, isPlaceholderData: false }),
 }));
+// The custom roles page through `useKeysetList` since LST-8 (#7490); none here.
+vi.mock("@/lib/query/use-keyset-list", async () => {
+	const { settledKeysetList } = await import("../../helpers/keyset-list");
+	return { useKeysetList: () => settledKeysetList([]) };
+});
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
 vi.mock("@/components/settings/roles/role-sheet", () => ({ RoleSheet: () => null }));

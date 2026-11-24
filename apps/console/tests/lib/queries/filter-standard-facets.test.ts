@@ -76,6 +76,7 @@ import {
 } from "@/lib/queries/alerts-lists";
 import { queryApprovalsPage } from "@/lib/queries/approvals";
 import { queryMembersPage } from "@/lib/queries/members";
+import { queryRolesPage } from "@/lib/queries/roles";
 import { queryTeamsPage } from "@/lib/queries/teams";
 
 /** The org every builder is scoped to. Not a needle: the scope predicate is what a facet pass IS. */
@@ -114,6 +115,11 @@ const DRIVEN: Record<string, Driver> = {
 		filtered: () =>
 			queryMembersPage(ORG, "viewer-1", { search: `${NEEDLE}-member`, roles: ["admin"] }),
 		unfiltered: () => queryMembersPage(ORG, "viewer-1"),
+	},
+	queryRolesPage: {
+		module: "@/lib/queries/roles",
+		filtered: () => queryRolesPage(ORG, { search: `${NEEDLE}-role`, kinds: ["custom"] }),
+		unfiltered: () => queryRolesPage(ORG),
 	},
 	queryAccessGrantsPage: {
 		module: "@/lib/queries/access-grants",

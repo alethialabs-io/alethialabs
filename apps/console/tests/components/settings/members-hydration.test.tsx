@@ -37,6 +37,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemberRow } from "@/app/server/actions/members";
 import type { MembersPage } from "@/lib/queries/members";
+import { membersPageOf } from "../../helpers/keyset-list";
 
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
@@ -106,11 +107,9 @@ function member(id: string, role: string): MemberRow {
 }
 
 /** The page `getMembersPage({})` answered with at `READ_AT`, for the viewer `u-owner`. */
-const PAGE: MembersPage = {
+const PAGE: MembersPage = membersPageOf({
 	members: [member("owner", "owner"), member("ada", "viewer")],
 	invitations: [],
-	resultCount: 2,
-	total: 2,
 	viewerUserId: "u-owner",
 	asOf: new Date(READ_AT).toISOString(),
 	facets: {
@@ -125,12 +124,13 @@ const PAGE: MembersPage = {
 		],
 		teams: [],
 	},
-};
+});
 
 /** The route's seed, as `page.tsx` builds it: the pristine page and the gate prefetched, then dehydrated. */
 function dehydratedSeed() {
 	const server = new QueryClient();
-	server.setQueryData([["members", "page"], { input: {}, type: "query" }], PAGE);
+	// The first page of the pristine walk, under the infinite key `useKeysetList` reads (LST-8 #7490).
+	server.setQueryData([["members", "page"], { input: {}, type: "infinite" }], { pages: [PAGE], pageParams: [null] });
 	server.setQueryData([["members", "gate"], { input: undefined, type: "query" }], { canManage: false, canInvite: false, plan: "community", inviteBlockedReason: "Inviting members is available on the Pro plan." });
 	return dehydrate(server);
 }

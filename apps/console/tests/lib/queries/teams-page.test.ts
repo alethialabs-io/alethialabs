@@ -30,8 +30,10 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
-import { ilike, or } from "drizzle-orm";
+import { ilike, or, SQL, sql } from "drizzle-orm";
 import { queryTeamsPage, TEAM_SIZE_BUCKETS, teamSizeBucket } from "@/lib/queries/teams";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/queries/keyset";
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -84,9 +86,9 @@ describe("queryTeamsPage", () => {
 				members: [{ userId: "u1", name: "Ada Lovelace", initials: "AD" }],
 			},
 		]);
-		expect(page.resultCount).toBe(1);
-		expect(page.total).toBe(4);
-		expect(page.facets.sizes).toEqual([
+		expect(page.nextCursor).toBeNull();
+		expect(page.universeEmpty).toBe(false);
+		expect(page.facets?.sizes).toEqual([
 			{ value: "empty", label: null, count: 2 },
 			{ value: "small", label: null, count: 1 },
 			{ value: "large", label: null, count: 1 },
@@ -96,7 +98,7 @@ describe("queryTeamsPage", () => {
 	it("keeps a zero bucket in the facet — a bucket nobody is in is still a fact", async () => {
 		seed([], [{ teamId: "t1", memberCount: 2 }]);
 		const page = await queryTeamsPage("org-1");
-		expect(page.facets.sizes.map((o) => [o.value, o.count])).toEqual([
+		expect(page.facets?.sizes.map((o) => [o.value, o.count])).toEqual([
 			["empty", 0],
 			["small", 1],
 			["large", 0],
@@ -175,5 +177,69 @@ describe("queryTeamsPage", () => {
 		);
 		const page = await queryTeamsPage("org-1");
 		expect(page.rows[1].members).toEqual([]);
+	});
+
+	// ── the keyset walk (LST-8 #7490) ─────────────────────────────────────────────────────
+	describe("pages on the keyset contract", () => {
+		const SAME = new Date("2026-05-01T00:00:00.000Z");
+		const dialect = new PgDialect({ casing: "snake_case" });
+		/** A chain's SQL fragments for `method`, rendered as the service db renders them. */
+		const render = (args: unknown[] | undefined) =>
+			dialect.sqlToQuery(sql.join((args ?? []).filter((a): a is SQL => a instanceof SQL), sql`, `)).sql;
+		/** Seeds result sets in await order: rows, then (first page) facets, then hydration. */
+		const seedSets = (...sets: unknown[][]) => {
+			const { db, chains } = mockChainDb(sets);
+			getServiceDb.mockReturnValue(db);
+			return chains;
+		};
+
+		it("orders newest first by the ms-truncated instant, then id, and reads limit + 1", async () => {
+			const chains = seedSets([], []);
+			await queryTeamsPage("org-1", {}, { limit: 2 });
+			expect(render(chains[0]?.argsOf("orderBy"))).toBe(
+				`date_trunc('milliseconds', "team"."created_at") desc, "team"."id" desc`,
+			);
+			expect(chains[0]?.argsOf("limit")).toEqual([3]);
+		});
+
+		it("cuts at the limit and hands back the LAST kept row as the cursor — ties broken by id", async () => {
+			// Three rows read for a page of two: the third proves a next page exists.
+			seedSets([{ id: "cccc", name: "C", createdAt: new Date("2026-05-03T00:00:00.000Z"), memberCount: 1 }, { id: "bbbb", name: "B", createdAt: SAME, memberCount: 1 }, { id: "aaaa", name: "A", createdAt: SAME, memberCount: 1 }], []);
+			const page = await queryTeamsPage("org-1", {}, { limit: 2 });
+			expect(page.rows.map((r) => r.id)).toEqual(["cccc", "bbbb"]);
+			// bbbb and aaaa share a millisecond: the cursor carries bbbb's id, so aaaa is the next
+			// page's first row rather than a row lost at the boundary.
+			expect(decodeKeysetCursor(page.nextCursor ?? "", "text")).toEqual({
+				at: "2026-05-01T00:00:00.000Z",
+				id: "bbbb",
+			});
+		});
+
+		it("says null at the end exactly — a full last page costs no empty read", async () => {
+			seedSets([{ id: "cccc", name: "C", createdAt: new Date("2026-05-03T00:00:00.000Z"), memberCount: 1 }, { id: "bbbb", name: "B", createdAt: SAME, memberCount: 1 }], []);
+			const page = await queryTeamsPage("org-1", {}, { limit: 2 });
+			expect(page.rows).toHaveLength(2);
+			expect(page.nextCursor).toBeNull();
+		});
+
+		it("applies the cursor as a row-value predicate and skips the facet pass on a later page", async () => {
+			const cursor = decodeKeysetCursor(
+				encodeKeysetCursor({ at: SAME, id: "00000000-0000-4000-8000-0000000000bb" }),
+			);
+			if (cursor === null) throw new Error("the test's cursor did not decode");
+			const chains = seedSets([]);
+			const page = await queryTeamsPage("org-1", {}, { limit: 50, cursor });
+			expect(render(chains[0]?.argsOf("where"))).toContain("< ($");
+			// No facet pass: a later page walks the same universe and would count the same.
+			expect(chains.filter((c) => c.awaited)).toHaveLength(1);
+			expect(page.facets).toBeNull();
+			expect(page.universeEmpty).toBeNull();
+		});
+
+		it("says the universe is empty on a first page over nothing — a boolean, never a count", async () => {
+			seedSets([], []);
+			const page = await queryTeamsPage("org-1", {});
+			expect(page.universeEmpty).toBe(true);
+		});
 	});
 });
