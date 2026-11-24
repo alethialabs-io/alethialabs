@@ -7,19 +7,12 @@
 // presents the approval's id as `approval_id` to `POST /api/jobs`.
 
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { approvalErrorResponse, approvePath, cliApprovalActor } from "@/lib/approvals/http";
 import { viewOf } from "@/lib/approvals/read";
-import { MAX_REASON_LENGTH, requestApproval } from "@/lib/approvals/request";
-import { APPLY_OPERATIONS } from "@/lib/approvals/types";
+import { requestApproval } from "@/lib/approvals/request";
 import { authorizeCli } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
-
-const requestBody = z.object({
-	plan_job_id: z.uuid(),
-	operation: z.enum(APPLY_OPERATIONS),
-	reason: z.string().max(MAX_REASON_LENGTH).nullish(),
-});
+import { requestApprovalBody } from "@/lib/validations/cli-request-bodies";
 
 /** Records (or returns the live) approval request for the calling CLI credential. */
 export async function POST(req: Request) {
@@ -28,7 +21,7 @@ export async function POST(req: Request) {
 	if ("error" in auth) return auth.error;
 	const actor = cliApprovalActor(auth);
 
-	const parsed = requestBody.safeParse(await req.json().catch(() => null));
+	const parsed = requestApprovalBody.safeParse(await req.json().catch(() => null));
 	if (!parsed.success) {
 		return NextResponse.json(
 			{ error: "Send plan_job_id (a UUID), operation (deploy or destroy) and an optional reason." },

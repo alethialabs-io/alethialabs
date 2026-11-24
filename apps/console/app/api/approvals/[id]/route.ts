@@ -14,18 +14,12 @@ import { authorizeCli, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { withActorScope } from "@/lib/db";
 
-/** The caller: a CLI bearer when the request carries one, else the console session. */
-async function callerOf(req: Request): Promise<{ actor: Actor } | { error: Response }> {
-	if (req.headers.get("authorization")) {
-		const auth = await authorizeCli(req, "view", { type: "project" });
-		return "error" in auth ? auth : { actor: cliApprovalActor(auth) };
-	}
+/** The console session's actor, or null when the request carries no session. */
+async function sessionActor(): Promise<Actor | null> {
 	try {
-		return { actor: await currentActor() };
+		return await currentActor();
 	} catch (err) {
-		if (err instanceof UnauthorizedError) {
-			return { error: NextResponse.json({ error: "Sign in to read this approval." }, { status: 401 }) };
-		}
+		if (err instanceof UnauthorizedError) return null;
 		throw err;
 	}
 }
@@ -36,10 +30,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	if (!z.uuid().safeParse(id).success) {
 		return NextResponse.json({ error: "Approval not found", code: "not_found" }, { status: 404 });
 	}
-	const caller = await callerOf(req);
-	if ("error" in caller) return caller.error;
+	// The caller: a CLI bearer when the request carries one, else the console session.
+	let actor: Actor | null;
+	if (req.headers.get("authorization")) {
+		const auth = await authorizeCli(req, "view", { type: "project" });
+		if ("error" in auth) return auth.error;
+		actor = cliApprovalActor(auth);
+	} else {
+		actor = await sessionActor();
+	}
+	if (!actor) return NextResponse.json({ error: "Sign in to read this approval." }, { status: 401 });
+	const caller = actor;
 	try {
-		const view = await withActorScope(caller.actor, (tx) => readApproval(tx, caller.actor, id));
+		const view = await withActorScope(caller, (tx) => readApproval(tx, caller, id));
 		return NextResponse.json({ approval: view, approve_path: approvePath(view.id) });
 	} catch (err) {
 		const refused = approvalErrorResponse(err);

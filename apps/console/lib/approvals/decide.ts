@@ -21,7 +21,7 @@ import { ApprovalError } from "./refusal";
  */
 export const DECIDER_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-/** The person deciding, as the decision route reads them from the console session. */
+/** The person deciding, as `decideApplyApproval` (app/server/actions/approvals.ts) reads them from the console session. */
 export interface Decider {
 	actor: Actor;
 	/** The Better Auth session the decision is made in. */
