@@ -622,7 +622,7 @@ controls:
     control: { role: button, name: "Delete role" }
     confirm: alert-dialog
     confirm_action: "Delete role"
-    dialog_title: "Delete this role?"
+    dialog_title: "Delete role “<name>”?"
     fixture: custom-role
     persona: team
     status: confirmed
@@ -636,7 +636,7 @@ controls:
     control: { role: menuitem, name: "Delete team" }
     confirm: alert-dialog
     confirm_action: "Delete team"
-    dialog_title: "Delete this team?"
+    dialog_title: "Delete team “<name>”?"
     fixture: team
     persona: team
     status: confirmed
@@ -666,7 +666,7 @@ controls:
     control: { role: button, name: "Remove provider" }
     confirm: alert-dialog
     confirm_action: "Remove provider"
-    dialog_title: "Remove this identity provider?"
+    dialog_title: "Remove identity provider “<name>”?"
     fixture: sso-provider
     persona: team
     status: confirmed
@@ -681,7 +681,7 @@ controls:
     control: { role: menuitem, name: "Revoke access" }
     confirm: alert-dialog
     confirm_action: "Revoke access"
-    dialog_title: "Revoke this grant?"
+    dialog_title: "Revoke <role> from <name>?"
     fixture: access-grant
     persona: team
     status: confirmed
@@ -896,13 +896,14 @@ controls:
     surface: apps/console/components/runners/runner-actions.tsx
     mutation: destroyRunnerAction
     mutation_surface: apps/console/lib/query/use-runners-query.ts
-    control: { role: button, name: "Destroy" }
-    # Destroy-class, still a popover (audit C-20). #6827 owns runner-actions.tsx; moving it to
-    # `ConfirmAction` at `severity: destroy` flips this to `confirm: typed` and drops `typed_by`.
-    confirm: popover
+    # The card's "Destroy" opens the runner picker (which runner carries out the destroy job); its
+    # "Continue to destroy" opens `ConfirmAction` at `severity: destroy` (#6827, audit C-20).
+    reach: [{ open: "Destroy" }]
+    control: { role: button, name: "Continue to destroy" }
+    confirm: typed
     class: destroy
-    typed_by: "#6827"
-    confirm_action: "Destroy"
+    confirm_action: "Destroy runner"
+    dialog_title: "Destroy runner “<name>”?"
     fixture: deployed-runner-with-cloud-resources
     persona: owner
     status: confirmed

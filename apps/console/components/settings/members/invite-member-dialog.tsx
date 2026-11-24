@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from "@repo/ui/select";
 import { type ActionResult, describeActionError } from "@/lib/actions/result";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
 import { track } from "@/lib/analytics/track";
@@ -187,6 +188,11 @@ export function InviteMemberDialog({
     if (open) form.reset({ invites: [{ email: "", role: "viewer" }] });
   }, [open, form]);
 
+  // Typed addresses are not dropped by a stray Escape or an outside click (R6 E-17): closing a
+  // dirty dialog asks first, with the console's one discard question (`useUnsavedGuard`), the same
+  // one the role, provider, policy and channel sheets ask.
+  const { guard, prompt } = useUnsavedGuard(form);
+
   const invite = useActionMutation(sendInvites, {
     // The members table (a new pending row) and this dialog's own taken-email list.
     invalidates: [orpc.members.key()],
@@ -235,119 +241,139 @@ export function InviteMemberDialog({
     ) : null;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      {trigger && <DialogTrigger render={trigger} />}
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Invite members</DialogTitle>
-          <DialogDescription>
-            Add one or more teammates — each gets an email to join this
-            organization with the role you choose.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (next) {
+            setOpen(true);
+            return;
+          }
+          if (invite.isPending) return;
+          guard(() => setOpen(false));
+        }}
+      >
+        {trigger && <DialogTrigger render={trigger} />}
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Invite members</DialogTitle>
+            <DialogDescription>
+              Add one or more teammates — each gets an email to join this
+              organization with the role you choose.
+            </DialogDescription>
+          </DialogHeader>
 
-        {seatBanner}
+          {seatBanner}
 
-        <FormProvider {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-            <div className="space-y-2">
-              {fields.map((field, i) => (
-                <div key={field.id} className="flex items-start gap-2">
-                  <FormField
-                    control={form.control}
-                    name={`invites.${i}.email`}
-                    render={({ field: f }) => (
-                      <FormItem className="flex-1">
-                        <FormControl>
-                          <Input
-                            aria-label={`Email address ${i + 1}`}
-                            type="email"
-                            placeholder="teammate@company.com"
-                            autoFocus={i === 0}
-                            {...f}
-                          />
-                        </FormControl>
-                        <FormMessage className="text-ui-xs" />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name={`invites.${i}.role`}
-                    render={({ field: f }) => (
-                      <FormItem className="w-32 shrink-0">
-                        <Select value={f.value} onValueChange={f.onChange}>
+          <FormProvider {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
+              <div className="space-y-2">
+                {fields.map((field, i) => (
+                  <div key={field.id} className="flex items-start gap-2">
+                    <FormField
+                      control={form.control}
+                      name={`invites.${i}.email`}
+                      render={({ field: f }) => (
+                        <FormItem className="flex-1">
                           <FormControl>
-                            {/* The picker carries its own accessible name. Without one the only way
-                                to reach it is by position among the dialog's comboboxes, and a
-                                spec that says `.first()` is asserting about whichever control
-                                happens to be first — a test that keeps passing when the row it
-                                meant to read has moved. */}
-                            <SelectTrigger
-                              aria-label={`Role for invite ${i + 1}`}
-                              className="h-9 w-full"
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
+                            <Input
+                              aria-label={`Email address ${i + 1}`}
+                              type="email"
+                              placeholder="teammate@company.com"
+                              autoFocus={i === 0}
+                              {...f}
+                            />
                           </FormControl>
-                          <SelectContent>
-                            {roles.map((r) => (
-                              <SelectItem key={r.value} value={r.value}>
-                                {r.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </FormItem>
-                    )}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Remove"
-                    disabled={fields.length === 1}
-                    onClick={() => remove(i)}
-                    className="h-9 w-9 shrink-0"
-                  >
-                    <Trash2 className="h-4 w-4 text-muted-foreground" />
-                  </Button>
-                </div>
-              ))}
-            </div>
+                          <FormMessage className="text-ui-xs" />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`invites.${i}.role`}
+                      render={({ field: f }) => (
+                        <FormItem className="w-32 shrink-0">
+                          <Select value={f.value} onValueChange={f.onChange}>
+                            <FormControl>
+                              {/* The picker carries its own accessible name. Without one the only way
+                                  to reach it is by position among the dialog's comboboxes, and a
+                                  spec that says `.first()` is asserting about whichever control
+                                  happens to be first — a test that keeps passing when the row it
+                                  meant to read has moved. */}
+                              <SelectTrigger
+                                aria-label={`Role for invite ${i + 1}`}
+                                className="h-9 w-full"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {roles.map((r) => (
+                                <SelectItem key={r.value} value={r.value}>
+                                  {r.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </FormItem>
+                      )}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      // Each row's remove names the row it removes (R6 E-24): N buttons all
+                      // called "Remove" cannot be told apart by a screen reader.
+                      aria-label={`Remove invite ${i + 1}`}
+                      disabled={fields.length === 1}
+                      onClick={() => remove(i)}
+                      className="h-9 w-9 shrink-0"
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
 
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => append({ email: "", role: "viewer" })}
-              className="gap-1.5 text-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add another
-            </Button>
-
-            {/* Role legend — what each role grants (descriptions, no overflow). */}
-            <ul className="space-y-0.5 border-t pt-2.5 text-ui-xs text-muted-foreground">
-              {roles.map((r) => (
-                <li key={r.value}>
-                  <span className="font-medium text-foreground">{r.label}</span>{" "}
-                  — {r.description}
-                </li>
-              ))}
-            </ul>
-
-            <DialogFooter>
-              <Button type="submit" disabled={invite.isPending}>
-                <UserPlus className="h-4 w-4" />
-                {invite.isPending
-                  ? "Sending…"
-                  : `Send ${fields.length > 1 ? `${fields.length} invites` : "invite"}`}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => append({ email: "", role: "viewer" })}
+                className="gap-1.5 text-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add another
               </Button>
-            </DialogFooter>
-          </form>
-        </FormProvider>
-      </DialogContent>
-    </Dialog>
+
+              {/* Role legend — what each role grants (descriptions, no overflow). */}
+              <ul className="space-y-0.5 border-t pt-2.5 text-ui-xs text-muted-foreground">
+                {roles.map((r) => (
+                  <li key={r.value}>
+                    <span className="font-medium text-foreground">{r.label}</span>{" "}
+                    — {r.description}
+                  </li>
+                ))}
+              </ul>
+
+              <DialogFooter>
+                <Button type="submit" disabled={invite.isPending}>
+                  <UserPlus className="h-4 w-4" />
+                  {invite.isPending
+                    ? "Sending…"
+                    : `Send ${fields.length > 1 ? `${fields.length} invites` : "invite"}`}
+                </Button>
+              </DialogFooter>
+            </form>
+          </FormProvider>
+        </DialogContent>
+      </Dialog>
+      <DiscardPrompt
+        {...prompt}
+        title="Discard these invitations?"
+        description="The addresses you typed have not been sent. Closing drops them."
+        confirmLabel="Discard"
+      />
+    </>
   );
 }
