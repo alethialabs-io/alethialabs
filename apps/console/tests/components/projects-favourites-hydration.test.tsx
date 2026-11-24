@@ -53,8 +53,8 @@ vi.mock("@/components/overview/usage-card", () => ({ UsageCard: () => null }));
 vi.mock("@/components/overview/alerts-card", () => ({ AlertsCard: () => null }));
 vi.mock("@/components/overview/recent-jobs-card", () => ({ RecentJobsCard: () => null }));
 
-// The grid is a query now (#6817): the fake transport gives it the browser's real key, and the
-// test seeds the answer as the route's prefetch and hydration would.
+// The grid is a keyset walk now (#6817, LST-4 #7486): the fake transport gives it the browser's real
+// key, and the test seeds the first page as the route's prefetch and hydration would.
 vi.mock("@/lib/rpc/client", async () => ({ orpc: (await import("./overview/rpc-fake")).fakeOrpc }));
 // The signed-in person the stars belong to, as the private layout seeds it.
 vi.mock("@/components/providers/viewer-provider", () => ({
@@ -66,7 +66,7 @@ vi.mock("@/app/server/actions/projects", () => ({ tryDuplicateProjectForProvider
 import { OverviewClient } from "@/app/(private)/[org]/overview-client";
 import { type OverviewState, overviewProjectsInput } from "@/components/overview/overview-state";
 import { PROJECTS_FAVORITES_STORAGE_KEY, useProjectsStore } from "@/lib/stores/use-projects-store";
-import { fakeOrpc } from "./overview/rpc-fake";
+import { fakeOrpc, never, reads } from "./overview/rpc-fake";
 
 /** The person signed in to this browser. */
 const USER = "u-1";
@@ -108,20 +108,25 @@ const STATE: OverviewState = { q: "", clouds: [], repos: [], sort: "activity", v
 /** Both of the overview's views: the cards and the table each render the favourite. */
 const VIEWS: OverviewState["view"][] = ["card", "table"];
 
-/** The grid's answer for `PROJECTS`, as `overview.projects` gives it. */
-const GRID = {
-	projects: PROJECTS,
-	facets: { clouds: [], repos: [] },
-	total: PROJECTS.length,
-	connectedProviders: [],
-	offeredClouds: ["aws"],
-	canCreate: true,
-};
+/** The grid's first (and only) keyset page for `PROJECTS`, as `overview.projects.page` gives it. */
+const PAGE = { rows: PROJECTS, nextCursor: null, facets: { clouds: [], repos: [] }, universeEmpty: false };
 
-/** A cache holding the grid's answer for `state`, as the page's hydration boundary leaves it. */
+/** The grid's summary, as `overview.projects.summary` gives it. */
+const SUMMARY = { projectCount: PROJECTS.length, connectedProviders: [], offeredClouds: ["aws"], canCreate: true };
+
+/**
+ * A cache holding the grid's first page (its INFINITE key: the address's query, never a cursor) and
+ * its summary for `state`, as the page's hydration boundary leaves them. The starred-projects lookup
+ * is NOT seeded — the route cannot know the browser's stars — so after hydration the grid orders the
+ * loaded rows while that read is in flight; its transport never answers here.
+ */
 function seededClient(state: OverviewState): QueryClient {
 	const client = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } });
-	client.setQueryData(fakeOrpc.overview.projects.queryKey({ input: overviewProjectsInput(state) }), GRID);
+	client.setQueryData([["overview", "projects", "page"], { input: overviewProjectsInput(state), type: "infinite" }], {
+		pages: [PAGE],
+		pageParams: [null],
+	});
+	client.setQueryData(fakeOrpc.overview.projects.summary.queryKey(), SUMMARY);
 	return client;
 }
 
@@ -180,6 +185,8 @@ async function serverThenHydrate(
 }
 
 beforeEach(() => {
+	reads.grid.mockReset();
+	reads.grid.mockImplementation(never);
 	localStorage.clear();
 	useProjectsStore.setState({ favoritesByUser: {} });
 });
