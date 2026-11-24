@@ -23,13 +23,18 @@
 #      `required` value is present, not a template placeholder, and of its generator's shape.
 #      Values are checked, never printed.
 #   4. The prod and self-host compose overlays render with that scratch .env, and the base file
-#      refuses to render, naming the variable, when a required secret is empty.
-#   5. Caddy auto-TLS is wired: deploy/prod/Caddyfile reads ALETHIA_DOMAIN + ALETHIA_ACME_EMAIL,
-#      and the rendered caddy service carries both.
+#      refuses to render, naming the variable, when a required secret is empty. The rendered
+#      self-host stack runs `preflight` before `migrate`, runs the bundled runner as `self`, and
+#      install.sh brings up that overlay, not the hosted one.
+#   5. The preflight check (deploy/selfhost/preflight.sh) passes the generated .env, and refuses,
+#      naming the variable, each manifest entry set to a template placeholder and each `required`
+#      entry left empty.
+#   6. Caddy auto-TLS is wired: both Caddyfiles (deploy/selfhost/, deploy/prod/) read ALETHIA_DOMAIN
+#      + ALETHIA_ACME_EMAIL, and the rendered caddy service carries both.
 #
-# LIVE adds the compose→hero-flow round-trip: bring the stack up, get /api/health 200 through
-# Caddy, prove a second `up -d` is a no-op (idempotent), tear down. The real-domain + real-cert
-# leg stays a maintainer step (needs DNS + a public box) — see deploy/prod/README.md.
+# LIVE adds the compose→hero-flow round-trip on the self-host overlay: bring the stack up, get
+# /api/health 200 through Caddy, prove a second `up -d` is a no-op (idempotent), tear down. The
+# real-domain + real-cert leg stays a maintainer step (needs DNS + a public box).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,11 +43,13 @@ cd "$ROOT"
 INSTALL_SH="deploy/install.sh"
 ENV_EXAMPLE=".env.example"
 PROD_CADDYFILE="deploy/prod/Caddyfile"
+SELFHOST_CADDYFILE="deploy/selfhost/Caddyfile"
+PREFLIGHT_SH="deploy/selfhost/preflight.sh"
 COMPOSE_FILES=(-f docker-compose.yml -f deploy/prod/docker-compose.prod.yml)
 SELFHOST_COMPOSE_FILES=(-f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml)
 MANIFEST="deploy/selfhost/secrets.manifest"
 CONSOLE_SECRETS_TS="apps/console/lib/crypto/secrets.ts"
-SHELL_SCRIPTS=("${INSTALL_SH}" deploy/selfhost/secrets.sh deploy/selfhost/rotate-secret.sh scripts/dev-env.sh)
+SHELL_SCRIPTS=("${INSTALL_SH}" deploy/selfhost/secrets.sh deploy/selfhost/preflight.sh deploy/selfhost/rotate-secret.sh scripts/dev-env.sh)
 
 # shellcheck source=SCRIPTDIR/../deploy/selfhost/secrets.sh
 . deploy/selfhost/secrets.sh
@@ -171,6 +178,95 @@ cleanup() {
 }
 trap cleanup EXIT
 
+RENDERED_SELFHOST=""
+
+# selfhost_jq FILTER — FILTER applied to the rendered self-host model (JSON). Reads structure, so
+# a comment or a reordering in the overlay cannot satisfy or break it.
+selfhost_jq() { printf '%s' "${RENDERED_SELFHOST}" | jq -r "$1" 2>/dev/null; }
+
+# The rendered self-host stack: preflight gates migrate, the runner is self-operated, every Alethia
+# image carries the one ALETHIA_VERSION tag, and install.sh layers this overlay.
+check_selfhost_wiring() {
+	if ! command -v jq >/dev/null 2>&1; then
+		fail "jq not installed — cannot read the rendered self-host model"
+		return
+	fi
+	if [ "$(selfhost_jq '.services.migrate.depends_on.preflight.condition')" = "service_completed_successfully" ]; then
+		green "self-host: migrate waits for preflight to complete successfully"
+	else
+		fail "self-host: migrate does not depend on preflight completing (service_completed_successfully)"
+	fi
+	if [ "$(selfhost_jq '.services.preflight.entrypoint | join(" ")')" = "sh /alethia/selfhost/preflight.sh" ]; then
+		green "self-host: preflight runs deploy/selfhost/preflight.sh"
+	else
+		fail "self-host: the preflight service does not run deploy/selfhost/preflight.sh"
+	fi
+	if [ "$(selfhost_jq '.services.runner.environment.ALETHIA_RUNNER_OPERATOR')" = "self" ]; then
+		green "self-host: the bundled runner is self-operated"
+	else
+		fail "self-host: the bundled runner's ALETHIA_RUNNER_OPERATOR is not 'self'"
+	fi
+	local stray
+	stray="$(selfhost_jq '[.services[] | .image // empty | select(startswith("ghcr.io/alethialabs-io/")) | select(endswith(":v0.0.0-validate") | not)] | join(" ")')"
+	if [ -z "${stray}" ]; then
+		green "self-host: every Alethia image is pinned to ALETHIA_VERSION"
+	else
+		fail "self-host: images not pinned to ALETHIA_VERSION: ${stray}"
+	fi
+	if [ "$(selfhost_jq '[.services.caddy.volumes[] | select(.target == "/etc/caddy/Caddyfile") | .source | endswith("/deploy/selfhost/Caddyfile")] | any')" = "true" ]; then
+		green "self-host: caddy mounts ${SELFHOST_CADDYFILE}"
+	else
+		fail "self-host: caddy does not mount ${SELFHOST_CADDYFILE}"
+	fi
+	if grep -q 'deploy/selfhost/docker-compose.selfhost.yml' "${INSTALL_SH}" && ! grep -q 'deploy/prod/docker-compose.prod.yml' "${INSTALL_SH}"; then
+		green "${INSTALL_SH} layers the self-host overlay, not the hosted one"
+	else
+		fail "${INSTALL_SH} must layer deploy/selfhost/docker-compose.selfhost.yml and not deploy/prod/docker-compose.prod.yml"
+	fi
+	if grep -q 'preflight.sh --env-file' "${INSTALL_SH}"; then
+		green "${INSTALL_SH} runs the preflight check before starting the stack"
+	else
+		fail "${INSTALL_SH} no longer runs ${PREFLIGHT_SH} before starting the stack"
+	fi
+}
+
+# 5. preflight.sh passes the generated .env and refuses each unusable entry, naming it. Output is
+#    captured and searched for the NAME only; preflight prints names, never values.
+check_preflight() {
+	info "preflight (${PREFLIGHT_SH}) against the scratch .env"
+	if [ ! -s "${SCRATCH_ENV}" ]; then
+		fail "no scratch .env (the generator check failed) — cannot exercise preflight"
+		return
+	fi
+	if sh "${PREFLIGHT_SH}" --env-file "${SCRATCH_ENV}" >/dev/null 2>&1; then
+		green "preflight passes the generated .env"
+	else
+		fail "preflight refused a freshly generated .env"
+	fi
+	local probe="${SCRATCH}/preflight.env" name out refused=0 total=0
+	for name in $(manifest_secrets all); do
+		total=$((total + 1))
+		(umask 077 && cp "${SCRATCH_ENV}" "${probe}")
+		env_set "${name}" "<generate-me>" "${probe}"
+		if out="$(sh "${PREFLIGHT_SH}" --env-file "${probe}" 2>&1)"; then
+			fail "preflight accepted a template placeholder for ${name}"
+		elif ! printf '%s\n' "${out}" | grep -qE "^  ${name} "; then
+			fail "preflight refused a placeholder for ${name} without naming it"
+		else
+			refused=$((refused + 1))
+		fi
+		[ "$(manifest_field "${name}" 4)" = "required" ] || continue
+		env_set "${name}" "" "${probe}"
+		if out="$(sh "${PREFLIGHT_SH}" --env-file "${probe}" 2>&1)"; then
+			fail "preflight accepted an empty ${name}"
+		elif ! printf '%s\n' "${out}" | grep -qE "^  ${name} "; then
+			fail "preflight refused an empty ${name} without naming it"
+		fi
+	done
+	[ "${refused}" -eq "${total}" ] && green "preflight refuses a placeholder in each of the ${total} manifest entries, and an empty value in each required one, naming it"
+	rm -f "${probe}"
+}
+
 check_compose_renders() {
 	info "docker compose config (base + prod overlay, base + self-host overlay)"
 	if ! command -v docker >/dev/null 2>&1; then
@@ -193,11 +289,13 @@ check_compose_renders() {
 		fail "docker compose config failed for the prod overlay: ${err}"
 		RENDERED_COMPOSE=""
 	fi
-	if ALETHIA_VERSION=v0.0.0-validate docker compose --env-file "${SCRATCH_ENV}" "${SELFHOST_COMPOSE_FILES[@]}" config >/dev/null 2>&1; then
+	if RENDERED_SELFHOST="$(ALETHIA_VERSION=v0.0.0-validate docker compose --env-file "${SCRATCH_ENV}" "${SELFHOST_COMPOSE_FILES[@]}" config --format json 2>/dev/null)"; then
 		green "self-host compose overlay renders"
+		check_selfhost_wiring
 	else
 		err="$(ALETHIA_VERSION=v0.0.0-validate docker compose --env-file "${SCRATCH_ENV}" "${SELFHOST_COMPOSE_FILES[@]}" config 2>&1 >/dev/null || true)"
 		fail "docker compose config failed for the self-host overlay: ${err}"
+		RENDERED_SELFHOST=""
 	fi
 	# Negative: with one required secret emptied, the base file must refuse and name it.
 	local blank="${SCRATCH}/blank.env"
@@ -211,16 +309,18 @@ check_compose_renders() {
 	fi
 }
 
-# 4. Caddy auto-TLS wiring: the Caddyfile reads the env vars, and the rendered caddy service carries them.
+# 6. Caddy auto-TLS wiring: the Caddyfiles read the env vars, and the rendered caddy service carries them.
 check_caddy_tls_wiring() {
 	info "Caddy auto-TLS wiring"
-	local var
-	for var in ALETHIA_DOMAIN ALETHIA_ACME_EMAIL; do
-		if grep -qE "\{\\\$${var}" "${PROD_CADDYFILE}"; then
-			green "${PROD_CADDYFILE} reads \${${var}}"
-		else
-			fail "${PROD_CADDYFILE} does not reference \${${var}} — auto-TLS would not pick up the domain/email"
-		fi
+	local var caddyfile
+	for caddyfile in "${SELFHOST_CADDYFILE}" "${PROD_CADDYFILE}"; do
+		for var in ALETHIA_DOMAIN ALETHIA_ACME_EMAIL; do
+			if grep -qE "\{\\\$${var}" "${caddyfile}"; then
+				green "${caddyfile} reads \${${var}}"
+			else
+				fail "${caddyfile} does not reference \${${var}} — auto-TLS would not pick up the domain/email"
+			fi
+		done
 	done
 	if [ -z "${RENDERED_COMPOSE}" ]; then
 		fail "cannot assert the caddy service env (compose did not render)"
@@ -239,14 +339,16 @@ check_caddy_tls_wiring() {
 HEALTH_URL="${HEALTH_URL:-http://localhost/api/health}"
 LIVE_TIMEOUT="${LIVE_TIMEOUT:-180}"
 
-live_up() { docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans; }
+# The live leg runs what install.sh runs: the self-host overlay, at ALETHIA_VERSION (default latest).
+export ALETHIA_VERSION="${ALETHIA_VERSION:-latest}"
+live_up() { docker compose "${SELFHOST_COMPOSE_FILES[@]}" up -d --remove-orphans; }
 
 check_live_roundtrip() {
 	info "LIVE round-trip (compose → /api/health → idempotent re-run)"
 	command -v docker >/dev/null 2>&1 || { fail "docker required for --live"; return; }
 
 	info "pulling + starting the stack…"
-	docker compose "${COMPOSE_FILES[@]}" pull
+	docker compose "${SELFHOST_COMPOSE_FILES[@]}" pull
 	live_up
 
 	info "waiting for ${HEALTH_URL} (up to ${LIVE_TIMEOUT}s)…"
@@ -283,7 +385,7 @@ check_live_roundtrip() {
 	fi
 
 	info "tearing the stack down…"
-	docker compose "${COMPOSE_FILES[@]}" down >/dev/null 2>&1 || true
+	docker compose "${SELFHOST_COMPOSE_FILES[@]}" down >/dev/null 2>&1 || true
 }
 
 main() {
@@ -294,6 +396,7 @@ main() {
 	check_manifest
 	check_generators
 	check_compose_renders
+	check_preflight
 	check_caddy_tls_wiring
 	[ "${live}" -eq 1 ] && check_live_roundtrip
 
