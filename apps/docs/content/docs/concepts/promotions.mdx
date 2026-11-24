@@ -3,8 +3,6 @@ title: Environment Promotion
 description: How Alethia carries a source environment's structural design onto a higher-stage environment through a gated, two-phase plan-then-deploy state machine.
 ---
 
-# Environment Promotion
-
 Each environment in a project owns a full design — the same shape the canvas reads and writes. **Promotion** is how a change proven in one environment moves up to another: it carries the *source* environment's structural design onto a *target* environment, runs a plan, evaluates the target's protection gates, and then deploys (or waits for a human).
 
 Promotion is a first-class subsystem with its own table, status enum, gate engine, and approval flow. It does not add a new job type — it reuses the existing `PLAN` then `DEPLOY` jobs.

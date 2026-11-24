@@ -3,8 +3,6 @@ title: Fleet Pools
 description: Configure a managed warm pool of runners for a cloud so the fleet controller keeps capacity sized to demand.
 ---
 
-# Fleet Pools
-
 A **warm pool** is a declarative target for one cloud's managed runners: a floor of always-ready
 runners, a ceiling on spend, and a version to converge to. The **fleet controller** — a 60-second
 loop — reads every pool each tick and provisions, drains, or replaces runners to match. Editing a
