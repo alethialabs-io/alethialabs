@@ -24,8 +24,30 @@ Every page is one of four kinds, and they don't mix:
 | **Reference**   | "tell me the facts"           | `reference/` (CLI, API, config, catalog)   |
 | **Explanation** | "help me understand"          | `concepts/`                                |
 
-The top-level folders are the four types, plus `get-started/` (the one onboarding path) and
-`editions/`. A page's folder is its type. Material about how the code is built (schema tables, CI
+The top-level folders are the four types, plus `get-started/` (the one onboarding path),
+`self-host/` and `agents/` (how-to pages for operators and for AI clients), `troubleshooting/`
+and `editions/`. A page's folder is its type. There is one sidebar over all of them; the order
+and the groups live in `content/docs/meta.json`, and no section is a `root` folder.
+
+### Page types — a fixed shape and a length
+
+Every page has the shape of its type, so a reader always knows where to look and a reviewer can
+check a page against it. Words are prose words: frontmatter and fenced code are not counted.
+
+| Type | Folders | Sections, in order | Cap |
+| --- | --- | --- | --- |
+| Quickstart | `get-started/` | Before you begin · numbered steps, each with the result to expect · Clean up · Next steps | 1,500 |
+| Tutorial | `tutorials/` | What you build · Before you begin · steps · Clean up | 2,500 |
+| How-to | `guides/`, `self-host/`, `agents/` | The goal in one line · Before you begin · Steps · Check that it worked · Related | 1,000 |
+| Concept | `concepts/` | What it is, in two sentences · one diagram · How it works · What it does not do · Related | 1,200 |
+| Reference | `reference/` | Synopsis · options table · one example · errors | none (moving to generated pages) |
+| Troubleshooting | `troubleshooting/` | One block per problem: Symptom · Cause · Fix | none |
+
+`pnpm -F docs check:page-length` enforces the caps (CI runs it). Pages that were over their cap
+when the guard landed are listed in `page-length-ledger.json` with their word count then: each may
+only shrink, and its line must be lowered or deleted when it does. A long page is split by task
+or by concept, never trimmed until it is vague: every sentence still has to say something the
+reader needs. Material about how the code is built (schema tables, CI
 pipelines, internal runbooks) is not user documentation: it goes in the repository's
 [`docs/contributing/`](../../docs/contributing/). When you move a page, add the old → new pair to
 `redirects.mjs`.

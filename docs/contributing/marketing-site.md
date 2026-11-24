@@ -103,7 +103,7 @@ when self-hosting the site behind your own domain:
 
 The `/pricing` page reads live prices from Stripe when `STRIPE_SECRET_KEY` and
 `STRIPE_PRICE_TEAM` are set; otherwise it falls back to the static plan catalog
-label. See [Configuration](https://alethialabs.io/docs/guides/self-hosting/configuration) for the full `.env`
+label. See [Configuration](https://alethialabs.io/docs/self-host/configuration) for the full `.env`
 reference.
 
 ## Verify

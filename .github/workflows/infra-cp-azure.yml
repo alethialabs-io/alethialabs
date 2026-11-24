@@ -1,7 +1,7 @@
 name: Infra - CP Azure
 
 # VALIDATE-ONLY, and credential-free by construction. `infra/cp-azure` is a self-hosting option a
-# user applies in THEIR OWN Azure subscription (apps/docs/.../self-hosting/terraform/azure.mdx); it
+# user applies in THEIR OWN Azure subscription (apps/docs/.../self-host/terraform/azure.mdx); it
 # is not a deployment target of ours. Hosted prod runs on `cp-hetzner`. Until 2026-11-14 this file
 # also carried a push-to-main `apply` job behind `vars.INFRA_AZURE_APPLY` and a static
 # service-principal secret (`secrets.ARM_CLIENT_SECRET`, with `ARM_CLIENT_ID` /

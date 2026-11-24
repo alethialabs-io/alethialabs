@@ -1,7 +1,7 @@
 name: Infra - Email SES
 
 # VALIDATE-ONLY, and credential-free by construction. `infra/email-ses` is a self-hosting
-# reference: SES in the self-hoster's OWN AWS account (apps/docs/.../self-hosting/email.mdx). It is
+# reference: SES in the self-hoster's OWN AWS account (apps/docs/.../self-host/email.mdx). It is
 # not a deployment target of ours. Hosted transactional email is `infra/email-ses-account`, in the
 # dedicated `alethia-email` account, applied by hand and validated by infra-email-ses-account.yml.
 #
