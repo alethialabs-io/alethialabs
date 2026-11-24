@@ -130,10 +130,9 @@ func TestApplyFamily_NotWaitingNamesEveryJob(t *testing.T) {
 			if strings.Contains(stdout, "is up.") {
 				t.Errorf("a run that did not wait claimed the project is up:\n%s", stdout)
 			}
-			for _, read := range s.reads {
-				if strings.HasPrefix(read, "/api/cli/jobs/") {
-					t.Errorf("a run that does not wait polled %s", read)
-				}
+			// The previews are waited for (a deploy applies a reviewed plan); the deploys are not.
+			if polls := s.hits("/api/cli/jobs/"); polls != 2 {
+				t.Errorf("a run that does not wait polled %d times, want once per preview (2)", polls)
 			}
 
 			code, stdout, _ = projExitCode(t, h, "apply", "--file", path, "--yes", "--runner", "primary", "--no-input", flag, "--output", "json")
@@ -262,13 +261,7 @@ func TestApplyFamily_ATimeoutExitsTwelveAndNamesWhatIsLeft(t *testing.T) {
 	if !strings.Contains(env.Error.Hint, "alethia jobs logs j1") {
 		t.Errorf("the hint does not name the command that follows the job: %q", env.Error.Hint)
 	}
-	deploys := 0
-	for _, p := range s.posts {
-		if p.Path == "/api/jobs" {
-			deploys++
-		}
-	}
-	if deploys != 1 {
+	if deploys := len(s.jobPostsOfType("DEPLOY")); deploys != 1 {
 		t.Errorf("%d deploys were queued; the second environment must wait for the first", deploys)
 	}
 }
@@ -296,14 +289,20 @@ type waitingClient struct {
 	queued int
 }
 
-// QueueJobWithParams queues the next job.
-func (c *waitingClient) QueueJobWithParams(api.QueueJobParams) (*api.ProvisionJob, error) {
+// QueueJobWithParams queues the next job. A preview is not counted: it is the plan a deploy applies.
+func (c *waitingClient) QueueJobWithParams(p api.QueueJobParams) (*api.ProvisionJob, error) {
+	if p.JobType == string(types.JobTypePlan) {
+		return &api.ProvisionJob{ID: "plan-1", Status: string(types.JobStatusQueued)}, nil
+	}
 	c.queued++
 	return &api.ProvisionJob{ID: "j1", Status: string(types.JobStatusQueued)}, nil
 }
 
-// GetJob reports the job as running.
-func (c *waitingClient) GetJob(string) (*api.ProvisionJob, error) {
+// GetJob reports a preview as succeeded and the deploy as running.
+func (c *waitingClient) GetJob(id string) (*api.ProvisionJob, error) {
+	if id == "plan-1" {
+		return &api.ProvisionJob{ID: id, Status: string(types.JobStatusSuccess)}, nil
+	}
 	return &api.ProvisionJob{ID: "j1", Status: "RUNNING"}, nil
 }
 

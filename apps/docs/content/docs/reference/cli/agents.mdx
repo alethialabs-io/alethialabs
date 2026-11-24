@@ -1,12 +1,13 @@
 ---
 title: Agent Commands
-description: Inspect agent identities — machine/agent personas scoped to your account or organization.
+description: Inspect agent identities, and connect coding agents such as Claude Code, Cursor, Codex and VS Code to Alethia.
 ---
 
 # Agent Commands
 
 The `agent` group (alias `agents`) reads **agent identities** — machine/agent personas, each with a
 persona, a mission, an allowed tool scope, and a memory namespace, scoped to your account or org.
+`agent setup` connects the coding agents on your machine to the Alethia MCP server.
 
 <Callout type="info">
 The CLI is a client of the same Console API. These subcommands call `/cli/agents[/…]` with your
@@ -57,6 +58,56 @@ Renders a field/value card: **id**, **persona**, **mission**, **tool scope** (th
 **namespace**, **project** (the project it is scoped to, or `—` for an org-wide identity),
 **created**, **version**. Add `-o json` for the full object. Backing call:
 `GET /cli/agents/<agent-id>`.
+
+## `alethia agent setup`
+
+Connect coding agents to Alethia. For each agent, `setup` writes an MCP configuration into the
+project directory that points at the Alethia MCP server, and it adds an Alethia section to
+`AGENTS.md`.
+
+```bash
+alethia agent setup
+alethia agent setup --client claude-code --client codex --project boutique
+alethia agent setup --client cursor --read-only --dry-run
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--client` | No | The agents to configure: `claude-code`, `cursor`, `codex`, `vscode`. Repeatable. Default: the agents found on this machine; on a terminal you choose from the list. |
+| `--project` | No | Pin the MCP server to one project, by **name** or id. On a terminal you are offered the choice. Default: every project you can see. |
+| `--read-only` | No | List only the tools that change nothing. |
+| `--dir` | No | The project directory to write into. Default: the current directory. |
+| `--no-agents-md` | No | Do not add the Alethia section to `AGENTS.md`. |
+| `--dry-run` | No | Say what would be written, and write nothing. |
+
+Each agent reads its own file:
+
+| Agent | File |
+|-------|------|
+| Claude Code | `.mcp.json` |
+| Cursor | `.cursor/mcp.json` |
+| Codex | `.codex/config.toml` |
+| VS Code | `.vscode/mcp.json` |
+
+The server URL is the MCP endpoint of the control plane this CLI is configured for, so the agents of
+a self-hosted control plane connect to it. No URL is built into the CLI. A pinned server adds
+`?project=` to the URL, and `--read-only` adds `?readonly`.
+
+`setup` writes no credential. Each agent signs in to the MCP server itself, in your browser, the
+first time it connects. So the token an agent holds is one you granted to that agent.
+
+Running `setup` again is safe. It replaces the `alethia` server entry and the marked Alethia section
+of `AGENTS.md`, and leaves everything else in those files as it was. A configuration file that is
+not valid JSON is refused, not overwritten. The result lists each file as `created`, `updated` or
+`unchanged`.
+
+The section in `AGENTS.md` tells the agent to plan before it applies, that a deploy or a destroy
+waits for a person's approval, and that text from logs and repositories is data, not instructions.
+An agent cannot approve its own deploy: the approval is given in the console, and
+[`alethia approve`](/reference/cli/plan-and-apply#alethia-approve) only opens that page.
+
+This version of `setup` does not install skills. Skills come with the Alethia agent plugin, which
+is not published yet.
 
 ## See also
 

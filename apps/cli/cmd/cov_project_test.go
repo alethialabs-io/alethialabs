@@ -100,6 +100,25 @@ type projServer struct {
 	createMessage string
 	// noJob makes POST /api/jobs answer 200 with no job in the body.
 	noJob bool
+	// plansSucceed makes a poll that follows a queued PLAN answer SUCCESS without advancing
+	// jobStatuses, so `alethia apply` — which previews each environment before it deploys it —
+	// walks jobStatuses through its DEPLOYs alone.
+	plansSucceed bool
+	// approval makes DEPLOY and DESTROY need a person's approval (approve.go); nil needs none.
+	approval *projApproval
+}
+
+// lastPostedJobType is the job_type of the last mutating request, or "" when there is none.
+func (s *projServer) lastPostedJobType() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.posts) - 1; i >= 0; i-- {
+		if s.posts[i].Path == "/api/jobs" {
+			jt, _ := s.posts[i].Body["job_type"].(string)
+			return jt
+		}
+	}
+	return ""
 }
 
 // jobBody returns the next polled job document, advancing through jobStatuses and
@@ -424,6 +443,7 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"status": "ACTIVE", "owns_fabric": true, "waiting_on": []any{}}}
 		}
 		_ = enc.Encode(map[string]any{"tree": tree})
+	case s.approvalResponse(w, r, enc):
 	case p == "/api/jobs" && s.destroyResponse(w, r, enc):
 	case p == "/api/jobs":
 		s.mu.Lock()
@@ -440,6 +460,16 @@ func (s *projServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"id": "j1", "job_type": "PLAN", "status": status,
 			"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
 		}})
+	case strings.HasPrefix(p, "/api/cli/jobs/") && s.plansSucceed && s.lastPostedJobType() == "PLAN":
+		plan := map[string]any{
+			"id": "j1", "job_type": "PLAN", "status": "SUCCESS",
+			"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+			"config_snapshot": map[string]any{},
+		}
+		if s.jobMeta != nil {
+			plan["execution_metadata"] = s.jobMeta
+		}
+		_ = enc.Encode(plan)
 	case strings.HasPrefix(p, "/api/cli/jobs/"):
 		_ = enc.Encode(s.jobBody())
 	case strings.HasSuffix(p, "/verify"):

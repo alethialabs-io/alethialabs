@@ -30,6 +30,9 @@ var (
 	projectApplyWait       waitFlags
 	// projectApplyYes is the --yes opt-in: deploy without being asked (and with --no-input).
 	projectApplyYes bool
+	// projectApplyNoWait is --no-wait: when the deploy needs a person's approval, print where to
+	// give it and exit 9 instead of waiting.
+	projectApplyNoWait bool
 )
 
 // projectDeployLong is the help of `project deploy`. The deprecated `project apply` shows it too.
@@ -44,6 +47,13 @@ which a script or an agent must.
 To deploy a preview you already read, pass --latest-plan (the project's most recent preview) or
 --plan-job-id. The DEPLOY job runs on a runner: add --wait to stay until it finishes, and
 --timeout to bound each wait. The job id is in the result either way.
+
+A deploy from the CLI needs a person's approval of the plan it applies. The control plane says
+so when the deploy is sent; the command then asks for an approval, prints the console page where
+a person approves it and the plan digest that page must show, and waits for the decision before
+it queues the deploy. --no-wait (and agent mode) prints the page and exits 9 instead; run the
+same deploy with --plan-job-id once the plan is approved. A rejected approval exits 5, an expired
+or superseded one 7.
 
 Nothing has to be copied out of another command's output: --project and --runner take a NAME.
 --dry-run checks every input and prints the request without sending anything.
@@ -142,7 +152,33 @@ func runProjectDeploy(cmd *cobra.Command, confirmFirst bool) error {
 	if asks && !confirm("Deploy this project environment?", deployDescription(params, projectApplyProjectRef, projectApplyEnv)) {
 		return nil
 	}
-	return finishProjectJob(cmd, client, projectJobRun{Params: params, Wait: projectApplyWait, DryRun: dryRun})
+	return finishProjectJob(cmd, client, projectJobRun{
+		Params: params, Wait: projectApplyWait, DryRun: dryRun,
+		Approval: &projectJobApproval{
+			Client:    client,
+			Operation: api.ApprovalOperationDeploy,
+			PlanJobID: func() (string, error) { return params.PlanJobID, nil },
+			Wait: approvalWait{
+				NoWait:  projectApplyNoWait,
+				Timeout: projectApplyWait.Timeout,
+				Rerun:   "run " + deployRerun(params, projectApplyProjectRef, projectApplyEnv),
+			},
+		},
+	})
+}
+
+// deployRerun is the command that deploys exactly this plan once it is approved: the same project
+// and environment, the plan named, and --yes because it was already reviewed.
+func deployRerun(params api.QueueJobParams, projectRef, env string) string {
+	project := projectRef
+	if project == "" {
+		project = params.ConfigurationID
+	}
+	line := "alethia project deploy --project " + project
+	if env != "" {
+		line += " --env " + env
+	}
+	return line + " --plan-job-id " + params.PlanJobID + " --yes"
 }
 
 // previewBeforeDeploy makes the reviewed plan a deploy applies when the caller named none: it
@@ -325,6 +361,7 @@ func registerDeployFlags(cmd *cobra.Command) {
 	addProjectWaitFlags(cmd, &projectApplyWait)
 	addDryRunFlag(cmd)
 	cmd.Flags().BoolVarP(&projectApplyYes, "yes", "y", false, "Deploy without being asked first (required with --no-input)")
+	addApprovalNoWaitFlag(cmd, &projectApplyNoWait)
 }
 
 func init() {

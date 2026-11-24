@@ -32,6 +32,8 @@ func upResetFlags() {
 
 func upEnv(t *testing.T, s *projServer) projHarness {
 	t.Helper()
+	// up's apply previews each environment before it deploys it; the previews succeed.
+	s.plansSucceed = true
 	h := projEnv(t, s)
 	applyResetFlags()
 	upResetFlags()
@@ -79,13 +81,7 @@ func TestUp_WithEverythingInPlaceIsApply(t *testing.T) {
 		t.Errorf("up rewrote a manifest that already existed:\n%s", out)
 	}
 	// And it really applied: the create plus a deploy per environment.
-	var deploys int
-	for _, p := range s.posts {
-		if p.Path == "/api/jobs" {
-			deploys++
-		}
-	}
-	if deploys != 2 || s.posts[0].Path != "/api/cli/projects" {
+	if deploys := len(s.jobPostsOfType("DEPLOY")); deploys != 2 || s.posts[0].Path != "/api/cli/projects" {
 		t.Errorf("requests: %+v", s.posts)
 	}
 }

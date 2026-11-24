@@ -77,7 +77,7 @@ var upSpec = spec.Spec{
 			Description: "Apply without asking (required with --no-input)",
 			Flag:        "yes", Shorthand: "y", Bool: true, Page: docsPlanApplyPage},
 		{Command: "alethia up", Key: "no-wait", Title: "Wait",
-			Description: "Queue the deploys and return instead of waiting for them",
+			Description: "Queue the deploys and return instead of waiting for them or for a person's approval (exits 9 when one is needed)",
 			Flag:        "no-wait", Bool: true, Page: docsPlanApplyPage},
 	},
 	Options: map[string][]string{"stages": environmentStages()},
@@ -105,9 +105,10 @@ for each cloud, and a runner is a process that has to be started, so "up" stops 
 command to run. Run that command, then run "alethia up" again.
 
 Progress is written to stderr. Stdout carries the plan and the result, so "--output json" is one
-document. While it waits for a deploy it says so when the deploy is held for an approval in the
-console, and when no runner has claimed it yet; in both cases the job keeps its place if you stop
-waiting. A deploy that fails exits 13 and names the job; "alethia jobs logs" shows why.
+document. Each environment is previewed before it is deployed, and a deploy from the CLI waits for
+a person's approval of its plan in the console, as "alethia apply" describes. While it waits for a
+deploy it says so when no runner has claimed it yet; the job keeps its place if you stop waiting.
+A preview or a deploy that fails exits 13 and names the job; "alethia jobs logs" shows why.
 
 With alethia.yaml present, an account connected and a runner available, "alethia up" is
 "alethia apply".`,
@@ -548,9 +549,10 @@ func runnerCommandFor(account api.CloudIdentity, anyOnline bool) string {
 // ── the wait ──────────────────────────────────────────────────────────────────────────────
 
 // jobStatusAwaitingApproval is the status of a job that is held until a person approves it in
-// the console. No control plane sends it yet: an apply under a device sign-in gains a browser
-// approval with the approval policy, and the unit that lands it owns the final name. It is
-// written here so the wait already has something true to say when it arrives.
+// the console. No control plane sends it. The approval a CLI deploy needs (agent surface §4.3)
+// is obtained BEFORE the job exists: the control plane refuses the deploy, the CLI asks for an
+// approval of its plan and waits for it (approve.go), and only then is the job queued. This arm
+// stays so a job that does report such a status is still said to wait on a person.
 const jobStatusAwaitingApproval = "AWAITING_APPROVAL"
 
 // queuedNoticeAfter is how long a deploy may sit unclaimed before the wait says so. It is a
