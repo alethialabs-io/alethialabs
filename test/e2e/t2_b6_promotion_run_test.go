@@ -184,7 +184,14 @@ func TestB6GatedPromotion(t *testing.T) {
 	} else if djs != "QUEUED" {
 		t.Fatalf("step 2: enqueued DEPLOY job status = %q, want QUEUED", djs)
 	}
-	t.Logf("step 2 ✓ APPROVAL SATISFIES: DEPLOYING, slot filled, DEPLOY job %s QUEUED", deployJobID)
+	// The DEPLOY applies the reviewed plan: it carries the PLAN job's digest, which the runner checks
+	// the saved plan file against before applying (#7410).
+	if digest, err := cp.JobPlanSHA256(ctx, deployJobID); err != nil {
+		t.Fatalf("read deploy job plan digest: %v", err)
+	} else if digest != b6PlanSHA256 {
+		t.Fatalf("step 2: DEPLOY plan_sha256 = %q, want the PLAN job's %q", digest, b6PlanSHA256)
+	}
+	t.Logf("step 2 ✓ APPROVAL SATISFIES: DEPLOYING, slot filled, DEPLOY job %s QUEUED, bound to the plan digest", deployJobID)
 
 	// STEP 3 — DEPLOY APPLIES: drive the enqueued DEPLOY job to SUCCESS through the REAL
 	// update_job_status SSOT (the authoritative terminal transition, not a bare UPDATE).
