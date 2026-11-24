@@ -3,14 +3,13 @@
 
 // normalizeJobsQuery is the jobs page's cache key (#578) — unsorted arrays or lingering empties
 // would fragment the TanStack cache. Since #6818 it is also where three things that are NOT
-// filters are kept apart from the ones that are: the project a project's list is scoped to, the row
-// window, and the date range, which is now one filter value that travels in the link.
+// filters are kept apart from the ones that are: the project a project's list is scoped to, and the
+// date range, which is now one filter value that travels in the link. The row window it used to
+// carry is gone (#7483): the list pages by a keyset cursor that is never part of the key.
 
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_JOBS_FILTERS,
-	JOBS_PAGE_MAX,
-	JOBS_PAGE_SIZE,
 	jobsRangeOf,
 	jobsRangeWindow,
 	normalizeJobsQuery,
@@ -63,16 +62,10 @@ describe("the project of a project's list is scope, not a filter", () => {
 	});
 });
 
-describe("the row window", () => {
-	it("the first window is the absent field, so the server's prefetch and the first client read share a key", () => {
-		expect(normalizeJobsQuery(DEFAULT_JOBS_FILTERS, undefined, JOBS_PAGE_SIZE)).toEqual(
-			normalizeJobsQuery(DEFAULT_JOBS_FILTERS),
-		);
-	});
-
-	it("a grown window is in the key, and never past the cap", () => {
-		expect(normalizeJobsQuery(DEFAULT_JOBS_FILTERS, undefined, JOBS_PAGE_SIZE * 2).limit).toBe(JOBS_PAGE_SIZE * 2);
-		expect(normalizeJobsQuery(DEFAULT_JOBS_FILTERS, undefined, JOBS_PAGE_MAX * 4).limit).toBe(JOBS_PAGE_MAX);
+describe("paging is not in the key", () => {
+	it("carries no limit and no cursor, so the server's prefetch and every client page share one key", () => {
+		const q = normalizeJobsQuery({ ...DEFAULT_JOBS_FILTERS, statuses: ["FAILED"] }, "proj-1");
+		expect(Object.keys(q).sort()).toEqual(["projectId", "range", "statuses"]);
 	});
 });
 
