@@ -78,8 +78,13 @@ export type StateRequestOptions = {
  * SIGINTs tofu and waits ALETHIA_CANCEL_GRACE_SECONDS (default 120s) before a hard kill; this is that
  * budget with generous headroom. It is a bound, not the gate: the gate is that the job still HOLDS
  * the lock, which ends the moment the runner reports terminal (releaseStateLocksForJob).
+ *
+ * Two places read it, and they must agree: this file stops admitting the cancelled job's final write
+ * and unlock once it has passed, and the reconcile sweep (lib/reconcile/state-locks.ts) releases a
+ * lock the job still holds after it — a runner that died after the cancel never reports terminal, and
+ * its lock would otherwise strand until the 3h lock TTL (#7387).
  */
-const CANCELLED_HOLDER_DRAIN_MS = 15 * 60 * 1000;
+export const CANCELLED_HOLDER_DRAIN_MS = 15 * 60 * 1000;
 
 /** True when a CANCELLED job is still inside the window in which its interrupted tofu may drain. */
 function inCancelDrainWindow(completedAt: Date | null, now: number): boolean {
