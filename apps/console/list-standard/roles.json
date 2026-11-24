@@ -1,0 +1,14 @@
+{
+	"kind": "debt",
+	"owner": "#7490",
+	"lane": "LST-8",
+	"why": "Read without a `query*Page` builder (`listRoles(search)`, no facet pass) and unpaged with no stated bound; a built-in + custom count pill.",
+	"findings": {
+		"apps/console/components/settings/roles/roles-manager.tsx": {
+			"count-pill": 1
+		},
+		"store:useRolesFilters": {
+			"keyset-contract": 1
+		}
+	}
+}
