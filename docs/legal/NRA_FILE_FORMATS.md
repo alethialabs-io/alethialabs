@@ -1,6 +1,6 @@
 # NRA VAT e-filing file formats: DEKLAR, PRODAGBI, POKUPKI, VIES
 
-Owner: Alethia Labs legal/commercial (board issue #7457)
+Owner: Alethia Labs legal/commercial (board issue #7457; reworked for чл. 100 by books lane B3)
 
 Effective: 2026-11-24 (every source below was read on that date)
 
@@ -8,9 +8,13 @@ Review cadence: before the first real filing; whenever ППЗДДС is amended (
 euro-wording amendment, §3); whenever the NRA publishes a new version of its program
 „Дневници по ЗДДС“.
 
-This is the specification the console's generator (`apps/console/lib/billing/nra/`) is written
-against. It records every field of the four files a company registered under чл. 97а ЗДДС files
-each month, with its position, width, format and source, and what the company puts in it.
+This is the specification the generator `@repo/nra` (`packages/nra/`) is written against. It
+records every field of the four files a company registered under **чл. 100, ал. 1 ЗДДС** (full,
+voluntary registration; filed 2026-11-24, replacing the earlier чл. 97а plan) files each month, with
+its position, width, format and source, and what the company puts in it. The generator runs from
+two JSON files and nothing else (§5.1): the console's `factura:export -- --nra=<nra-input.json>`
+and the books workflow's `nra:build` both call it, and `nra:protocol` issues one чл. 117 protocol on
+the day.
 
 **No lawyer or accountant has reviewed this.** It was written by an agent from the regulation's
 text.
@@ -106,8 +110,8 @@ Source: Приложение № 12, "Файлът "DEKLAR.ТХТ" … съдъ�
 | 00-06 | Брой документи в дневника за покупки | 137 | 151 | 15 | цифров | POKUPKI record count |
 | 01-01 | Общ размер на данъчните основи за облагане с ДДС | 152 | 166 | 15 | сума | Σ 02-10 |
 | 01-20 | Всичко начислен ДДС | 167 | 181 | 15 | сума | Σ 02-20 |
-| 01-11 | ДО на облагаемите доставки със ставка 20 % … | 182 | 196 | 15 | сума | 0 |
-| 01-21 | Начислен ДДС 20 % | 197 | 211 | 15 | сума | 0 |
+| 01-11 | ДО на облагаемите доставки със ставка 20 % … | 182 | 196 | 15 | сума | Σ 02-11 (domestic sales) |
+| 01-21 | Начислен ДДС 20 % | 197 | 211 | 15 | сума | Σ 02-21 |
 | 01-12 | ДО на ВОП и на получени доставки по чл. 82, ал. 2 - 6 | 212 | 226 | 15 | сума | Σ 02-12 + Σ 02-26 (the protocols) |
 | 01-22 | Начислен данък за ВОП и за получени доставки по чл. 82, ал. 2 - 6 | 227 | 241 | 15 | сума | Σ 02-22 |
 | 01-23 | Начислен данък за доставки … за лични нужди | 242 | 256 | 15 | сума | 0 |
@@ -117,21 +121,21 @@ Source: Приложение № 12, "Файлът "DEKLAR.ТХТ" … съдъ�
 | 01-15 | ДО … 0 % за ВОД на стоки | 302 | 316 | 15 | сума | 0 |
 | 01-16 | ДО … 0 % по чл. 140, 146 и чл. 173 | 317 | 331 | 15 | сума | 0 |
 | 01-17 | ДО на доставки на услуги по чл. 21, ал. 2 … в друга държава членка | 332 | 346 | 15 | сума | Σ 02-17 (EU B2B sales) |
-| 01-18 | ДО на доставки по чл. 69, ал. 2 … | 347 | 361 | 15 | сума | 0 |
+| 01-18 | ДО на доставки по чл. 69, ал. 2 … | 347 | 361 | 15 | сума | Σ 02-18 (the Paddle supply; other non-EU B2B) |
 | 01-19 | ДО на освободени доставки и освободените ВОП | 362 | 376 | 15 | сума | 0 |
-| 01-30 | ДО и данък на получените доставки … без право на данъчен кредит или без данък | 377 | 391 | 15 | сума | Σ 03-30 |
-| 01-31 | ДО … с право на пълен данъчен кредит | 392 | 406 | 15 | сума | 0 |
-| 01-41 | Начислен ДДС с право на пълен данъчен кредит | 407 | 421 | 15 | сума | 0 |
+| 01-30 | ДО и данък на получените доставки … без право на данъчен кредит или без данък | 377 | 391 | 15 | сума | Σ 03-30 (BG purchases with no credit) |
+| 01-31 | ДО … с право на пълен данъчен кредит | 392 | 406 | 15 | сума | Σ 03-31 (protocols + BG purchases with credit) |
+| 01-41 | Начислен ДДС с право на пълен данъчен кредит | 407 | 421 | 15 | сума | Σ 03-41 |
 | 01-32 | ДО … с право на частичен данъчен кредит | 422 | 436 | 15 | сума | 0 |
 | 01-42 | Начислен ДДС с право на частичен данъчен кредит | 437 | 451 | 15 | сума | 0 |
 | 01-43 | Годишна корекция по чл. 73, ал. 8 (+/-) | 452 | 466 | 15 | сума | 0 |
-| 01-33 | Коефициент по чл. 73, ал. 5 | 467 | 470 | 4 | цифров, 0.00 to 1.00 | `0.00` [I] |
-| 01-40 | Общо данъчен кредит (кл. 41 + кл. 42 x кл. 33 + кл. 43) | 471 | 485 | 15 | сума | 0 (чл. 70, ал. 4 ЗДДС) |
+| 01-33 | Коефициент по чл. 73, ал. 5 | 467 | 470 | 4 | цифров, 0.00 to 1.00 | `0.00` (no partial credit) [I] |
+| 01-40 | Общо данъчен кредит (кл. 41 + кл. 42 x кл. 33 + кл. 43) | 471 | 485 | 15 | сума | = 01-41 (01-42, 01-43 = 0) |
 | 01-50 | ДДС за внасяне (кл. 20 - кл. 40) >= 0 | 486 | 500 | 15 | сума | 01-20 − 01-40 when ≥ 0 |
 | 01-60 | ДДС за възстановяване (кл. 20 - кл. 40) < 0 | 501 | 515 | 15 | сума | its absolute value when < 0 |
-| 01-70 | Данък за внасяне от кл. 50, приспаднат по реда на чл. 92, ал. 1 | 516 | 530 | 15 | сума | 0 |
-| 01-71 | Данък за внасяне от кл. 50, внесен ефективно | 531 | 545 | 15 | сума | = 01-50 [I] |
-| 01-80 | ДДС, подлежащ на възстановяване, чл. 92, ал. 1 | 546 | 560 | 15 | сума | 0 |
+| 01-70 | Данък за внасяне от кл. 50, приспаднат по реда на чл. 92, ал. 1 | 516 | 530 | 15 | сума | earlier refundable VAT set off (input `deklar.refundOffsetEur`), at most 01-50 [I] |
+| 01-71 | Данък за внасяне от кл. 50, внесен ефективно | 531 | 545 | 15 | сума | 01-50 − 01-70 [I] |
+| 01-80 | ДДС, подлежащ на възстановяване, чл. 92, ал. 1 | 546 | 560 | 15 | сума | = 01-60 [I] |
 | 01-81 | ДДС, подлежащ на възстановяване, чл. 92, ал. 3 | 561 | 575 | 15 | сума | 0 |
 | 01-82 | ДДС, подлежащ на възстановяване, чл. 92, ал. 4 | 576 | 590 | 15 | сума | 0 |
 
@@ -152,13 +156,13 @@ Source: Приложение № 12, "Дневник за продажбите -
 | 02-04 | Вид на документа | 41 | 42 | 2 | символен | `01` фактура, `03` кредитно известие, `09` протокол |
 | 02-05 | Номер на документа | 43 | 62 | 20 | символен | the ten-digit number |
 | 02-06 | Дата на документа | 63 | 72 | 10 | дата | issue date |
-| 02-07 | ИН на контрагента (получател) | 73 | 87 | 15 | символен | customer's EU VAT number; for a protocol, the supplier's, or `999999999999999` |
+| 02-07 | ИН на контрагента (получател) | 73 | 87 | 15 | символен | customer's VAT number (BG or EU); a BG customer without one: its ЕИК/ЕГН [I]; a non-EU customer (Paddle) and a protocol's non-EU supplier: `999999999999999` |
 | 02-08 | Име на контрагента (получател) | 88 | 137 | 50 | символен | name, cut to 50 |
 | 02-09 | Вид на стоката или обхват и вид на услугата | 138 | 167 | 30 | символен | the service, cut to 30 |
 | 02-10 | Общ размер на данъчните основи за облагане с ДДС | 168 | 182 | 15 | сума | "Сума на 02-11, 02-12, 02-13, 02-14, 02-15, 02-16, 02-26" |
 | 02-20 | Всичко начислен ДДС | 183 | 197 | 15 | сума | "Сума на 02-21, 02-22, 02-23, 02-24" |
-| 02-11 | ДО … ставка 20 % … | 198 | 212 | 15 | сума | 0 |
-| 02-21 | Начислен ДДС 20 % | 213 | 227 | 15 | сума | 0 |
+| 02-11 | ДО … ставка 20 % … | 198 | 212 | 15 | сума | domestic sale's base |
+| 02-21 | Начислен ДДС 20 % | 213 | 227 | 15 | сума | its 20 % |
 | 02-12 | ДО на ВОП | 228 | 242 | 15 | сума | 0 |
 | 02-26 | ДО по получените доставки по чл. 82, ал. 2 - 5 ЗДДС | 243 | 257 | 15 | сума | protocol's base |
 | 02-22 | Начислен ДДС за ВОП и за получени доставки по чл. 82, ал. 2 - 5 | 258 | 272 | 15 | сума | protocol's tax |
@@ -169,13 +173,13 @@ Source: Приложение № 12, "Дневник за продажбите -
 | 02-15 | ДО … 0 % на ВОД на стоки | 333 | 347 | 15 | сума | 0 |
 | 02-16 | ДО … 0 % по чл. 140, чл. 146, ал. 1 и чл. 173 | 348 | 362 | 15 | сума | 0 |
 | 02-17 | ДО на доставки на услуги по чл. 21, ал. 2 … в друга държава членка | 363 | 377 | 15 | сума | EU B2B sale's base (negative for a credit note) |
-| 02-18 | ДО на доставки по чл. 69, ал. 2 … | 378 | 392 | 15 | сума | 0 |
+| 02-18 | ДО на доставки по чл. 69, ал. 2 … | 378 | 392 | 15 | сума | non-EU supply's base (the Paddle фактура) |
 | 02-19 | ДО на освободени доставки и освободените ВОП | 393 | 407 | 15 | сума | 0 |
 | 02-25 | ДО на доставки като посредник в тристранни операции | 408 | 422 | 15 | сума | 0 |
 | 02-27 | Доставка по чл. 163а или внос по чл. 167а | 423 | 424 | 2 | символен | empty |
 
-Record width 424, then CR LF. **02-17 is outside 02-10**: the appendix's formula for 02-10 does not
-list it, so an EU B2B sale has 02-10 = 0.00 **[C]**.
+Record width 424, then CR LF. **02-17 and 02-18 are outside 02-10**: the appendix's formula for
+02-10 does not list them, so an EU B2B sale and the Paddle supply have 02-10 = 0.00 **[C]**.
 
 ### POKUPKI.TXT: one record per purchase-journal document [C]
 
@@ -187,15 +191,15 @@ Source: Приложение № 12, "Дневник за покупките - �
 | 03-01 | Данъчен период | 16 | 21 | 6 | ггггмм | as 00-03 |
 | 03-03 | Клон/обособено звено | 22 | 25 | 4 | цифров | `0` |
 | 03-04 | Пореден номер на документа в дневника | 26 | 40 | 15 | цифров | 1, 2, 3 … |
-| 03-05 | Вид на документа | 41 | 42 | 2 | символен | `09` протокол |
-| 03-06 | Номер на документа | 43 | 62 | 20 | символен | the protocol's number |
-| 03-07 | Дата на документа | 63 | 72 | 10 | дата | the protocol's date |
-| 03-08 | ИН на контрагента (доставчик) | 73 | 87 | 15 | символен | supplier's EU VAT number, or `999999999999999` |
+| 03-05 | Вид на документа | 41 | 42 | 2 | символен | `09` протокол; `01`/`03` a BG supplier's фактура / credit note |
+| 03-06 | Номер на документа | 43 | 62 | 20 | символен | the protocol's or the supplier's number |
+| 03-07 | Дата на документа | 63 | 72 | 10 | дата | the protocol's or the document's date |
+| 03-08 | ИН на контрагента (доставчик) | 73 | 87 | 15 | символен | supplier's VAT number (BG or EU), or `999999999999999` |
 | 03-09 | Име на контрагента (доставчик) | 88 | 137 | 50 | символен | supplier, cut to 50 |
 | 03-10 | Вид на стоката или обхват и вид на услугата | 138 | 167 | 30 | символен | the service, cut to 30 |
-| 03-30 | ДО и данък на получените доставки … без право на данъчен кредит или без данък | 168 | 182 | 15 | сума | base + tax |
-| 03-31 | ДО … с право на пълен данъчен кредит | 183 | 197 | 15 | сума | 0 |
-| 03-41 | ДДС с право на пълен данъчен кредит | 198 | 212 | 15 | сума | 0 |
+| 03-30 | ДО и данък на получените доставки … без право на данъчен кредит или без данък | 168 | 182 | 15 | сума | BG purchase with no credit: base + tax |
+| 03-31 | ДО … с право на пълен данъчен кредит | 183 | 197 | 15 | сума | protocol's base; BG purchase's base |
+| 03-41 | ДДС с право на пълен данъчен кредит | 198 | 212 | 15 | сума | protocol's tax; BG purchase's VAT |
 | 03-32 | ДО … с право на частичен данъчен кредит | 213 | 227 | 15 | сума | 0 |
 | 03-42 | ДДС с право на частичен данъчен кредит | 228 | 242 | 15 | сума | 0 |
 | 03-43 | Годишна корекция по чл. 73, ал. 8 | 243 | 257 | 15 | сума | 0 |
@@ -244,48 +248,112 @@ fixed **[I]**. "За всяка група от секции полетата с
 "Данъчен период" в секции "ВОД" … за редовете, чийто данъчен период съвпада с данъчния период на
 декларацията" **[C]**.
 
-## 5. What goes where, for a чл. 97а-only company
+## 5. What goes where, for a чл. 100 company
 
-- **Sales journal [C].** ППЗДДС чл. 113, ал. 2: a person registered under чл. 97а "отразява в
-  дневника за продажбите единствено документите, издадени във връзка с извършените доставки на
-  услуги по чл. 21, ал. 2 … на територията на друга държава членка, както и получените доставки
-  на услуги, за които данъкът е изискуем от получателя по чл. 82, ал. 2, т. 3 … и извършените
-  вътреобщностни придобивания". So:
-  - a фактура to a Bulgarian customer (чл. 113, ал. 9) is **not** recorded;
-  - a фактура to an EU business with a VAT number of its own member state is recorded (02-17);
-  - a фактура to a consumer, or to a customer outside the EU, is **not** recorded [I: they are
-    not чл. 21, ал. 2 supplies to another member state];
-  - each чл. 117 protocol is recorded (02-26 and 02-22, so also 02-10 and 02-20).
-- **Purchase journal [C].** ППЗДДС чл. 113, ал. 3: a чл. 97а person "могат да не изготвят дневник
-  за покупките", in which case the file holds "един-единствен запис със стойности "нула" за
-  числовите полета и "интервал" за символните полета". The generator does keep the journal: each
-  protocol in 03-30, base plus tax, because чл. 70, ал. 4 ЗДДС denies the credit ("Няма право на
-  данъчен кредит лице, регистрирано на основание чл. 97а"). Which form to file is an accountant
-  question (§6).
-- **VIES [C].** ЗДДС чл. 125, ал. 2: filed with the return for a period with чл. 21, ал. 2 services
-  to another member state; one VIR line per customer VAT number, net of credit notes.
-- **Every month [C].** ЗДДС чл. 125, ал. 1 and ал. 4: a return for every period, also "когато
+### 5.1 The inputs
+
+The generator reads two JSON files (`packages/nra/src/input.ts`; objects are strict, amounts are
+decimal strings, never floats):
+
+- **`facturi-M.json`** (version 1): every фактура and credit note the company issued in M, each
+  with its `treatment`. The console writes it in every `factura:export` from its own `factura`
+  table (`apps/console/lib/billing/nra/sales-documents.ts`): a Bulgarian recipient →
+  `bg_vat_20`; a recipient in another member state with a VAT number of that state →
+  `eu_b2b_services_21_2`; one there without (a consumer) → `bg_vat_20` [I: under the EU-wide
+  €10,000 threshold the place of supply stays in Bulgaria]; a recipient outside the EU (Paddle.com
+  Market Ltd, UK; Paddle.com Inc., US) → `outside_eu_69_2`.
+- **`nra-input.json`** (version 2): the filer and the person who files (DEKLAR 00-04, so the file
+  is personal data and stays out of the repository); `registration {basis: "chl100",
+  effectiveDate}`; the VIES declarant; `protocols {series: "own" | "shared_with_factura",
+  firstNumber?, issueDate?}`; optional `deklar.refundOffsetEur`; and `purchases[]`, every document
+  received in M with supplier `{name, country, vatNumber | null}`, number, document date, tax-event
+  date, currency, amount, ECB rate, `netEur`, `vatEur?`, `protocolNumber?`, `protocolDate?` and a
+  `treatment`. There is no special Stripe block: Stripe is a purchase like any other.
+
+Every non-EUR amount is checked against its rate (`netEur` = `amount` × `eurRate`, half away from
+zero; a one-cent gap is noted, more is refused). A document whose tax event precedes the
+registration's effective date (чл. 103, т. 3 ЗДДС: registered from the day the act is served) is in
+neither journal and is listed in the summary; a month that ends before it is refused.
+
+### 5.2 Sales journal (PRODAGBI) [C, cells; I, classification]
+
+ППЗДДС чл. 113, ал. 1: a registered person records every document issued and every protocol
+issued under чл. 117. By treatment:
+
+| Document | Cells | Ground |
+|---|---|---|
+| `bg_vat_20` фактура | 02-11 base, 02-21 tax (so also 02-10, 02-20) | чл. 66, ал. 1, т. 1 ЗДДС (20 %) |
+| `eu_b2b_services_21_2` фактура | 02-17 base (outside 02-10); a VIES line | чл. 21, ал. 2; tax due by the customer |
+| `outside_eu_69_2` фактура (the monthly Paddle supply) | 02-18 base (outside 02-10); 02-07 `999999999999999` | place of supply outside the country; credit kept under чл. 69, ал. 2 |
+| Credit note (type 03) | the same cells as its фактура, negative | чл. 115 |
+| чл. 117 protocol (type 09) | 02-26 base, 02-22 tax (so also 02-10, 02-20) | чл. 82, ал. 2, т. 3; protocol under чл. 117, ал. 1, т. 1 |
+
+**02-26, not 02-12, for a protocol.** 02-12 is "ДО на ВОП" (intra-EU acquisitions of goods), which
+the company does not make; 02-26 is "ДО по получените доставки по чл. 82, ал. 2 - 5", the services
+received. DEKLAR 01-12 is Σ 02-12 + Σ 02-26, so the return is the same either way.
+
+A `bg_vat_20` document must carry 20 % of its base (one cent of rounding is a note); an
+`eu_b2b_services_21_2` or `outside_eu_69_2` one, no Bulgarian VAT; an EU B2B recipient must have a
+VAT number of its own member state, and an `outside_eu_69_2` recipient must be outside the EU. Any
+contradiction is refused.
+
+### 5.3 Purchase journal (POKUPKI) [C, cells; I, treatment]
+
+| Purchase | Cells | Ground |
+|---|---|---|
+| `rc_services_82_2`: the protocol | 03-31 base, 03-41 tax (type 09) | full credit, чл. 69, ал. 1, т. 2 (tax due as recipient under чл. 82, ал. 2) |
+| `bg_vat_full_credit`: a BG фактура with VAT | 03-31 base, 03-41 VAT (type 01/03) | чл. 69, ал. 1, т. 1; needs the supplier's BG VAT number (чл. 71, т. 1) |
+| `bg_vat_no_credit`: a BG фактура with VAT, no credit | 03-30 base + VAT | чл. 70 |
+| `outside_journal`: an exempt or out-of-scope supply received (Stripe's card-processing fee by default, чл. 46, ал. 1) | none; listed in SUMMARY.md | accountant question 2 |
+
+The company makes no exempt supplies, so it has no partial credit: 03-32, 03-42 and 03-43 are 0,
+and DEKLAR 01-33 is 0.00.
+
+### 5.4 DEKLAR
+
+Every cell is the sum Appendix 12 names (§4), and the result cells follow the printed formulas:
+01-40 = 01-41 + 01-42 × 01-33 + 01-43 = 01-41; 01-50 = 01-20 − 01-40 when ≥ 0, else 01-60 = its
+absolute value. A reverse-charge service nets to zero: its tax is in 01-22 (so 01-20) and again in
+01-41 (so 01-40). **A refundable month** (01-60 > 0) puts the amount in 01-80, refund by set-off
+over the next three periods under чл. 92, ал. 1 [I]; a later month's set-off of it is written in
+01-70 from the input's `deklar.refundOffsetEur`, and 01-71 is the rest of 01-50 [I].
+
+### 5.5 VIES, the period, the protocol, the codes [C]
+
+- **VIES.** ЗДДС чл. 125, ал. 2: filed with the return for a period with чл. 21, ал. 2 services to
+  another member state; one VIR line per customer VAT number and period, net of credit notes. The
+  Paddle supply (UK/US) is not in VIES.
+- **Every month.** ЗДДС чл. 125, ал. 1 and ал. 4: a return for every period, also "когато
   регистрираното лице не е извършило или получило доставки". Due by the 14th of the next month
   (чл. 125, ал. 5); tax paid by the same date (чл. 89, ал. 1).
-- **The protocol [C].** ЗДДС чл. 117, ал. 1, т. 1 (recipient of a service under чл. 82, ал. 2);
+- **The protocol.** ЗДДС чл. 117, ал. 1, т. 1 (recipient of a service under чл. 82, ал. 2);
   contents in чл. 117, ал. 2, т. 1-9; issued "не по-късно от 15 дни от датата, на която данъкът е
-  станал изискуем" (ал. 3). The generator prints each point and dates each protocol at the earlier
-  of 15 days after the tax event and the month's last day.
-- **Codes [C].** "Вид на документа": 01 Фактура, 03 Кредитно известие, 09 Протокол или друг
+  станал изискуем" (ал. 3). The protocol states the full credit right (чл. 69, ал. 1, т. 2), the
+  document currency and the ECB rate (чл. 26, ал. 6) when not EUR. A month's build dates each
+  protocol at the earlier of 15 days after the tax event and the month's last day, unless the
+  purchase carries the `protocolNumber` / `protocolDate` of one already issued by `nra:protocol`
+  on its day. Own series by default (`protocols.series = "own"`, numbered from `firstNumber`); with
+  `shared_with_factura` every protocol's number must be given.
+- **Codes.** "Вид на документа": 01 Фактура, 03 Кредитно известие, 09 Протокол или друг
   документ. Counterparty with no EU VAT number: "задължително се попълват с код "999999999999999"
   в случаите, когато контрагентът е чуждестранно лице …, което няма регистрация … или няма ДДС
   номер, с който лицето е регистрирано за целите на ДДС в друга държава членка".
 
 ## 6. Questions for the accountant
 
-These are printed in every `nra/SUMMARY.md` until answered and changed in code:
+These are printed in every `SUMMARY.md` until answered and changed in code:
 
-1. Stripe's card-processing fee: exempt (чл. 46, ал. 1, т. 3) or self-charged at 20 %?
-2. One protocol per Stripe monthly statement, tax event on the month's last day: right?
-3. May the protocols run in their own ten-digit series, or must they share the фактура series?
-4. Purchase journal: the full journal (as generated) or the single zero record of чл. 113, ал. 3?
-5. DEKLAR 01-33 written as 0.00, and 01-71 equal to 01-50: right for a чл. 97а-only return?
-6. Does the NRA accept the files in euro (check with „Дневници по ЗДДС“ v15.01+ before the first
+1. Paddle: the monthly фактура to Paddle.com Market Ltd (UK) / Paddle.com Inc. (US) in 02-18
+   (чл. 69, ал. 2) with 02-07 = `999999999999999`: right cell and code (or their UK/US numbers)?
+2. Stripe's card-processing fee and other exempt financial services received: outside both
+   journals (default), or in 03-30 as received "без данък"?
+3. Protocols in 02-26 / 02-22 and 03-31 / 03-41 (full credit), in their own ten-digit series — or
+   must they share the фактура series?
+4. DEKLAR: 01-33 = 0.00, 01-42 = 01-43 = 0; 01-80 = 01-60 in a refundable month; 01-70 from the
+   input's set-off. Correct?
+5. A domestic customer with no VAT number: 02-07 = its ЕИК/ЕГН, `999999999999999` with neither?
+6. Documents before the effective date are left out: any purchase to claim under чл. 74 ЗДДС?
+7. Does the NRA accept the files in euro (check with „Дневници по ЗДДС“ v15.01+ before the first
    upload)?
 
 ## 7. Not verified
@@ -297,20 +365,26 @@ These are printed in every `nra/SUMMARY.md` until answered and changed in code:
 3. **The full text of the NRA opinion of 22.03.2026** on file structure (summary only).
 4. **What NRA program v15.01 checks** (rounding, currency) — not run.
 5. **The portal e-service page** for the return, journals and VIES: not reached.
-6. **01-33 = 0.00 and 01-71 = 01-50** for a return with no credit [I].
+6. **01-33 = 0.00, 01-80 = 01-60 and 01-70/01-71** as §5.4 writes them [I].
 7. **VIES amounts with cents.** Appendix 15 allows "." for cents; whether the NRA wants whole
    euro in VIES was not checked.
-8. **Signs.** A credit-note record has a negative 02-17 and "0.00" in the other value fields.
+8. **Signs.** A credit-note record has negative amounts in its cells and "0.00" in the others.
    Whether the NRA reads 0.00 as "the same sign" was not checked.
 9. **The VDR capacity code.** The appendix's table heading says "Код на латиница" (`A`, `R`); the
    lex.bg text of `А` may be a Cyrillic letter. The generator writes Latin.
+10. **02-07 for a Bulgarian customer with no VAT number** (its ЕИК/ЕГН) and for a natural
+    person with neither (`999999999999999`): the appendix's wording for a domestic counterparty
+    was not quoted here.
+11. **The classification of a consumer in another member state as `bg_vat_20`** (the €10,000
+    threshold): the company's card sales go through Paddle, so this should not occur; not checked
+    against ЗДДС чл. 21.
 
 ## 8. Sources (read 2026-11-24)
 
 | Source | Version | URL |
 |---|---|---|
 | ППЗДДС: чл. 113, 114, 117, 118; Приложения № 12 и № 15 | lex.bg, last amendment ДВ бр. 54/2024 | https://lex.bg/laws/ldoc/2135534826 |
-| ЗДДС: чл. 70, 82, 89, 117, 125 | lex.bg | https://lex.bg/laws/ldoc/2135533201 |
+| ЗДДС: чл. 21, 25, 26, 46, 66, 69, 70, 71, 82, 89, 92, 100, 103, 115, 117, 125 | lex.bg | https://lex.bg/laws/ldoc/2135533201 |
 | Закон за въвеждане на еврото в Република България: чл. 11, 12, 13, 50, 51 | lex.bg | https://lex.bg/laws/ldoc/2137244903 |
 | NRA, „Въпроси и отговори за еврото“ | as served | https://nra.bg/wps/portal/nra/za-nap/bulgaria_v_eurozonzta/vuprosi-i-otgovori-za-evroto |
 | NRA, „ДДС-документи“ (program v15.01, 26.01.2026; user manual) | as served | https://nra.bg/wps/portal/nra/Programni-produkti/DD-dokumenti |

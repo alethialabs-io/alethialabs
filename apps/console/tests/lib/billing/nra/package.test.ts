@@ -2,70 +2,64 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #7457: the nra/ package as the export writes it — file names, the protocols (golden text, and a
-// real PDF rendered with the фактура's renderer and fonts), SUMMARY.md (golden), the due date, and
-// that a refusal anywhere returns problems and no files. Node environment for the PDF, as in
-// tests/lib/billing/factura/render.test.ts.
+// The console's side of the NRA package: the demo month's фактури projected into facturi-M.json
+// (sales-documents.ts) with the right treatment for each, the nra/ folder of the export built through
+// @repo/nra with the console's PDF renderer, and the files listed in the export's manifest. The
+// package's own rules and goldens are tested in packages/nra/tests. Node environment for the PDF.
 
+import { buildNraPackage, type ProtocolRenderer } from "@repo/nra";
 import { describe, expect, it } from "vitest";
 import { buildExport } from "@/lib/billing/factura/export";
 import { demoMonth } from "@/lib/billing/nra/demo";
-import { buildNraMonth } from "@/lib/billing/nra/month";
-import { buildNraPackage, type ProtocolRenderer } from "@/lib/billing/nra/package";
-import { protocolLayout, protocolText } from "@/lib/billing/nra/protocol";
+import { buildNraExport } from "@/lib/billing/nra/package";
 import { renderProtocolPdf } from "@/lib/billing/nra/protocol-document";
-import { ACCOUNTANT_QUESTIONS, dueDate } from "@/lib/billing/nra/summary";
+import { salesFileFromFacturi, salesFileJson } from "@/lib/billing/nra/sales-documents";
 
 /** A stand-in renderer: the protocol number as bytes. */
 const stubRender: ProtocolRenderer = async (p) => new TextEncoder().encode(`%PDF-${p.number}`);
 
-/** The demo month's protocols. */
-function protocols() {
-	const r = buildNraMonth(demoMonth());
-	if (!r.ok) throw new Error(r.problems.join("; "));
-	return r.month.protocols;
+/** The demo month with its facturi-M.json. */
+function demoSales() {
+	const m = demoMonth();
+	const sales = salesFileFromFacturi(m.window.month, m.documents);
+	if (!sales.ok) throw new Error(sales.problems.join("; "));
+	return { ...m, sales: sales.value };
 }
 
-describe("dueDate", () => {
-	it("is the 14th of the next month, across a year end", () => {
-		expect(dueDate("2026-12")).toBe("2027-01-14");
-		expect(dueDate("2027-01")).toBe("2027-02-14");
+describe("salesFileFromFacturi", () => {
+	it("classifies each demo document from what is printed on it", () => {
+		const { sales } = demoSales();
+		expect(sales.documents.map((d) => [d.number, d.kind, d.treatment, d.recipient.vatNumber, d.netEur, d.vatEur])).toEqual([
+			["0000000101", "invoice", "bg_vat_20", "BG000000000", "49.00", "9.80"],
+			["0000000102", "invoice", "eu_b2b_services_21_2", "DE000000000", "114.00", "0.00"],
+			["0000000103", "credit_note", "eu_b2b_services_21_2", "DE000000000", "-28.50", "0.00"],
+			["0000000104", "invoice", "outside_eu_69_2", null, "1234.56", "0.00"],
+		]);
+		expect(sales.documents[1]).toMatchObject({ currency: "USD", amount: "120.00", eurRate: "0.95000000" });
+		expect(sales.documents[2]?.original).toEqual({ number: "0000000102", issueDate: "2026-12-10" });
+	});
+
+	it("treats a consumer in another member state (no VAT number) as a Bulgarian 20 % supply", () => {
+		const m = demoMonth();
+		const de = m.documents[1];
+		if (!de) throw new Error("fixture");
+		const consumer = { ...de, snapshot: { ...de.snapshot, recipient: { ...de.snapshot.recipient, identifiers: [] } } };
+		const r = salesFileFromFacturi(m.window.month, [consumer]);
+		expect(r.ok && r.value.documents[0]?.treatment).toBe("bg_vat_20");
+	});
+
+	it("writes JSON that parses back to the same file", () => {
+		const { sales } = demoSales();
+		expect(JSON.parse(new TextDecoder().decode(salesFileJson(sales)))).toEqual(sales);
 	});
 });
 
-describe("the protocols", () => {
-	it("print every point of чл. 117, ал. 2 ЗДДС, as golden/protocol-*.txt", async () => {
-		const [stripe, google, anthropic] = protocols();
-		if (!stripe || !google || !anthropic) throw new Error("fixture");
-		await expect(`${protocolText(protocolLayout(stripe, "BG208913663"))}\n`).toMatchFileSnapshot("./golden/protocol-stripe.txt");
-		await expect(`${protocolText(protocolLayout(anthropic, "BG208913663"))}\n`).toMatchFileSnapshot("./golden/protocol-anthropic.txt");
-		const text = protocolText(protocolLayout(google, "BG208913663"));
-		for (const part of ["№ 0000000002", "16.12.2026", "01.12.2026", "ДДС № / VAT No.: BG208913663", "IE0000001XX", "DEMO-GW-5550001", "€6.80", "20 %", "€1.36", "чл. 82, ал. 2, т. 3 ЗДДС"]) {
-			expect(text).toContain(part);
-		}
-	});
-
-	it("say so when the supplier's invoice was not issued by the protocol date", () => {
-		const [stripe] = protocols();
-		if (!stripe) throw new Error("fixture");
-		expect(protocolText(protocolLayout({ ...stripe, supplierDocument: null }, "BG208913663"))).toContain("не е издадена към датата на протокола");
-	});
-
-	it("render to a reproducible PDF", async () => {
-		const [google] = protocols().slice(1);
-		if (!google) throw new Error("fixture");
-		const a = await renderProtocolPdf(google, "BG208913663");
-		const b = await renderProtocolPdf(google, "BG208913663");
-		expect(new TextDecoder().decode(a.subarray(0, 5))).toBe("%PDF-");
-		expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
-	}, 30_000);
-});
-
-describe("buildNraPackage", () => {
-	it("writes the four files, a PDF and a .txt per protocol, and SUMMARY.md, under nra/", async () => {
-		const pkg = await buildNraPackage(demoMonth(), stubRender, { demo: true });
-		if (!pkg.ok) throw new Error(pkg.problems.join("; "));
-		expect(pkg.files.map((f) => f.name)).toEqual([
+describe("buildNraExport", () => {
+	it("places the package under nra/ and reports the refundable VAT of the demo month", async () => {
+		const { sales, operator } = demoSales();
+		const out = await buildNraExport(sales, operator, stubRender, { demo: true });
+		if (!out.ok) throw new Error(out.problems.join("; "));
+		expect(out.files.map((f) => f.name)).toEqual([
 			"nra/DEKLAR.TXT",
 			"nra/PRODAGBI.TXT",
 			"nra/POKUPKI.TXT",
@@ -78,65 +72,34 @@ describe("buildNraPackage", () => {
 			"nra/protocols/0000000003.txt",
 			"nra/SUMMARY.md",
 		]);
-		expect(pkg.vatPayableCents).toBe(1063);
+		// Worked by hand: output 9.80 + 0.76 + 9.50 + 40.36 = 60.42; credit 20.00 + 0.76 + 9.50 + 40.36 = 70.62.
+		expect(out.vatPayableCents).toBe(0);
+		expect(out.vatRefundableCents).toBe(1020);
 	});
 
-	it("writes SUMMARY.md as golden/SUMMARY.md, demo banner first", async () => {
-		const pkg = await buildNraPackage(demoMonth(), stubRender, { demo: true });
-		if (!pkg.ok) throw new Error("refused");
-		const summary = new TextDecoder().decode(pkg.files.find((f) => f.name === "nra/SUMMARY.md")?.data);
-		expect(summary.startsWith("> **DEMO.")).toBe(true);
-		for (const q of ACCOUNTANT_QUESTIONS) expect(summary).toContain(q);
-		await expect(summary).toMatchFileSnapshot("./golden/SUMMARY.md");
-	});
-
-	it("summarises a nil month, without the demo banner", async () => {
-		const m = demoMonth();
-		const pkg = await buildNraPackage({ ...m, documents: [], balance: [], operator: { ...m.operator, purchases: [], stripe: undefined } }, stubRender);
-		if (!pkg.ok) throw new Error("refused");
-		const summary = new TextDecoder().decode(pkg.files.find((f) => f.name === "nra/SUMMARY.md")?.data);
-		expect(summary).not.toContain("DEMO");
-		expect(summary).toContain("**Nil month.**");
-		expect(summary).toContain("VAT payable (cell 50): EUR 0.00");
-		expect(summary).toContain("not filed this month");
-		expect(pkg.files.map((f) => f.name)).toEqual(["nra/DEKLAR.TXT", "nra/PRODAGBI.TXT", "nra/POKUPKI.TXT", "nra/SUMMARY.md"]);
-	});
-
-	it("lists notes in the summary: a late protocol and fitted text", async () => {
-		const m = demoMonth();
-		const pkg = await buildNraPackage({ ...m, operator: { ...m.operator, protocols: { firstNumber: 1, issueDate: "2026-12-31" } } }, stubRender);
-		if (!pkg.ok) throw new Error("refused");
-		const summary = new TextDecoder().decode(pkg.files.find((f) => f.name === "nra/SUMMARY.md")?.data);
-		expect(summary).toContain("## Notes");
-		expect(summary).toContain("more than 15 days after the tax event");
-	});
-
-	it("returns problems and no files when the month refuses", async () => {
-		const m = demoMonth();
-		expect(await buildNraPackage({ ...m, operator: { ...m.operator, stripe: undefined } }, stubRender)).toEqual({
-			ok: false,
-			problems: [expect.stringContaining("stripe.processingFees"), expect.stringContaining("stripe block")],
-		});
-	});
-
-	it("returns problems when text cannot be written in cp-1251", async () => {
-		const m = demoMonth();
-		const p = m.operator.purchases[0];
-		if (!p) throw new Error("fixture");
-		const pkg = await buildNraPackage({ ...m, operator: { ...m.operator, purchases: [{ ...p, description: "☃ snow service" }] } }, stubRender);
-		expect(pkg).toEqual({ ok: false, problems: [expect.stringContaining("cannot be written in cp-1251")] });
-	});
-
-	it("is listed in the export's manifest beside the other files", async () => {
-		const m = demoMonth();
-		const pkg = await buildNraPackage({ ...m, documents: [] }, stubRender);
-		if (!pkg.ok) throw new Error("refused");
-		const out = buildExport(m.window, [], new Map(), m.balance, pkg.files);
+	it("is listed in the export's manifest beside facturi-M.json", async () => {
+		const { window, sales, operator } = demoSales();
+		const nra = await buildNraExport(sales, operator, stubRender, { demo: true });
+		if (!nra.ok) throw new Error("refused");
+		const out = buildExport(window, [], new Map(), [], [{ name: "facturi-2026-12.json", data: salesFileJson(sales) }, ...nra.files]);
 		if (!out.ok) throw new Error("refused");
 		const manifest = new TextDecoder().decode(out.files.find((f) => f.name === "MANIFEST.sha256")?.data);
+		expect(manifest).toMatch(/^[0-9a-f]{64} {2}facturi-2026-12\.json$/m);
 		expect(manifest).toMatch(/^[0-9a-f]{64} {2}nra\/DEKLAR\.TXT$/m);
 		expect(manifest).toMatch(/^[0-9a-f]{64} {2}nra\/protocols\/0000000003\.pdf$/m);
-		expect(manifest).toMatch(/^[0-9a-f]{64} {2}nra\/SUMMARY\.md$/m);
-		expect(out.files.map((f) => f.name)).toContain("nra/POKUPKI.TXT");
 	});
+});
+
+describe("renderProtocolPdf", () => {
+	it("renders a protocol to a reproducible PDF", async () => {
+		const { sales, operator } = demoSales();
+		const pkg = await buildNraPackage(sales, operator, null);
+		if (!pkg.ok) throw new Error(pkg.problems.join("; "));
+		const [first] = pkg.month.protocols;
+		if (!first) throw new Error("fixture");
+		const a = await renderProtocolPdf(first, operator.filer.vatNumber);
+		const b = await renderProtocolPdf(first, operator.filer.vatNumber);
+		expect(new TextDecoder().decode(a.subarray(0, 5))).toBe("%PDF-");
+		expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
+	}, 30_000);
 });
