@@ -168,7 +168,7 @@ curl -fsSL https://get.alethialabs.io/self-host \
   | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
 ```
 
-See the [Self-Hosting guide](./apps/docs/content/docs/guides/self-hosting/) (quickstart, configuration,
+See the [Self-Hosting guide](./apps/docs/content/docs/self-host/) (quickstart, configuration,
 per-cloud Terraform, upgrading).
 
 ## Documentation

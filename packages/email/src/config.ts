@@ -80,7 +80,7 @@ function envBool(name: string): boolean | undefined {
  * silently to the log fallback. With none, emails
  * are logged to the console (dev) so a fresh self-hoster works with zero email
  * setup. Sender addresses are split by stream (auth.* vs mail.*) — see
- * docs/self-hosting/email.
+ * docs/self-host/email.
  */
 export function getEmailConfig(): EmailConfig {
 	if (cached) return cached;
@@ -143,7 +143,7 @@ export function getEmailConfig(): EmailConfig {
 	// transport. With nothing else configured it would now fall through to the log fallback.
 	if (!provider && !explicit && env("RESEND_API_KEY")) {
 		throw new Error(
-			"RESEND_API_KEY is set but Resend support was removed; configure SMTP or SES (see docs/self-hosting/email).",
+			"RESEND_API_KEY is set but Resend support was removed; configure SMTP or SES (see docs/self-host/email).",
 		);
 	}
 
