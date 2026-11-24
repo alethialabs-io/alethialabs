@@ -74,6 +74,7 @@ import {
 	queryAlertDeliveriesPage,
 	queryAlertPoliciesPage,
 } from "@/lib/queries/alerts-lists";
+import { queryApprovalsPage } from "@/lib/queries/approvals";
 import { queryMembersPage } from "@/lib/queries/members";
 import { queryTeamsPage } from "@/lib/queries/teams";
 
@@ -143,6 +144,19 @@ const DRIVEN: Record<string, Driver> = {
 		module: "@/lib/queries/alerts-lists",
 		filtered: () => queryAlertDeliveriesPage(ORG, { search: `${NEEDLE}-delivery` }),
 		unfiltered: () => queryAlertDeliveriesPage(ORG),
+	},
+	// AGT-L2: the approvals list takes the viewer's scoped transaction rather than opening one, so
+	// the recording db is handed in as that transaction; the project list is the viewer's scope.
+	queryApprovalsPage: {
+		module: "@/lib/queries/approvals",
+		filtered: () =>
+			queryApprovalsPage(getServiceDb(), ORG, ["project-in-scope"], {
+				search: `${NEEDLE}-approval`,
+				status: ["pending"],
+				operation: ["destroy"],
+				credential: ["agent_oauth"],
+			}, { limit: 50 }),
+		unfiltered: () => queryApprovalsPage(getServiceDb(), ORG, ["project-in-scope"], {}, { limit: 50 }),
 	},
 };
 

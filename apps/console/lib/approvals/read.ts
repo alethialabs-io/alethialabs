@@ -26,6 +26,8 @@ export interface ApprovalView {
 	digest_prefix: string;
 	expires_at: string;
 	decided_at: string | null;
+	/** The decider's reason for denying, when they gave one. UNTRUSTED text, shown as data. */
+	decision_reason: string | null;
 	consumed_job_id: string | null;
 }
 
@@ -52,6 +54,7 @@ export async function viewOf(db: Executor, approval: ApplyApproval, now: Date = 
 		digest_prefix: digestPrefix(approval.plan_sha256),
 		expires_at: approval.expires_at.toISOString(),
 		decided_at: approval.decided_at?.toISOString() ?? null,
+		decision_reason: approval.decision_reason,
 		consumed_job_id: approval.consumed_job_id,
 	};
 }
