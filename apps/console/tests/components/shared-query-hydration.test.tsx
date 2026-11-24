@@ -38,6 +38,23 @@ import type { CaseListItem } from "@/lib/queries/support";
 import { orpc } from "@/lib/rpc/client";
 import { makeJob } from "../fixtures/jobs";
 
+/** The key "My cases" reads: the first page of the `support.cases` infinite query (`useKeysetList`). */
+function casesKey(input: { bucket: "all"; search?: string }) {
+	return orpc.support.cases.infiniteOptions({
+		input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+		initialPageParam: null,
+		getNextPageParam: (last: { nextCursor: string | null }) => last.nextCursor,
+	}).queryKey;
+}
+
+/** One first page of "My cases" as the infinite query caches it. */
+function casesPage(rows: CaseListItem[]) {
+	return {
+		pages: [{ rows, nextCursor: null, facets: { severity: [], type: [] }, universeEmpty: rows.length === 0 }],
+		pageParams: [null],
+	};
+}
+
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
 	useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
@@ -165,9 +182,10 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 			requester_name: null,
 			is_mine: true,
 		};
-		const key = orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey;
-		const seed = (qc: QueryClient) =>
-			qc.setQueryData(key, { rows: [item], facets: { severity: [], type: [] } });
+		// The list reads the first page of an infinite query (`useKeysetList`, #7494), and the route
+		// prefetches exactly that.
+		const key = casesKey({ bucket: "all" });
+		const seed = (qc: QueryClient) => qc.setQueryData(key, casesPage([item]));
 		const { serverHtml, recoverable } = await serverThenHydrate(
 			<CaseList orgSlug="acme" seeAll={false} />,
 			client(seed),
