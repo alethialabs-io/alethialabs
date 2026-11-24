@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/agent"
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/config"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/obs"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 )
@@ -111,6 +112,13 @@ func main() {
 	}
 
 	fmt.Printf("runner %s\n", version.Version)
+
+	// A self-hosted instance's runner checks its whole configuration first and names every value
+	// that is not usable, never the value (internal/config says when this applies).
+	if err := config.Check(os.Getenv); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	if cfg.AlethiaURL == "" {
 		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
