@@ -45,6 +45,7 @@ export {
 	VAT_RATE_PERCENT,
 	vatOf,
 } from "./month";
+export { isProtocolData, type ProtocolData, protocolDataSchema, protocolFromData } from "./protocol-data";
 export { buildNraPackage, type NraOutputFile, type NraPackage } from "./package";
 export { type ProtocolLayout, type ProtocolPair, protocolLayout, type ProtocolRenderer, protocolText } from "./protocol";
 export { centsToDecimal, NraError } from "./record";

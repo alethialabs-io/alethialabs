@@ -134,6 +134,8 @@ export interface ReverseChargeProtocol {
 	supplierDocument: { number: string; date: string };
 	/** The invoice's own currency and the rate used, when not EUR. */
 	conversion: { currency: string; amount: string; eurRate: string } | null;
+	/** A conversion stated as one sentence by the caller (the books' fxNote), printed as given. */
+	conversionNote?: string;
 	lines: ProtocolLine[];
 	base: number;
 	vat: number;

@@ -60,7 +60,9 @@ export function protocolLayout(p: ReverseChargeProtocol, filerVat: string): Prot
 	const doc = p.supplierDocument;
 	const conversion = p.conversion
 		? [`Сума по фактурата / Invoice amount: ${p.conversion.currency} ${p.conversion.amount}; курс / rate: ${p.conversion.eurRate} EUR (чл. 26, ал. 6 ЗДДС).`]
-		: [];
+		: p.conversionNote
+			? [`Превалутиране / Conversion: ${p.conversionNote}`]
+			: [];
 	return {
 		title: "ПРОТОКОЛ",
 		subtitle: "по чл. 117, ал. 1, т. 1 ЗДДС / Self-assessment protocol (reverse charge)",
