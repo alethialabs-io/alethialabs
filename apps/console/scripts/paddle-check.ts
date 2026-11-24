@@ -6,7 +6,7 @@
 //
 //   pnpm creds paddle-sandbox -- pnpm -C apps/console run paddle:check
 //   pnpm creds paddle-live -- pnpm -C apps/console run paddle:check -- --live \
-//     --webhook-url=https://alethialabs.io/api/webhooks/paddle [--json]
+//     --webhook-url=<the console Paddle webhook URL, lane L3 route> [--json]
 //
 // It reports the environment, each tagged product with its tax category, each catalog price with
 // its amounts, and every notification destination with whether its events are exactly

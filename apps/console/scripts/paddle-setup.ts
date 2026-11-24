@@ -8,7 +8,7 @@
 //   pnpm creds paddle-sandbox -- pnpm -C apps/console run paddle:setup -- --apply [--webhook-url=<url>]
 //   pnpm creds paddle-live -- pnpm -C apps/console run paddle:setup -- --live --plan
 //   pnpm creds paddle-live -- pnpm -C apps/console run paddle:setup -- --live --apply \
-//     --webhook-url=https://alethialabs.io/api/webhooks/paddle
+//     --webhook-url=<the console Paddle webhook URL, lane L3 route>
 //
 // `--plan` only reads. It prints the difference between the account and the desired state below.
 // `--apply` makes exactly that difference, then reads the account again and fails unless the second
