@@ -25,6 +25,8 @@ import { CATEGORIES } from "@/lib/alerts/catalog";
 import { getPdp } from "@/lib/authz";
 import { authorize } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
+import { queryAlertDeliveriesPage } from "@/lib/queries/alerts-lists";
+import { encodeKeysetCursor } from "@/lib/queries/keyset";
 import { alertsRouter, readAlertsSettings } from "@/lib/rpc/procedures/alerts";
 
 const can = vi.fn();
@@ -84,5 +86,44 @@ describe("alerts.settings", () => {
 		const failure = await client.settings().catch((error: unknown) => error);
 		expect(failure).toBeInstanceOf(ORPCError);
 		if (failure instanceof ORPCError) expect(failure.code).toBe("FORBIDDEN");
+	});
+});
+
+// The delivery ledger pages by keyset (#7489): the procedure's input is the filter plus the shared
+// paging fields (`keysetPageInput()`), split apart before the builder sees them.
+describe("alerts.deliveries — the keyset paging contract at the boundary", () => {
+	const client = () =>
+		createRouterClient(alertsRouter, { context: { actor: { credential: "session", userId: "u", orgId: "o" } } });
+	const PAGE = { rows: [], nextCursor: null, facets: null, universeEmpty: null };
+
+	beforeEach(() => {
+		vi.mocked(authorize).mockResolvedValue(actor(true) as never);
+		vi.mocked(queryAlertDeliveriesPage).mockResolvedValue(PAGE as never);
+	});
+
+	it("page one: the filter alone reaches the builder, with no cursor and the default limit of 50", async () => {
+		await client().deliveries({ status: ["failed"] });
+		expect(queryAlertDeliveriesPage).toHaveBeenCalledWith("org-1", { status: ["failed"] }, { cursor: undefined, limit: 50 });
+	});
+
+	it("a later page: the opaque cursor is DECODED at the boundary and handed over as a position", async () => {
+		const id = "11111111-1111-4111-8111-111111111111";
+		const cursor = encodeKeysetCursor({ at: "2026-11-20T10:00:00.123456Z", id });
+		await client().deliveries({ search: "build", cursor, limit: 25 });
+		expect(queryAlertDeliveriesPage).toHaveBeenCalledWith(
+			"org-1",
+			{ search: "build" },
+			{ cursor: { at: "2026-11-20T10:00:00.123Z", id }, limit: 25 },
+		);
+	});
+
+	it("a malformed cursor is BAD_REQUEST — never a silent restart at page one", async () => {
+		await expect(client().deliveries({ cursor: "not-a-cursor" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		expect(queryAlertDeliveriesPage).not.toHaveBeenCalled();
+	});
+
+	it("a limit above 100 is refused, not clamped — the old 200-row ask is gone", async () => {
+		await expect(client().deliveries({ limit: 200 })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+		expect(queryAlertDeliveriesPage).not.toHaveBeenCalled();
 	});
 });

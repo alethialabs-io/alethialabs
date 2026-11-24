@@ -6,8 +6,8 @@
 // vertically — Policies, Channels, Activity. No KPIs or tabs; navigation is the secondary
 // "Alerts" sidebar (components/shell/sidebar-drill.tsx), whose items anchor-scroll to these
 // sections and highlight via the shared use-alerts-section store. Each section opens with
-// the shared `SectionHeading` (icon + title + description + a Docs link), carrying the filtered
-// result count in its count pill — where the console filter standard requires counts to be.
+// the shared `SectionHeading` (icon + title + description + a Docs link) and NO count: the console
+// carries no list counts (maintainer, 2026-11-24, epic #7481; this hub's three pills went in #7489).
 // The whole surface is gated behind the `alerting` entitlement (Pro+) and `view_alerts`; the
 // ROUTE decides both on the server (page.tsx) and renders this only past them. Its reads are
 // prefetched there, so every section paints with its rows (#6125).
@@ -26,8 +26,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { ActivityPanel } from "@/components/alerts/activity-panel";
+import { useActivityView } from "@/components/alerts/activity-view";
 import {
-	useActivityView,
 	useChannelsView,
 	usePoliciesView,
 } from "@/components/alerts/alerts-filters";
@@ -154,7 +154,6 @@ export function AlertsPage() {
 					className="mb-4"
 					title={sectionTitle(ShieldAlert, "Policies")}
 					description="A policy watches a set of events and routes them to channels."
-					count={policiesView.count}
 					actions={<DocsLink href="/docs/guides/alerts#policies" />}
 				/>
 				<PoliciesPanel hub={hub} view={policiesView} onOpenChannel={openChannel} />
@@ -165,7 +164,6 @@ export function AlertsPage() {
 					className="mb-4"
 					title={sectionTitle(Webhook, "Channels")}
 					description="Channels are where alerts go — webhooks, Slack, Rocket.Chat or email."
-					count={channelsView.count}
 					actions={<DocsLink href="/docs/guides/alerts#channels" />}
 				/>
 				<ChannelsPanel hub={hub} view={channelsView} onOpenPolicy={openPolicy} />
@@ -176,7 +174,6 @@ export function AlertsPage() {
 					className="mb-4"
 					title={sectionTitle(Activity, "Activity")}
 					description="The delivery ledger — every notification routed, with retry status."
-					count={activityView.count}
 					actions={<DocsLink href="/docs/guides/alerts#activity" />}
 				/>
 				<ActivityPanel view={activityView} />
