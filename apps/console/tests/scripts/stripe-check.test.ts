@@ -49,7 +49,10 @@ describe("stripe-check", () => {
 			"portal.customer_updates: email",
 			"portal.invoice_history: no",
 			"portal.subscription_update: no",
-			"payment_methods.available: card,link",
+			"portal.headline: Alethia: manage your subscription and payment method",
+			"payment_methods.id: pmc_default",
+			"payment_methods.on: apple_pay,card,google_pay,link",
+			"payment_methods.available: apple_pay,card,google_pay,link",
 			"matches_catalog: yes",
 		]) {
 			expect(out).toContain(expected);
@@ -69,6 +72,17 @@ describe("stripe-check", () => {
 		expect(report.matches).toBe(false);
 		expect(report.plan.join("\n")).toContain("~ portal");
 		expect(report.portal?.customerUpdates).toEqual(["email", "tax_id"]);
+	});
+
+	it("fails when a payment method was turned back on in the dashboard", async () => {
+		const acct = await converged();
+		const sepa = acct.pmcs.find((c) => c.is_default)?.sepa_debit;
+		if (!sepa) throw new Error("no sepa_debit");
+		sepa.display_preference.preference = "on";
+		const report = await runCheck(fakeClient(acct), "test", URL);
+		expect(report.matches).toBe(false);
+		expect(report.plan.join("\n")).toContain("~ payment methods pmc_default: off sepa_debit");
+		expect(report.paymentMethods?.on).toContain("sepa_debit");
 	});
 
 	it("flags an endpoint whose events differ from the handler's", async () => {

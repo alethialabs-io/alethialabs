@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// A RE-RUN OF A PROJECT'S JOB IS A FRESH RUN OF ITS OPERATION (#6121, lib/jobs/operation.ts), against
-// real Postgres: it goes through the entry point a fresh deploy uses, so the environment's
-// one-job-in-flight guard holds for it, and it deploys the project's CURRENT configuration — not the
-// snapshot frozen into the job it was started from.
+// A RE-RUN OF A PROJECT'S DEPLOY QUEUES NOTHING (#6121, lib/jobs/operation.ts; decision M23, #6780),
+// against real Postgres. A deploy applies a current reviewed plan, and the plan the original deploy
+// applied stopped being current when that deploy was queued, so a re-run never re-applies the frozen
+// snapshot and never queues a deploy of its own: it answers "plan again". The environment's
+// one-job-in-flight guard still comes first: while a job runs on the environment the answer is that
+// conflict, and nothing is queued either way.
 //
 // The actions run for real — config snapshot, environment transition and all. Only the PDP (the
 // permission half is tests/integration/jobs-rerun-authority.test.ts), the visibility predicate (its
@@ -35,6 +37,7 @@ vi.mock("@/lib/billing/job-quota", async (importOriginal) => ({
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 
 import { rerunJob } from "@/app/server/actions/jobs";
+import { tryPlanProject } from "@/app/server/actions/projects";
 import { authorize } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { auditLog, cloudIdentities, jobs, projectEnvironments, projects } from "@/lib/db/schema";
@@ -70,7 +73,7 @@ async function settle() {
 	await db.update(projectEnvironments).set({ status: "ACTIVE" }).where(eq(projectEnvironments.id, envId));
 }
 
-describeIfDb("a re-run of a project's deploy is a fresh deploy", () => {
+describeIfDb("a re-run of a project's deploy says to plan again (decision M23)", () => {
 	beforeAll(async () => {
 		const db = getServiceDb();
 		const [identity] = await db
@@ -126,28 +129,41 @@ describeIfDb("a re-run of a project's deploy is a fresh deploy", () => {
 		await db.delete(cloudIdentities).where(inArray(cloudIdentities.id, [identityId]));
 	});
 
-	it("deploys the project's current configuration to the same environment, not the original snapshot", async () => {
-		const result = await rerunJob({ jobId: original });
-		if (!result.ok) throw new Error(`re-run refused: ${JSON.stringify(result.error)}`);
-		const created = (await jobsOn()).find((r) => r.id === result.data.id);
-		expect(created).toMatchObject({ job_type: "DEPLOY", environment_id: envId });
-		expect(JSON.stringify(created?.config_snapshot)).not.toContain(STALE);
-		// The fresh-run entry point moved the environment on, which is the guard the next test meets.
+	it("queues nothing and says to plan again, leaving the environment as it was", async () => {
+		const before = (await jobsOn()).length;
+		expect(await rerunJob({ jobId: original })).toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message:
+					"A deploy applies a reviewed plan, so it runs again from a new one: plan this environment, review the plan, then apply it.",
+			},
+		});
+		expect((await jobsOn()).length).toBe(before);
+		// The frozen snapshot of the original job is never queued again.
+		expect((await jobsOn()).filter((r) => JSON.stringify(r.config_snapshot).includes(STALE))).toHaveLength(1);
 		const [env] = await getServiceDb()
 			.select({ status: projectEnvironments.status })
 			.from(projectEnvironments)
 			.where(eq(projectEnvironments.id, envId));
-		expect(env?.status).not.toBe("ACTIVE");
+		expect(env?.status).toBe("ACTIVE");
 	});
 
-	it("is refused while another job is in flight on the environment, and queues nothing", async () => {
-		const first = await rerunJob({ jobId: original });
-		expect(first.ok).toBe(true);
+	it("is refused with the in-flight conflict while another job runs on the environment, and queues nothing", async () => {
+		// A preview in flight on the environment: the environment is QUEUED until it settles.
+		const plan = await tryPlanProject(projectId, undefined, envId);
+		expect(plan.ok).toBe(true);
 		const before = (await jobsOn()).length;
 
-		// No settle: the first re-run's deploy is still in flight on the environment.
+		// No settle: the in-flight answer wins over "plan again".
 		const second = await rerunJob({ jobId: original });
-		expect(second).toMatchObject({ ok: false, error: { kind: "conflict" } });
+		expect(second).toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message: "Environment is not in a valid state for this operation — a job may already be in progress.",
+			},
+		});
 		expect((await jobsOn()).length).toBe(before);
 	});
 });

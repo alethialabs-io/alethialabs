@@ -129,10 +129,15 @@ const PROMOTION = {
 	deploy_job_id: null,
 };
 
+const PLAN_DIGEST = "ab".repeat(32);
+
 const PLAN_JOB = {
 	id: "plan-1",
 	cloud_identity_id: "ci-1",
 	config_snapshot: { project: "p" },
+	configuration_hash: "cd".repeat(32),
+	// The digest a succeeded plan records; the promotion's DEPLOY carries it to the runner.
+	plan_sha256: PLAN_DIGEST,
 	execution_metadata: null,
 	verify_override: null,
 };
@@ -224,6 +229,8 @@ describe("advancePromotionOnPlan", () => {
 				job_type: "DEPLOY",
 				status: "QUEUED",
 				plan_job_id: "plan-1",
+				plan_sha256: PLAN_DIGEST,
+				configuration_hash: PLAN_JOB.configuration_hash,
 				environment_id: "env-stg",
 				config_snapshot: PLAN_JOB.config_snapshot,
 				cloud_identity_id: "ci-1",
@@ -233,6 +240,23 @@ describe("advancePromotionOnPlan", () => {
 			expect.objectContaining({ status: "DEPLOYING", deploy_job_id: "deploy-1" }),
 		]);
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
+	});
+
+	it("blocks the promotion and queues nothing when the candidate plan has no recorded digest", async () => {
+		fake.selects.push([PROMOTION], [{ ...PLAN_JOB, plan_sha256: null }]);
+		scriptGateContext({});
+
+		await advancePromotionOnPlan("plan-1");
+
+		expect(transitionEnv).not.toHaveBeenCalled();
+		expect(fake.inserted).toEqual([]);
+		expect(fake.updated).toEqual([
+			expect.objectContaining({
+				status: "BLOCKED",
+				error_message: expect.stringMatching(/no recorded plan digest.*Promote again/),
+			}),
+		]);
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
 	it("inserts no DEPLOY when the env CAS loses the race", async () => {

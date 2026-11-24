@@ -274,7 +274,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Beta predicates — B1 to B9
 
-**1 of 9 beta predicates are met.** 5 not met · 3 not measured. Evaluated on this tree at the snapshot instant **2026-11-22T16:41:14Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
+**1 of 9 beta predicates are met.** 6 not met · 2 not measured. Evaluated on this tree at the snapshot instant **2026-11-23T20:40:05Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
 
 The predicates are defined in `docs/beta/README.md`; this section only evaluates them. `not measured` is not met: it means the instrument does not exist yet, or reads something the tree and the snapshot do not carry. Evidence records read: **1**.
 
@@ -326,19 +326,19 @@ The predicates are defined in `docs/beta/README.md`; this section only evaluates
 - **B6** ? not measured
   - sealed register: ✅ met — `terms` is sealed at 2026-08-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
   - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
-- **B7** ? not measured
-  - off-box backup: ? not measured — no backup-status.yml result in the snapshot (BKP-L2 runs it daily from `main`)
-  - restore drill: ✅ met — `docs/beta/evidence/b7/2026-11-23-restore-drill.md` (2026-11-23T19:19:31Z) · 159s · tombstones replayed
+- **B7** ❌ not met
+  - off-box backup: ✅ met — newest complete copy `20261123T144753Z` finished 2026-11-23T14:47:59Z, 5.8 h before 2026-11-23T20:40:05Z (backup-status.yml run 45239283153 at 2026-11-23T19:12:00Z)
+  - restore drill: ❌ not met — no restore-drill record
   - public hosts: ? not measured — the post-deploy smoke result is not in the snapshot, and the installer and status hosts are not in the smoke yet (REL-L8)
 - **B8** ❌ not met
   - hosted: ❌ not met — no B8 record
   - enterprise: ❌ not met — no B8 record
   - self-hosted: ❌ not met — no B8 record
 - **B9** ? not measured
-  - aws reaper: ✅ met — run 45037371646 at 2026-11-22T15:52:14Z reclaimed 5 orphan run(s) / 6 resource(s), then verified clean
-  - gcp reaper: ✅ met — run 45037371646 at 2026-11-22T15:52:14Z found no orphan runs and verified clean
-  - azure reaper: ✅ met — run 45037371646 at 2026-11-22T15:52:14Z found no orphan runs and verified clean
-  - hetzner reaper: ? not measured — run 45037371646 at 2026-11-22T15:52:14Z found 1 unattributable resource(s)
+  - aws reaper: ✅ met — run 45246723457 at 2026-11-23T19:39:36Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean
+  - gcp reaper: ✅ met — run 45246723457 at 2026-11-23T19:39:36Z found no orphan runs and verified clean
+  - azure reaper: ✅ met — run 45246723457 at 2026-11-23T19:39:36Z found no orphan runs and verified clean
+  - hetzner reaper: ? not measured — run 45246723457 at 2026-11-23T19:39:36Z found 1 unattributable resource(s)
   - nightly 6 of 7: ? not measured — the snapshot does not record the scheduled nightly's per-cloud verdicts, so 6 green of the last 7 cannot be counted
 
 </details>
@@ -431,10 +431,10 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 45030099973 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 45016724904 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 45016724904 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 45016724904 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 45175308576 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 45175308576 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 45175308576 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 45175308576 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -463,13 +463,14 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ✅ clean | run 45037371646 at 2026-11-22T15:52:14Z reclaimed 5 orphan run(s) / 6 resource(s), then verified clean |
-| **gcp** | ✅ clean | run 45037371646 at 2026-11-22T15:52:14Z found no orphan runs and verified clean |
-| **azure** | ✅ clean | run 45037371646 at 2026-11-22T15:52:14Z found no orphan runs and verified clean |
-| **hetzner** | ? indeterminate | run 45037371646 at 2026-11-22T15:52:14Z found 1 unattributable resource(s) |
+| **aws** | ✅ clean | run 45246723457 at 2026-11-23T19:39:36Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 45246723457 at 2026-11-23T19:39:36Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 45246723457 at 2026-11-23T19:39:36Z found no orphan runs and verified clean |
+| **hetzner** | ? indeterminate | run 45246723457 at 2026-11-23T19:39:36Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
+- #7351 — Maintainer legal review before consumer cells open: withdrawal email, consumer-rights page re-seal, BG consumers
 - #7151 — infra/cp-hetzner: import the hand-made get.alethialabs.io record before the next apply
 - #7148 — Public status page at status.alethialabs.io (Cloudflare Worker, like tovr.eu/status)
 - #7030 — e2e nightly: 1 of 5 clouds are not enabled
@@ -529,7 +530,7 @@ Every number above is derived from these, and from nothing else:
 - `apps/console/docs/qa/prod-runs/`
 - `docs/beta/evidence/<record kind>/`
 
-Live board snapshot: taken **2026-11-22T16:41:14Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-11-23T20:40:05Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 

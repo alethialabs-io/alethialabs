@@ -139,8 +139,8 @@
 			"source": "apps/marketing/app/ai-transparency/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-24",
-			"displayedDate": "2026-08-24",
+			"version": "2026-11-23",
+			"displayedDate": "2026-11-23",
 			"contentHash": null,
 			"owner": "LEG-L4"
 		},
@@ -151,10 +151,10 @@
 			"route": "/consumer-rights",
 			"source": "apps/marketing/app/consumer-rights/page.tsx",
 			"status": "current",
-			"sealed": false,
-			"version": "2026-11-22",
-			"displayedDate": "2026-11-22",
-			"contentHash": null,
+			"sealed": true,
+			"version": "2026-11-23",
+			"displayedDate": "2026-11-23",
+			"contentHash": "1d57baabd0e9fa3710f4b806b4590aad30a77d5b49a6b6a7e551ca532b243e1b",
 			"owner": "LEG-L1"
 		},
 		{
@@ -529,7 +529,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/RECORDS_OF_PROCESSING.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -542,7 +542,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/DPIA.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -555,7 +555,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/RETENTION_SCHEDULE.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -568,7 +568,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/AI_ACT_POSITION.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -1591,6 +1591,75 @@
 			"verifiedOn": "2026-11-22"
 		},
 		{
+			"id": "consumer-rights.console-withdrawal",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "You can also withdraw from the billing settings in the console, which shows what you will get back before you confirm.",
+			"evidence": [
+				{
+					"path": "apps/console/app/(private)/[org]/~/settings/billing/page.tsx",
+					"pattern": "\\{showWithdrawal \\? <WithdrawalSection /> : null\\}",
+					"shows": "The billing settings page mounts the withdrawal control."
+				},
+				{
+					"path": "apps/console/components/billing/withdrawal-section.tsx",
+					"pattern": "Refunded if you withdraw now:",
+					"shows": "The control shows the refund the server computed before the consumer acts."
+				},
+				{
+					"path": "apps/console/components/billing/withdrawal-section.tsx",
+					"pattern": "description=\\{`You will be refunded \\$\\{refund\\} and \\$\\{retained\\} will be retained",
+					"shows": "The confirm step repeats the refund and the retained amount before the withdrawal is made."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-23"
+		},
+		{
+			"id": "consumer-rights.refund-arranged",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "outside-repo",
+			"quote": "If we cannot refund automatically, for example because there was no card payment to refund against, we contact you within 14 days to arrange it.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/consumer-rights.ts",
+					"pattern": "if \\(!refundIssued\\) \\{\\n\\t\\tawait alertOperator\\(\\{\\n\\t\\t\\ttitle: \"Withdrawal refund owed but not issued\"",
+					"shows": "When an owed refund could not be issued, the withdrawal action alerts the platform operator."
+				},
+				{
+					"path": "apps/console/emails/withdrawal-acknowledgement.tsx",
+					"pattern": "\\{refundIssued \\? null : \\(",
+					"shows": "The acknowledgement repeats the sentence only when the refund was not issued."
+				}
+			],
+			"requires": "A person acting on the operator alert: contacting the consumer and arranging the refund within 14 days of the withdrawal. Nothing in the repository schedules or tracks that contact.",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-23"
+		},
+		{
+			"id": "consumer-rights.bg-payment-obligation-label",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "Бутонът, с който се прави поръчката, гласи „ {CONSUMER_PAYMENT_OBLIGATION_LABEL_BG}“",
+			"evidence": [
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "CONSUMER_PAYMENT_OBLIGATION_LABEL_BG = \"Поръчка със задължение за плащане\";",
+					"shows": "The Bulgarian label is the ЗЗП art. 49(2) formulation."
+				},
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "if \\(locale === \"bg-BG\"\\) \\{\\n\\t\\treturn capacity === \"consumer\"\\n\\t\\t\\t\\? CONSUMER_PAYMENT_OBLIGATION_LABEL_BG",
+					"shows": "orderButtonLabel returns it for a consumer addressed in Bulgarian. No checkout renders orderButtonLabel yet; the consumer checkout that will is not built."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-23"
+		},
+		{
 			"id": "security.token-clouds-encrypted",
 			"document": "security",
 			"kind": "security",
@@ -1947,27 +2016,6 @@
 				}
 			],
 			"owner": "LEG-L1",
-			"foundOn": "2026-11-22"
-		},
-		{
-			"id": "consumer-rights.withdrawal-control-missing",
-			"document": "consumer-rights",
-			"quote": "A withdrawal control in the console&rsquo;s billing settings will be in place before consumer sales open.",
-			"says": "The page commits to a console withdrawal control before consumer sales open.",
-			"actually": "The server half exists (getWithdrawalRight, withdrawFromContract) but no component calls it. Filed as #7221; it gates the first consumer PAID_MARKETS cell together with paid-markets.withdrawal-function-not-listed.",
-			"evidence": [
-				{
-					"path": "apps/console/app/server/actions/consumer-rights.ts",
-					"pattern": "export async function withdrawFromContract\\(",
-					"shows": "The server action exists."
-				},
-				{
-					"path": "apps/console/components/billing/payer-declaration-form.tsx",
-					"absent": "withdrawFromContract",
-					"shows": "The billing form that asks for the buyer's capacity does not call it."
-				}
-			],
-			"owner": "REL-L4",
 			"foundOn": "2026-11-22"
 		}
 	]

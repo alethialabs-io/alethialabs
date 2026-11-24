@@ -154,9 +154,19 @@ afterEach(() => {
   __resetLicenseCache();
 });
 
-/** A verified licence as `resolveInstanceLicense` returns it. */
-function verified(expiresAt: number | null, entitlements?: Entitlements): InstanceLicense {
-  return { active: true, license: { subject: "acme-corp", tier: "enterprise", expiresAt, entitlements } };
+/**
+ * A verified licence as `resolveInstanceLicense` returns it. `graceDays` defaults to 0 so a case
+ * about the licence's end reads that end directly; the grace cases pass their own.
+ */
+function verified(
+  expiresAt: number | null,
+  entitlements?: Entitlements,
+  graceDays = 0,
+): InstanceLicense {
+  return {
+    verified: true,
+    license: { subject: "acme-corp", tier: "enterprise", expiresAt, entitlements, graceDays },
+  };
 }
 
 /**
@@ -187,11 +197,11 @@ describe("licensedEntitlements — when the instance licence grants", () => {
   });
 
   it("grants nothing for a licence that was not verified", () => {
-    expect(licensedEntitlements({ active: false, reason: "no licence" }, NOW)).toBeNull();
+    expect(licensedEntitlements({ verified: false, reason: "no licence" }, NOW)).toBeNull();
   });
 
   it("grants nothing when the state says verified and carries no licence", () => {
-    expect(licensedEntitlements({ active: true }, NOW)).toBeNull();
+    expect(licensedEntitlements({ verified: true }, NOW)).toBeNull();
   });
 
   it("grants exactly the entitlements a licence names, when it names them", () => {
@@ -202,7 +212,7 @@ describe("licensedEntitlements — when the instance licence grants", () => {
 
 describe("editionReport — what the build reports", () => {
   it("reports `none`, no capabilities and the whole registry when no licence is installed", () => {
-    const report = editionReport({ active: false, reason: "none" }, ENTERPRISE_FEATURES, NOW, false);
+    const report = editionReport({ verified: false, reason: "none" }, ENTERPRISE_FEATURES, NOW, false);
     expect(report).toEqual({
       license: { state: "none", subject: null, tier: null, expiresAt: null, graceEndsAt: null },
       capabilities: [],
@@ -211,7 +221,7 @@ describe("editionReport — what the build reports", () => {
   });
 
   it("reports `invalid` and no capabilities for an installed licence that was not verified", () => {
-    const report = editionReport({ active: false, reason: "bad" }, ENTERPRISE_FEATURES, NOW, true);
+    const report = editionReport({ verified: false, reason: "bad" }, ENTERPRISE_FEATURES, NOW, true);
     expect(report.license).toEqual({
       state: "invalid",
       subject: null,
@@ -235,10 +245,39 @@ describe("editionReport — what the build reports", () => {
     expect(report.features).toEqual(FEATURES);
   });
 
-  it("reports the end of a licence that has one as an ISO instant", () => {
-    const report = editionReport(verified(NOW_SECONDS + 86_400), ENTERPRISE_FEATURES, NOW, true);
+  it("reports the end of a licence that has one, and its grace end, as ISO instants", () => {
+    const report = editionReport(
+      verified(NOW_SECONDS + 60 * 86_400, undefined, 30),
+      ENTERPRISE_FEATURES,
+      NOW,
+      true,
+    );
     expect(report.license.state).toBe("active");
-    expect(report.license.expiresAt).toBe("2026-12-02T00:00:00.000Z");
+    expect(report.license.expiresAt).toBe("2027-01-30T00:00:00.000Z");
+    expect(report.license.graceEndsAt).toBe("2027-03-01T00:00:00.000Z");
+  });
+
+  it("reports `expiring` with every capability when 30 days or fewer are left", () => {
+    const report = editionReport(verified(NOW_SECONDS + 86_400), ENTERPRISE_FEATURES, NOW, true);
+    expect(report.license.state).toBe("expiring");
+    expect([...report.capabilities].sort()).toEqual(ALL_CAPABILITIES);
+  });
+
+  it("reports `grace` with every capability after the end and inside the grace period", () => {
+    const report = editionReport(
+      verified(NOW_SECONDS - 86_400, undefined, 30),
+      ENTERPRISE_FEATURES,
+      NOW,
+      true,
+    );
+    expect(report.license).toEqual({
+      state: "grace",
+      subject: "acme-corp",
+      tier: "enterprise",
+      expiresAt: "2026-11-30T00:00:00.000Z",
+      graceEndsAt: "2026-12-30T00:00:00.000Z",
+    });
+    expect([...report.capabilities].sort()).toEqual(ALL_CAPABILITIES);
   });
 
   it("reports `expired` and no capabilities once a verified licence's end has passed", () => {
@@ -263,11 +302,11 @@ describe("editionReport — what the build reports", () => {
 
   it("is accepted whole by the edition protocol's validator in every state", () => {
     const states: InstanceLicense[] = [
-      { active: false, reason: "none" },
+      { verified: false, reason: "none" },
       verified(null),
       verified(NOW_SECONDS + 86_400),
       verified(NOW_SECONDS - 1),
-      { active: true },
+      { verified: true },
     ];
     const rejected: number[] = [];
     states.forEach((state, index) => {
@@ -281,7 +320,7 @@ describe("editionReport — what the build reports", () => {
   });
 
   it("names every registry entry once, and marks a module built only when it mounts something", () => {
-    const report = editionReport({ active: false }, ENTERPRISE_FEATURES, NOW, false);
+    const report = editionReport({ verified: false }, ENTERPRISE_FEATURES, NOW, false);
     expect(report.features.map((feature) => feature.id)).toEqual(FEATURES.map((f) => f.id));
     const mismatched = ENTERPRISE_FEATURES.filter(
       (feature) => feature.built !== feature.authPlugins(stubCore()).length > 0,
@@ -361,16 +400,16 @@ describe("register(core) — the report and the resolver of the registered modul
   });
 
   it("reports `active` with nine capabilities and resolves without a billing record under a signed licence", async () => {
-    await installLicense({ expiresInDays: 30 });
+    await installLicense({ expiresInDays: 365 });
     const mod = register(stubCore());
     const report = await mod.instanceEdition?.();
     expect(report?.license).toMatchObject({
       state: "active",
       subject: "acme-corp",
       tier: "enterprise",
-      graceEndsAt: null,
     });
     expect(typeof report?.license.expiresAt).toBe("string");
+    expect(typeof report?.license.graceEndsAt).toBe("string");
     expect([...(report?.capabilities ?? [])].sort()).toEqual(ALL_CAPABILITIES);
     const entitlements = await mod.resolveEntitlements?.("org_1");
     expect(entitlements).toMatchObject({ teams: true, sso: true });
@@ -397,15 +436,22 @@ describe("register(core) — the report and the resolver of the registered modul
     expect(await mod.resolveEntitlements?.("org_1")).toEqual(NO_PLAN);
   });
 
-  it("stops granting when the licence ends while the process is running", async () => {
+  it("keeps granting through grace and stops when grace ends, while the process is running", async () => {
     await installLicense({ expiresInDays: 1 });
     const mod = register(stubCore());
-    expect((await mod.instanceEdition?.())?.license.state).toBe("active");
+    expect((await mod.instanceEdition?.())?.license.state).toBe("expiring");
     expect(await mod.resolveEntitlements?.("org_1")).toMatchObject({ teams: true, sso: true });
 
+    const start = Date.now();
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Date.now() + 2 * 86_400_000);
+    // Two days on: past the end, inside the default 30-day grace period.
+    vi.setSystemTime(start + 2 * 86_400_000);
+    expect((await mod.instanceEdition?.())?.license.state).toBe("grace");
+    expect(await mod.resolveEntitlements?.("org_1")).toMatchObject({ teams: true, sso: true });
+    expect(billing.resolveOrgEntitlements).not.toHaveBeenCalled();
 
+    // Thirty-two days on: the end and the grace period have both passed.
+    vi.setSystemTime(start + 32 * 86_400_000);
     const report = await mod.instanceEdition?.();
     expect(report?.license.state).toBe("expired");
     expect(report?.capabilities).toEqual([]);

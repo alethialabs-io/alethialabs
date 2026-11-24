@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { formatBytes } from "@repo/format";
-import { verifyRunnerOwnsJob, verifyRunnerToken } from "@/lib/runners/auth";
+import {
+	verifyRunnerMayReadJob,
+	verifyRunnerOwnsJob,
+	verifyRunnerToken,
+} from "@/lib/runners/auth";
 import { storage } from "@/lib/storage";
 import {
 	MAX_PLAN_ARTIFACT_BYTES,
@@ -13,6 +17,7 @@ import {
 import { NextResponse } from "next/server";
 import { log } from "@/lib/observability/log";
 
+/** Stores the plan file a runner produced for a job it owns. */
 export async function POST(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
@@ -67,6 +72,7 @@ export async function POST(
 	}
 }
 
+/** Serves a job's plan file to a runner that may read it (see {@link verifyRunnerMayReadJob}). */
 export async function GET(
 	req: Request,
 	{ params }: { params: Promise<{ id: string }> },
@@ -76,8 +82,9 @@ export async function GET(
 
 	const { id: jobId } = await params;
 
-	const ownershipError = await verifyRunnerOwnsJob(runnerId, jobId);
-	if (ownershipError) return ownershipError;
+	// The runner that made the plan, or the runner whose in-flight DEPLOY applies it, may download it.
+	const read = await verifyRunnerMayReadJob(runnerId, jobId);
+	if (read.error) return read.error;
 
 	try {
 		const path = planArtifactKey(jobId);

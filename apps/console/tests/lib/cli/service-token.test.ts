@@ -241,22 +241,16 @@ describe("a token's scope and project limit (AGT-L3)", () => {
 		);
 	});
 
-	it("refuses to mint a token narrower than every scope over every project, and writes nothing", async () => {
-		const { mintServiceToken, NarrowServiceTokenError } = await import("@/lib/cli/service-token");
-		const narrower = [
-			{ scopes: ["read" as const], projectIds: null },
-			{ scopes: ["read" as const, "design" as const, "plan" as const, "apply" as const, "destroy" as const], projectIds: ["p-a"] },
-		];
-		const minted: number[] = [];
-		for (const [i, ceiling] of narrower.entries()) {
-			try {
-				await mintServiceToken({ organizationId: "org-1", name: "ci", createdBy: "u", ceiling });
-				minted.push(i);
-			} catch (e) {
-				if (!(e instanceof NarrowServiceTokenError)) throw e;
-			}
-		}
-		expect(minted).toEqual([]);
-		expect(insertValues).not.toHaveBeenCalled();
+	it("mints a token narrower than every scope over every project with exactly that limit", async () => {
+		const { mintServiceToken } = await import("@/lib/cli/service-token");
+		await mintServiceToken({
+			organizationId: "org-1",
+			name: "ci",
+			createdBy: "u",
+			ceiling: { scopes: ["read", "plan"], projectIds: ["p-a"] },
+		});
+		expect(insertValues).toHaveBeenCalledWith(
+			expect.objectContaining({ scopes: ["read", "plan"], project_ids: ["p-a"] }),
+		);
 	});
 });

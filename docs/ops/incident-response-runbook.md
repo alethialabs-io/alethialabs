@@ -99,9 +99,103 @@ force-destroy. Include the `trace_id` in the escalation so the next responder st
 
 ---
 
+## 7. Named incidents
+
+Four incidents have their own playbook because each one is likely before launch and none is a
+single job or tenant. Each says how it is **detected**, what to **do first**, and what is **not built
+yet** — a runbook step that names a control which does not exist is worse than no step.
+
+### 7.1 Box loss — the production box is gone or its data is
+
+**Detected by:** status.alethialabs.io (Console, Database and Authorization rows down — it runs on
+Cloudflare, outside the box, so it stays up); the post-deploy smoke on the next deploy (`deploy-console.yml`
+job `smoke`, which opens "prod: the post-deploy smoke is red on main — the deploy itself succeeded");
+`backup-status.yml` (daily 06:23 UTC, from off the box) when the nightly copy stops arriving.
+
+**Do first:**
+1. Confirm it is the box and not the edge: if `get.alethialabs.io` (served by the console through the
+   tunnel) and `alethialabs.io/api/health` both fail while status.alethialabs.io loads, the box or its
+   tunnel is down.
+2. If the old box is still reachable at all, run `backup.sh tombstones` on it before anything else —
+   erasures recorded after the last hourly tombstone export are otherwise lost
+   (`docs/ops/restore-runbook.md`, "Tombstones").
+3. Follow **`docs/ops/restore-runbook.md`**, "A real recovery (box lost)": provision with `infra/cp-hetzner`,
+   fetch the newest copy that has a `manifest.json`, verify, decrypt with the offline age key, restore
+   Postgres and storage, migrate, replay tombstones, then deploy. That section is marked "has not been
+   drilled"; the weekly drill (`restore-drill.yml`, Mondays) exercises the same steps on a throwaway
+   EC2 instance, never on production.
+
+**Data loss bound:** up to one night of database and storage (the nightly copy runs at 02:30 UTC), and
+up to about an hour of erasure tombstones.
+
+**Not built:** there is no scripted production restore — `scripts/ops/restore-drill.sh` accepts only
+`--target drill`.
+
+### 7.2 AI provider exhaustion — the model provider account runs out
+
+**Detected by:** users see "The AI provider account behind this deployment is out of credit."
+(`apps/console/lib/ai/provider-error.ts`); the console log carries `chat turn model error` /
+`support ask model error`. When the free-tier global ceiling is reached the platform raises
+`system.platform.free_ai_paused`; when the ceiling's own count query fails it lets turns through and
+raises `system.platform.cost_guard_failed_open`.
+
+**Do first:**
+1. Top up the provider account. This is the only fix for paid tiers — nothing pauses paid AI.
+2. To stop free-tier usage draining it again, set `ALETHIA_FREE_AI_PAUSED=1` (free tier only; paid
+   plans and purchased credits keep working; users see "Free AI is paused by the platform operator").
+   To narrow instead of stopping, lower `ALETHIA_FREE_AI_GLOBAL_DAILY_CREDITS` (default 20,000 credits
+   per UTC day).
+3. Both are read from the console's environment and take effect after a console restart.
+   **Neither is emitted by `scripts/ci/deploy-console-assemble-env.sh` today**, so putting them in the
+   vault does nothing: set them by hand in `/opt/alethia/.env` on the box and restart the console, and
+   expect the next deploy to drop them until the assembler emits them.
+
+**Not built:** no alert on the provider's billing error itself and no provider-balance alert — the
+first operator signal is a user report or the log line.
+
+### 7.3 Payment-hold backlog — subscriptions stuck unproven
+
+A payment hold is a `payment_holds` row saying a subscription is not yet proven settled
+(`apps/console/docs/stripe-prod-runbook.md` §7, "Payment holds"). The in-process sweeper
+(`payment-hold-sweeper` heartbeat loop) advances up to 50 holds every 5 minutes.
+
+**Detected by:** `system.platform.payment_needs_support`, raised when a hold enters `needs_operator`
+or sits in one state past its bound (the table in the Stripe runbook); the console log line
+`[billing] payment needs support — …`. If the sweeper itself stops, its heartbeat loop is what
+`system.platform.loop_degraded` reports (§1).
+
+**Do first:**
+1. List what is open: `pnpm -C apps/console billing:payment-holds list --open`; inspect one with
+   `show sub_…`.
+2. If the sweeper is degraded, restart the console (§4, "A degraded/dead loop"), then
+   `billing:payment-holds reconcile` to catch up.
+3. Release a hold only when the subscription is proven settled:
+   `billing:payment-holds release sub_… --reason "<why>" --operator <your user id>`. A missed Stripe
+   event can be re-processed with break-glass `replay-webhook` (§3; break-glass is default-off).
+
+### 7.4 Who is paged — alert routing
+
+Today the channels that need no configuration are **GitHub issues**: a red production deploy or smoke
+(`scripts/deploy-failure-report.mjs`), a failing backup check (`backup-status.yml`, label
+`tracker:backup-status`), a failing restore drill ("Restore drill failing"), and workflows red across
+runs (`workflow-health.yml`). Those reach the maintainer only through GitHub notifications.
+
+Every `system.platform.*` alert (`loop_degraded`, `loop_recovered`, `payment_needs_support`,
+`cost_guard_failed_open`, `free_ai_paused`) is delivered **only** when `ALETHIA_PLATFORM_ALERT_ORG_ID`
+names the operator org **and** that org has a rule for the alert bound to a channel (pagerduty, slack,
+email, webhook and the other types in `apps/console/lib/alerts/channels/`). Unset, each is a log line
+nobody reads. The status page records incidents but sends no notification.
+
+**To make paging real (maintainer, once):** set `ALETHIA_PLATFORM_ALERT_ORG_ID` in `alethia/prod/env`
+(it is emitted by the deploy), redeploy, then in that org create one rule per alert above bound to a
+channel that pushes to the maintainer's phone. Page on: `/api/health` unhealthy, `payment_needs_support`,
+`free_ai_paused` and `cost_guard_failed_open`, and a `loop_degraded` that does not clear after a restart.
+
+---
+
 ## Enablement (maintainer, one-time)
 - Observability: set `OTEL_EXPORTER_OTLP_ENDPOINT` (traces/metrics), `SENTRY_DSN` (errors),
-  `ALETHIA_PLATFORM_ALERT_ORG_ID` (loop-degraded alerts route here).
+  `ALETHIA_PLATFORM_ALERT_ORG_ID` (every `system.platform.*` alert routes here — see §7.4).
 - Break-glass: `ALETHIA_BREAKGLASS_ENABLED=true`, `BREAKGLASS_OPERATORS=<emails>`, and (for the
   CF-Access header path) `BREAKGLASS_ACCESS_PROXY_SECRET`; add these to the prod emit list.
 - Nightly real-cloud proof: add `HCLOUD_TOKEN` (then AWS/Azure secrets) to enable `e2e-nightly.yml`.

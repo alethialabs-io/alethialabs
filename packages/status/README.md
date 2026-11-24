@@ -26,7 +26,7 @@ control-plane box is the case this page _reports_, not the case that takes it do
 | Website       | `alethialabs.io/`                | not 2xx                                                             |
 | Docs          | `alethialabs.io/docs`            | not 2xx                                                             |
 | News          | `alethialabs.io/news`            | not 2xx                                                             |
-| Installer     | `get.alethialabs.io`             | not 2xx                                                             |
+| Installer     | `get.alethialabs.io`             | not 2xx, or a body that is not the install script (shebang + markers) |
 
 Console, Database and Authorization are **critical**: one of them down is a major outage. Any other row
 down is "some systems degraded".

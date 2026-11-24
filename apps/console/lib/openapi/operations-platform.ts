@@ -416,6 +416,7 @@ export const PLATFORM_OPERATIONS: readonly OpenApiOperation[] = [
 			ok(deployRunnerWire, "The runner and its queued job.", 201),
 			{ status: 400, description: "A required field is missing, `cloud_identity_id` is not a UUID, or the account's cloud cannot host a deployed runner." },
 			{ status: 404, description: "The cloud account or `assigned_runner_id` was not found, or is not this caller's to use." },
+			{ status: 409, description: "The instance has no public URL (`NEXT_PUBLIC_APP_URL`), so the runner would have no console to connect to. Nothing is written." },
 			serverError,
 		],
 	},

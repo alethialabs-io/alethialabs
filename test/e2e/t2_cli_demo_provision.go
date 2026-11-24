@@ -504,13 +504,16 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "apply",
 		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
+			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--latest-plan", "--no-input"}
 		},
 		After:           captureApplyJobID,
 		AwaitEnvSettled: true,
 		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a " +
 			"seeded row. --runner-id is REQUIRED: without it the CLI calls selectRunner(), which prompts, " +
-			"and a prompt in CI hangs until the context kills it and reports as an unreachable command.",
+			"and a prompt in CI hangs until the context kills it and reports as an unreachable command. " +
+			"--latest-plan deploys the plan the `plan` beat made: a deploy applies a reviewed plan, and " +
+			"without a plan reference the CLI would preview again first, whose PLAN job id would be the " +
+			"first id in the output instead of the DEPLOY's.",
 	},
 	{
 		StepID: "jobs-logs",

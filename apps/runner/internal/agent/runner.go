@@ -730,8 +730,9 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 		return err
 	}
 
-	// A job that carries a plan digest applies that plan and no other (plan_binding.go). Checked
-	// before any token is minted or workdir created, so a refusal costs nothing.
+	// A job that names a plan applies that plan and no other, and only when it carries the plan's
+	// digest (plan_binding.go). Checked before any token is minted or workdir created, so a refusal
+	// costs nothing. A job that names no plan is a system re-apply and plans afresh below.
 	binding, planBound, err := jobPlanBinding(job)
 	if err != nil {
 		return err
@@ -742,22 +743,6 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 			return err
 		}
 		fmt.Fprintln(stdout, "Plan job validated.")
-	} else if job.PlanJobID != nil && *job.PlanJobID != "" {
-		fmt.Fprintf(stdout, "Validating against plan job %s...\n", *job.PlanJobID)
-		planJob, err := w.api.GetJob(*job.PlanJobID)
-		if err != nil {
-			fmt.Fprintf(stderr, "Warning: could not fetch plan job for validation: %v\n", err)
-		} else if planJob != nil {
-			if planJob.Status != "SUCCESS" {
-				return fmt.Errorf("plan job %s has status %s, expected SUCCESS", *job.PlanJobID, planJob.Status)
-			}
-			if job.ConfigurationHash != nil && planJob.ConfigurationHash != nil &&
-				*job.ConfigurationHash != *planJob.ConfigurationHash {
-				return fmt.Errorf("configuration changed since plan was generated (plan hash: %s, current: %s)",
-					*planJob.ConfigurationHash, *job.ConfigurationHash)
-			}
-			fmt.Fprintln(stdout, "Plan validation passed.")
-		}
 	}
 
 	// One token per repo the deploy clones or pushes, each requested for that repo by name (the
@@ -798,9 +783,9 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 	}
 	defer os.RemoveAll(workDir)
 
-	// Download the pre-approved plan into the workdir (mounted into the sandbox) so the child can
-	// read it. For a job that carries a plan digest it is handed on only once its digest equals
-	// that one, and such a job never falls back to computing a new plan.
+	// Download the reviewed plan into the workdir (mounted into the sandbox) so the child can read
+	// it. It is handed on only once its digest equals the one the job carries, and a job bound to a
+	// plan never falls back to computing a new one.
 	planFile := ""
 	if planBound {
 		planFile, err = w.fetchReviewedPlan(binding, workDir)
@@ -808,14 +793,6 @@ func (w *Runner) executeDeploy(ctx context.Context, job *Job, provider string, i
 			return err
 		}
 		fmt.Fprintf(stdout, "Using the reviewed plan from plan job %s (digest %s).\n", binding.planJobID, shortDigest(binding.digest))
-	} else if job.PlanJobID != nil && *job.PlanJobID != "" {
-		planFileDest := filepath.Join(workDir, "plan-apply.out")
-		if dlErr := w.api.DownloadPlanArtifact(*job.PlanJobID, planFileDest); dlErr != nil {
-			fmt.Fprintf(stdout, "Warning: could not download plan artifact: %v (will re-plan)\n", dlErr)
-		} else {
-			fmt.Fprintln(stdout, "Using saved plan artifact from plan job.")
-			planFile = planFileDest
-		}
 	}
 
 	// The apply path normally skips Infracost (cost is estimated on the PLAN job). But when a

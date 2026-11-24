@@ -5,7 +5,7 @@ import { timingSafeStrEqual } from "@/lib/auth/internal-auth";
 import { getServiceDb } from "@/lib/db";
 import { jobs, runners } from "@/lib/db/schema";
 import { createHash, randomBytes } from "crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export type RunnerAuthResult = {
@@ -106,4 +106,56 @@ export async function verifyRunnerOwnsJob(
 		);
 	}
 	return null;
+}
+
+/** How a runner may read a job: as the runner that ran it, or as the runner applying its plan. */
+export type RunnerJobAccess = "owner" | "applies_plan";
+
+/** The statuses of an apply that is in a runner's hands right now. */
+const IN_FLIGHT_APPLY = ["CLAIMED", "PROCESSING"] as const;
+
+/**
+ * Confirms the authenticated runner may READ the given job, and says on what ground:
+ *
+ * - `owner`: the runner owns the job, as {@link verifyRunnerOwnsJob} checks;
+ * - `applies_plan`: the job is a PLAN, and this runner holds an in-flight DEPLOY of the same org that
+ *   names it as `plan_job_id`. The runner applying a reviewed plan downloads that plan and reads its
+ *   status, whichever runner made it. Only that plan, only while the apply is claimed or running.
+ *
+ * Returns the 404/403 to answer with, or the access ground. Writes keep {@link verifyRunnerOwnsJob}.
+ */
+export async function verifyRunnerMayReadJob(
+	runnerId: string,
+	jobId: string,
+): Promise<{ error: NextResponse; access?: undefined } | { error: null; access: RunnerJobAccess }> {
+	const db = getServiceDb();
+	const [job] = await db
+		.select({ runner_id: jobs.runner_id, job_type: jobs.job_type, org_id: jobs.org_id })
+		.from(jobs)
+		.where(eq(jobs.id, jobId))
+		.limit(1);
+
+	if (!job) {
+		return { error: NextResponse.json({ error: "Job not found" }, { status: 404 }) };
+	}
+	if (job.runner_id === runnerId) return { error: null, access: "owner" };
+	if (job.job_type === "PLAN" && job.org_id !== null) {
+		const [apply] = await db
+			.select({ id: jobs.id })
+			.from(jobs)
+			.where(
+				and(
+					eq(jobs.plan_job_id, jobId),
+					eq(jobs.runner_id, runnerId),
+					eq(jobs.org_id, job.org_id),
+					eq(jobs.job_type, "DEPLOY"),
+					inArray(jobs.status, [...IN_FLIGHT_APPLY]),
+				),
+			)
+			.limit(1);
+		if (apply) return { error: null, access: "applies_plan" };
+	}
+	return {
+		error: NextResponse.json({ error: "Runner does not own this job" }, { status: 403 }),
+	};
 }

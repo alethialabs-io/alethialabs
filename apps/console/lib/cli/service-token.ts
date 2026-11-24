@@ -5,7 +5,6 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, isNull, or, gt } from "drizzle-orm";
 import type { AgentScope } from "@/lib/approvals/types";
 import {
-	isUnrestricted,
 	parseProjectIds,
 	parseScopes,
 	UNRESTRICTED_CEILING,
@@ -52,31 +51,12 @@ export interface MintedServiceToken {
 }
 
 /**
- * Thrown by {@link mintServiceToken} for a limit narrower than every scope over every project.
- *
- * Not every route that queues a plan, a deploy or a destroy reads a token's limit yet
- * (`POST /api/jobs` builds its own actor), so a narrower token is not issued until all of them do.
- * The refusal lives here, in the one function that writes a token row, so no caller can issue one.
- */
-export class NarrowServiceTokenError extends Error {
-	/** The machine-readable reason a client can branch on. */
-	readonly code = "narrow_tokens_unavailable";
-
-	/** Builds the refusal; its message is shown to the caller. */
-	constructor() {
-		super(
-			"Tokens limited to fewer scopes or to named projects are not available yet. Omit scopes and project_ids to mint a token with every scope over every project.",
-		);
-		this.name = "NarrowServiceTokenError";
-	}
-}
-
-/**
  * Mint a service token for an organization. Returns the plaintext exactly once; the caller must show
  * it to the user in that response and never persist it.
  *
- * The token carries every scope over every project. A `ceiling` narrower than that throws
- * {@link NarrowServiceTokenError} and writes nothing.
+ * The token carries `ceiling`: the scopes it may use and the projects it may touch (every scope over
+ * every project when omitted). Every route that acts for a service token holds it to that limit:
+ * `authorizeCli`, `resolveCliProvider` and `POST /api/jobs` attach it with `withServiceTokenCeiling`.
  */
 export async function mintServiceToken(params: {
 	organizationId: string;
@@ -86,7 +66,6 @@ export async function mintServiceToken(params: {
 	ceiling?: ScopeCeiling;
 }): Promise<MintedServiceToken> {
 	const ceiling = params.ceiling ?? UNRESTRICTED_CEILING;
-	if (!isUnrestricted(ceiling)) throw new NarrowServiceTokenError();
 	const db = getServiceDb();
 	const random = randomBytes(TOKEN_BYTES).toString("base64url");
 	const token = SERVICE_TOKEN_PREFIX + random;

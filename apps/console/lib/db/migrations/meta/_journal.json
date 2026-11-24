@@ -1254,6 +1254,20 @@
       "when": 1795443454050,
       "tag": "0178_many_hammerhead",
       "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "7",
+      "when": 1795454354122,
+      "tag": "0179_furry_harry_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1795475363189,
+      "tag": "0180_short_namor",
+      "breakpoints": true
     }
   ]
 }

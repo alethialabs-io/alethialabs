@@ -13,7 +13,7 @@ import { Input } from "@repo/ui/input";
 import { FieldHelp } from "@repo/ui/field-help";
 import { CopyButton } from "@repo/ui/copy-button";
 import { ConnectSheetShell, MethodTabs, Step, StoredNote } from "@/components/connectors/connection-ui";
-import { ALETHIA_ISSUER_URL, connectorAssetUrl } from "@/components/connectors/connector-assets";
+import { useConnectorAssets } from "@/components/connectors/connector-assets";
 import { ConnectForm } from "@/components/cloud-connect/connect-form";
 import {
 	alibabaConnectWizard,
@@ -136,9 +136,10 @@ export function AlibabaConnection({ session }: { session: ConnectSession }) {
 	});
 	const { form } = flow.wizard;
 
-	const scriptUrl = connectorAssetUrl("alethia-alibaba-setup.sh");
+	const { assetUrl, issuerUrl } = useConnectorAssets();
+	const scriptUrl = assetUrl("alethia-alibaba-setup.sh");
 	// Pass the issuer explicitly so a self-hosted console points the customer's trust at its OWN issuer.
-	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-alibaba-setup.sh ${ALETHIA_ISSUER_URL}`;
+	const cloudShellCmd = `curl -sO ${scriptUrl} && bash alethia-alibaba-setup.sh ${issuerUrl}`;
 	const cloudShellUrl = "https://shell.aliyun.com";
 
 	/** A paste of the script's whole output keeps only the RAM role ARN in it. */
