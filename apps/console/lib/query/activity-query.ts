@@ -3,9 +3,9 @@
 
 // The Activity feed's normalize step (the console filter standard, lib/query/README.md) in a module
 // with no "use client" and no server imports: the route builds the first page's key through it on
-// the server (#6129) and `useActivityQuery` builds the same key in the browser, so the two cannot
+// the server (#6129) and the feed's `useKeysetList` builds the same key in the browser, so the two cannot
 // disagree about what the key is. A client-only module imported by a server component is a client
-// REFERENCE there, not a callable function — which is why this is not in `use-activity-query.ts`.
+// REFERENCE there, not a callable function — which is why this is not in a client module.
 
 import { presetRange } from "@repo/ui/range";
 import type { ActivityQuery } from "@/app/server/actions/activity";
