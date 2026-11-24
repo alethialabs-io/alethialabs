@@ -71,6 +71,7 @@ const COLUMNS: FooterColumn[] = [
 		links: [
 			{ label: "Privacy", href: "/privacy" },
 			{ label: "Terms", href: "/terms" },
+			{ label: "Refunds", href: "/refunds" },
 			{ label: "Imprint", href: "/imprint" },
 			{ label: "All legal documents", href: "/legal" },
 		],
