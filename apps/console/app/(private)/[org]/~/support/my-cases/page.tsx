@@ -23,7 +23,7 @@ export const metadata = pageMetadata({
 
 /**
  * "My cases" route (#6130, the jobs slice's shape). Prefetches EXACTLY the key the list asks for on
- * first paint — `support.cases` for the link's normalized query (`?status=`, `?search=`,
+ * first paint — the first page of the `support.cases` infinite query for the link's normalized query (`?status=`, `?search=`,
  * `?severity=`, `?type=`, all applied by the server since #7396) — in-process through the read
  * router, and hands the dehydrated cache to the client, so the rows are in the server HTML and the
  * browser fetches nothing on mount. When the link carries any filter, the pristine query is
@@ -55,8 +55,19 @@ export default async function MyCasesRoute({
 
 	const queryClient = getQueryClient();
 	const inputs = JSON.stringify(query) === JSON.stringify(pristine) ? [query] : [pristine, query];
+	// The FIRST page of the infinite query `useKeysetList` reads: the same key (the filter alone —
+	// the cursor is the page param, null on page one) and the same `nextCursor` walk, so the list
+	// hydrates onto it and "Load more" carries on from the prefetched page.
 	await Promise.all(
-		inputs.map((input) => queryClient.prefetchQuery(serverOrpc().support.cases.queryOptions({ input }))),
+		inputs.map((input) =>
+			queryClient.prefetchInfiniteQuery(
+				serverOrpc().support.cases.infiniteOptions({
+					input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+					initialPageParam: null,
+					getNextPageParam: (last) => last.nextCursor,
+				}),
+			),
+		),
 	);
 
 	return (
