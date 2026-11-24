@@ -85,6 +85,14 @@ func cancelGracePeriod() time.Duration {
 type TofuCLI struct {
 	tf      *tfexec.Terraform
 	version string
+	// execPath and workDir are what the state-writing commands (Apply, Destroy) exec directly —
+	// see runStateWriting for why those two do not go through terraform-exec.
+	execPath string
+	workDir  string
+	// stderr is the configured lifecycle error writer.
+	stderr io.Writer
+	// grace is the SIGINT→SIGKILL window for a cancelled state-writing command.
+	grace time.Duration
 	// stdout is the configured lifecycle log writer (plan/apply/destroy stream here).
 	// Output() temporarily redirects the tofu process off this writer to io.Discard so
 	// un-redacted `output -json` values (kubeconfig, talosconfig, DB passwords, tokens)
@@ -113,11 +121,11 @@ func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr i
 		resolvedStdout = os.Stdout
 	}
 	tf.SetStdout(resolvedStdout)
-	if stderr != nil {
-		tf.SetStderr(stderr)
-	} else {
-		tf.SetStderr(os.Stderr)
+	resolvedStderr := stderr
+	if resolvedStderr == nil {
+		resolvedStderr = os.Stderr
 	}
+	tf.SetStderr(resolvedStderr)
 
 	// Stage-aware graceful cancellation. terraform-exec always SIGINTs the `tofu`
 	// child when ctx is cancelled; setting WaitDelay makes the stdlib escalate to
@@ -125,9 +133,18 @@ func NewTofuCLI(ctx context.Context, tfVersion, workDir string, stdout, stderr i
 	// in-flight resource, persist state, and release the state lock before dying.
 	// (SetWaitDelay only errors on Windows, where graceful cancel is unsupported — the
 	// runner is Linux/macOS, so the error is intentionally ignored.)
-	_ = tf.SetWaitDelay(cancelGracePeriod())
+	grace := cancelGracePeriod()
+	_ = tf.SetWaitDelay(grace)
 
-	return &TofuCLI{tf: tf, version: tfVersion, stdout: resolvedStdout}, nil
+	return &TofuCLI{
+		tf:       tf,
+		version:  tfVersion,
+		stdout:   resolvedStdout,
+		execPath: execPath,
+		workDir:  workDir,
+		stderr:   resolvedStderr,
+		grace:    grace,
+	}, nil
 }
 
 func (t *TofuCLI) Init(ctx context.Context, backendConfig map[string]string, upgrade bool) error {
@@ -218,18 +235,120 @@ func (t *TofuCLI) PlanDestroy(ctx context.Context, varFile, planOutFile string) 
 	return t.tf.Plan(ctx, opts...)
 }
 
+// Apply runs `tofu apply` on a saved plan. A cancelled ctx interrupts it gracefully and waits for
+// it to exit (runStateWriting).
 func (t *TofuCLI) Apply(ctx context.Context, planFile string) error {
 	fmt.Println("Applying OpenTofu plan...")
-	return t.tf.Apply(ctx, tfexec.DirOrPlan(planFile))
+	// The argv terraform-exec's Apply(DirOrPlan) builds with its defaults (apply.go
+	// buildApplyArgs), kept identical so moving off it changes nothing tofu sees.
+	return t.runStateWriting(ctx, "apply", "-no-color", "-auto-approve", "-input=false",
+		"-lock=true", "-parallelism=10", "-refresh=true", planFile)
 }
 
+// Destroy runs `tofu destroy`. A cancelled ctx interrupts it gracefully and waits for it to exit
+// (runStateWriting).
 func (t *TofuCLI) Destroy(ctx context.Context, varFile string) error {
 	fmt.Println("Running OpenTofu destroy...")
-	var opts []tfexec.DestroyOption
+	// The argv terraform-exec's Destroy builds with its defaults (destroy.go buildDestroyArgs).
+	args := []string{"destroy", "-no-color", "-auto-approve", "-input=false", "-lock-timeout=0s"}
 	if varFile != "" {
-		opts = append(opts, tfexec.VarFile(varFile))
+		args = append(args, "-var-file="+varFile)
 	}
-	return t.tf.Destroy(ctx, opts...)
+	args = append(args, "-lock=true", "-parallelism=10", "-refresh=true")
+	return t.runStateWriting(ctx, args...)
+}
+
+// stateWritingIODrain bounds how long a state-writing command's output is still drained after the
+// tofu process itself has exited. A provider plugin that outlives tofu keeps the inherited pipe
+// open, and without a bound that would hold Wait (golang/go#23019). It never kills a running tofu.
+const stateWritingIODrain = 10 * time.Second
+
+// startedHook, when set, observes a state-writing command right after it starts. Tests only.
+var startedHook func(*exec.Cmd)
+
+// runStateWriting runs a `tofu` subcommand that WRITES STATE (apply, destroy) and owns its
+// cancellation: on ctx cancel it sends SIGINT, waits up to the grace window for tofu to finish the
+// resource in flight, push its state and release the lock, and only then kills it. Whatever path
+// is taken, it returns only after the tofu process has exited (#7290).
+//
+// Why not terraform-exec: its runTerraformCmd checks ctx.Err() right after cmd.Start() and, if the
+// context was cancelled while the process was being started, RETURNS WITHOUT WAITING — while the
+// os/exec context watcher has already sent the SIGINT. tofu then runs its graceful shutdown with
+// nobody waiting: Apply has already reported context.Canceled, the runner posts CANCELLED, the
+// console releases the state lock, and tofu's final state push is refused — the orphan #7290 is
+// about. Plan, init and the read-only commands write no state and stay on terraform-exec.
+//
+// terraform-exec's Pdeathsig is deliberately not copied: Linux delivers it when the forking OS
+// THREAD exits, not the process, which can SIGKILL a healthy apply mid-write.
+func (t *TofuCLI) runStateWriting(ctx context.Context, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var errBuf strings.Builder
+	cmd := exec.Command(t.execPath, args...) // not CommandContext: cancellation is handled below
+	cmd.Dir = t.workDir
+	cmd.Env = stateWritingEnv(os.Environ())
+	cmd.Stdout = t.stdout
+	cmd.Stderr = io.MultiWriter(t.stderr, &errBuf)
+	cmd.WaitDelay = stateWritingIODrain
+	setOwnProcessGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start tofu %s: %w", args[0], err)
+	}
+	if startedHook != nil {
+		startedHook(cmd)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	select {
+	case err := <-exited:
+		return stateWritingResult(err, errBuf.String())
+	case <-ctx.Done():
+	}
+
+	// Cancelled. Interrupt, then wait — through the grace window, then through the kill.
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		killProcessGroup(cmd) // no graceful interrupt on this platform (Windows)
+	}
+	grace := time.NewTimer(t.grace)
+	defer grace.Stop()
+	var exitErr error
+	select {
+	case exitErr = <-exited:
+	case <-grace.C:
+		killProcessGroup(cmd)
+		exitErr = <-exited
+	}
+	return fmt.Errorf("tofu %s cancelled: %w", args[0], errors.Join(ctx.Err(), stateWritingResult(exitErr, errBuf.String())))
+}
+
+// stateWritingResult turns a state-writing command's Wait error into the error Apply/Destroy
+// return, carrying tofu's stderr like terraform-exec does. Output still being drained when the
+// drain bound expired is not a failure of a tofu that exited cleanly.
+func stateWritingResult(err error, stderr string) error {
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
+	return fmt.Errorf("%w\n%s", err, stderr)
+}
+
+// stateWritingEnv is the environment terraform-exec's buildEnv gives a command when no SetEnv is
+// in use (this package never calls it — see ensurePluginCache): the process environment, logging
+// forced off so it cannot pollute the output, automation mode on, and TF_WORKSPACE dropped.
+func stateWritingEnv(environ []string) []string {
+	drop := map[string]bool{
+		"TF_LOG": true, "TF_LOG_CORE": true, "TF_LOG_PATH": true, "TF_LOG_PROVIDER": true,
+		"TF_IN_AUTOMATION": true, "TF_WORKSPACE": true,
+	}
+	env := make([]string, 0, len(environ)+6)
+	for _, kv := range environ {
+		k, _, _ := strings.Cut(kv, "=")
+		if !drop[k] {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "TF_LOG=", "TF_LOG_CORE=", "TF_LOG_PATH=", "TF_LOG_PROVIDER=", "TF_IN_AUTOMATION=1")
 }
 
 // Output runs `tofu output -json` and returns the parsed output map.

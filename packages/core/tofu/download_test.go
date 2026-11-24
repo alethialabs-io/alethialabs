@@ -22,9 +22,11 @@ func resetTofuSeams(t *testing.T) {
 	t.Helper()
 	origLookPath := lookPath
 	origHTTPGet := httpGet
+	origStartedHook := startedHook
 	t.Cleanup(func() {
 		lookPath = origLookPath
 		httpGet = origHTTPGet
+		startedHook = origStartedHook
 	})
 }
 
