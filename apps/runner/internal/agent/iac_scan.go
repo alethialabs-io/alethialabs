@@ -48,6 +48,14 @@ func (w *Runner) executeIacScan(ctx context.Context, job *Job, stdout, stderr *J
 
 	fmt.Fprintf(stdout, "Scanning BYO IaC module %q (repo on host %s @ %s)\n", modulePath, provisioner.RepoHostForLog(repoURL), ref)
 
+	// The BYO IaC module repo may be https or ssh (a deploy key through a self-hosted runner's
+	// agent), the same transports the BYO deploy accepts; the host must be public unless the operator
+	// allows it (git.ValidateRepoURL, ALETHIA_GIT_ALLOWED_HOSTS).
+	byoRepoURL := git.RepoURLOptions{AllowSSH: true}
+	if err := git.ValidateRepoURL(ctx, repoURL, byoRepoURL); err != nil {
+		return err
+	}
+
 	workDir, err := newJobWorkDir(job.ID)
 	if err != nil {
 		return fmt.Errorf("create workdir: %w", err)
@@ -69,6 +77,7 @@ func (w *Runner) executeIacScan(ctx context.Context, job *Job, stdout, stderr *J
 	} else {
 		repo = git.NewGIT(repoURL, cloneDir, false)
 	}
+	repo.AllowSSH = byoRepoURL.AllowSSH
 	fmt.Fprintln(stdout, "Cloning…")
 	if err := repo.Clone(ctx, ref, true); err != nil {
 		return fmt.Errorf("clone failed: %w", err)
