@@ -19,6 +19,7 @@ import { currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { authzActivityLog, user } from "@/lib/db/schema";
 import { type ActivityFacets, activitySelect } from "@/lib/queries/activity";
+import type { KeysetListPage } from "@/lib/queries/keyset";
 
 export interface ActivityRow {
 	id: string;
@@ -38,22 +39,20 @@ export interface ActivityRow {
 	ts: string;
 }
 
-/** A filtered, cursor-paginated slice of the Activity log + the cursor for the next page. */
-export interface ActivityPage {
-	rows: ActivityRow[];
-	/** The `id` to pass as `cursor` for the next page, or null when this is the last page. */
-	nextCursor: number | null;
-	/** The User / Project / Events facet counts over the scope's UNFILTERED log. Present on the
-	 *  first page only (null when `cursor` was set): a later page walks the same universe. */
-	facets: ActivityFacets | null;
-}
+/**
+ * One page of the Activity log: the shared keyset page (`lib/queries/keyset.ts`, epic #7481) —
+ * the rows, the opaque cursor for the next page (null on the last), and on the FIRST page only
+ * the User / Project / Events facet counts over the scope's UNFILTERED log and whether that log
+ * is empty at all (`universeEmpty`); both are null on a later page, which walks the same universe.
+ */
+export type ActivityPage = KeysetListPage<ActivityRow, ActivityFacets>;
 
-/** Filters + cursor for the `activity.page` read; all fields optional (omitted = no filter). */
+/**
+ * The filters of the `activity.page` read; all fields optional (omitted = no filter). This is the
+ * whole of the feed's query key: the cursor and the page size are the paging half of the read's
+ * input (`keysetPageInput`), never part of the key.
+ */
 export interface ActivityQuery {
-	/** Last row `id` seen — fetches strictly-older rows. Omit/null for the first page. */
-	cursor?: number | null;
-	/** Page size (rows returned); defaults to the read's page size (50). */
-	limit?: number;
 	/** SCOPE, not a filter: a project's own Activity page pins the feed to this project id. The
 	 *  facet counts see it; they never see any of the filters below. */
 	projectId?: string;
