@@ -1,7 +1,6 @@
 {
 	"title": "Get started",
 	"icon": "Rocket",
-	"root": true,
 	"pages": [
 		"index",
 		"quickstart-aws",
@@ -11,5 +10,6 @@
 		"install-the-cli",
 		"the-console",
 		"the-cli"
-	]
+	],
+	"defaultOpen": true
 }

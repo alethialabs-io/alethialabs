@@ -1,7 +1,6 @@
 {
 	"title": "Agents",
 	"icon": "Bot",
-	"root": true,
 	"pages": [
 		"index",
 		"---Connect a client---",

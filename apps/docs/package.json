@@ -13,7 +13,8 @@
 		"lint": "eslint",
 		"lint:prose": "vale content",
 		"check:links": "node scripts/check-links.mjs --self-test && node scripts/check-links.mjs",
-		"check:template-cost": "node scripts/check-template-cost.mjs --self-test && node scripts/check-template-cost.mjs"
+		"check:template-cost": "node scripts/check-template-cost.mjs --self-test && node scripts/check-template-cost.mjs",
+		"check:page-length": "node scripts/check-page-length.mjs --self-test && node scripts/check-page-length.mjs"
 	},
 	"dependencies": {
 		"@repo/brand": "workspace:*",

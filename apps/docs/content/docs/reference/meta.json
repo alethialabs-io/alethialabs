@@ -1,7 +1,6 @@
 {
 	"title": "Reference",
 	"icon": "BookMarked",
-	"root": true,
 	"pages": [
 		"index",
 		"cli",
