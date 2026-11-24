@@ -220,8 +220,18 @@ write_drill_config() {
 	env_file_set "$WORK/drill.env" BETTER_AUTH_SECRET "$(random_hex)"
 	env_file_set "$WORK/drill.env" ALETHIA_IMAGE_TAG "$IMAGE_TAG"
 	env_file_set "$WORK/drill.env" ALETHIA_DOMAIN ""
+	# Every other required instance secret gets a drill-only value from its manifest generator:
+	# docker-compose.yml refuses to render while one is empty. In a subshell, so the helpers stay
+	# out of this script's namespace.
+	(
+		SECRETS_MANIFEST="$REPO/deploy/selfhost/secrets.manifest"
+		# shellcheck source=SCRIPTDIR/../../deploy/selfhost/secrets.sh
+		. "$REPO/deploy/selfhost/secrets.sh"
+		fill_required_secrets "$WORK/drill.env" >/dev/null
+	) || die "could not generate the drill's instance secrets"
 	# The restored database still holds production's encrypted credentials. The drill does not get
-	# production's key, so they stay ciphertext here; nothing on a drill box can decrypt them.
+	# production's key (its ALETHIA_CRED_ENCRYPTION_KEY is the drill-only one generated above), so
+	# they stay ciphertext here; nothing on a drill box can decrypt them.
 	cat >"$WORK/drill.override.yml" <<-YAML
 		# Written by $INSTRUMENT. The drill network has no route out: a restored console must not
 		# send a notification, call a webhook, or reach a customer's cloud on production's behalf.

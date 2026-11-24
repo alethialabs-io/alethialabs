@@ -9,10 +9,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ ! -f .env ]]; then
-  echo "✗ no .env found — run: cp .env.example .env" >&2
-  exit 1
-fi
+# Create .env, or fill any instance secret it lacks, from deploy/selfhost/secrets.manifest.
+bash scripts/dev-env.sh
 set -a; source .env; set +a
 
 echo "→ waiting for Docker daemon…"
