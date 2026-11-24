@@ -24,6 +24,21 @@ export async function register() {
 			startupLog.error("sentry init failed", { component: "sentry", err }),
 		);
 	}
+	// Instance secrets (#6803): in production, refuse to start while any of them holds a template
+	// placeholder rather than a value generated for this install. The message names each variable and
+	// how to generate it. The wider presence check per runtime is EDN-H2 (#6902).
+	if (process.env.NODE_ENV === "production") {
+		const { assertInstanceSecrets } = await import("@/lib/crypto/secrets");
+		try {
+			assertInstanceSecrets(process.env, ["BETTER_AUTH_SECRET"]);
+		} catch (err) {
+			startupLog.error("instance secrets are not usable — refusing to start", {
+				component: "secrets",
+				err,
+			});
+			throw err;
+		}
+	}
 	// Decide the edition at BOOT for this module instance (#6149, R2). A failed enterprise load used
 	// to surface as one thrown request and then a silently community process serving every org
 	// address from the personal scope. Bundled chunks can hold their own module instances, so this
