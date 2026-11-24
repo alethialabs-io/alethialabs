@@ -12,7 +12,8 @@
 // and a rollback returns the number with everything else, so no number is ever skipped. A Postgres
 // SEQUENCE would not do: `nextval` is not rolled back, so a failed issue would leave a gap.
 //
-// THE DOCUMENT. One `factura` row per issued фактура or credit note. `snapshot` holds every Art. 114
+// THE DOCUMENT. One `factura` row per issued фактура or credit note (кредитно известие, Art. 115,
+// one per Stripe refund: lib/billing/factura/credit-note.ts). `snapshot` holds every Art. 114
 // field as printed (FacturaSnapshot in types/jsonb.types.ts); the PDF is rendered from it alone, and
 // `pdf_sha256` proves the stored PDF unchanged. A trigger in programmables.sql refuses UPDATE, DELETE
 // and TRUNCATE on an issued row. The one write it admits is attaching the PDF ONCE (pdf_key and
@@ -91,8 +92,13 @@ export const factura = pgTable(
 		originalFacturaId: uuid().references((): AnyPgColumn => factura.id, {
 			onDelete: "restrict",
 		}),
-		/** The paid Stripe invoice this document is issued for. Unique per kind (idempotency). */
+		/** The paid Stripe invoice this document is issued for (for a credit note: the one it corrects). */
 		stripeInvoiceId: text().notNull(),
+		/**
+		 * For a credit note: the Stripe refund it records (#7369). One refund, one credit note, so a
+		 * partial refund and a later one each get their own. NULL on a фактура.
+		 */
+		stripeRefundId: text(),
 		issueDate: date({ mode: "string" }).notNull(),
 		/** The date of the chargeable event (Art. 25 ЗДДС). */
 		chargeableDate: date({ mode: "string" }).notNull(),
@@ -105,8 +111,18 @@ export const factura = pgTable(
 		createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	},
 	(t) => [
-		unique("factura_stripe_invoice_kind").on(t.stripeInvoiceId, t.kind),
+		// Idempotency: one фактура per Stripe invoice (its refund id is NULL, and NULLs compare equal
+		// here), and one credit note per Stripe refund (#7369). A replay or a racing issuer conflicts.
+		unique("factura_document_key")
+			.on(t.stripeInvoiceId, t.kind, t.stripeRefundId)
+			.nullsNotDistinct(),
 		index("factura_org_idx").on(t.organizationId),
+		index("factura_issue_date_idx").on(t.issueDate),
+		// A credit note names the refund it records; a фактура names none.
+		check(
+			"factura_credit_note_has_refund",
+			sql`(kind = 'credit_note') = (stripe_refund_id IS NOT NULL)`,
+		),
 		check("factura_number_ten_digits", sql`number ~ '^[0-9]{10}$'`),
 		check("factura_kind_known", sql.raw(`kind IN (${sqlList(FACTURA_KINDS)})`)),
 		// A credit note names the фактура it corrects; a фактура names none.
