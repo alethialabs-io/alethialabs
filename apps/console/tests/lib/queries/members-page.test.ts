@@ -38,7 +38,7 @@ vi.mock("@/lib/db", () => ({ getServiceDb }));
 
 import { exists, ilike, inArray, isNull, SQL, sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/queries/keyset";
+import { decodeKeysetTextCursor } from "@/lib/queries/keyset";
 import {
 	MEMBER_ROW_STATUSES,
 	type MembersListRow,
@@ -167,7 +167,7 @@ describe("queryMembersPage", () => {
 				expiresAt: "2026-08-22T09:00:00.000Z",
 			},
 		]);
-		// One list, newest first: the August invitation above the January member.
+		// One list; these fixtures carry no sort text, so the id breaks the tie ("i1" < "m1").
 		expect(page.rows.map((r) => r.kind)).toEqual(["invite", "member"]);
 		expect(page.nextCursor).toBeNull();
 		expect(page.universeEmpty).toBe(false);
@@ -395,13 +395,13 @@ describe("queryMembersPage", () => {
 			inviteRow({ id: "c", role: null }),
 		]);
 		const page = await queryMembersPage("org-1", "viewer-1");
-		// One instant for all three, so the id breaks the tie — descending: c, b, a.
+		// One sort text for all three, so the id breaks the tie — ascending: a, b, c.
 		expect(invitesOf(page).map((i) => i.inviterName)).toEqual([
-			"Ada Lovelace",
-			"—",
 			"ada@x.io",
+			"—",
+			"Ada Lovelace",
 		]);
-		expect(invitesOf(page)[0]?.role).toBe("viewer");
+		expect(invitesOf(page)[2]?.role).toBe("viewer");
 	});
 
 	it("leaves lastActiveAt null for a member with no session row", async () => {
@@ -411,72 +411,77 @@ describe("queryMembersPage", () => {
 		expect(membersOf(page)[0].teams).toEqual([]);
 	});
 
-	it("orders both kinds by the shared keyset order: created instant to the ms, newest first, then id", async () => {
+	it("orders both kinds alphabetically by what the row displays, folded with COLLATE \"C\", then id", async () => {
 		// Creation order: rows(members), rows(invites), facet(members), facet(invites), facet(teams).
 		const chains = seed([], [], [{ role: "admin", status: "active" }]);
 		await queryMembersPage("org-1", "viewer-1");
+		// A member sorts under the name it shows — trimmed, or the email when the name is blank.
 		expect(orderByOf(chains[0])).toBe(
-			`date_trunc('milliseconds', "member"."created_at") desc, "member"."id" desc`,
+			`lower(coalesce(nullif(btrim("user"."name"), ''), "user"."email")) collate "C" asc, "member"."id" asc`,
 		);
-		expect(orderByOf(chains[1])).toBe(
-			`date_trunc('milliseconds', "invitation"."created_at") desc, "invitation"."id" desc`,
-		);
+		expect(orderByOf(chains[1])).toBe(`lower("invitation"."email") collate "C" asc, "invitation"."id" asc`);
 		// limit + 1 of each kind: the one extra row is how the end of the list is known exactly.
 		expect(chains[0]?.argsOf("limit")).toEqual([51]);
 		expect(chains[1]?.argsOf("limit")).toEqual([51]);
 	});
 
-	it("merges the two kinds into one page and cuts it at the limit, with an exact next cursor", async () => {
-		const t = (iso: string) => new Date(iso);
+	it("interleaves the two kinds alphabetically and cuts at the limit, with an exact next cursor", async () => {
 		seed(
 			[
-				memberRow({ id: "m3", userId: "u3", joinedAt: t("2026-05-03T00:00:00.000Z") }),
-				memberRow({ id: "m1", userId: "u1", joinedAt: t("2026-05-01T00:00:00.000Z") }),
+				memberRow({ id: "m-bob", userId: "u-bob", name: "Bob", sortText: "bob" }),
+				memberRow({ id: "m-dee", userId: "u-dee", name: "Dee", sortText: "dee" }),
 			],
 			[
-				inviteRow({ id: "i4", createdAt: t("2026-05-04T00:00:00.000Z") }),
-				inviteRow({ id: "i2", createdAt: t("2026-05-02T00:00:00.000Z") }),
+				inviteRow({ id: "i-amy", email: "amy@x.io", sortText: "amy@x.io" }),
+				inviteRow({ id: "i-cy", email: "cy@x.io", sortText: "cy@x.io" }),
 			],
 			[{ role: "admin", status: "active" }],
 		);
 		const page = await queryMembersPage("org-1", "viewer-1", {}, { limit: 3 });
-		expect(page.rows.map((r) => r.id)).toEqual(["i4", "m3", "i2"]);
-		// The cursor is the LAST row kept — i2 — so the next page starts strictly after it.
-		expect(decodeKeysetCursor(page.nextCursor ?? "", "text")).toEqual({
-			at: "2026-05-02T00:00:00.000Z",
-			id: "i2",
-		});
+		// An invitation keeps its kind (and its "Pending" status), so it stays distinguishable.
+		expect(page.rows.map((r) => `${r.kind}:${r.id}`)).toEqual(["invite:i-amy", "member:m-bob", "invite:i-cy"]);
+		// The cursor carries the LAST kept row's sort text and id themselves.
+		expect(decodeKeysetTextCursor(page.nextCursor ?? "", "text")).toEqual({ text: "cy@x.io", id: "i-cy" });
 	});
 
-	it("breaks a tie on the same millisecond by id, across the two kinds", async () => {
-		const same = new Date("2026-05-01T00:00:00.000Z");
+	it("breaks a tie on the sort text by id, across the two kinds", async () => {
 		seed(
-			[memberRow({ id: "aaaa", joinedAt: same })],
-			[inviteRow({ id: "bbbb", createdAt: same })],
+			[memberRow({ id: "bbbb", sortText: "same" })],
+			[inviteRow({ id: "aaaa", sortText: "same" })],
 			[{ role: "admin", status: "active" }],
 		);
 		const page = await queryMembersPage("org-1", "viewer-1", {}, { limit: 1 });
-		// id desc: bbbb before aaaa, and aaaa starts the next page rather than being lost.
-		expect(page.rows.map((r) => r.id)).toEqual(["bbbb"]);
-		expect(decodeKeysetCursor(page.nextCursor ?? "", "text")?.id).toBe("bbbb");
+		// id ascending: aaaa first, and bbbb starts the next page rather than being lost.
+		expect(page.rows.map((r) => r.id)).toEqual(["aaaa"]);
+		expect(decodeKeysetTextCursor(page.nextCursor ?? "", "text")).toEqual({ text: "same", id: "aaaa" });
 	});
 
-	it("applies the cursor to both kinds and issues no facet pass on a later page", async () => {
-		const cursor = decodeKeysetCursor(
-			encodeKeysetCursor({ at: "2026-05-02T00:00:00.000Z", id: "00000000-0000-4000-8000-000000000002" }),
-		);
-		if (cursor === null) throw new Error("the test's cursor did not decode");
+	it("applies the text cursor to both kinds and issues no facet pass on a later page", async () => {
+		const cursor = { text: "grace", id: "00000000-0000-4000-8000-000000000002" };
 		const chains = seed([], []);
 		const page = await queryMembersPage("org-1", "viewer-1", {}, { limit: 50, cursor });
 		// Two rows passes and nothing else: the facets describe the universe, which page two shares.
 		expect(chains).toHaveLength(2);
 		for (const c of chains) {
 			const where = (c.argsOf("where") ?? []).filter((a): a is SQL => a instanceof SQL);
-			expect(dialect.sqlToQuery(sql.join(where)).sql).toContain("< ($");
+			expect(dialect.sqlToQuery(sql.join(where)).sql).toContain('> ($');
 		}
 		expect(page.facets).toBeNull();
 		expect(page.universeEmpty).toBeNull();
 		expect(page.nextCursor).toBeNull();
+	});
+
+	it("reads one row by id — the deep link — inside the same org scope as the list", async () => {
+		const id = "00000000-0000-4000-8000-0000000000aa";
+		const chains = seed([memberRow({ id })], [], [{ role: "admin", status: "active" }]);
+		const page = await queryMembersPage("org-1", "viewer-1", { id });
+		expect(page.rows.map((r) => r.id)).toEqual([id]);
+		// Both kinds are narrowed to the id, and both still carry the org predicate.
+		for (const c of [chains[0], chains[1]]) {
+			const q = dialect.sqlToQuery(sql.join((c?.argsOf("where") ?? []).filter((a): a is SQL => a instanceof SQL)));
+			expect(q.params).toContain(id);
+			expect(q.params).toContain("org-1");
+		}
 	});
 
 	it("exposes the three row statuses the facet renders", () => {

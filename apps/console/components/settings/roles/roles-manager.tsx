@@ -12,6 +12,7 @@
 // refreshes the page when someone else changes a role. Authoring is gated on customRoles.
 
 import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { planMeta } from "@repo/plan-catalog";
@@ -32,6 +33,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { ListFooter } from "@/components/list/list-footer";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { useRoleCatalogQuery } from "@/lib/query/use-roles-query";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useRolesFilters } from "@/lib/stores/use-settings-filters";
@@ -217,8 +219,20 @@ export function RolesManager() {
 		settled: !isPending && !isPlaceholderData,
 	});
 
+	// A linked custom role the loaded pages do not hold (a deep link to a role on page three) is read
+	// BY ID through the same builder and scope as the rail (`members.roles` with `id`), so the detail
+	// opens at once rather than falling back to the first built-in.
+	const selectedLoaded = selectedId !== "" && [...builtin, ...custom].some((r) => r.id === selectedId);
+	const selectedRead = useQuery({
+		...orpc.members.roles.queryOptions({ input: { id: selectedId || undefined } }),
+		enabled: selectedId !== "" && !selectedLoaded && !catalog.isPending,
+		retry: retryUnlessRefused,
+	});
 	const selected =
-		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
+		[...builtin, ...custom].find((r) => r.id === selectedId) ??
+		selectedRead.data?.rows.find((r) => r.id === selectedId) ??
+		builtin[0] ??
+		null;
 
 	/** Opens the role sheet empty, to author a new custom role. */
 	function openCreate() {

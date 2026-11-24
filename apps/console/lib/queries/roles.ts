@@ -3,7 +3,6 @@
 
 import "server-only";
 import { and, count, eq, exists, inArray, isNotNull, or, type SQL, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
 import type { RoleRow } from "@/app/server/actions/roles";
 import { BUILT_IN_ROLE_NAMES } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
@@ -13,11 +12,13 @@ import { type FacetOption, narrowTo, orderedOptions, searchTerm } from "./facets
 import {
 	KEYSET_DEFAULT_LIMIT,
 	type KeysetListPage,
-	type KeysetPageRequest,
-	type KeysetPosition,
+	type KeysetTextPageRequest,
 	keysetFetchLimit,
 	keysetListPage,
-	keysetPage,
+	keysetTextAfter,
+	keysetTextOrderBy,
+	keysetTextPage,
+	keysetTextSortKey,
 } from "./keyset";
 
 // The Settings › Roles rail's custom roles, filtered in SQL and paged on the console's ONE contract
@@ -35,17 +36,10 @@ import {
 // custom roles today: `createRole` inserts without a ceiling. A `bounded` decision would name a bound
 // that does not exist, so the rail pages.
 //
-// THE ORDER, AND THE ONE PLACE IT LEAVES THE CODEC'S SHAPE. The rail is alphabetical — a role is
-// found by its name — and the `role` table has no creation instant to sort by, so the codec's usual
-// `(sort instant, id)` order is not available. The order is `(lower(name), id)` ascending instead,
-// still total (the id breaks ties between names that fold together). The cursor is still the shared
-// opaque codec over the last row's id (uuid kind, so a malformed one is a 400 at the boundary); its
-// instant is a constant, because the name the predicate compares against is read back from that
-// row in the same statement. That keeps the cursor short and free of user text. The cost is
-// stated rather than hidden: if the cursor's role is deleted between two pages, the comparison has
-// nothing to compare with and the walk ends there — and the delete itself invalidates every
-// `members.*` read (the rail's writes and the `access` live hint both do), which restarts the walk
-// from page one with the deleted role gone.
+// THE ORDER. The rail is alphabetical — a role is found by its name — through the codec's TEXT mode:
+// `lower(name) COLLATE "C"`, then the id (names that fold together still have one order). The cursor
+// carries the last row's sort text and id themselves, so a role deleted between two pages does not
+// end the walk: the next page starts strictly after where that role WAS.
 
 /** The kinds of role the rail shows — the Kind facet's values. */
 const ROLE_KINDS = ["builtin", "custom"] as const;
@@ -56,6 +50,8 @@ export interface RolesQuery {
 	search?: string;
 	/** Which kinds the rail shows; empty/unknown = both. Only `custom` reaches rows here. */
 	kinds?: string[];
+	/** Read ONE custom role by id — the `?selected=` deep link; a selector within the org scope. */
+	id?: string;
 }
 
 /** The Kind facet: both kinds, always — the built-ins' fixed count, and the org's custom roles. */
@@ -66,30 +62,8 @@ export interface RolesFacets {
 /** One page of the custom roles (`KeysetListPage`): rows, the next cursor, and first-page facets. */
 export type RolesPage = KeysetListPage<RoleRow, RolesFacets>;
 
-/**
- * The instant every roles cursor carries. The `role` table has no creation time; the predicate
- * reads the cursor row's NAME back by its id instead (see the header), so this is a fixed value.
- */
-const ROLE_CURSOR_AT = new Date(0);
-
-/** The rail's sort key: the name, case-folded, so "beta" sorts between "Alpha" and "Gamma". */
-const ROLE_SORT_NAME: SQL = sql`lower(${role.name})`;
-
-/** The cursor row, read back inside the predicate to learn the name it sorts under. */
-const cursorRole = alias(role, "cursor_role");
-
-/**
- * Rows strictly after `cursor` in `(lower(name), id)` order — one row-value comparison against the
- * cursor row as it reads now, scoped to the org so a cursor can never name another org's role.
- */
-function roleAfter(orgId: string, cursor: KeysetPosition | undefined): SQL | undefined {
-	if (cursor === undefined) return undefined;
-	const at = getServiceDb()
-		.select({ name: sql`lower(${cursorRole.name})`, id: cursorRole.id })
-		.from(cursorRole)
-		.where(and(eq(cursorRole.id, cursor.id), eq(cursorRole.organization_id, orgId)));
-	return sql`(${ROLE_SORT_NAME}, ${role.id}) > (${at})`;
-}
+/** The rail's sort text: the role name, folded by the codec's text mode. */
+const ROLE_SORT: SQL = keysetTextSortKey(role.name);
 
 /**
  * Distinct-USER grant counts per role in an org. Counts only `user` principals (team grants
@@ -163,7 +137,7 @@ function roleSearchPredicate(like: string): SQL | undefined {
 export async function queryRolesPage(
 	orgId: string,
 	query: RolesQuery = {},
-	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+	request: KeysetTextPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<RolesPage> {
 	const db = getServiceDb();
 	const search = searchTerm(query.search);
@@ -175,17 +149,23 @@ export async function queryRolesPage(
 		// ROWS: org scope + custom only + the query's search + the cursor, `limit + 1` of them.
 		wantsCustom
 			? db
-					.select({ id: role.id, name: role.name, description: role.description })
+					.select({
+						id: role.id,
+						name: role.name,
+						description: role.description,
+						sortText: sql<string>`${ROLE_SORT}`,
+					})
 					.from(role)
 					.where(
 						and(
 							eq(role.organization_id, orgId),
 							eq(role.is_builtin, false),
 							search ? roleSearchPredicate(likeTerm(search)) : undefined,
-							roleAfter(orgId, request.cursor),
+							query.id ? eq(role.id, query.id) : undefined,
+							keysetTextAfter(ROLE_SORT, role.id, request.cursor),
 						),
 					)
-					.orderBy(sql`${ROLE_SORT_NAME} asc`, sql`${role.id} asc`)
+					.orderBy(...keysetTextOrderBy(ROLE_SORT, role.id))
 					.limit(keysetFetchLimit(request.limit))
 			: [],
 		// FACETS (first page only): the org predicate ONLY — how many custom roles the org has.
@@ -197,7 +177,7 @@ export async function queryRolesPage(
 					.where(and(eq(role.organization_id, orgId), eq(role.is_builtin, false)))
 			: [],
 	]);
-	const cut = keysetPage(fetched, request.limit, (r) => ({ at: ROLE_CURSOR_AT, id: r.id }));
+	const cut = keysetTextPage(fetched, request.limit, (r) => ({ text: r.sortText, id: r.id }));
 
 	const ids = cut.rows.map((r) => r.id);
 	const [byRole, counts] = await Promise.all([permissionKeysByRole(ids), grantCountsByRole(orgId, ids)]);

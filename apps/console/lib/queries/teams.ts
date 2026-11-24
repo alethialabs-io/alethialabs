@@ -11,22 +11,22 @@ import { type FacetOption, narrowTo, orderedOptions, searchTerm } from "./facets
 import {
 	KEYSET_DEFAULT_LIMIT,
 	type KeysetListPage,
-	type KeysetPageRequest,
-	keysetAfter,
+	type KeysetTextPageRequest,
 	keysetFetchLimit,
 	keysetListPage,
-	keysetOrderBy,
-	keysetPage,
-	keysetSortKey,
+	keysetTextAfter,
+	keysetTextOrderBy,
+	keysetTextPage,
+	keysetTextSortKey,
 } from "./keyset";
 
 // The Settings › Teams list, filtered in SQL (the console filter standard's server half).
 // Service path with an explicit `organization_id` filter — the service role bypasses RLS,
 // so the org scope is enforced here, exactly as the unfiltered `getTeams()` does.
 //
-// Paged on the console's ONE contract (lib/query/README.md → "Paging"; LST-8 #7490): newest team
-// first by `created_at` truncated to the millisecond, then the id, through the shared keyset codec.
-// It used to read every team and let the browser page them 20 at a time.
+// Paged on the console's ONE contract (lib/query/README.md → "Paging"; LST-8 #7490), alphabetically —
+// a team is found by its name — through the codec's TEXT mode: `lower(name) COLLATE "C"`, then the
+// id. It used to read every team and let the browser page them 20 at a time.
 //
 // `TeamRow`/`TeamMemberLite` stay defined in the action module (every component already
 // imports them from there); the import above is type-only, so it is erased and no runtime
@@ -53,6 +53,8 @@ export interface TeamsQuery {
 	search?: string;
 	/** Restrict to these size buckets (OR semantics); empty/unknown = all. */
 	sizes?: string[];
+	/** Read ONE team by id — the `?selected=` deep link; a selector within the org scope, not a filter. */
+	id?: string;
 }
 
 /** The size facet behind the Teams filter bar: all three buckets, over the org's UNFILTERED teams. */
@@ -63,8 +65,8 @@ export interface TeamsFacets {
 /** One page of the Teams list (`KeysetListPage`): rows, the next cursor, and first-page facets. */
 export type TeamsPage = KeysetListPage<TeamRow, TeamsFacets>;
 
-/** A team's keyset sort key — when it was created, truncated to the millisecond. */
-const TEAM_LISTED_AT: SQL = keysetSortKey(team.createdAt);
+/** A team's sort text: its name, folded by the codec's text mode. */
+const TEAM_SORT: SQL = keysetTextSortKey(team.name);
 
 /** The aggregate a size bucket is a predicate over. */
 const MEMBER_COUNT = sql`count(${teamMember.userId})`;
@@ -82,7 +84,7 @@ function bucketPredicate(bucket: TeamSizeBucket): SQL {
 }
 
 /**
- * One page of the org's teams for `query`, newest first — rows filtered in SQL, plus (on the first
+ * One page of the org's teams for `query`, alphabetical — rows filtered in SQL, plus (on the first
  * page only) size-facet counts over the org's UNFILTERED teams: options must not disappear as you
  * select them, so the facet pass below is given the org predicate and nothing else. A later page
  * carries `facets: null`.
@@ -90,7 +92,7 @@ function bucketPredicate(bucket: TeamSizeBucket): SQL {
 export async function queryTeamsPage(
 	orgId: string,
 	query: TeamsQuery = {},
-	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+	request: KeysetTextPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<TeamsPage> {
 	const db = getServiceDb();
 	const search = searchTerm(query.search);
@@ -101,19 +103,25 @@ export async function queryTeamsPage(
 		// ROWS: org scope + the query's predicates + the cursor, `limit + 1` of them. The size
 		// bucket is a HAVING over the member count, so it narrows after the grouping.
 		db
-			.select({ id: team.id, name: team.name, createdAt: team.createdAt, memberCount: count(teamMember.userId) })
+			.select({
+				id: team.id,
+				name: team.name,
+				sortText: sql<string>`${TEAM_SORT}`,
+				memberCount: count(teamMember.userId),
+			})
 			.from(team)
 			.leftJoin(teamMember, eq(teamMember.teamId, team.id))
 			.where(
 				and(
 					eq(team.organizationId, orgId),
 					search ? ilike(team.name, likeTerm(search)) : undefined,
-					keysetAfter(TEAM_LISTED_AT, team.id, request.cursor),
+					query.id ? eq(team.id, query.id) : undefined,
+					keysetTextAfter(TEAM_SORT, team.id, request.cursor),
 				),
 			)
-			.groupBy(team.id, team.name, team.createdAt)
+			.groupBy(team.id, team.name)
 			.having(sizes ? or(...sizes.map(bucketPredicate)) : undefined)
-			.orderBy(...keysetOrderBy(TEAM_LISTED_AT, team.id))
+			.orderBy(...keysetTextOrderBy(TEAM_SORT, team.id))
 			.limit(keysetFetchLimit(request.limit)),
 		// FACETS (first page only): the org predicate ONLY — one light aggregate pass over every
 		// team in the org, bucketed below. Never sees `search`, `sizes` or the cursor; that is
@@ -127,7 +135,7 @@ export async function queryTeamsPage(
 					.groupBy(team.id)
 			: [],
 	]);
-	const cut = keysetPage(fetched, request.limit, (t) => ({ at: t.createdAt, id: t.id }));
+	const cut = keysetTextPage(fetched, request.limit, (t) => ({ text: t.sortText, id: t.id }));
 
 	// The avatar stacks, for this page's teams only (the members of teams nobody asked for are
 	// not part of the answer).

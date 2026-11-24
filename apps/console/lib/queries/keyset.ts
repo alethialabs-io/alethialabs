@@ -321,3 +321,204 @@ export function keysetListPage<Row, Facets>(
 		universeEmpty: first?.universeEmpty ?? null,
 	};
 }
+
+// ── the TEXT mode: alphabetical lists (LST-8 #7490) ─────────────────────────────────────────
+//
+// Everything above pages by an INSTANT — newest first. Some lists are read by NAME: a person looks
+// a member, a team or a role up alphabetically, and bending those lists to newest-first because the
+// codec could only order by time would be the cursor deciding the product. So the codec has a
+// second, additive mode over `(sort text, id)`, ascending, and nothing above changes.
+//
+// THE ONE SUBTLE PART, the text mode's version of the millisecond lesson: the SQL order, the cursor
+// predicate and any in-memory merge must agree on what "before" means for two strings, and two
+// collations rarely agree (`ORDER BY name` under a glibc or ICU locale skips punctuation at the first
+// level, sorts "a" and "A" together by rules nobody here chose, and can differ between two Postgres
+// hosts). So the sort text is ALWAYS `lower(expr) COLLATE "C"` — case-folded by the database, then
+// compared byte by byte in UTF-8 — and the in-memory comparator ({@link compareSortText}) compares
+// the same UTF-8 bytes. The text a cursor carries is the database's own `lower(…)` of the last row
+// (the builder selects it), never a JS `toLowerCase()`, which folds some characters differently.
+//
+// WHAT A TEXT CURSOR IS. The same opaque envelope, versioned `t1` so a time cursor can never be
+// misread as a text one (or the reverse), carrying the sort text itself — not a row id to read it
+// back by, so a row deleted between two pages cannot end the walk. That makes a text cursor longer
+// than a time cursor, so it has its own (larger) bound.
+//
+// INDEXES. A list that grows large wants an expression index on `(lower(col) COLLATE "C", id)` to
+// serve this order; the lists on it today (members, teams, custom roles) are org-scoped and small,
+// and the org predicate's index bounds the scan.
+
+/** Text-cursor envelope version — distinct from {@link CURSOR_VERSION}, so the two modes never cross. */
+const TEXT_CURSOR_VERSION = "t1";
+
+/** The longest sort text a cursor may carry (characters) — far above any name or email. */
+const SORT_TEXT_MAX_LENGTH = 2048;
+
+/** Longest text cursor accepted before decoding: the sort text, UTF-8 and base64-inflated, plus the envelope. */
+const TEXT_CURSOR_MAX_LENGTH = 12_000;
+
+/** A decoded text keyset position: the last row of the previous page, by its sort text and id. */
+export interface KeysetTextPosition {
+	/** The row's sort text exactly as the database folded it (`lower(…)`). */
+	text: string;
+	/** The row's id — the tiebreaker that makes the order total. */
+	id: string;
+}
+
+/** A text position as a builder knows it about a row: its database-folded sort text and its id. */
+export interface KeysetTextKey {
+	text: string;
+	id: string | number;
+}
+
+/** One text-mode page request: a decoded cursor (absent on page one) and a limit. */
+export interface KeysetTextPageRequest {
+	cursor?: KeysetTextPosition;
+	limit: number;
+}
+
+/** Encodes a row's text position as an opaque `t1` cursor. */
+export function encodeKeysetTextCursor(key: KeysetTextKey): string {
+	return toBase64Url(JSON.stringify([TEXT_CURSOR_VERSION, key.text, String(key.id)]));
+}
+
+/**
+ * Decodes a text cursor, or returns null when it is not one this codec minted for an id of `kind`
+ * — not base64url, not JSON, the wrong version (a time cursor included) or arity, a sort text over
+ * the bound, or an id of the wrong kind. Null is a REFUSAL (a 400), never "start over".
+ */
+export function decodeKeysetTextCursor(raw: string, kind: KeysetIdKind = "uuid"): KeysetTextPosition | null {
+	if (raw.length === 0 || raw.length > TEXT_CURSOR_MAX_LENGTH) return null;
+	const json = fromBase64Url(raw);
+	if (json === null) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(json);
+	} catch {
+		return null;
+	}
+	if (!Array.isArray(parsed) || parsed.length !== 3) return null;
+	const [version, text, id] = parsed;
+	if (version !== TEXT_CURSOR_VERSION || typeof text !== "string" || typeof id !== "string") return null;
+	if (text.length > SORT_TEXT_MAX_LENGTH) return null;
+	if (!isIdOfKind(id, kind)) return null;
+	return { text, id };
+}
+
+/** The cursor field of a text-mode list input: decoded at the boundary, a malformed one a 400. */
+export function keysetTextCursorSchema(kind: KeysetIdKind = "uuid") {
+	return z
+		.string()
+		.max(TEXT_CURSOR_MAX_LENGTH)
+		.transform((raw, ctx) => {
+			const position = decodeKeysetTextCursor(raw, kind);
+			if (position === null) {
+				ctx.addIssue({ code: "custom", message: "Malformed list cursor." });
+				return z.NEVER;
+			}
+			return position;
+		});
+}
+
+/** The paging half of a text-mode list input — {@link keysetPageInput}'s twin, same `limit` rules. */
+export function keysetTextPageInput(kind: KeysetIdKind = "uuid") {
+	return {
+		cursor: keysetTextCursorSchema(kind).optional(),
+		limit: z.number().int().min(1).max(KEYSET_MAX_LIMIT).default(KEYSET_DEFAULT_LIMIT),
+	};
+}
+
+/**
+ * A list's sort text: `lower(expr) COLLATE "C"`. Pass THIS to {@link keysetTextOrderBy} and
+ * {@link keysetTextAfter}, and SELECT it so the builder can mint the cursor from the database's own
+ * folding — the order, the predicate and the cursor then read one expression.
+ */
+export function keysetTextSortKey(expr: PgColumn | SQL): SQL {
+	return sql`lower(${expr}) collate "C"`;
+}
+
+/** The ORDER BY of a text keyset list: alphabetical, the id breaking ties, so the order is total. */
+export function keysetTextOrderBy(sortKey: SQL, id: PgColumn): [SQL, SQL] {
+	return [sql`${sortKey} asc`, sql`${id} asc`];
+}
+
+/**
+ * The text cursor predicate: rows strictly after `cursor`, as ONE row-value comparison
+ * `(sort_text, id) > (text COLLATE "C", id)`. Undefined on page one, so it drops out of an `and(…)`.
+ */
+export function keysetTextAfter(
+	sortKey: SQL,
+	id: PgColumn,
+	cursor: KeysetTextPosition | undefined,
+	kind: KeysetIdKind = "uuid",
+): SQL | undefined {
+	if (cursor === undefined) return undefined;
+	return sql`(${sortKey}, ${id}) > (${cursor.text}::text collate "C", ${cursor.id}${idCast(kind)})`;
+}
+
+/** The UTF-8 bytes of a string — what `COLLATE "C"` compares in a UTF-8 database. */
+function utf8(text: string): Uint8Array {
+	return new TextEncoder().encode(text);
+}
+
+/**
+ * Compares two sort texts exactly as `COLLATE "C"` does in a UTF-8 database: byte by byte. NOT
+ * `a < b` — JavaScript compares UTF-16 code units, which orders characters above U+FFFF before
+ * U+E000–U+FFFF, the opposite of their UTF-8 bytes.
+ */
+export function compareSortText(a: string, b: string): number {
+	if (a === b) return 0;
+	const x = utf8(a);
+	const y = utf8(b);
+	const n = Math.min(x.length, y.length);
+	for (let i = 0; i < n; i += 1) {
+		const d = (x[i] ?? 0) - (y[i] ?? 0);
+		if (d !== 0) return d < 0 ? -1 : 1;
+	}
+	return x.length === y.length ? 0 : x.length < y.length ? -1 : 1;
+}
+
+/**
+ * Cuts the rows a text-mode builder read (up to `limit + 1`, already in order) into a page — the
+ * first `limit` rows, and the text cursor of the last one when a further row exists.
+ */
+export function keysetTextPage<Row>(
+	fetched: readonly Row[],
+	limit: number,
+	keyOf: (row: Row) => KeysetTextKey,
+): { rows: Row[]; nextCursor: string | null } {
+	const more = fetched.length > limit;
+	const rows = more ? fetched.slice(0, limit) : [...fetched];
+	const last = rows.at(-1);
+	return { rows, nextCursor: more && last !== undefined ? encodeKeysetTextCursor(keyOf(last)) : null };
+}
+
+/**
+ * Pages a composed universe through the text mode, in the SQL order: sort text by
+ * {@link compareSortText}, then id, ascending, strictly after the cursor, with the exact next
+ * cursor. `keyOf` must hand back the DATABASE-folded text the rows were selected with.
+ */
+export function keysetTextPageInMemory<Row>(
+	universe: readonly Row[],
+	request: KeysetTextPageRequest,
+	keyOf: (row: Row) => KeysetTextKey,
+	kind: KeysetIdKind = "uuid",
+): { rows: Row[]; nextCursor: string | null } {
+	const keyed = universe.map((row) => {
+		const key = keyOf(row);
+		return { row, text: key.text, id: String(key.id) };
+	});
+	keyed.sort((a, b) => compareSortText(a.text, b.text) || compareIds(a.id, b.id, kind));
+	const cursor = request.cursor;
+	const after =
+		cursor === undefined
+			? keyed
+			: keyed.filter((k) => {
+					const byText = compareSortText(k.text, cursor.text);
+					return byText > 0 || (byText === 0 && compareIds(k.id, cursor.id, kind) > 0);
+				});
+	return keysetTextPage(
+		after.slice(0, keysetFetchLimit(request.limit)).map((k) => k.row),
+		request.limit,
+		keyOf,
+	);
+}

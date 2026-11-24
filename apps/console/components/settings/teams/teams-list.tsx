@@ -20,6 +20,8 @@
 import { planMeta } from "@repo/plan-catalog";
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { TeamRow } from "@/app/server/actions/teams";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
@@ -48,6 +50,8 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
@@ -261,7 +265,6 @@ export function TeamsList({
 	);
 
 	const [creating, setCreating] = useState(false);
-	const [manage, setManage] = useState<TeamRow | null>(null);
 	const [renaming, setRenaming] = useState<TeamRow | null>(null);
 	const [deleting, setDeleting] = useState<TeamRow | null>(null);
 	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close (the
@@ -269,8 +272,8 @@ export function TeamsList({
 	const [deletingName, setDeletingName] = useState("");
 	const createReason = writeReason(entitled, gate.canCreate);
 
-	// Filtered AND paged SERVER-SIDE: `members.teams` narrows in SQL a page at a time, newest
-	// first, and its first page carries the size facet counted over the org's UNFILTERED teams, so
+	// Filtered AND paged SERVER-SIDE: `members.teams` narrows in SQL a page at a time,
+	// alphabetically, and its first page carries the size facet counted over the org's UNFILTERED teams, so
 	// an option never disappears as you select it. The normalized query IS the key, and
 	// `keepPreviousData` (in the hook) keeps the table's rows across a filter change —
 	// `isPlaceholderData` is what marks them stale while the next answer loads.
@@ -282,6 +285,28 @@ export function TeamsList({
 		for (const o of facets?.sizes ?? []) byBucket[o.value] = o.count;
 		return byBucket;
 	}, [facets]);
+
+	// The roster dialog's team is URL state (`?selected=<team id>`, R6 E-23): a link to a team opens
+	// its roster, and a refresh keeps it. Written with `history.replaceState`, so opening a roster is
+	// not a server navigation.
+	const searchParams = useSearchParams();
+	const selectedId = selectionFromUrl(searchParams);
+	const openRoster = useCallback((team: TeamRow | null) => {
+		window.history.replaceState(
+			null,
+			"",
+			hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(team?.id ?? null)),
+		);
+	}, []);
+	// A linked team the loaded pages do not hold is read BY ID through the same builder and scope as
+	// the list (`members.teams` with `id`), so a link to a team on page three opens at once.
+	const selectedLoaded = selectedId !== null && rows.some((r) => r.id === selectedId);
+	const selectedRead = useQuery({
+		...orpc.members.teams.queryOptions({ input: { id: selectedId ?? undefined } }),
+		enabled: selectedId !== null && !selectedLoaded && !list.isPending,
+		retry: retryUnlessRefused,
+	});
+	const selectedTeam = selectedRead.data?.rows[0];
 	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
 	// been read into the store, before the first answer, while the rows are the previous query's
 	// placeholder, and while a typed search is still inside its debounce — the jobs, runners,
@@ -312,17 +337,17 @@ export function TeamsList({
 			entitled,
 			gate,
 			removingId,
-			openRoster: setManage,
+			openRoster,
 			openRename: setRenaming,
 			askDelete,
 		}),
-		[entitled, gate, removingId, askDelete],
+		[entitled, gate, removingId, openRoster, askDelete],
 	);
 
-	// The team the roster dialog is open on, read from the CURRENT rows, so an add or a removal
-	// shows in the dialog as soon as the list refetches; the snapshot covers a team the filters
-	// now exclude.
-	const manageRow = manage ? (rows.find((r) => r.id === manage.id) ?? manage) : null;
+	// The team the roster dialog is open on, read from the CURRENT rows when they hold it, so an add
+	// or a removal shows in the dialog as soon as the list refetches — otherwise from the by-id read
+	// above (a deep link to a team on a page not loaded yet, or one the filters now exclude).
+	const manageRow = selectedId ? (rows.find((r) => r.id === selectedId) ?? selectedTeam ?? null) : null;
 
 	const activeFilters = countActiveFilters(filters, DEFAULT_TEAMS_FILTERS);
 
@@ -434,8 +459,8 @@ export function TeamsList({
 			{manageRow && (
 				<ManageTeamDialog
 					team={manageRow}
-					open={manage !== null}
-					onOpenChange={(o) => !o && setManage(null)}
+					open
+					onOpenChange={(o) => !o && openRoster(null)}
 					rosterReason={writeReason(entitled, gate.canEditRoster)}
 				/>
 			)}

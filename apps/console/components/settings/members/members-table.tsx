@@ -14,7 +14,9 @@
 // list is invalidated when the write settles.
 
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -35,6 +37,8 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { type ActionResult, describeActionError } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { type KeysetList, useKeysetList } from "@/lib/query/use-keyset-list";
+import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { useMembersGateQuery } from "@/lib/query/use-members-query";
 import type { MembersListRow } from "@/lib/queries/members";
 import { orpc } from "@/lib/rpc/client";
@@ -55,6 +59,7 @@ import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { PageToolbar } from "@repo/ui/page-toolbar";
+import { SectionHeading } from "@repo/ui/section-heading";
 import {
   Select,
   SelectContent,
@@ -701,6 +706,25 @@ function toRowView(r: MembersListRow): MemberRowView {
   };
 }
 
+/**
+ * One row as a finished list — the linked row's own one-row table: everything shown, nothing further
+ * to page, nothing loading or failed (the caller renders those states before it has the row).
+ */
+function oneRowList(row: MemberRowView): KeysetList<MemberRowView> {
+  return {
+    rows: [row],
+    facets: null,
+    universeEmpty: null,
+    query: { isLoading: false, isError: false, data: [row], error: null, refetch: () => undefined },
+    isPending: false,
+    isPlaceholderData: false,
+    hasMore: false,
+    loadingMore: false,
+    loadMoreFailed: false,
+    loadMore: () => undefined,
+  };
+}
+
 /** Settings · Members: the filterable members + invitations table and its confirmations. */
 export function MembersTable() {
   // The gate is the SERVER's answer, prefetched with the rows (#6129, F017): whether this org may
@@ -747,7 +771,7 @@ export function MembersTable() {
   }, []);
 
   // Filtered AND paged SERVER-SIDE: `members.page` narrows members AND pending invitations in SQL,
-  // a page at a time in one newest-first keyset order, and its first page carries the status/role/
+  // a page at a time in one alphabetical keyset order, and its first page carries the status/role/
   // team facets counted over the org's UNFILTERED universe, so an option never disappears as you
   // select it. The normalized query IS the key, and `keepPreviousData` (in the hook) keeps the
   // table's rows across a filter change — `isPlaceholderData` is what marks them stale while the
@@ -854,6 +878,28 @@ export function MembersTable() {
   // The table renders the SAME list, its rows mapped for display: the footer, the busy state and
   // the stale notice all still read the list's own paging state.
   const tableList = useMemo<KeysetList<MemberRowView>>(() => ({ ...list, rows }), [list, rows]);
+
+  // A deep link (`?selected=<member or invitation id>`) opens that row AT ONCE, wherever it sits in
+  // the alphabet: when the loaded pages do not hold it, it is read BY ID through the same builder
+  // and scope as the list (`members.page` with `id`), so a link can open only what the list would
+  // show. It renders above the list, in its own one-row table with the same controls.
+  const searchParams = useSearchParams();
+  const selectedId = selectionFromUrl(searchParams);
+  const loadedSelected = selectedId === null ? undefined : list.rows.find((r) => r.id === selectedId);
+  const selectedRead = useQuery({
+    ...orpc.members.page.queryOptions({ input: { id: selectedId ?? undefined } }),
+    enabled: selectedId !== null && loadedSelected === undefined && !list.isPending,
+    retry: retryUnlessRefused,
+  });
+  const selectedRow = loadedSelected ?? selectedRead.data?.rows.find((r) => r.id === selectedId);
+  const linked = useMemo(() => (selectedRow ? oneRowList(toRowView(selectedRow)) : null), [selectedRow]);
+  const clearSelection = useCallback(() => {
+    window.history.replaceState(
+      null,
+      "",
+      hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(null)),
+    );
+  }, []);
 
   // One batched query hydrates every member row's classification chips (invites aren't
   // classifiable). Keyed on the member row id (member.id).
@@ -1088,6 +1134,28 @@ export function MembersTable() {
         )}
         <FilterBarReset count={activeFilters} onReset={reset} />
       </FilterBar>
+
+      {linked && (
+        <section
+          aria-label={linked.rows[0]?.kind === "invite" ? "Linked invitation" : "Linked member"}
+          data-slot="members-linked"
+          className="mb-4 rounded-md border border-foreground"
+        >
+          <SectionHeading
+            className="px-3 pt-2"
+            level={2}
+            title={linked.rows[0]?.kind === "invite" ? "Linked invitation" : "Linked member"}
+            actions={
+              <Button variant="ghost" size="sm" onClick={clearSelection}>
+                Clear
+              </Button>
+            }
+          />
+          <MembersCellsContext.Provider value={cells}>
+            <DataTable columns={columns} keyset={linked} />
+          </MembersCellsContext.Provider>
+        </section>
+      )}
 
       {/* bulk bar */}
       {canManage && visibleSelected.size > 0 && (

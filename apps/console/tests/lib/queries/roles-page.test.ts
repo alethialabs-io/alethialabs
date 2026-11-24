@@ -17,7 +17,7 @@ import { mockChainDb } from "./_list-query-db";
 const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
-import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/queries/keyset";
+import { decodeKeysetTextCursor } from "@/lib/queries/keyset";
 import { queryRolesPage } from "@/lib/queries/roles";
 
 const dialect = new PgDialect({ casing: "snake_case" });
@@ -83,39 +83,46 @@ describe("queryRolesPage", () => {
 	it("orders alphabetically, case-folded, then by id — and reads limit + 1", async () => {
 		const chains = seed([], [{ n: 0 }]);
 		await queryRolesPage("org-1", {}, { limit: 2 });
-		expect(render(chains[0]?.argsOf("orderBy"))).toBe('lower("role"."name") asc, "role"."id" asc');
+		expect(render(chains[0]?.argsOf("orderBy"))).toBe('lower("role"."name") collate "C" asc, "role"."id" asc');
 		expect(chains[0]?.argsOf("limit")).toEqual([3]);
 	});
 
-	it("cuts at the limit and carries the last kept role's id in the cursor", async () => {
+	it("cuts at the limit and carries the last kept role's sort text and id in the cursor", async () => {
 		seed(
 			[
-				{ id: ROLE_A, name: "Alpha", description: null },
-				{ id: ROLE_B, name: "beta", description: null },
-				{ id: ROLE_C, name: "Gamma", description: null },
+				{ id: ROLE_A, name: "Alpha", description: null, sortText: "alpha" },
+				{ id: ROLE_B, name: "beta", description: null, sortText: "beta" },
+				{ id: ROLE_C, name: "Gamma", description: null, sortText: "gamma" },
 			],
 			[{ n: 3 }],
 		);
 		const page = await queryRolesPage("org-1", {}, { limit: 2 });
 		expect(page.rows.map((r) => r.id)).toEqual([ROLE_A, ROLE_B]);
-		expect(decodeKeysetCursor(page.nextCursor ?? "")?.id).toBe(ROLE_B);
+		expect(decodeKeysetTextCursor(page.nextCursor ?? "")).toEqual({ text: "beta", id: ROLE_B });
 	});
 
-	it("walks strictly after the cursor row, reading its name back, and skips the facet pass", async () => {
-		const cursor = decodeKeysetCursor(encodeKeysetCursor({ at: new Date(0), id: ROLE_B }));
-		if (cursor === null) throw new Error("the test's cursor did not decode");
+	it("walks strictly after the cursor's own (name, id) — no read-back, so a deleted role cannot end the walk", async () => {
+		// The cursor names ROLE_B; whether ROLE_B still exists is irrelevant — the predicate compares
+		// against the values the cursor carries, so the next page starts where ROLE_B WAS.
 		const chains = seed([]);
-		const page = await queryRolesPage("org-1", {}, { limit: 50, cursor });
-		// The row-value comparison against the cursor row as it reads now.
-		expect(render(chains.find((c) => c.awaited)?.argsOf("where"))).toContain(
-			'(lower("role"."name"), "role"."id") > (',
+		const page = await queryRolesPage("org-1", {}, { limit: 50, cursor: { text: "beta", id: ROLE_B } });
+		const q = dialect.sqlToQuery(
+			sql.join((chains.find((c) => c.awaited)?.argsOf("where") ?? []).filter((a): a is SQL => a instanceof SQL)),
 		);
-		// The cursor row is looked up inside the org — a cursor cannot name another org's role.
-		const lookup = chains.find((c) => !c.awaited && c.called("from") && !c.called("orderBy"));
-		expect(render(lookup?.argsOf("where"))).toContain('"cursor_role"."organization_id"');
-		expect(chains.filter((c) => c.awaited)).toHaveLength(1);
+		expect(q.sql).toContain('(lower("role"."name") collate "C", "role"."id") > ($');
+		expect(q.params).toEqual(expect.arrayContaining(["beta", ROLE_B]));
+		// One awaited read and no subquery reading the role back.
+		expect(chains).toHaveLength(1);
 		expect(page.facets).toBeNull();
 		expect(page.universeEmpty).toBeNull();
+	});
+
+	it("reads one custom role by id — the deep link — inside the org scope", async () => {
+		const chains = seed([{ id: ROLE_C, name: "Zeta", description: null, sortText: "zeta" }], [{ n: 120 }]);
+		const page = await queryRolesPage("org-1", { id: ROLE_C });
+		expect(page.rows.map((r) => r.id)).toEqual([ROLE_C]);
+		const q = dialect.sqlToQuery(sql.join((chains[0]?.argsOf("where") ?? []).filter((a): a is SQL => a instanceof SQL)));
+		expect(q.params).toEqual(expect.arrayContaining(["org-1", ROLE_C]));
 	});
 
 	it("answers no rows when the kind selection excludes custom, but still offers the facet", async () => {

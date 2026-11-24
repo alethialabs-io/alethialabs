@@ -43,7 +43,12 @@ import {
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { INVITE_ROLES } from "@/lib/members/roles";
 import { type AccessGrantsPage, queryAccessGrantsPage } from "@/lib/queries/access-grants";
-import { type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
+import {
+	type KeysetPageRequest,
+	type KeysetTextPageRequest,
+	keysetPageInput,
+	keysetTextPageInput,
+} from "@/lib/queries/keyset";
 import { type MembersPage, queryMembersPage } from "@/lib/queries/members";
 import { grantCountsByRole, permissionKeysByRole, queryRolesPage, type RolesPage } from "@/lib/queries/roles";
 import { queryTeamsPage, type TeamsPage } from "@/lib/queries/teams";
@@ -73,7 +78,15 @@ const filterValues = z.array(z.string().min(1).max(200)).max(200).optional();
 
 // Each LIST read's input is its filter fields plus the paging contract (`keysetPageInput`, LST-8
 // #7490): an opaque cursor — a malformed one is a 400 at this boundary — and a `limit` defaulting to
-// 50 and refused above 100. Every id these lists page by is a uuid.
+// 50 and refused above 100. Members, teams and roles are ALPHABETICAL (the codec's text mode); the
+// grants are newest first (its time mode). Every id these lists page by is a uuid.
+//
+// `id` on the three alphabetical lists is the `?selected=` deep link: one row by id, read through the
+// SAME builder and scope as the list, so a link opens exactly what the list would show and nothing
+// else — an item on page three opens at once, without walking to it.
+
+/** The deep-link selector: one row of the list, by id. */
+const selectedId = z.string().uuid().optional();
 
 /** The members page's filter query (`normalizeMembersQuery()`), validated. */
 const membersFilterFields = {
@@ -81,22 +94,25 @@ const membersFilterFields = {
 	statuses: filterValues,
 	roles: filterValues,
 	teams: filterValues,
+	id: selectedId,
 };
-const membersPageInput = z.object({ ...membersFilterFields, ...keysetPageInput("uuid") });
+const membersPageInput = z.object({ ...membersFilterFields, ...keysetTextPageInput("uuid") });
 
 /** The teams page's filter query (`normalizeTeamsQuery()`), validated. */
 const teamsFilterFields = {
 	search: z.string().max(200).optional(),
 	sizes: filterValues,
+	id: selectedId,
 };
-const teamsPageInput = z.object({ ...teamsFilterFields, ...keysetPageInput("uuid") });
+const teamsPageInput = z.object({ ...teamsFilterFields, ...keysetTextPageInput("uuid") });
 
 /** The roles rail's filter query (`normalizeRolesQuery()`): search, and which kinds it shows. */
 const rolesFilterFields = {
 	search: z.string().max(200).optional(),
 	kinds: filterValues,
+	id: selectedId,
 };
-const rolesInput = z.object({ ...rolesFilterFields, ...keysetPageInput("uuid") });
+const rolesInput = z.object({ ...rolesFilterFields, ...keysetTextPageInput("uuid") });
 
 /** The access page's filter query (`normalizeAccessQuery()`), validated. */
 const grantsFilterFields = {
@@ -214,14 +230,14 @@ export async function listOrgMembers(): Promise<MemberRow[]> {
 }
 
 /**
- * One page of the Members list: member rows AND pending invitations filtered server-side, newest
- * first, plus (first page) the status/role/team facets over the org's unfiltered universe (the
+ * One page of the Members list: member rows AND pending invitations filtered server-side,
+ * alphabetical, plus (first page) the status/role/team facets over the org's unfiltered universe (the
  * console filter standard). Any member reads it; the personal-scope fallback is synthesized from the
  * caller alone, and the "You" row is the caller's.
  */
 export async function readMembersPage(
 	filters: FiltersOf<typeof membersFilterFields>,
-	request?: KeysetPageRequest,
+	request?: KeysetTextPageRequest,
 ): Promise<MembersPage> {
 	const actor = await currentActor();
 	return queryMembersPage(actor.orgId, actor.userId, filters, request);
@@ -327,13 +343,13 @@ export async function readInviteContext(): Promise<InviteContext> {
 // ── Teams ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * One page of the Teams list: rows filtered server-side, newest first, plus (first page) size-facet
+ * One page of the Teams list: rows filtered server-side, alphabetical, plus (first page) size-facet
  * counts over the org's unfiltered teams. Any member reads it; every predicate is on the addressed
  * org.
  */
 export async function readTeamsPage(
 	filters: FiltersOf<typeof teamsFilterFields>,
-	request?: KeysetPageRequest,
+	request?: KeysetTextPageRequest,
 ): Promise<TeamsPage> {
 	const actor = await currentActor();
 	return queryTeamsPage(actor.orgId, filters, request);
@@ -402,7 +418,7 @@ export async function readRolesCatalog(): Promise<RolesBootstrap> {
  */
 export async function readRolesPage(
 	filters: FiltersOf<typeof rolesFilterFields>,
-	request?: KeysetPageRequest,
+	request?: KeysetTextPageRequest,
 ): Promise<RolesPage> {
 	const actor = await authorizeQuiet("view", { type: "member" });
 	return queryRolesPage(actor.orgId, filters, request);

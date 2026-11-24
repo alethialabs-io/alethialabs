@@ -62,6 +62,8 @@ vi.mock("@/components/classification/classification-chips", () => ({ Classificat
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 
 import { RolesManager } from "@/components/settings/roles/roles-manager";
+// The rail reads a deep-linked role by id through `useQuery` since LST-8 (#7490).
+import { queryWrapper } from "../../helpers/query-wrapper";
 
 const bootstrap: RolesBootstrap = {
 	builtin: [
@@ -87,14 +89,14 @@ function hasCapitalize(root: HTMLElement): boolean {
 
 describe("role names on the Roles page", () => {
 	it("a built-in role is called by its label — visibly and to assistive tech", () => {
-		render(<RolesManager />);
+		render(<RolesManager />, { wrapper: queryWrapper() });
 		// jsdom joins the row's name and count spans with no space: "<name><permission count>".
 		const owner = screen.getByRole("button", { name: "Owner2" });
 		expect(hasCapitalize(owner)).toBe(false);
 	});
 
 	it("a custom role's name is rendered exactly as the user typed it, never re-cased", () => {
-		render(<RolesManager />);
+		render(<RolesManager />, { wrapper: queryWrapper() });
 		const cases: Array<[name: string, permissionCount: number]> = [
 			["k8s-readers", 1],
 			["iOS team", 0],
@@ -107,7 +109,7 @@ describe("role names on the Roles page", () => {
 	});
 
 	it("the detail header names the selected role the same way the rail does", () => {
-		render(<RolesManager />);
+		render(<RolesManager />, { wrapper: queryWrapper() });
 		// The default selection is the first built-in, so the header shows its label.
 		const headers = screen.getAllByText("Owner").filter((el) => el.closest("button") === null);
 		expect(headers).toHaveLength(1);
