@@ -24,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import type { Tx } from "@/lib/db";
 import { projectAddons, projectServices } from "@/lib/db/schema";
 import { decodeKeysetCursor } from "@/lib/queries/keyset";
-import { queryProjectsPage } from "@/lib/queries/projects";
+import { countProjects, queryProjectsPage } from "@/lib/queries/projects";
 
 const dialect = new PgDialect();
 
@@ -52,6 +52,7 @@ interface Answers {
 	envs?: unknown[];
 	services?: unknown[];
 	addons?: unknown[];
+	total?: unknown[];
 }
 
 const METHODS = ["from", "leftJoin", "innerJoin", "where", "groupBy", "orderBy", "limit"];
@@ -60,6 +61,7 @@ const METHODS = ["from", "leftJoin", "innerJoin", "where", "groupBy", "orderBy",
 function answerFor(pass: Pass, a: Answers): unknown[] {
 	const k = pass.keys.join(",");
 	if (k.startsWith("project,")) return a.rows ?? [];
+	if (k === "n" && pass.table === "projects") return a.total ?? [];
 	if (k === "value,count") return a.clouds ?? [];
 	if (k === "url,count") return a.repoFacets ?? [];
 	if (k === "id") return a.universe ?? [];
@@ -330,5 +332,20 @@ describe("queryProjectsPage — the card rollups", () => {
 		const { tx, passes } = recordingTx({ universe: [{ id: uuid(1) }] });
 		await queryProjectsPage(tx, { q: "zzz" });
 		expect(passes.filter((p) => p.keys[0] === "project_id")).toEqual([]);
+	});
+});
+
+describe("countProjects — the Usage card's project total", () => {
+	it("counts the org's projects in one pass over the projects table and returns a number", async () => {
+		const { tx, passes } = recordingTx({ total: [{ n: "7" }] });
+		await expect(countProjects(tx)).resolves.toBe(7);
+		expect(passes).toHaveLength(1);
+		expect(passes[0]?.table).toBe("projects");
+		expect(passes[0]?.calls.some((c) => c.method === "where")).toBe(false);
+	});
+
+	it("reads an empty answer as zero", async () => {
+		const { tx } = recordingTx({});
+		await expect(countProjects(tx)).resolves.toBe(0);
 	});
 });
