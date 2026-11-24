@@ -740,3 +740,11 @@ describe("register(core) — the agent policy follows the licence", () => {
     expect(await answers(register(stubCore()))).toEqual({ secondPerson: false, selfApproval: null, otherClient: null });
   });
 });
+
+describe("register(core) — the identity-provider cap (LST-9, #7491)", () => {
+  it("is mounted after sso(), so its after-hook sees the row the plugin wrote", () => {
+    const ids = (register(stubCore()).authPlugins ?? []).map((p) => p.id);
+    expect(ids.indexOf("sso")).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf("alethia-sso-provider-cap")).toBeGreaterThan(ids.indexOf("sso"));
+  });
+});

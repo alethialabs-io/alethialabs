@@ -10404,7 +10404,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F5",
 			"verdict": "FAIL",
-			"detail": "useSsoFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"detail": "useSsoFilters: \"N of M\" / \"Showing …\" prose around the list — totals exist only as facet option counts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
