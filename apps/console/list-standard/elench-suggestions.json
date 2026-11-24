@@ -1,0 +1,11 @@
+{
+	"kind": "bounded",
+	"decided": "LST-0 (#7482), measured while seeding the ledger",
+	"decision": "The Elench empty-state suggestion carousel cycles 3-card pages over a fixed set of prompt suggestions. It is not a list read: nothing is fetched, so there is no server page to read instead.",
+	"bound": "The set is a compile-time constant (`ORG_SUGGESTIONS` / `PROJECT_SUGGESTIONS` in components/agent/elench/elench-suggestions.tsx, nine entries each); it can only grow in a reviewed diff.",
+	"findings": {
+		"apps/console/components/agent/elench/suggestion-carousel.tsx": {
+			"page-slice": 1
+		}
+	}
+}

@@ -1,0 +1,10 @@
+{
+	"kind": "content",
+	"decided": "Maintainer, 2026-11-24, decision comment on #7481",
+	"decision": "The agent artifact panel's plan tiles (`PlanCountTile`) render a number that IS the tile's content (how many resources the plan adds, changes, destroys), not a count of a list beside a heading.",
+	"findings": {
+		"apps/console/components/agent/artifact-panel.tsx": {
+			"count-pill": 1
+		}
+	}
+}

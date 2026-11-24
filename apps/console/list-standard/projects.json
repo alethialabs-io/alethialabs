@@ -1,0 +1,14 @@
+{
+	"kind": "debt",
+	"owner": "#7486",
+	"lane": "LST-4",
+	"why": "Every project in the org is fetched and a \"Show more\" render window (`ordered.slice(0, shownCount)`) grows over them; the Projects section heading carries a count pill.",
+	"findings": {
+		"apps/console/app/(private)/[org]/overview-client.tsx": {
+			"count-pill": 1
+		},
+		"apps/console/components/overview/projects-grid.tsx": {
+			"render-window": 1
+		}
+	}
+}
