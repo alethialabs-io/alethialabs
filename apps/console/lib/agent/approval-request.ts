@@ -16,14 +16,27 @@ import { type ApprovalView, viewOf } from "@/lib/approvals/read";
 import { ApprovalError } from "@/lib/approvals/refusal";
 import { requestApproval } from "@/lib/approvals/request";
 import type { ApplyOperation } from "@/lib/approvals/types";
+import { appliedPlanFor } from "@/lib/ai/mcp/approval-store";
 import { currentActor } from "@/lib/authz/guard";
+import type { Actor } from "@/lib/authz/types";
 import { withActorScope } from "@/lib/db";
 import type { InAppApprovalOutput } from "./approval-output";
 import { isInAppAgent } from "./in-app-credential";
 
-/** What the model passes: the shared `request_apply` input (lib/ai/mcp/surface.ts). */
-export interface InAppApprovalInput {
+/** What the model passes to `request_apply`: the shared input (lib/ai/mcp/surface.ts). */
+export interface InAppApplyInput {
 	plan_job_id: string;
+	reason?: string;
+}
+
+/**
+ * What the model passes to `request_destroy`: the shared input (lib/ai/mcp/surface.ts). It names the
+ * environment, not a plan; the server binds the destroy to the plan the environment's last successful
+ * deploy applied, as the engine requires (lib/approvals/binding.ts).
+ */
+export interface InAppDestroyInput {
+	project_id: string;
+	environment_id: string;
 	reason?: string;
 }
 
@@ -42,24 +55,45 @@ function requested(view: ApprovalView): InAppApprovalOutput {
 	};
 }
 
+/** The refusal for a call made outside a chat turn. */
+const OUTSIDE_A_TURN: InAppApprovalOutput = {
+	status: "refused",
+	code: "not_permitted",
+	reason: "An approval is requested by the assistant from inside a conversation.",
+};
+
 /**
- * Records a pending approval for the in-product agent to `operation` the plan `input.plan_job_id`, as
- * the person the conversation belongs to, or returns the live one this conversation already asked
- * for. Answers a refusal as a value (the model relays it), and refuses outright when it is not running
- * inside a chat turn: an approval is never recorded as anything but `agent_in_app` from here.
+ * Records a pending approval for the in-product agent `actor` to `operation` the plan `planJobId`, or
+ * returns the live one this conversation already asked for. `planJobId` may be a lookup, run first and
+ * inside the same refusal handling. Answers a refusal as a value (the model relays it).
  */
-export async function requestInAppApproval(
+async function record(
+	actor: Actor,
 	operation: ApplyOperation,
-	input: InAppApprovalInput,
+	planJobId: string | (() => Promise<string>),
+	reason: string | undefined,
 ): Promise<InAppApprovalOutput> {
-	const actor = await currentActor();
-	if (!isInAppAgent(actor)) {
-		return {
-			status: "refused",
-			code: "not_permitted",
-			reason: "An approval is requested by the assistant from inside a conversation.",
-		};
+	try {
+		const planId = typeof planJobId === "string" ? planJobId : await planJobId();
+		const view = await withActorScope(actor, async (tx) => {
+			const approval = await requestApproval(tx, actor, { planJobId: planId, operation, reason });
+			return viewOf(tx, approval);
+		});
+		return requested(view);
+	} catch (err) {
+		if (err instanceof ApprovalError) return { status: "refused", code: err.code, reason: err.message };
+		throw err;
 	}
+}
+
+/**
+ * `request_apply` for the in-product agent: records a pending approval to deploy the plan
+ * `input.plan_job_id`, as the person the conversation belongs to. Refuses outright when it is not
+ * running inside a chat turn: an approval is never recorded as anything but `agent_in_app` from here.
+ */
+export async function requestInAppApply(input: InAppApplyInput): Promise<InAppApprovalOutput> {
+	const actor = await currentActor();
+	if (!isInAppAgent(actor)) return OUTSIDE_A_TURN;
 	const planJobId = z.uuid().safeParse(input.plan_job_id);
 	if (!planJobId.success) {
 		return {
@@ -68,18 +102,29 @@ export async function requestInAppApproval(
 			reason: "plan_job_id must be the id of a succeeded plan job (a UUID). Read it from list_jobs or get_job.",
 		};
 	}
-	try {
-		const view = await withActorScope(actor, async (tx) => {
-			const approval = await requestApproval(tx, actor, {
-				planJobId: planJobId.data,
-				operation,
-				reason: input.reason,
-			});
-			return viewOf(tx, approval);
-		});
-		return requested(view);
-	} catch (err) {
-		if (err instanceof ApprovalError) return { status: "refused", code: err.code, reason: err.message };
-		throw err;
+	return record(actor, "deploy", planJobId.data, input.reason);
+}
+
+/**
+ * `request_destroy` for the in-product agent: records a pending approval to destroy the environment
+ * `input.environment_id`, bound to the plan its last successful deploy applied (the same lookup the
+ * connected agents' tool uses, lib/ai/mcp/approval-store.ts). Refuses outside a chat turn.
+ */
+export async function requestInAppDestroy(input: InAppDestroyInput): Promise<InAppApprovalOutput> {
+	const actor = await currentActor();
+	if (!isInAppAgent(actor)) return OUTSIDE_A_TURN;
+	const ids = z.object({ project_id: z.uuid(), environment_id: z.uuid() }).safeParse(input);
+	if (!ids.success) {
+		return {
+			status: "refused",
+			code: "not_found",
+			reason: "project_id and environment_id must be ids (UUIDs). Read them from list_resources.",
+		};
 	}
+	return record(
+		actor,
+		"destroy",
+		() => appliedPlanFor(actor, ids.data.project_id, ids.data.environment_id),
+		input.reason,
+	);
 }

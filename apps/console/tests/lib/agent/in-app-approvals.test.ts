@@ -29,7 +29,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { inAppApprovalOutputSchema } from "@/lib/agent/approval-output";
-import { requestInAppApproval } from "@/lib/agent/approval-request";
+import { requestInAppApply, requestInAppDestroy } from "@/lib/agent/approval-request";
 import { inAppAgentActor, isInAppAgent } from "@/lib/agent/in-app-credential";
 import { hasAcceptedApproval } from "@/lib/agent/turn-key";
 import { operationTools } from "@/lib/ai/tools/operations";
@@ -132,6 +132,50 @@ function requestSetup(opts: { stage?: string; policy?: Record<string, unknown>[]
 	);
 }
 
+/** The environment's last successful deploy, as appliedState reads it: it applied PLAN. */
+const lastDeploy = () => [{ id: JOB, plan_job_id: PLAN, plan_sha256: DIGEST, created_at: PLANNED_AT }];
+
+/**
+ * The executor a destroy request reads through: first the lookup of the plan the environment was
+ * deployed from (the environment, then its last deploy), then the request itself, which checks that
+ * deploy again and binds to it.
+ */
+function destroySetup(opts: { stage?: string; policy?: Record<string, unknown>[] } = {}) {
+	const env = [{ stage: opts.stage ?? "staging", name: "staging" }];
+	return fakeExecutor(
+		new Map<unknown, unknown[][]>([
+			[
+				jobs,
+				[
+					lastDeploy(),
+					[
+						{
+							id: PLAN,
+							org_id: ORG,
+							project_id: PROJECT,
+							environment_id: ENV,
+							status: "SUCCESS",
+							configuration_hash: "cfg",
+							plan_sha256: DIGEST,
+							execution_metadata: null,
+						},
+					],
+					// The request's own check, then the binding check (the deploy, no run queued since),
+					// then the view's binding check.
+					lastDeploy(),
+					lastDeploy(),
+					[],
+					lastDeploy(),
+					[],
+				],
+			],
+			[projectEnvironments, [env, env]],
+			[orgAgentPolicy, [opts.policy ?? []]],
+			[applyApprovals, [[approvalRow({ operation: "destroy" })]]],
+		]),
+	);
+}
+
 /** The approval row the request inserted. */
 function inserted(fake: FakeExecutor): Record<string, unknown> | undefined {
 	const write = fake.writes.find((w) => w.kind === "insert" && w.table === applyApprovals);
@@ -190,7 +234,7 @@ describe("request_apply / request_destroy", () => {
 		currentActor.mockResolvedValue(PERSON);
 		const fake = requestSetup();
 		scoped.db = fake.db;
-		await expect(requestInAppApproval("deploy", { plan_job_id: PLAN })).resolves.toMatchObject({
+		await expect(requestInAppApply({ plan_job_id: PLAN })).resolves.toMatchObject({
 			status: "refused",
 			code: "not_permitted",
 		});
@@ -198,7 +242,7 @@ describe("request_apply / request_destroy", () => {
 	});
 
 	it("refuses a plan id that is not a UUID before reading anything", async () => {
-		await expect(requestInAppApproval("deploy", { plan_job_id: "plan-from-the-prompt" })).resolves.toMatchObject({
+		await expect(requestInAppApply({ plan_job_id: "plan-from-the-prompt" })).resolves.toMatchObject({
 			status: "refused",
 			code: "not_found",
 		});
@@ -207,22 +251,86 @@ describe("request_apply / request_destroy", () => {
 	it("is refused when the org's kill switch is off", async () => {
 		const fake = requestSetup({ policy: [policy({ agent_access_enabled: false })] });
 		scoped.db = fake.db;
-		const out = await requestInAppApproval("deploy", { plan_job_id: PLAN });
+		const out = await requestInAppApply({ plan_job_id: PLAN });
 		expect(out).toMatchObject({ status: "refused", code: "not_permitted" });
 		expect(out.status === "refused" && out.reason).toContain("Agent access is turned off");
 		expect(inserted(fake)).toBeUndefined();
 	});
 
-	it.each(["deploy", "destroy"] as const)(
-		"%s on production is refused when agents may not apply to production",
-		async (operation) => {
-			const fake = requestSetup({ stage: "production", policy: [policy({ agents_may_not_apply_to_production: true })] });
-			scoped.db = fake.db;
-			const out = await requestInAppApproval(operation, { plan_job_id: PLAN });
-			expect(out).toMatchObject({ status: "refused", code: "not_permitted" });
-			expect(inserted(fake)).toBeUndefined();
-		},
-	);
+	it("a deploy on production is refused when agents may not apply to production", async () => {
+		const fake = requestSetup({ stage: "production", policy: [policy({ agents_may_not_apply_to_production: true })] });
+		scoped.db = fake.db;
+		const out = await requestInAppApply({ plan_job_id: PLAN });
+		expect(out).toMatchObject({ status: "refused", code: "not_permitted" });
+		expect(inserted(fake)).toBeUndefined();
+	});
+
+	it("a destroy on production is refused when agents may not apply to production", async () => {
+		const fake = destroySetup({ stage: "production", policy: [policy({ agents_may_not_apply_to_production: true })] });
+		scoped.db = fake.db;
+		const out = await requestInAppDestroy({ project_id: PROJECT, environment_id: ENV });
+		expect(out).toMatchObject({ status: "refused", code: "not_permitted" });
+		expect(inserted(fake)).toBeUndefined();
+	});
+});
+
+describe("request_destroy names the environment, not a plan", () => {
+	it("binds the destroy to the plan the environment's last successful deploy applied", async () => {
+		const fake = destroySetup();
+		scoped.db = fake.db;
+		const execute = operationTools().request_destroy.execute;
+		if (!execute) throw new Error("request_destroy must execute on the server");
+		const output = inAppApprovalOutputSchema.parse(
+			await execute({ project_id: PROJECT, environment_id: ENV }, { toolCallId: "t1", messages: [] }),
+		);
+		expect(output).toMatchObject({ status: "requested", plan_job_id: PLAN });
+		expect(inserted(fake)).toMatchObject({
+			operation: "destroy",
+			plan_job_id: PLAN,
+			plan_sha256: DIGEST,
+			requester_credential: "agent_in_app",
+			requester_credential_ref: THREAD,
+		});
+		expect(fake.writes.some((w) => w.table === jobs)).toBe(false);
+	});
+
+	it("is refused when nothing reviewed was ever deployed there", async () => {
+		const fake = fakeExecutor(
+			new Map<unknown, unknown[][]>([
+				[projectEnvironments, [[{ stage: "staging", name: "staging" }]]],
+				[jobs, [[]]],
+			]),
+		);
+		scoped.db = fake.db;
+		await expect(requestInAppDestroy({ project_id: PROJECT, environment_id: ENV })).resolves.toMatchObject({
+			status: "refused",
+			code: "plan_not_approvable",
+		});
+		expect(inserted(fake)).toBeUndefined();
+	});
+
+	it("is refused for a project the person may not view", async () => {
+		can.mockResolvedValue({ allowed: false });
+		await expect(requestInAppDestroy({ project_id: PROJECT, environment_id: ENV })).resolves.toMatchObject({
+			status: "refused",
+			code: "not_found",
+		});
+	});
+
+	it("refuses ids that are not UUIDs before reading anything", async () => {
+		await expect(requestInAppDestroy({ project_id: "acme", environment_id: "staging" })).resolves.toMatchObject({
+			status: "refused",
+			code: "not_found",
+		});
+	});
+
+	it("is refused outside a chat turn", async () => {
+		currentActor.mockResolvedValue(PERSON);
+		await expect(requestInAppDestroy({ project_id: PROJECT, environment_id: ENV })).resolves.toMatchObject({
+			status: "refused",
+			code: "not_permitted",
+		});
+	});
 });
 
 describe("queueing as the in-product agent (the queue gate)", () => {
