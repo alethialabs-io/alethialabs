@@ -3,37 +3,38 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Invoices page body — the org's full mirrored-invoice history, on the console filter
-// standard (lib/query/README.md → "Server-side filters"): a URL-synced zustand store →
-// `normalizeInvoiceQuery` → the `billing.invoices` GET procedure (#6127), which filters by status
-// and paid-date range SERVER-SIDE. The route prefetches the unfiltered universe AND the URL's
-// filtered view with the same inputs, so the first paint carries rows and facet counts. Replaces the hand-rolled `useEffect` + `cancelled` flag the
-// standard explicitly forbids ("TanStack owns request lifecycle") and the ad-hoc Reset button.
+// standard (lib/query/README.md → "Server-side filters") and its paging standard ("Paging", #7493):
+// a URL-synced zustand store → `normalizeInvoiceQuery` → `useKeysetList` over the `billing.invoices`
+// GET procedure, which filters by status and paid-date range SERVER-SIDE and pages by keyset. The
+// route prefetches the URL's first page with the same key, so the first paint carries rows and
+// facet counts. Every invoice is reachable: the table renders each loaded page and the shared
+// footer (scroll sentinel + "Load more") fetches the next — the list used to read up to 200 rows
+// and page them in the browser, with a note apologising for the rest.
 //
-// The status facet's counts come from a second query on the BASE key — the unfiltered universe
-// — because an option that disappears the moment you select it is unusable. There is no search
-// box: `InvoiceListParams` has no `search`, and inventing a client-side one over a
-// server-filtered list is the thing this standard exists to stop.
+// The status facet's counts come from the FIRST page's facet pass, which the server counts over
+// the org's unfiltered invoices — an option that disappears the moment you select it is unusable.
+// There is no search box: `InvoiceListParams` has no `search`, and inventing a client-side one over
+// a server-paged list is the thing this standard exists to stop. No count pill either: the console
+// carries no list counts (README → "Counts").
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { CircleDot, ReceiptText } from "lucide-react";
-import { useMemo, useState } from "react";
-import { RegionError } from "@/components/errors/region-error";
-import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
+import { useCallback, useMemo, useState } from "react";
+import { DataTable } from "@/components/data-table";
+import { RegionRefusal, refusalOf } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
 import { Button } from "@repo/ui/button";
-import { CountPill } from "@repo/ui/count-pill";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
 import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import { type DateRange, DEFAULT_PRESET, presetRange } from "@repo/ui/range";
-import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import {
 	parseRangeFilter,
@@ -44,14 +45,13 @@ import {
 import {
 	ALL_TIME_LABEL,
 	DEFAULT_INVOICE_FILTERS,
-	INVOICE_LIST_CAP,
 	INVOICE_STATUS_OPTIONS,
 	invoiceStatusCounts,
 	NO_WINDOW_LABEL,
 	normalizeInvoiceQuery,
 } from "./invoices-filters";
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
-import { InvoicesTable } from "./invoices-table";
+import { useInvoiceColumns } from "./invoices-table";
 
 /** The Invoices page: the filter bar over the org's invoice history. */
 export function InvoicesPanel() {
@@ -64,38 +64,28 @@ export function InvoicesPanel() {
 	// The preview dialog (open state + selected invoice).
 	const [selected, setSelected] = useState<InvoiceInfo | null>(null);
 	const [previewOpen, setPreviewOpen] = useState(false);
+	const openPreview = useCallback((row: InvoiceInfo) => {
+		setSelected(row);
+		setPreviewOpen(true);
+	}, []);
+	const columns = useInvoiceColumns(openPreview);
 
 	const query = useMemo(() => normalizeInvoiceQuery(filters), [filters]);
 	const activeFilters = countActiveFilters(filters, DEFAULT_INVOICE_FILTERS);
 
-	// The filtered rows. `keepPreviousData` holds the current page on screen while the next
-	// one loads, and `isPlaceholderData` dims it — no skeleton flash on every facet click.
-	const invoices = useQuery(
-		orpc.billing.invoices.queryOptions({
-			input: query,
-			placeholderData: keepPreviousData,
-			retry: retryUnlessRefused,
-		}),
-	);
+	// The filtered list, one keyset page at a time. A filter change is a new key, so the walk
+	// restarts at page one; `keepPreviousData` holds the old rows on screen (dimmed) meanwhile.
+	const invoices = useKeysetList(orpc.billing.invoices, query);
+	const refusal = invoices.query.isError ? refusalOf(invoices.query.error) : null;
+	const counts = useMemo(() => invoiceStatusCounts(invoices.facets), [invoices.facets]);
 
-	// The UNFILTERED universe, purely for the facet counts. Same key the page prefetches.
-	const universe = useQuery(
-		orpc.billing.invoices.queryOptions({ input: {}, staleTime: 60_000, retry: retryUnlessRefused }),
-	);
-	const refusal = invoices.isError ? refusalOf(invoices.error) : null;
-	const counts = useMemo(
-		() => invoiceStatusCounts(universe.data ?? []),
-		[universe.data],
-	);
-
-	const rows = invoices.data ?? [];
 	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
 	// been read into the store, before the first answer, and while the rows are the previous
 	// query's placeholder — the jobs, runners, members, alerts and activity lists' rule (#4980,
 	// #5045, #5471), without the debounce term because this list has no search box. Before the
-	// first answer the panel is a skeleton under a null count pill, which nothing else on screen
-	// tells apart from a page that failed to render a list; `aria-busy` says which, for assistive
-	// tech and for the audit's F8–F9 `settle()` (#5494).
+	// first answer the panel is placeholder rows, which nothing else on screen tells apart from a
+	// page that failed to render a list; `aria-busy` says which, for assistive tech and for the
+	// audit's F8–F9 `settle()` (#5494).
 	const busy = !urlRead || invoices.isPending || invoices.isPlaceholderData;
 
 	// The paid-date choice (#6731): all time (the default — no bound), a relative preset, or an
@@ -112,10 +102,7 @@ export function InvoicesPanel() {
 	}, [choice, now]);
 
 	return (
-		<SettingsSection
-			title="Invoices"
-			action={<CountPill count={invoices.isPending ? null : rows.length} />}
-		>
+		<SettingsSection title="Invoices">
 			<div aria-busy={busy}>
 				<FilterBar>
 					<FacetFilter
@@ -147,18 +134,9 @@ export function InvoicesPanel() {
 
 				{refusal ? (
 					<RegionRefusal refusal={refusal} />
-				) : invoices.isError ? (
-					// A fetch failure must not render as "no invoices yet" — that reads as a fact
-					// about the account rather than about the request.
-					<RegionError
-						title="Couldn't load invoices"
-						description="Something went wrong fetching your invoice history. Check your connection and try again."
-						onRetry={() => void invoices.refetch()}
-					/>
-				) : invoices.isPending ? (
-					<Skeleton className="h-56 w-full" />
-				) : rows.length === 0 && activeFilters > 0 ? (
-					// A filtered view with no rows offers the way back (R6 F-25), as Activity does.
+				) : invoices.universeEmpty === false && invoices.rows.length === 0 && !invoices.isPlaceholderData ? (
+					// The org has invoices and none match: offer the way back (R6 F-25), as Activity
+					// does. Decided by the server's `universeEmpty`, not by whether a filter is set.
 					<EmptyState
 						className="bg-surface-sunken"
 						icon={<ReceiptText />}
@@ -171,27 +149,17 @@ export function InvoicesPanel() {
 						}
 					/>
 				) : (
+					// Loading (placeholder rows), the first-run empty row, a failed first page (the
+					// table's region error with a retry — never "no invoices yet", which reads as a
+					// fact about the account), a failed refresh (rows + the stale notice) and a failed
+					// later page (rows + the footer's retry line) are all the server-mode table's.
 					<div className={cn(invoices.isPlaceholderData && "opacity-60")}>
-						<InvoicesTable
-							rows={rows}
-							onPreview={(row) => {
-								setSelected(row);
-								setPreviewOpen(true);
-							}}
-							pageSize={20}
+						<DataTable
+							columns={columns}
+							keyset={invoices}
+							onRowClick={openPreview}
 							emptyMessage="No invoices yet — invoices appear here after your first payment."
 						/>
-						{rows.length >= INVOICE_LIST_CAP && (
-							// The read returns the newest INVOICE_LIST_CAP; say so rather than let the
-							// oldest invoices vanish silently (R6 F-26).
-							<p
-								data-testid="invoices-cap-note"
-								className="mt-3 text-ui-sm text-text-secondary"
-							>
-								Showing the {INVOICE_LIST_CAP} most recent invoices. Narrow the paid date to
-								see older ones.
-							</p>
-						)}
 					</div>
 				)}
 			</div>

@@ -5,6 +5,8 @@
 // Invoices table (Billing) — a presentational DataTable of the org's mirrored invoices with
 // number, paid date, billing period, status, total, and per-row actions (Preview + a
 // download of our stored фактура PDF). Read-only; the parent owns the data + the preview dialog.
+// Server mode only (lib/query/README.md → "Paging", #7493): the Invoices page renders these columns
+// over its keyset list, and the preview over the five rows it holds; neither pages in the browser.
 // The PDF/download hrefs are built from the org slug (route segment `[org]`).
 //
 // A row whose фактура is not issued yet says "Being issued" in place of its number and offers no
@@ -17,6 +19,7 @@ import { useParams } from "next/navigation";
 import { useMemo } from "react";
 import { DataTable } from "@/components/data-table";
 import { ClockText } from "@/components/settings/usage/clock-text";
+import type { KeysetList } from "@/lib/query/use-keyset-list";
 import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { formatDate, formatMoney } from "@repo/format";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
@@ -58,24 +61,35 @@ export function invoicePdfHref(org: string, id: string, download = false): strin
 }
 
 /**
- * The invoices table — presentational. `rows` are supplied by the parent, `onPreview` opens
- * the preview dialog (also triggered by a row click), and `pageSize` caps the page.
+ * The rows a caller holds WHOLE, as a finished list: every row shown, no further page, nothing
+ * loading or failed (the caller renders those states itself before it has rows). The Billing page's
+ * five-row preview is the one such caller — its "View all invoices" link, not a footer, is the way
+ * to the rest. A table never pages these rows in the browser.
  */
-export function InvoicesTable({
-	rows,
-	onPreview,
-	pageSize = 10,
-	emptyMessage,
-}: {
-	rows: InvoiceInfo[];
-	onPreview: (row: InvoiceInfo) => void;
-	pageSize?: number;
-	/** Empty-state row text (unified empty table). */
-	emptyMessage?: string;
-}) {
+function wholeList(rows: InvoiceInfo[]): KeysetList<InvoiceInfo> {
+	return {
+		rows,
+		facets: null,
+		universeEmpty: null,
+		query: { isLoading: false, isError: false, data: rows, error: null, refetch: () => undefined },
+		isPending: false,
+		isPlaceholderData: false,
+		hasMore: false,
+		loadingMore: false,
+		loadMoreFailed: false,
+		loadMore: () => undefined,
+	};
+}
+
+/**
+ * The invoices columns: number, paid date, billing period, status, total, and per-row actions.
+ * `onPreview` opens the preview dialog. Shared by the Invoices page (which renders them in its own
+ * server-mode `DataTable` over a keyset list) and {@link InvoicesTable} (the preview).
+ */
+export function useInvoiceColumns(onPreview: (row: InvoiceInfo) => void): ColumnDef<InvoiceInfo>[] {
 	const { org } = useParams<{ org: string }>();
 
-	const columns = useMemo<ColumnDef<InvoiceInfo>[]>(
+	return useMemo<ColumnDef<InvoiceInfo>[]>(
 		() => [
 			{
 				accessorKey: "number",
@@ -163,14 +177,24 @@ export function InvoicesTable({
 		],
 		[org, onPreview],
 	);
+}
 
-	return (
-		<DataTable
-			columns={columns}
-			data={rows}
-			onRowClick={onPreview}
-			pageSize={pageSize}
-			emptyMessage={emptyMessage}
-		/>
-	);
+/**
+ * The Billing page's five-row invoice preview — presentational. `rows` are held whole by the
+ * parent (one read, first page only, with a link to the full list), `onPreview` opens the preview
+ * dialog (also triggered by a row click). Server mode over a finished list: no browser paging.
+ */
+export function InvoicesTable({
+	rows,
+	onPreview,
+	emptyMessage,
+}: {
+	rows: InvoiceInfo[];
+	onPreview: (row: InvoiceInfo) => void;
+	/** Empty-state row text (unified empty table). */
+	emptyMessage?: string;
+}) {
+	const columns = useInvoiceColumns(onPreview);
+	const keyset = useMemo(() => wholeList(rows), [rows]);
+	return <DataTable columns={columns} keyset={keyset} onRowClick={onPreview} emptyMessage={emptyMessage} />;
 }

@@ -16,6 +16,7 @@
 // history expects all of it.
 
 import { parseRangeFilter } from "@/lib/query/range-filter";
+import type { InvoiceFacets } from "@/lib/queries/billing";
 import type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 
@@ -32,18 +33,14 @@ export const DEFAULT_INVOICE_FILTERS: InvoiceFilters = {
 	range: "",
 };
 
-/** The Billing page's Invoices section: the five newest, no filter. Shared with the route's prefetch. */
+/**
+ * The Billing page's Invoices section: the first page of five, no filter — a preview with a link
+ * to the full list, not a list of its own. Shared with the route's prefetch.
+ */
 export const RECENT_INVOICES_INPUT: InvoiceListParams = { limit: 5 };
 
 /** The label shown when no date window is set. */
 export const ALL_TIME_LABEL = "All time";
-
-/**
- * The most invoices one read returns: `listOrgInvoices`' default `limit` in `lib/billing/invoices.ts`
- * (the page never passes one). `invoices-filters.test.ts` reads that file and fails if the two part,
- * so the "showing the most recent N" note cannot go on naming a number the read no longer uses.
- */
-export const INVOICE_LIST_CAP = 200;
 
 /** The date picker's trigger label while there is no window to show. */
 export const NO_WINDOW_LABEL = "Pick dates";
@@ -81,12 +78,13 @@ export function normalizeInvoiceQuery(
 }
 
 /**
- * Status facet counts over the UNFILTERED invoice universe, so an option cannot disappear as
- * you select it. `listInvoices` returns no facets, so `all` is the unfiltered list fetched
- * under the base key and counted here.
+ * Status facet counts, read off the first page's facet pass — which the server counts over the
+ * org's UNFILTERED invoices, so an option cannot disappear as you select it. Every status gets an
+ * entry (0 when the org has none), so the bar's hint never reads blank. Null facets (no first page
+ * yet) count nothing.
  */
-export function invoiceStatusCounts(all: InvoiceInfo[]): Record<string, number> {
+export function invoiceStatusCounts(facets: InvoiceFacets | null): Record<string, number> {
 	const counts: Record<string, number> = { paid: 0, refunded: 0, void: 0 };
-	for (const inv of all) counts[inv.status] = (counts[inv.status] ?? 0) + 1;
+	for (const option of facets?.status ?? []) counts[option.value] = option.count;
 	return counts;
 }
