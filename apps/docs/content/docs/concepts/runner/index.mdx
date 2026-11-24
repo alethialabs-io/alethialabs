@@ -100,6 +100,24 @@ Every 30 seconds to confirm it is alive.
 
 </Steps>
 
+## Repository URLs
+
+The runner checks every repository URL before it clones, pulls or pushes:
+
+- The URL uses `https://`. A bring-your-own IaC repository can also use `ssh://` or
+  `git@host:owner/repo`, for a deploy key. Other schemes, such as `file://`, `git://` and
+  `http://`, are not accepted.
+- The URL contains no credentials. A private repository is read through its connected git account.
+- The host is a public name that resolves only to public addresses. Names such as `localhost`,
+  `*.local` and `*.internal`, and private, loopback, link-local and carrier-grade NAT addresses,
+  are not accepted.
+
+If your self-operated runner uses a Git server on a private network, allow it with
+`ALETHIA_GIT_ALLOWED_HOSTS`. The value is a comma-separated list of host names (`git.corp.example`),
+wildcard suffixes (`*.corp.example`), IP addresses or CIDR ranges (`10.20.0.0/16`). The list is
+empty by default. The scheme and credential checks still apply to allowed hosts. If an entry cannot
+be read, the runner refuses every clone until you correct it.
+
 ## Container contents
 
 The image builds `FROM` a shared `runner-base` (Alpine 3.21, non-root `runner` user). The base
