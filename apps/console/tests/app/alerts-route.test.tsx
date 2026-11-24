@@ -69,7 +69,7 @@ function answerEverything() {
 		"alerts.settings": async () => ({ alerting: true }),
 		"alerts.policies": async (input) => ({ query: input, rows: [], total: 0 }),
 		"alerts.channels": async (input) => ({ query: input, rows: [], total: 0 }),
-		"alerts.deliveries": async (input) => ({ query: input, rows: [], total: 0 }),
+		"alerts.deliveries": async (input) => ({ query: input, rows: [], nextCursor: null, facets: null, universeEmpty: true }),
 		"workspace.projects": async () => [],
 	};
 }
@@ -80,6 +80,21 @@ function clientKey(procedure: string, input?: unknown): string {
 	const queryKey: unknown = Reflect.get(Object(node), "queryKey");
 	if (typeof queryKey !== "function") throw new Error(`no ${procedure}`);
 	return JSON.stringify(queryKey(input === undefined ? undefined : { input }));
+}
+
+/**
+ * The browser's key for the delivery ledger, an INFINITE query since #7489 — built the way
+ * `useKeysetList` builds it (the cursor is the page param, so the key is the filter alone).
+ */
+function ledgerKey(input: Record<string, unknown>): string {
+	const node: unknown = Reflect.get(Reflect.get(Object(orpc), "alerts"), "deliveries");
+	const infiniteOptions: unknown = Reflect.get(Object(node), "infiniteOptions");
+	if (typeof infiniteOptions !== "function") throw new Error("no deliveries");
+	const options: unknown = infiniteOptions({
+		input: (cursor: string | null | undefined) => (cursor == null ? input : { ...input, cursor }),
+		initialPageParam: null,
+	});
+	return JSON.stringify(Reflect.get(Object(options), "queryKey"));
 }
 
 /** The route's output for one link. */
@@ -146,7 +161,7 @@ describe("the first paint carries the hub's reads (B1)", () => {
 				clientKey("settings"),
 				clientKey("policies", {}),
 				clientKey("channels", {}),
-				clientKey("deliveries", {}),
+				ledgerKey({}),
 			]),
 		);
 	});
@@ -156,7 +171,7 @@ describe("the first paint carries the hub's reads (B1)", () => {
 		const at = (key: string) => state.queries.find((q) => JSON.stringify(q.queryKey) === key)?.state.data;
 		expect(at(clientKey("policies", { status: ["off"] }))).toEqual({ query: { status: ["off"] }, rows: [], total: 0 });
 		expect(at(clientKey("channels", { types: ["slack"] }))).toBeDefined();
-		expect(at(clientKey("deliveries", { status: ["failed"] }))).toBeDefined();
+		expect(at(ledgerKey({ status: ["failed"] }))).toBeDefined();
 		// Each prefixed param reaches ITS panel and no other.
 		expect(h.calls.filter((c) => c.path === "alerts.policies").map((c) => c.input)).toEqual(
 			expect.not.arrayContaining([expect.objectContaining({ types: expect.anything() })]),
@@ -173,7 +188,7 @@ describe("the first paint carries the hub's reads (B1)", () => {
 		};
 		const keys = keysOf(await dehydrated(await route({})));
 		expect(keys.some((k) => k.includes("workspace"))).toBe(false);
-		expect(keys).not.toContain(clientKey("deliveries", {}));
+		expect(keys).not.toContain(ledgerKey({}));
 		expect(keys).toContain(clientKey("policies", {}));
 	});
 });
