@@ -147,6 +147,7 @@ prev_secrets='[]'
 prev_observed=''
 prev_reaper='[]'
 prev_backup_status='null'
+prev_smoke='null'
 # THE START OF THE DERIVATION WINDOW, recorded rather than guessed.
 #
 # The rollup needs to know which issues closed since the LAST snapshot, because a red that is filed
@@ -166,6 +167,7 @@ if [ -f "$OUT" ]; then
 	prev_reaper="$(jq -c '.orphan_reaper_observations // []' "$OUT" 2>/dev/null || echo '[]')"
 	prev_derived="$(jq -r '.derived_at // ""' "$OUT" 2>/dev/null || echo '')"
 	prev_backup_status="$(jq -c '.backup_status_observation // null' "$OUT" 2>/dev/null || echo 'null')"
+	prev_smoke="$(jq -c '.post_deploy_smoke_observation // null' "$OUT" 2>/dev/null || echo 'null')"
 fi
 
 inventory_observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -404,6 +406,68 @@ else
 	echo "programme-fetch: could not list backup-status.yml runs (not on the default branch yet?); carrying the previous observation forward." >&2
 fi
 
+# ── B7's public-hosts reading (#7392). ──
+#
+# deploy-console.yml's `smoke` job uploads `post-deploy-smoke` (smoke-report.json plus failure
+# screenshots) on every production deploy. The NEWEST deploy run on `main` whose smoke job RAN
+# becomes `post_deploy_smoke_observation`, holding the summary scripts/post-deploy-smoke-result.mjs
+# makes of the report (check ids and counts — never the report's failure or note text).
+#
+# "Whose smoke job ran" is decided from the run's jobs, not from whether an artifact exists. A run
+# whose smoke was skipped (the deploy failed, or nothing deployed) did not change what production
+# serves, so the walk moves on to an older run. But a run whose smoke DID run and left no readable
+# report is the newest deploy's smoke, and walking past it to an older green report would hide it —
+# so it is recorded with `result: null` and the reason, and the rollup reads it as not met.
+#
+# Only `main`'s runs are listed: the smoke job runs only on refs/heads/main. A listing that fails
+# carries the previous observation forward; the rollup ages it out against derived_at.
+post_deploy_smoke_observation="$prev_smoke"
+if smoke_runs="$(gh api "repos/$REPO/actions/workflows/deploy-console.yml/runs?branch=main&status=completed&per_page=20" \
+	--jq '[.workflow_runs[] | {id, event, head_branch, head_sha, updated_at}]' 2>/dev/null)"; then
+	while IFS=$'\t' read -r sm_run_id sm_event sm_branch sm_sha sm_completed_at; do
+		[ -n "$sm_run_id" ] || continue
+		[ "$sm_branch" = "main" ] || continue
+		# The job's name is "Post-deploy smoke (…)"; its latest attempt's conclusion is what counts.
+		sm_conclusion="$(gh api "repos/$REPO/actions/runs/$sm_run_id/jobs?per_page=100" \
+			--jq '[.jobs[] | select(.name | startswith("Post-deploy smoke")) | .conclusion // ""] | first // ""' 2>/dev/null)" || {
+			echo "programme-fetch: could not read run $sm_run_id's jobs; carrying the previous smoke observation forward." >&2
+			break
+		}
+		case "$sm_conclusion" in '' | skipped) continue ;; esac
+		sm_result='null'
+		sm_missing=''
+		# An API call that fails here stops the walk and keeps the previous observation: moving on to an
+		# older run would skip the newest deploy, and recording it unmet would red B7 over a blip.
+		artifacts="$(gh api "repos/$REPO/actions/runs/$sm_run_id/artifacts?per_page=100" 2>/dev/null)" || {
+			echo "programme-fetch: could not list run $sm_run_id's artifacts; carrying the previous smoke observation forward." >&2
+			break
+		}
+		artifact_id="$(printf '%s' "$artifacts" | jq -r '.artifacts[]? | select(.name == "post-deploy-smoke" and .expired == false) | .id' | head -1)"
+		zip="$reaper_tmp/post-deploy-smoke-${sm_run_id}.zip"
+		raw="$reaper_tmp/post-deploy-smoke-${sm_run_id}.json"
+		if [ -z "$artifact_id" ]; then
+			sm_missing="the smoke job concluded ${sm_conclusion} and no unexpired post-deploy-smoke artifact exists"
+		elif ! gh api "repos/$REPO/actions/artifacts/$artifact_id/zip" >"$zip" 2>/dev/null; then
+			echo "programme-fetch: could not download post-deploy-smoke artifact $artifact_id; carrying the previous smoke observation forward." >&2
+			break
+		elif ! unzip -Z1 "$zip" 2>/dev/null | grep -qx 'smoke-report.json' || ! unzip -p "$zip" smoke-report.json >"$raw"; then
+			sm_missing="the post-deploy-smoke artifact holds no smoke-report.json"
+		elif ! sm_result="$(node scripts/post-deploy-smoke-result.mjs summarize --file "$raw" 2>"$raw.err")"; then
+			echo "::warning::programme-fetch: post-deploy-smoke artifact $artifact_id failed validation. $(tr '\n' ' ' <"$raw.err")" >&2
+			sm_result='null'
+			sm_missing="the smoke report failed validation: $(head -c 300 "$raw.err" | tr '\n' ' ')"
+		fi
+		post_deploy_smoke_observation="$(jq -cn --argjson result "$sm_result" --arg run_id "$sm_run_id" --arg event "$sm_event" \
+			--arg branch "$sm_branch" --arg sha "$sm_sha" --arg at "$sm_completed_at" --arg conclusion "$sm_conclusion" \
+			--arg missing "$sm_missing" \
+			'{run_id: $run_id, event_name: $event, head_branch: $branch, head_sha: $sha, completed_at: $at,
+			  smoke_conclusion: $conclusion, report_missing: (if $missing == "" then null else $missing end), result: $result}')"
+		break
+	done < <(printf '%s' "$smoke_runs" | jq -r '.[] | [.id, .event, .head_branch, .head_sha, .updated_at] | @tsv')
+else
+	echo "programme-fetch: could not list deploy-console.yml runs; carrying the previous smoke observation forward." >&2
+fi
+
 # ── THE COMPOSITION READS ITS BIG INPUTS FROM FILES, NOT FROM argv. ──
 #
 # This was `--argjson open_issues "$issues" --argjson closed_issues "$closed" …`, and it died:
@@ -457,6 +521,7 @@ jq -n \
 	--slurpfile orphan_reaper_observations "$(arg_file orphan_reaper "$reaper_observations" '[]')" \
 	--arg inventory_observed_at "$inventory_observed_at" \
 	--argjson backup_status_observation "$backup_status_observation" \
+	--argjson post_deploy_smoke_observation "$post_deploy_smoke_observation" \
 	'{
     "_doc": "GENERATED by scripts/programme-fetch.sh. Do not edit. The LIVE board and orphan-reaper state PROGRAMME.md cannot derive from the tree. Variable and secret NAMES only — never values.",
     derived_at: $derived_at,
@@ -471,7 +536,8 @@ jq -n \
     inventory_observed_at: $inventory_observed_at,
     gate_observations: $gate_observations[0],
     orphan_reaper_observations: $orphan_reaper_observations[0],
-    backup_status_observation: $backup_status_observation
+    backup_status_observation: $backup_status_observation,
+    post_deploy_smoke_observation: $post_deploy_smoke_observation
   }' >"$OUT"
 
 # The counts say CAPPED or not. A bare number is the thing that read identically at "500 total" and

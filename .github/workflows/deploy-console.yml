@@ -1115,9 +1115,10 @@ jobs:
   # the CLI install script (its BODY, byte-identical to the tree when the apps were rebuilt), and
   # status.alethialabs.io must answer with a summary generated in the last 20 minutes. Those two are
   # the instrument docs/beta/README.md names for beta predicate B7's "public hosts" part. The
-  # `post-deploy-smoke` artifact's smoke-report.json names the sha and run it is about; NOTHING reads it
-  # into the programme snapshot yet (scripts/programme-rollup.mjs still reports that part unmeasured),
-  # so a green smoke here does not by itself turn B7 green.
+  # `post-deploy-smoke` artifact's smoke-report.json names the sha and run it is about;
+  # scripts/programme-fetch.sh copies a summary of the newest one on `main` into the programme
+  # snapshot (#7392), and scripts/programme-rollup.mjs judges it — including against the artifact's
+  # 14-day retention below, which it asserts. A green smoke is one of B7's three parts, not B7.
   #
   # A SEPARATE JOB, not extra steps on `deploy`, deliberately: `deploy` holds the SSH key, and
   # Chromium plus a pnpm install do not belong in the job that holds it. The blast radius of a

@@ -164,7 +164,10 @@ B7 has three parts. All three must pass.
     REL-L8 adds the CLI installer host and the status host to it. This file reads "both public hosts"
     in the spec as those two hosts; the console host is already in the smoke.
   - **Pass:** the newest production deploy's smoke passed every check, including the installer and
-    status hosts. Until REL-L8 lands, this part is false.
+    status hosts, and it ran no more than 14 days before *T*. Fourteen days is how long the
+    `post-deploy-smoke` artifact is kept. A deploy whose smoke ran but left no readable report does
+    not pass. The snapshot holds a summary of the report: the check counts and the ids of failed
+    checks.
 
 ### B8 — editions
 
