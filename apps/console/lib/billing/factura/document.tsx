@@ -29,12 +29,14 @@ import { type FacturaLayout, facturaLayout, type LayoutPair } from "./layout";
 /** Where the vendored fonts live, relative to the console's root. */
 const FACTURA_FONT_DIR = "lib/billing/factura/fonts";
 
-const FAMILY = "NotoSans";
+/** The registered font family; the чл. 117 protocols (lib/billing/nra/) print with it too. */
+export const FACTURA_FONT_FAMILY = "NotoSans";
+const FAMILY = FACTURA_FONT_FAMILY;
 
 let fontsRegistered = false;
 
 /** Registers the Cyrillic-capable font once per process, and turns hyphenation off. */
-function registerFonts(): void {
+export function registerFonts(): void {
 	if (fontsRegistered) return;
 	const dir = join(process.cwd(), FACTURA_FONT_DIR);
 	Font.register({
