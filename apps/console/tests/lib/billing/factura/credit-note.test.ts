@@ -16,8 +16,8 @@ vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/storage", () => ({ storage: { put: vi.fn(), get: vi.fn() } }));
 vi.mock("@/lib/billing/operator-alert", () => ({ alertOperator: vi.fn(async () => true) }));
 
+import { buildCreditNoteSnapshot } from "@/lib/billing/factura/credit-note-snapshot";
 import {
-	buildCreditNoteSnapshot,
 	type CreditNoteDeps,
 	type CreditNoteStore,
 	issueCreditNotesForCharge,
