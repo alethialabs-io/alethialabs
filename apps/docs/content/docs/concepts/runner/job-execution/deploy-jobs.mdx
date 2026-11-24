@@ -3,8 +3,6 @@ title: Deploy Jobs
 description: How the runner executes DEPLOY jobs — the verify gate, tofu apply, keyless kubeconfig, and ArgoCD.
 ---
 
-# Deploy Jobs
-
 `DEPLOY` jobs apply the OpenTofu plan and install ArgoCD on the provisioned cluster. Between the
 plan and the apply sits the **fail-closed verify gate** — a real apply will not run while a hard
 control is failing.

@@ -3,8 +3,6 @@ title: Connectors architecture
 description: How pluggable per-category connectors are declared, stored, and composed into a provision.
 ---
 
-# Connectors architecture
-
 Connectors decouple **what** a Project needs (a DNS zone, secrets, a registry, observability) from **who** provides it. A **connector** is a provider *type* in the catalog; an account you actually connect to a cloud is a **cloud identity** (see the [glossary](/reference/glossary#connectivity)). Cloud and Git connectors are first-class; the **pluggable per-category** connectors are added by registration, not by editing call sites.
 
 This page explains how the catalog is built and how credentials flow. To connect an account, read its status, or disconnect it, see [Connectors](/guides/connectors).
