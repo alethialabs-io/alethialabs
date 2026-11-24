@@ -101,7 +101,7 @@ export interface ClusterFacetSet {
  * the client two rows with one id — which the page join (`useKeysetList`) keeps once. The row's
  * `id` is the cluster's own (`project_cluster.id`).
  */
-export interface ClusterPageRow<Row extends ClusterFacts = ClusterFacts> {
+interface ClusterPageRow<Row extends ClusterFacts = ClusterFacts> {
 	id: string;
 	cluster: Row;
 }

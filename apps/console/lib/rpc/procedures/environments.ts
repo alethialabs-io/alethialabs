@@ -547,13 +547,13 @@ const environmentsListQuery = z.object({
 });
 
 /** One keyset page of the environments table: the query plus the opaque cursor and the page size. */
-export const environmentsPageInput = environmentsListQuery.extend(keysetPageInput());
+const environmentsPageInput = environmentsListQuery.extend(keysetPageInput());
 
 /** What the environments table is asked, without the paging fields — the normalized query, and the key. */
 export type EnvironmentsListQuery = z.infer<typeof environmentsListQuery>;
 
 /** One keyset page of the promotions history: the project plus the cursor and the page size. */
-export const promotionsPageInput = z.object({ project: projectSlug, ...keysetPageInput() });
+const promotionsPageInput = z.object({ project: projectSlug, ...keysetPageInput() });
 
 /**
  * The environments domain's read procedures (ADR 0005 D1, #6120). Every one is a GET (the `query`
