@@ -1,0 +1,15 @@
+{
+	"kind": "debt",
+	"owner": "#7494",
+	"lane": "LST-12",
+	"why": "The reference keyset list, but on its own cursor codec, its own `useInfiniteQuery` and its own sentinel + \"Load more\" rather than the shared `useKeysetList` + `ListFooter`; a toolbar count pill once the end is known.",
+	"findings": {
+		"apps/console/components/support/cases/case-list.tsx": {
+			"count-pill": 1,
+			"keyset-contract": 2
+		},
+		"store:useSupportFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

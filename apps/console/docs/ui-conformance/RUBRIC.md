@@ -259,7 +259,7 @@ absence of a `lib/stores/use-*-filters.ts` store, not from how the page looks. F
 | **F2** | `useFilterUrlSync` is wired, so a filtered view is linkable |
 | **F3** | search is debounced — typing only; a search the link carried lands at once (`{ urlRead }`, #5861) — and the **normalized** query object is the TanStack key |
 | **F4** | the bar is built from `FilterBar` / `FilterSearch` / `FacetFilter` / `FilterChipGroup` / `FilterBarReset` |
-| **F5** | the result count is a `CountPill` beside the heading — never "N of M" prose in the bar |
+| **F5** | **no list count** — no `CountPill`, no `count=` on `PageToolbar` / `SectionHeading`, no "N of M" / "Showing …" prose (inverted by #7482: it used to require the pill; gated by the list standard's per-surface ledger, `apps/console/list-standard/`) |
 | **F6** | `keepPreviousData` plus the `opacity-60` dim on `isPlaceholderData` |
 | **F7** | the server builder issues a rows pass **and a separate unfiltered facet pass** |
 | **F8** | a filtered view survives the URL round-trip, **observed in a browser** | applying the first facet option that narrows puts one of the surface's params in the URL; the URL reloaded in a **fresh tab** (its own sessionStorage, so only the URL can restore it) keeps the param and the narrowed list; Reset clears every param the surface writes and the count returns to the full count |

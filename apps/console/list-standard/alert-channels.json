@@ -1,0 +1,14 @@
+{
+	"kind": "debt",
+	"owner": "#7489",
+	"lane": "LST-7",
+	"why": "The channels tab heading carries a count pill (`alerts-page.tsx`), and the list is unpaged with no stated bound — it awaits keyset paging or a recorded `bounded` decision.",
+	"findings": {
+		"apps/console/components/alerts/alerts-page.tsx": {
+			"count-pill": 1
+		},
+		"store:useAlertChannelFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

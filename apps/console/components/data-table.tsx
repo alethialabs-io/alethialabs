@@ -32,7 +32,9 @@ import {
 	DEFAULT_SKELETON_ROWS,
 	DataTableSkeletonRows,
 } from "@/components/skeletons/data-table-skeleton";
+import { ListFooter } from "@/components/list/list-footer";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
+import type { KeysetList } from "@/lib/query/use-keyset-list";
 import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import {
@@ -94,33 +96,43 @@ export interface DataTableQuery {
 	refetch: () => unknown;
 }
 
-interface DataTableProps<TData extends { id?: string }, TValue> {
+/** The props both modes share. */
+interface DataTableCommonProps<TData extends { id?: string }, TValue> {
 	columns: ColumnDef<TData, TValue>[];
-	data: TData[];
 	onRowClick?: (row: TData) => void;
 	selectedRowId?: string;
 	className?: string;
-	pageSize?: number;
-	columnFilters?: ColumnFiltersState;
-	pageIndex?: number;
-	onPageIndexChange?: (index: number) => void;
 	/** Tailwind height class (e.g. "h-[70vh]"). When set, wraps the table in a ScrollArea and makes the header sticky. */
 	scrollHeight?: string;
 	/**
-	 * Message shown in the empty-state row when `data` is empty (default "No results."). It is
+	 * Message shown in the empty-state row when there are no rows (default "No results."). It is
 	 * NEVER shown while the read is loading or has failed: an empty table and a table still
 	 * loading are different answers, and showing the first for the second is a lie about the
 	 * data (F004).
 	 */
 	emptyMessage?: string;
+	/** Placeholder rows to draw while the first load runs (default 6). Match the usual row count. */
+	skeletonRows?: number;
+}
+
+/**
+ * CLIENT mode: the caller holds every row. Its page-number and "Show more" footers are the two
+ * paging modes the list standard retires (lib/query/README.md → "Paging"); they stay only until
+ * their last caller moves to {@link DataTableServerProps} (LST-14, #7496).
+ */
+interface DataTableClientProps<TData extends { id?: string }, TValue> extends DataTableCommonProps<TData, TValue> {
+	data: TData[];
+	keyset?: never;
+	pageSize?: number;
+	columnFilters?: ColumnFiltersState;
+	pageIndex?: number;
+	onPageIndexChange?: (index: number) => void;
 	/**
 	 * The read behind `data`. Pass the TanStack query result itself — `query={jobsQuery}` — and
 	 * the table derives its loading, error and stale states from it. See {@link DataTableQuery}.
 	 * Omit it only for rows that are not read from anywhere (a constant list, a computed one).
 	 */
 	query?: DataTableQuery;
-	/** Placeholder rows to draw while the first load runs (default 6). Match the usual row count. */
-	skeletonRows?: number;
 	/**
 	 * Opt into a "Show more" footer (like the Activity log) instead of page-number controls. The
 	 * caller grows the visible window itself — pass `pageSize` as the current visible count and
@@ -128,6 +140,29 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	 */
 	loadMore?: { hasMore: boolean; onLoadMore: () => void };
 }
+
+/**
+ * SERVER mode, the list standard's (#7482): `keyset` is a {@link KeysetList} from
+ * `useKeysetList`. The table renders EVERY loaded row — no page numbers, no rows-per-page picker,
+ * no "of N" — followed by `ListFooter`, and derives its loading / error / stale bodies from the
+ * list's first-page state. Column sorting is off: the server owns the order, and sorting the pages
+ * that happen to be loaded would show an order the list does not have. The client-paging props
+ * are `never` here, so the two modes cannot be mixed.
+ */
+interface DataTableServerProps<TData extends { id?: string }, TValue> extends DataTableCommonProps<TData, TValue> {
+	keyset: KeysetList<TData>;
+	data?: never;
+	pageSize?: never;
+	columnFilters?: never;
+	pageIndex?: never;
+	onPageIndexChange?: never;
+	query?: never;
+	loadMore?: never;
+}
+
+type DataTableProps<TData extends { id?: string }, TValue> =
+	| DataTableClientProps<TData, TValue>
+	| DataTableServerProps<TData, TValue>;
 
 /**
  * The notice a table shows when a refetch failed behind rows it already has: the rows are still
@@ -167,9 +202,11 @@ function StaleRefreshNotice({ onRetry }: { onRetry: () => void }) {
  *
  * The convergence is a layer, not a single component:
  *
- * - **`DataTable` (this file)** is the default. Reach for it whenever the rows are a flat list
- *   the client can hold in memory: it brings sorting, client filtering, pagination or a
- *   "Show more" window, an empty row, and one row-click contract.
+ * - **`DataTable` (this file)** is the default. A list read from the server goes through its
+ *   SERVER mode — `keyset={useKeysetList(…)}` — which renders every loaded row and `ListFooter`
+ *   (lib/query/README.md → "Paging", #7482). Its CLIENT mode (`data=`) is for rows the client
+ *   genuinely holds whole (a constant list, a computed one); that mode's page numbers and
+ *   "Show more" window are retired by the list standard and go with their last caller (LST-14).
  * - **The `@repo/ui/table` primitives** are the shell underneath — `DataTable` renders through
  *   them, so a table built on them directly inherits the same padding, borders, hover and
  *   selected states. Compose them directly only for the shapes TanStack's flat row model cannot
@@ -184,22 +221,27 @@ function StaleRefreshNotice({ onRetry }: { onRetry: () => void }) {
  * one-line notice with its own retry. Before this, a table that had not loaded yet said
  * "No results." (#6117, F004).
  */
-export function DataTable<TData extends { id?: string }, TValue>({
-	columns,
-	data,
-	onRowClick,
-	selectedRowId,
-	className,
-	pageSize = 20,
-	columnFilters: externalFilters,
-	pageIndex: externalPageIndex,
-	onPageIndexChange,
-	scrollHeight,
-	emptyMessage = "No results.",
-	query,
-	skeletonRows = DEFAULT_SKELETON_ROWS,
-	loadMore,
-}: DataTableProps<TData, TValue>) {
+export function DataTable<TData extends { id?: string }, TValue>(props: DataTableProps<TData, TValue>) {
+	const {
+		columns,
+		onRowClick,
+		selectedRowId,
+		className,
+		scrollHeight,
+		emptyMessage = "No results.",
+		skeletonRows = DEFAULT_SKELETON_ROWS,
+	} = props;
+	// Server mode (`keyset`) or client mode — the props union makes them exclusive, so at most one
+	// side of each `??` below is ever present.
+	const keyset = props.keyset;
+	const data: TData[] = keyset?.rows ?? props.data ?? [];
+	const query: DataTableQuery | undefined = keyset?.query ?? props.query;
+	const pageSize = props.pageSize ?? 20;
+	const externalFilters = props.columnFilters;
+	const externalPageIndex = props.pageIndex;
+	const onPageIndexChange = props.onPageIndexChange;
+	const loadMore = props.loadMore;
+
 	// One status for the body, decided once (see `DataTableQuery`). A failure with data is NOT
 	// an error body: the rows stay and `staleRefresh` adds a notice above them.
 	const hasData = query?.data !== undefined;
@@ -242,17 +284,24 @@ export function DataTable<TData extends { id?: string }, TValue>({
 		// this persona".
 		getRowId: (row, index) => row.id ?? String(index),
 		getCoreRowModel: getCoreRowModel(),
-		getSortedRowModel: getSortedRowModel(),
-		getPaginationRowModel: getPaginationRowModel(),
-		getFilteredRowModel: getFilteredRowModel(),
+		// Server mode reads the core model only: every loaded row, in the server's order. Sorting,
+		// filtering or paging the loaded pages in the browser would show a list the server does not
+		// have — the sort over 50 of 4,000 rows, the "page 2 of 3" of whatever happened to load.
+		...(keyset === undefined && {
+			getSortedRowModel: getSortedRowModel(),
+			getPaginationRowModel: getPaginationRowModel(),
+			getFilteredRowModel: getFilteredRowModel(),
+		}),
+		enableSorting: keyset === undefined,
 		onSortingChange: setSorting,
 		onColumnFiltersChange: setColumnFilters,
 		state: {
 			sorting,
 			columnFilters: externalFilters ?? columnFilters,
-			...(effectivePageIndex !== undefined && {
-				pagination: { pageIndex: effectivePageIndex, pageSize },
-			}),
+			...(keyset === undefined &&
+				effectivePageIndex !== undefined && {
+					pagination: { pageIndex: effectivePageIndex, pageSize },
+				}),
 		},
 		...(onPageIndexChange && {
 			onPaginationChange: (updater: Updater<PaginationState>) => {
@@ -387,6 +436,8 @@ export function DataTable<TData extends { id?: string }, TValue>({
 
 			{bodyState !== "ready"
 				? null
+				: keyset
+				? (data.length > 0 && <ListFooter list={keyset} />)
 				: loadMore
 				? (table.getFilteredRowModel().rows.length > 0 && (
 						<div className="flex flex-col items-center gap-2 px-1">
