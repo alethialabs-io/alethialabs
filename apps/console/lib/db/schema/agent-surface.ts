@@ -78,7 +78,10 @@ export const applyApprovals = pgTable(
 		/** The person the requesting credential acts for. No FK, like `jobs.user_id`. */
 		requester_user_id: uuid().notNull(),
 		requester_credential: actorCredential().notNull(),
-		/** The token id (service token) or OAuth client id (agent_oauth); null for the other kinds. */
+		/**
+		 * The token id (service token), OAuth client id (agent_oauth) or conversation id (agent_in_app,
+		 * lib/agent/in-app-credential.ts); null for the other kinds.
+		 */
 		requester_credential_ref: text(),
 		/** The requester's note. UNTRUSTED text: rendered as such, never as an instruction. */
 		reason: text(),

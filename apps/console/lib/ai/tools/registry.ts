@@ -79,6 +79,10 @@ export const TOOL_AUDIENCE: Record<string, ToolAudience> = {
 
 	// Operations — HITL plan/deploy proposals (multi-turn approval).
 	propose_operation: "in-app",
+	// The in-product agent's approval requests (agent_in_app). The external surface declares its own
+	// request_apply / request_destroy in lib/ai/mcp/surface.ts.
+	request_apply: "in-app",
+	request_destroy: "in-app",
 
 	// Support (Ask-AI) — HITL escalation: proposes a case the user submits client-side.
 	create_support_case: "support",
