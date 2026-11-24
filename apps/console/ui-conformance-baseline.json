@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 5,
-			"fail": 14,
+			"pass": 3,
+			"fail": 16,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.2632
+			"score": 0.1579
 		},
 		"F6": {
 			"family": "F",
@@ -987,11 +987,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1013,11 +1013,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 1,
+				"pass": 35,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 5,
-				"score": 0.9714
+				"score": 1
 			}
 		},
 		{
@@ -1054,11 +1054,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1080,11 +1080,11 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 1,
+				"pass": 36,
+				"fail": 0,
 				"na": 4,
 				"notMeasured": 3,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
@@ -1121,11 +1121,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1147,11 +1147,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 1,
 				"notMeasured": 1,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -1322,11 +1322,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1348,11 +1348,11 @@
 				}
 			},
 			"overall": {
-				"pass": 40,
-				"fail": 0,
+				"pass": 39,
+				"fail": 1,
 				"na": 0,
 				"notMeasured": 3,
-				"score": 1
+				"score": 0.975
 			}
 		},
 		{
@@ -1657,11 +1657,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1683,11 +1683,11 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 1,
+				"pass": 34,
+				"fail": 0,
 				"na": 5,
 				"notMeasured": 4,
-				"score": 0.9706
+				"score": 1
 			}
 		},
 		{
@@ -1724,11 +1724,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1750,11 +1750,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 2,
-				"score": 1
+				"score": 0.9737
 			}
 		},
 		{
@@ -1858,11 +1858,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1884,11 +1884,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -2260,11 +2260,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -2286,11 +2286,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 2,
-				"score": 1
+				"score": 0.9737
 			}
 		},
 		{
@@ -4263,8 +4263,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4275,7 +4274,7 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4487,8 +4486,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useEnvironmentsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4499,7 +4497,7 @@
 			"route": "/[org]/[project]/environments",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4709,7 +4707,8 @@
 		{
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -4720,7 +4719,7 @@
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -5188,7 +5187,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -5397,7 +5396,8 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -5408,7 +5408,7 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -6323,7 +6323,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6535,232 +6535,232 @@
 		},
 		{
 			"route": "/[org]/~/clusters",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F8",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "F9",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R5",
+			"verdict": "PASS",
+			"detail": "themes dark, light"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "R8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/clusters",
+			"predicate": "T7",
+			"verdict": "N/A",
+			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "B1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "B2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "B4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F10",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/connectors",
 			"predicate": "F5",
 			"verdict": "FAIL",
-			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F7",
-			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F8",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "F9",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R5",
-			"verdict": "PASS",
-			"detail": "themes dark, light"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "R8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/clusters",
-			"predicate": "T7",
-			"verdict": "N/A",
-			"reason": "no-restricted-surface"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "B1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "B2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "B4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "F1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "F10",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "F2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "F3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "F4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/connectors",
-			"predicate": "F5",
-			"verdict": "PASS"
+			"detail": "useConnectorFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6771,7 +6771,7 @@
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -6996,7 +6996,7 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7204,7 +7204,8 @@
 		{
 			"route": "/[org]/~/jobs",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useJobsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7215,7 +7216,7 @@
 			"route": "/[org]/~/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7898,7 +7899,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8366,7 +8367,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -8576,7 +8577,8 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -8587,7 +8589,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -9285,7 +9287,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -9968,7 +9970,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -10189,7 +10191,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -10403,7 +10405,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F5",
 			"verdict": "FAIL",
-			"detail": "useSsoFilters: \"N of M\" / \"Showing …\" prose around the list — totals exist only as facet option counts"
+			"detail": "useSsoFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10414,7 +10416,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10636,7 +10638,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -11782,7 +11784,7 @@
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
