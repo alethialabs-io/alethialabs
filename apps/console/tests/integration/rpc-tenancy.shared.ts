@@ -918,6 +918,13 @@ export const FIXTURES: Record<string, Fixture> = {
 			return { x: hasCluster(clusters, s.clusterX), y: hasCluster(clusters, s.clusterY) };
 		},
 	},
+	// LST-3 (#7485): one cluster by its own id, for a `?selected=` link whose row is not loaded. The
+	// same composed read as the page, narrowed: another org's cluster id answers null, never its row.
+	"clusters.detail": {
+		kind: "by-id",
+		input: (s, org) => ({ clusterId: org === "x" ? s.clusterX : s.clusterY }),
+		reveals: (out, s, org) => hasCluster([out], org === "x" ? s.clusterX : s.clusterY),
+	},
 	// General settings (#6128).
 	"settings.org": {
 		// The org's own row: its slug is the marker (seeded as `it-6113-<first 8 of its id>`). The
