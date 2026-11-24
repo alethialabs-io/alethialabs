@@ -145,10 +145,11 @@ raises `system.platform.cost_guard_failed_open`.
    plans and purchased credits keep working; users see "Free AI is paused by the platform operator").
    To narrow instead of stopping, lower `ALETHIA_FREE_AI_GLOBAL_DAILY_CREDITS` (default 20,000 credits
    per UTC day).
-3. Both are read from the console's environment and take effect after a console restart.
-   **Neither is emitted by `scripts/ci/deploy-console-assemble-env.sh` today**, so putting them in the
-   vault does nothing: set them by hand in `/opt/alethia/.env` on the box and restart the console, and
-   expect the next deploy to drop them until the assembler emits them.
+3. Set either key in `alethia/prod/env` and redeploy (dispatch `deploy-console.yml` on `main`).
+   `scripts/ci/deploy-console-assemble-env.sh` writes each key into the box's `.env` only when the
+   vault holds a non-empty value, and the deploy restarts the console with it. To lift the pause,
+   delete the key from the vault (or set it to `0`) and redeploy. A key absent from the vault is
+   absent from the box, so the console's defaults apply: not paused, 20,000 credits.
 
 **Not built:** no alert on the provider's billing error itself and no provider-balance alert — the
 first operator signal is a user report or the log line.
