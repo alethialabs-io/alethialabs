@@ -3,8 +3,6 @@ title: Runner Agent
 description: Autonomous execution agent that runs OpenTofu, installs ArgoCD, and streams logs.
 ---
 
-# Runner Agent
-
 Runner is the execution engine — a single Go binary shipped as a container image. Runners claim
 provisioning jobs from the queue, mint per-job cloud credentials keylessly, execute the `tofu`
 binary (OpenTofu), install ArgoCD, and stream logs back in real time. The binary is **CLI-free**:

@@ -38,8 +38,22 @@
    referenced nowhere in the repo, and the system is zero-chroma by rule, so they
    were dead code carrying the only hue in the docs app. */
 
-/* Minimal grayscale scrollbars — mirrors packages/brand/src/tokens.css (docs doesn't
-   import the brand tokens; keyed off the fumadocs foreground var). */
+/* The brand tokens pin `html, body` to `h-full` for the console's app shell. In the
+   docs that height cap breaks the fumadocs layout: the body is `flex flex-col`, and the
+   layout grid (`overflow-x-clip`) is a flex item whose automatic minimum height is
+   therefore 0. The grid shrinks to one viewport, the page content overflows it, and
+   the sticky sidebar and table of contents (which can only stick inside the grid)
+   scroll away after the first screen. Let the document grow with its content again.
+   Same layer as the brand rule and imported after it, so this one wins. */
+@layer base {
+  html,
+  body {
+    height: auto;
+  }
+}
+
+/* Minimal grayscale scrollbars, keyed off the fumadocs foreground var. They mirror
+   the ones in packages/brand/src/tokens.css. */
 * {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--color-fd-foreground, currentColor) 18%, transparent) transparent;

@@ -3,8 +3,6 @@ title: Managed Provisioning (4-cloud runbook)
 description: Turn on the managed fleet so your instance provisions Kubernetes into customer AWS, GCP, Azure, and Hetzner accounts — connectors, runner images, fleet pools, per-cloud verification, and the optional untrusted-BYO container sandbox.
 ---
 
-# Managed provisioning — operator runbook
-
 With the **managed** operator, your instance runs the provisioning runners itself: a cheap Hetzner VM fleet claims each
 customer's plan/deploy job, assumes into the customer's cloud (keyless OIDC, or a token for Hetzner), runs
 OpenTofu against Alethia's own project templates, and streams state + logs back through the console. The
