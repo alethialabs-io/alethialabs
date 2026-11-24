@@ -82,6 +82,8 @@ func applyResetFlags() {
 
 func applyEnv(t *testing.T, s *projServer) projHarness {
 	t.Helper()
+	// apply previews each environment before it deploys it; the previews succeed.
+	s.plansSucceed = true
 	h := projEnv(t, s)
 	applyResetFlags()
 	t.Cleanup(applyResetFlags)
@@ -294,7 +296,7 @@ func TestApply_CreatesThenDeploysInFileOrder(t *testing.T) {
 		}
 	}
 	// The wire, in order: one create carrying the WHOLE matrix (so the server fans it out onto
-	// one Fabric), the components, then a DEPLOY per environment in file order.
+	// one Fabric), the components, then a preview and a DEPLOY per environment in file order.
 	var paths []string
 	for _, p := range s.posts {
 		paths = append(paths, p.Method+" "+p.Path)
@@ -304,6 +306,8 @@ func TestApply_CreatesThenDeploysInFileOrder(t *testing.T) {
 		"POST /api/cli/projects/p1/components/cluster",
 		"POST /api/cli/projects/p1/components/repositories",
 		"POST /api/cli/projects/p1/components/databases",
+		"POST /api/jobs",
+		"POST /api/jobs",
 		"POST /api/jobs",
 		"POST /api/jobs",
 	}
@@ -324,9 +328,12 @@ func TestApply_CreatesThenDeploysInFileOrder(t *testing.T) {
 	if db["name"] != "orders" || fields["engine"] != "postgres" {
 		t.Errorf("a named component carries its name outside its fields: %+v", db)
 	}
-	job := s.posts[4].Body
-	if job["job_type"] != "DEPLOY" || job["assigned_runner_id"] != "r1" || job["configuration_id"] != "p1" {
-		t.Errorf("the deploy is not assigned to the named runner: %+v", job)
+	preview, job := s.posts[4].Body, s.posts[5].Body
+	if preview["job_type"] != "PLAN" || preview["assigned_runner_id"] != "r1" || preview["environment_id"] != "e1" {
+		t.Errorf("the preview is not of the environment, on the named runner: %+v", preview)
+	}
+	if job["job_type"] != "DEPLOY" || job["assigned_runner_id"] != "r1" || job["configuration_id"] != "p1" || job["plan_job_id"] != "j1" {
+		t.Errorf("the deploy is not assigned to the named runner, applying its preview: %+v", job)
 	}
 }
 
@@ -362,13 +369,7 @@ func TestApply_EnvNarrowsTheDeployNotTheCreate(t *testing.T) {
 	if h.run("apply", "--file", path, "--yes", "--runner", "primary", "--env", "dev-1", "--no-wait", "--no-input") {
 		t.Error("apply exited fatally")
 	}
-	var deploys int
-	for _, p := range s.posts {
-		if p.Path == "/api/jobs" {
-			deploys++
-		}
-	}
-	if deploys != 1 {
+	if deploys := len(s.jobPostsOfType("DEPLOY")); deploys != 1 {
 		t.Errorf("--env dev-1 queued %d deploys, want 1", deploys)
 	}
 	if s.posts[0].Path != "/api/cli/projects" {
@@ -571,12 +572,13 @@ func TestApply_ReconcilesAnExistingProjectByAddingWhatIsMissing(t *testing.T) {
 	var deployed []any
 	for _, p := range s2.posts {
 		posts = append(posts, p.Method+" "+p.Path)
-		if p.Path == "/api/jobs" {
+		if p.Path == "/api/jobs" && p.Body["job_type"] == "DEPLOY" {
 			deployed = append(deployed, p.Body["environment_id"])
 		}
 	}
-	// production deploys first, in file order, then dev-1 by the id its add returned.
-	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs POST /api/jobs" {
+	// production deploys first, in file order, then dev-1 by the id its add returned. Each deploy
+	// follows its environment's preview.
+	if strings.Join(posts, " ") != "POST /api/cli/projects/p1/environments POST /api/cli/projects/p1/components/databases POST /api/cli/projects/p1/components/databases POST /api/jobs POST /api/jobs POST /api/jobs POST /api/jobs" {
 		t.Errorf("requests: %v", posts)
 	}
 	if !reflect.DeepEqual(deployed, []any{"e1", "e9"}) {
@@ -953,13 +955,7 @@ func TestApply_SendsTheNormalisedEnvironmentName(t *testing.T) {
 		t.Errorf("sent %q — the server stores the slug, so anything else cannot be addressed afterwards", first["name"])
 	}
 	// And the deploy found it, which is the half that used to fail.
-	var deploys int
-	for _, p := range s.posts {
-		if p.Path == "/api/jobs" {
-			deploys++
-		}
-	}
-	if deploys != 1 {
+	if deploys := len(s.jobPostsOfType("DEPLOY")); deploys != 1 {
 		t.Errorf("the deploy did not resolve the environment it had just created: %+v", s.posts)
 	}
 }

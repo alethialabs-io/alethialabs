@@ -127,6 +127,15 @@ const (
 	CodeOperationFailed      = "operation_failed"
 	CodeCLITooOld            = "cli_too_old"
 	CodeInterrupted          = "interrupted"
+	// CodeApprovalRequired is the control plane's own code for a deploy or destroy that needs a
+	// person's approval (apps/console/lib/approvals/refusal.ts). Registered so the CLI exits 9 on it:
+	// like a confirmation, it is something only a person can give.
+	CodeApprovalRequired = "approval_required"
+	// CodeApprovalRejected is an approval a person rejected in the console.
+	CodeApprovalRejected = "approval_rejected"
+	// CodeApprovalInvalid is an approval that can no longer be used: expired, superseded by a newer
+	// plan or change, or already used. The control plane sends the same code.
+	CodeApprovalInvalid = "approval_invalid"
 )
 
 // CodeDef is one registered error code.
@@ -143,16 +152,19 @@ var codeDefs = []CodeDef{
 	{CodeAuthRequired, ClassAuth, "The command needs a signed-in session or a service token."},
 	{CodeTokenExpired, ClassAuth, "The stored credential has expired and could not be refreshed."},
 	{CodeForbidden, ClassForbidden, "The signed-in identity is not permitted to do this."},
+	{CodeApprovalRejected, ClassForbidden, "A person rejected the approval this deploy or destroy asked for."},
 	{CodeNotFound, ClassNotFound, "The resource named does not exist in the active organization."},
 	{CodeConflict, ClassConflict, "The resource is not in a state that allows this."},
 	{CodeAlreadyExists, ClassConflict, "A resource with this name already exists."},
 	{CodeOperationInProgress, ClassConflict, "Another operation on this resource is still running."},
+	{CodeApprovalInvalid, ClassConflict, "The approval expired, was superseded by a newer plan, or was already used."},
 	{CodeInvalidFlag, ClassUsage, "A flag is unknown, or its value could not be read."},
 	{CodeInvalidUsage, ClassUsage, "The command or its arguments are not valid."},
 	{CodeMissingArgument, ClassUsage, "A required argument was not given."},
 	{CodeValidationFailed, ClassUsage, "The input was read and is not valid."},
 	{CodeConfirmationRequired, ClassInputRequired, "The command needs a confirmation and prompting is unavailable."},
 	{CodeInputRequired, ClassInputRequired, "The command needs a value and prompting is unavailable."},
+	{CodeApprovalRequired, ClassInputRequired, "A person has to approve this deploy or destroy in the console before it runs."},
 	{CodeRateLimited, ClassLimited, "Too many requests; wait and retry."},
 	{CodeQuotaExceeded, ClassLimited, "A quota of the organization is used up."},
 	{CodePlanLimit, ClassLimited, "The organization's plan does not include this."},
