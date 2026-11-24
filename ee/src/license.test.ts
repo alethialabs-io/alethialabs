@@ -131,6 +131,7 @@ describe("verifyLicense: issue → verify round trip", () => {
 				advancedAlerting: false,
 				byoRunners: false,
 				managedPools: false,
+				agentPolicy: false,
 				quotas: {
 					maxConcurrentJobs: null,
 					priorityLevel: 30,
