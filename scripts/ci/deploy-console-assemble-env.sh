@@ -243,6 +243,14 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   emit ALETHIA_AI_OPENAI_TRANSFER
   emit ALETHIA_AI_OPENAI_RETENTION
   emit ALETHIA_AI_OPENAI_NO_TRAINING
+  # The free-AI kill switch and the free tier's platform-wide daily ceiling (apps/console/lib/abuse/,
+  # docs/ops/incident-response-runbook.md §7.2). Written ONLY when the vault holds a non-empty value,
+  # so an absent key stays absent from the box's .env and the console's own default applies: not
+  # paused, and the ceiling in lib/abuse/limits.ts. (An empty value also reads as the default today —
+  # isFreeAiSwitchedOff and parseAbuseLimitOverride both ignore it — but absent does not depend on
+  # that staying true.) Optional, so NOT in deploy/prod/required-vault-keys.txt.
+  [ -z "$(val ALETHIA_FREE_AI_PAUSED)" ] || emit ALETHIA_FREE_AI_PAUSED
+  [ -z "$(val ALETHIA_FREE_AI_GLOBAL_DAILY_CREDITS)" ] || emit ALETHIA_FREE_AI_GLOBAL_DAILY_CREDITS
   emit STRIPE_SECRET_KEY
   emit STRIPE_WEBHOOK_SECRET
   emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
