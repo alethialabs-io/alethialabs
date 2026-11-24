@@ -11,3 +11,4 @@
 
 apps/cli/internal/kubecache/lock_windows.go  LockFileEx via golang.org/x/sys/windows; lock_unix.go is the flock counterpart
 test/e2e/t2_runner_proc_sysproc_linux_test.go  Setpgid+Pdeathsig SysProcAttr mirrors terraform-exec's Linux-only cmd_linux.go; Pdeathsig does not exist elsewhere
+packages/core/tofu/procgroup_windows.go  no process groups or SIGINT on Windows: the cancel path kills the process outright; procgroup_unix.go is the Setpgid + group-SIGKILL counterpart
