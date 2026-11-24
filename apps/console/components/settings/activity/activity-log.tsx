@@ -6,8 +6,9 @@
 // (every recorded action + denials), fronted by reusable filters: time-range (quick + calendar),
 // User, Project, and an event-type sheet. Viewing is available on every plan; CSV export is
 // Enterprise-gated, and time windows older than the plan's retention prompt an upgrade.
-// Filtering + pagination are server-side (cursor by id): every filter change refetches page 1,
-// and "Load more" pages in older rows. A row carries the resource's name as it was recorded with
+// Filtering + pagination are server-side, on the console's one keyset contract (`useKeysetList` +
+// `ListFooter`, LST-10 #7492): every filter change restarts at page one, and the footer's sentinel
+// and "Load more" page in older rows. A row carries the resource's name as it was recorded with
 // the event (#6735); only a row without one (older rows, people) is named from the projects store +
 // members, which cannot name what has since been deleted. The Project filter is resolved to
 // project ids server-side. When
@@ -16,6 +17,7 @@
 import { Boxes, Download, ListFilter, ScrollText, Users } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ListFooter } from "@/components/list/list-footer";
 import {
 	type ActivityPage,
 	type ActivityRow,
@@ -32,7 +34,10 @@ import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useHydrated } from "@repo/ui/use-hydrated";
-import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
+import { useMembersQuery } from "@/lib/query/use-activity-query";
+import { normalizeActivityQuery } from "@/lib/query/activity-query";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { orpc } from "@/lib/rpc/client";
 import { RegionError } from "@/components/errors/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
@@ -217,27 +222,24 @@ export function ActivityLog({
 	// key, so equal filters hit the cache (the standard). When the feed is locked to a
 	// `projectId` (project settings) that scope is forced; otherwise the Project facet
 	// drives the `resourceIds` (the selected project ids), keeping scoping server-side.
-	const query = useMemo(
-		() =>
-			activityQueryFrom({
-				filters,
-				range,
-				search: debouncedSearch,
-				pinnedProjectId: projectId,
-			}),
-		[filters, range, debouncedSearch, projectId],
-	);
+	// `activityQueryFrom` already normalizes; normalizing again at the key is idempotent, and makes
+	// "the key is the normalized query" a fact of this module rather than of a helper a module away.
+	const query = useMemo(() => normalizeActivityQuery(
+		activityQueryFrom({
+			filters,
+			range,
+			search: debouncedSearch,
+			pinnedProjectId: projectId,
+		}),
+	), [filters, range, debouncedSearch, projectId]);
 
-	// Cursor-paginated fetch, filters in the key, keepPreviousData across filter changes —
-	// replaces the raw `useEffect` + `cancelled`-flag chain (forbidden by the standard).
-	const activity = useActivityQuery(query);
-	const rows = useMemo<ActivityRow[]>(
-		() => (activity.data?.pages ?? []).flatMap((p) => p.rows),
-		[activity.data],
-	);
-	const nextCursor = activity.data?.pages.at(-1)?.nextCursor ?? null;
+	// The shared keyset read: the normalized filters are the whole key, the cursor is the page
+	// param, keepPreviousData holds the old rows across a filter change, and rows are joined across
+	// pages keeping each id once — so a live hint (an `activity` topic invalidation, ADR 0005) that
+	// refetches the walk from page one never draws a row twice (lib/query/use-keyset-list.ts).
+	const activity = useKeysetList(orpc.activity.page, query);
+	const rows = activity.rows;
 	const loading = activity.isPending;
-	const loadingMore = activity.isFetchingNextPage;
 	// The other half of `keepPreviousData` (lib/query/README.md, step 5). Keeping the rows is
 	// only half the standard: without the dim the feed renders the PREVIOUS filter's rows as
 	// though they were the answer to the one you just picked, which is a worse lie than a
@@ -247,21 +249,14 @@ export function ActivityLog({
 	// The feed is BUSY while what it shows may not answer the URL and the bar: before the link has
 	// been read into the store, before the first answer, while the rows are the previous query's
 	// placeholder, and while a typed search is still inside its debounce — the jobs and runners
-	// lists' rule (#4980, #5045). Before the first answer this feed renders a skeleton with no count,
-	// no table and no empty state, which nothing else on screen tells apart from a page that failed
+	// lists' rule (#4980, #5045). Before the first answer this feed renders a skeleton with no
+	// table and no empty state, which nothing else on screen tells apart from a page that failed
 	// to render a list; `aria-busy` says which, for assistive tech and for the audit's F8–F9 read,
 	// which took two such reads for the list's answer (#5471).
 	const busy = !urlRead || activity.isPending || stale || filters.search !== debouncedSearch;
-
-	/**
-	 * Fetch the next page (older rows); TanStack appends it to `pages`. It does not throw: a failure
-	 * lands on the query as `isFetchNextPageError`, which the feed renders under the rows it already
-	 * has (R6 E-26) — the old `catch` here never ran.
-	 */
-	const onLoadMore = useCallback(() => {
-		if (nextCursor == null || loadingMore) return;
-		void activity.fetchNextPage();
-	}, [activity, nextCursor, loadingMore]);
+	// `query.isError` is a first-page or refresh failure only; a failed LATER page is the footer's.
+	const firstPageFailed = activity.query.isError && activity.query.data === undefined;
+	const refreshFailed = activity.query.isError && activity.query.data !== undefined;
 
 	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. While the
 	 * retention is unknown, a range inside the community floor applies and an older one does
@@ -283,7 +278,7 @@ export function ActivityLog({
 	// the scope and none of the filters — so a count holds still as you select options, the
 	// standard's unfiltered-universe rule. They ride on the FIRST page only; while it loads the
 	// options render without a figure rather than with a zero that is not yet true.
-	const facets = activity.data?.pages[0]?.facets ?? null;
+	const facets = activity.facets;
 
 	// Options are the org's FULL member / project lists (their own shared query caches), never
 	// the rows on screen, so an option cannot vanish as it is selected. An actor the log knows
@@ -336,13 +331,10 @@ export function ActivityLog({
 		DEFAULT_ACTIVITY_FILTERS,
 	);
 	/**
-	 * Every event in this scope, whatever the filters and the window, or null while unknown. The
-	 * facet passes see the scope and nothing else (the time window included), so their decision
-	 * counts add up to the whole log — which is what tells a new organization from a quiet week.
+	 * Whether this scope's log is empty whatever the filters and the window, or null while unknown —
+	 * the first page's `universeEmpty`, which is what tells a new organization from a quiet week.
 	 */
-	const scopeTotal = facets
-		? facets.decisions.reduce((sum, option) => sum + option.count, 0)
-		: null;
+	const universeEmpty = activity.universeEmpty;
 
 	// The export through the mutation contract: pending disables the button (no second export while
 	// one runs), a plan refusal opens the upgrade sheet, a permission refusal is one toast with the
@@ -370,19 +362,18 @@ export function ActivityLog({
 
 	// Refused while the page is open (the viewer's `view_activity` went away): the no-access render,
 	// never the failure below and never an empty feed (B4).
-	if (readRefusalOf(activity.error) === "forbidden") return <ActivityNoAccess />;
+	if (readRefusalOf(activity.query.error) === "forbidden") return <ActivityNoAccess />;
 
 	return (
 		<div aria-busy={busy}>
 			{/* The page opens with its toolbar, not a heading that repeats the breadcrumb (R6 E-28):
-			    the count of rows LOADED so far — this feed is cursor-paginated, so "42" means 42 on
-			    screen and "Load more" moves it — one line saying what the feed is, and Export.
+			    one line saying what the feed is, and Export. No count: the feed is keyset-paged, so a
+			    figure could only be the rows LOADED so far, which reads as a total (#7481).
 			    Export dumps the WHOLE org log, so it only belongs on the org-scoped feed; when the plan
 			    or the role does not allow it, it is disabled WITH the reason (R6 E-09), which a
 			    disabled button's `title` never showed anyone. */}
 			<PageToolbar
 				className="mb-4"
-				count={loading ? null : rows.length}
 				description={
 					projectId ? (
 						<>
@@ -472,23 +463,23 @@ export function ActivityLog({
 				<FilterBarReset count={activeFilters} onReset={reset} />
 			</FilterBar>
 
-			{activity.data === undefined && activity.isError ? (
+			{firstPageFailed ? (
 				// A failed FIRST load is an error, never an empty feed. Once rows are on screen a later
 				// failure never replaces them (R6 E-26): a failed "Load more" is said under the rows
 				// it would have extended, and a failed background refresh keeps what was loaded.
 				<RegionError
 					title="Couldn't load activity"
 					description="Something went wrong fetching the activity log. Check your connection and try again."
-					onRetry={() => void activity.refetch()}
+					onRetry={() => void activity.query.refetch()}
 				/>
 			) : loading && rows.length === 0 ? (
 				<ActivityRowsSkeleton rows={6} />
 			) : (
 				<div className={stale ? "opacity-60 transition-opacity" : undefined}>
-					{activity.isRefetchError && !activity.isFetchNextPageError && (
+					{refreshFailed && (
 						<p role="status" className="mb-3 flex items-center gap-2 text-ui-sm text-text-secondary">
 							Couldn&apos;t refresh the activity log; showing what was loaded.
-							<Button variant="outline" size="sm" onClick={() => void activity.refetch()}>
+							<Button variant="outline" size="sm" onClick={() => void activity.query.refetch()}>
 								Try again
 							</Button>
 						</p>
@@ -496,13 +487,10 @@ export function ActivityLog({
 					<ActivityFeed
 						rows={rows}
 						ctx={ctx}
-						onLoadMore={onLoadMore}
-						hasMore={nextCursor != null}
-						loadingMore={loadingMore}
 						empty={
 							<ActivityEmpty
 								narrowed={narrowingFilters > 0}
-								scopeTotal={scopeTotal}
+								universeEmpty={universeEmpty}
 								pinnedToProject={projectId !== undefined}
 								// The wider window is offered only on the default window, and only to a plan
 								// whose retention reaches it — never as a button that opens an upsell.
@@ -515,16 +503,7 @@ export function ActivityLog({
 								onWiden={() => applyRange(presetRange("30d"), WIDER_RANGE_LABEL)}
 							/>
 						}
-						tail={
-							activity.isFetchNextPageError ? (
-								<div role="alert" className="flex items-center justify-center gap-2 pt-1 text-ui-sm text-text-secondary">
-									Couldn&apos;t load older activity. The rows above are unchanged.
-									<Button variant="outline" size="sm" disabled={loadingMore} onClick={onLoadMore}>
-										Try again
-									</Button>
-								</div>
-							) : undefined
-						}
+						footer={<ListFooter list={activity} />}
 					/>
 				</div>
 			)}
@@ -540,22 +519,23 @@ const WIDER_RANGE_LABEL = RANGE_PRESETS.find((p) => p.id === "30d")?.label ?? "L
  *
  * - **filtered** — something beyond the time window narrows the feed; the sentence the alerts
  *   activity panel and the QA flow catalog already pin, with Clear filters;
- * - **new** — the scope's whole log is empty, whatever the window (the facet totals see no window);
+ * - **new** — the scope's whole log is empty, whatever the window (`universeEmpty`, which the
+ *   server answers from the facet passes, and they see no window);
  * - **quiet** — the log has events, none in this window; offered the wider window when the window
  *   is still the default and the plan's retention reaches it.
  *
- * While the totals are unknown, an unfiltered empty feed is the quiet answer without a figure.
+ * While `universeEmpty` is unknown, an unfiltered empty feed is the quiet answer.
  */
 function ActivityEmpty({
 	narrowed,
-	scopeTotal,
+	universeEmpty,
 	pinnedToProject,
 	canWiden,
 	onClearFilters,
 	onWiden,
 }: {
 	narrowed: boolean;
-	scopeTotal: number | null;
+	universeEmpty: boolean | null;
 	pinnedToProject: boolean;
 	canWiden: boolean;
 	onClearFilters: () => void;
@@ -576,7 +556,7 @@ function ActivityEmpty({
 			/>
 		);
 	}
-	if (scopeTotal === 0) {
+	if (universeEmpty === true) {
 		return (
 			<EmptyState
 				className="bg-surface-sunken"

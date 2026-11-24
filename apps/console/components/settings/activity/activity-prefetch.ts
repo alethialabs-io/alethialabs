@@ -13,8 +13,8 @@ import { serverOrpc } from "@/lib/rpc/server";
 /**
  * The Activity routes' prefetch (#6129, B1), shared by the org feed and a project's feed so the two
  * cannot drift apart: the default window resolved ONCE, here, and the first page of
- * `activity.page` for the link's filters in that window — the exact infinite key `useActivityQuery`
- * asks for — plus `members.list`, which names the actors. Returns the window, which the feed must
+ * `activity.page` for the link's filters in that window — the exact infinite key the feed's
+ * `useKeysetList` asks for (the filter alone; the cursor is the page param, never in the key) — plus `members.list`, which names the actors. Returns the window, which the feed must
  * be handed (a window resolved in the browser is a different key), and whether the log refused the
  * viewer (`view_activity` withdrawn between the permission check and the read).
  */
@@ -28,7 +28,7 @@ export async function prefetchActivityFeed(
 	const query = activityQueryFromUrl(params, defaultWindow, projectId);
 	const rpc = serverOrpc();
 	const page = rpc.activity.page.infiniteOptions({
-		input: (cursor: number | null) => (cursor == null ? query : { ...query, cursor }),
+		input: (cursor: string | null) => (cursor === null ? query : { ...query, cursor }),
 		initialPageParam: null,
 		getNextPageParam: (last) => last.nextCursor,
 		retry: retryUnlessRefused,
