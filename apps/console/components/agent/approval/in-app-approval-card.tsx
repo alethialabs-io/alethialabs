@@ -6,6 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { formatMonthlyRate, formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -13,10 +14,8 @@ import { z } from "zod";
 import { decideApplyApproval } from "@/app/server/actions/approvals";
 import { type InAppApprovalDetail, readInAppApproval, startInAppApproval } from "@/lib/agent/approval-actions";
 import type { InAppApprovalOutput } from "@/lib/agent/approval-output";
+import { IN_APP_APPROVAL_KEY } from "@/lib/query/topics";
 import { useArtifactStore } from "@/lib/stores/use-artifact-store";
-
-/** How often a card whose request is still open asks where it stands. */
-const POLL_MS = 10_000;
 
 /** The `requested` arm of the approval tools' output: what the card is drawn for. */
 type RequestedApproval = Extract<InAppApprovalOutput, { status: "requested" }>;
@@ -38,13 +37,26 @@ function refusalText(error: { kind: string; message?: string }): string {
  * path: a console session, a recent sign-in, the verb on the project, and a different person when the
  * org requires one). Once approved, the requester's click starts the job, queued as the assistant's
  * credential with the approval presented, so the queue gate consumes it once.
+ *
+ * Where the request stands is a query under {@link IN_APP_APPROVAL_KEY}, which the `environments`
+ * topic invalidates whenever the approval row changes (lib/realtime/README.md, rule 1): a teammate's
+ * decision reaches this card without a poll. `expired` is computed at read time, so the card re-reads
+ * once when the request's window closes.
  */
 export function InAppApprovalCard({ request }: { request: RequestedApproval }) {
 	const open = useArtifactStore((s) => s.open);
-	const [detail, setDetail] = useState<InAppApprovalDetail | null>(null);
+	const queryClient = useQueryClient();
+	const queryKey = [...IN_APP_APPROVAL_KEY, request.approval_id];
+	const { data: detail = null, dataUpdatedAt } = useQuery({
+		queryKey,
+		queryFn: async (): Promise<InAppApprovalDetail | null> => {
+			const res = await readInAppApproval({ approvalId: request.approval_id });
+			return res.ok ? res.data : null;
+		},
+	});
 	const [message, setMessage] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
-	const [now, setNow] = useState<Date | null>(null);
+	const now = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
 	const form = useForm<z.infer<typeof confirmSchema>>({
 		resolver: zodResolver(confirmSchema),
 		defaultValues: { environmentName: "" },
@@ -54,26 +66,21 @@ export function InAppApprovalCard({ request }: { request: RequestedApproval }) {
 	const status = detail?.approval.status ?? request.approval_status;
 	const digest = detail?.approval.digest_prefix ?? request.digest_prefix;
 
-	const refresh = useCallback(async () => {
-		const res = await readInAppApproval({ approvalId: request.approval_id });
-		setNow(new Date());
-		if (res.ok) setDetail(res.data);
-	}, [request.approval_id]);
+	const refresh = useCallback(
+		() => queryClient.invalidateQueries({ queryKey: [...IN_APP_APPROVAL_KEY, request.approval_id] }),
+		[queryClient, request.approval_id],
+	);
 
-	// Where the request stands now, and again while a person may still decide or start it.
+	// `expired` is computed when the approval is read, so no change hint announces it: read once more
+	// when the window closes. One timer per open request, not a poll.
+	const live = status === "pending" || status === "approved";
 	useEffect(() => {
-		let cancelled = false;
-		const tick = () => {
-			if (!cancelled) void refresh().catch(() => undefined);
-		};
-		tick();
-		const live = status === "pending" || status === "approved";
-		const timer = live ? setInterval(tick, POLL_MS) : undefined;
-		return () => {
-			cancelled = true;
-			if (timer) clearInterval(timer);
-		};
-	}, [refresh, status]);
+		if (!live) return;
+		const wait = Date.parse(request.expires_at) - Date.now();
+		if (!(wait > 0)) return;
+		const timer = setTimeout(() => void refresh(), wait + 1_000);
+		return () => clearTimeout(timer);
+	}, [live, request.expires_at, refresh]);
 
 	/** Queues the approved job as the assistant's credential and opens its logs. */
 	const startJob = async () => {
@@ -101,7 +108,7 @@ export function InAppApprovalCard({ request }: { request: RequestedApproval }) {
 			if (detail?.requestedByReader) await startJob();
 		} finally {
 			setBusy(false);
-			await refresh().catch(() => undefined);
+			await refresh();
 		}
 	});
 
@@ -113,7 +120,7 @@ export function InAppApprovalCard({ request }: { request: RequestedApproval }) {
 			if (!decided.ok) setMessage(refusalText(decided.error));
 		} finally {
 			setBusy(false);
-			await refresh().catch(() => undefined);
+			await refresh();
 		}
 	};
 
@@ -124,7 +131,7 @@ export function InAppApprovalCard({ request }: { request: RequestedApproval }) {
 			await startJob();
 		} finally {
 			setBusy(false);
-			await refresh().catch(() => undefined);
+			await refresh();
 		}
 	};
 
@@ -146,7 +153,7 @@ export function InAppApprovalCard({ request }: { request: RequestedApproval }) {
 					</div>
 					<div className="vx-eyebrow text-ui-3xs">
 						Requested by the assistant · digest {digest}
-						{now && (status === "pending" || status === "approved")
+						{now && live
 							? ` · expires ${formatRelative(request.expires_at, now)}`
 							: ""}
 					</div>
