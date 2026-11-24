@@ -1679,6 +1679,26 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:ui-client-boundary -- --self-test
+      # The packages published to npm as @alethialabs/* (packages/public-packages.json,
+      # docs/contributing/releasing-packages.md). Building and packing them on every PR is the only
+      # place a broken publish shows BEFORE it reaches main: a published package depending on an
+      # unpublished one, an export the build did not produce, a missing asset. The changeset check
+      # fails a PR that changes what a published package ships without saying how to version it.
+      # Each script's self-test plants its defects first, so a parser that stopped matching cannot
+      # pass green over nothing.
+      - name: Published packages build, stage and pack (no upload)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/release/stage-public-packages.mjs --self-test
+          node scripts/release/stage-public-packages.mjs
+          node scripts/release/publish-public-packages.mjs --dry-run
+      - name: A change to a published package carries a changeset
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/check-changeset.mjs --self-test
+          node scripts/release/check-changeset.mjs
       # CLAUDE.md §6's shared-surface table, for the two rows where the rule is unambiguous:
       # @repo/format and @repo/ui/page-header. Before this, no row of that table was guarded by
       # anything — one `numeric` column rendered as `$12.50/mo`, `~$12/mo` and `€12.50`, and
