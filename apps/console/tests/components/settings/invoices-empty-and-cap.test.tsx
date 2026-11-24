@@ -42,8 +42,7 @@ function invoice(id: string): InvoiceInfo {
 		periodStart: null,
 		periodEnd: null,
 		description: null,
-		hasPdf: false,
-		hostedInvoiceUrl: null,
+		facturaIssued: true,
 	};
 }
 
