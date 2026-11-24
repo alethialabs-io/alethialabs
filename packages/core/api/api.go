@@ -327,6 +327,9 @@ type QueueJobParams struct {
 	// tenants first. Without it the server refuses to destroy a Fabric owner that still has live
 	// tenants, naming them. Sent only when true.
 	Cascade bool
+	// ApprovalID (DEPLOY and DESTROY only) presents a person's approval of the reviewed plan, which
+	// a CLI login or a service token needs (RequestApproval). Sent only when set.
+	ApprovalID string
 }
 
 // CascadeJob is one DESTROY job a cascade queued, in destroy order (tenants first, owner last).
@@ -790,6 +793,9 @@ func (c *Client) QueueJobFull(params QueueJobParams) (*QueueJobResponse, error) 
 	}
 	if params.Cascade {
 		payload["cascade"] = true
+	}
+	if params.ApprovalID != "" {
+		payload["approval_id"] = params.ApprovalID
 	}
 
 	var successResp QueueJobResponse
