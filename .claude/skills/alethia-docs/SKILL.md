@@ -25,7 +25,7 @@ Pick exactly one — don't blend a tutorial into a reference.
 | Type            | Purpose                          | Shape                                                        | Alethia home                         |
 | --------------- | -------------------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | **Tutorial**    | teach a beginner, end to end     | a guaranteed-to-work lesson; concrete, no digressions       | `tutorials/`                         |
-| **How-to**      | help a competent user do a task  | numbered steps toward one goal; assumes context             | `guides/` (connectors, design-project, self-hosting, …) |
+| **How-to**      | help a competent user do a task  | numbered steps toward one goal; assumes context             | `guides/` (connectors, design-project, …), `self-host/`, `agents/` |
 | **Reference**   | state the facts                  | dry, exhaustive, consistently structured; describe, not teach | `reference/` (CLI, API, config, control catalog, glossary) |
 | **Explanation** | build understanding              | discursive; the *why*, trade-offs, connections              | `concepts/` (pipeline, domain model, runner, Elench) |
 
@@ -38,6 +38,12 @@ runbooks — goes in the repository's `docs/contributing/`, not here. The test: 
 *using* Alethia, or running their own copy, ever need it?
 
 If a page is trying to do two of these, split it.
+
+**Every type has a fixed set of sections and a prose-word cap** — the table under "Page types" in
+`apps/docs/README.md`. `pnpm -F docs check:page-length` enforces the caps in CI, with a shrink-only
+ledger for the pages that were already over. Shorter is not the goal by itself: cut repetition,
+history, internals and hedging; keep every fact the reader needs to act. A page over its cap is
+split by task or concept, never trimmed until it is vague.
 
 ## 2. Write plain, STE-informed prose
 
