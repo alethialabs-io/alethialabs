@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { sql } from "drizzle-orm";
-import { getServiceDb } from "@/lib/db";
+import { type Db, getServiceDb } from "@/lib/db";
 
 /**
  * Lock TTL for a tofu-state object. Deliberately > the 2h job timeout so a LIVE apply is never
@@ -69,10 +69,13 @@ export async function forceReleaseStateLock(stateKey: string): Promise<boolean> 
  *
  * Rotates + bumps the fencing `generation` rather than deleting the row, so even a zombie writer is
  * fenced out instead of corrupting state. Scoped strictly to locks THIS job holds. Returns how many
- * were released (normally 0 — tofu unlocked itself — or 1).
+ * were released (normally 0 — tofu unlocked itself — or 1). `db` defaults to the service pool; the
+ * reconcile sweep passes its transaction, which already holds the job's row.
  */
-export async function releaseStateLocksForJob(jobId: string): Promise<number> {
-	const db = getServiceDb();
+export async function releaseStateLocksForJob(
+	jobId: string,
+	db: Pick<Db, "execute"> = getServiceDb(),
+): Promise<number> {
 	const rows = await db.execute<{ released: number }>(
 		sql`select release_tofu_state_locks_for_job(${jobId}::uuid) as released`,
 	);
