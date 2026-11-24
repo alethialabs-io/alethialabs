@@ -52,6 +52,11 @@ export interface CloudConnectSetup {
 	 *
 	 * A cloud this deployment does not offer is `false` whatever the platform has: the server
 	 * refuses a new connection for it, so a Connect control for it could only fail.
+	 *
+	 * A keyless cloud whose issuer key IS set but whose app URL no cloud can reach (not HTTPS, or a
+	 * private/local host) stays `true` here on purpose: the board keeps its Connect, and the connect
+	 * sheet reads the board's `keylessReadiness` (`lib/oidc/keyless-readiness.ts`) and says "this
+	 * instance is not publicly reachable" with the reason and the way forward (EDN-H6).
 	 */
 	platformConfigured: Record<string, boolean>;
 }

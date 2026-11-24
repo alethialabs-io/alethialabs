@@ -32,9 +32,14 @@ vi.mock("@/lib/authz/guard", () => ({ authorizeQuiet }));
 vi.mock("@/lib/support/scope", () => ({
 	withSupportScope: async (_actor: unknown, fn: (t: unknown) => unknown) => fn(tx),
 }));
-vi.mock("@/lib/queries/support", () => ({ listCasesForOwner, getCaseWithThread }));
+vi.mock("@/lib/queries/support", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/queries/support")>()),
+	listCasesForOwner,
+	getCaseWithThread,
+}));
 
 import { ForbiddenError } from "@/lib/authz/types";
+import { CASE_PAGE_SIZE } from "@/lib/queries/support";
 import { supportRouter } from "@/lib/rpc/procedures/support";
 
 const ACTOR = { userId: "user-1", orgId: "org-1", credential: "session" as const };
@@ -55,7 +60,24 @@ describe("support.cases", () => {
 	] as const)("bucket %s reaches the builder as %j, for the resolved actor", async (bucket, filter) => {
 		await client.cases({ bucket });
 		expect(authorizeQuiet).toHaveBeenCalledWith("view", { type: "support_case" });
-		expect(listCasesForOwner).toHaveBeenCalledWith(tx, ACTOR.userId, filter);
+		// No cursor is the first page — one page, never the whole list (#7389).
+		expect(listCasesForOwner).toHaveBeenCalledWith(tx, ACTOR.userId, filter, {
+			cursor: undefined,
+			limit: CASE_PAGE_SIZE,
+		});
+	});
+
+	it("passes a cursor through to the builder as the page's keyset position", async () => {
+		const cursor = { at: "2026-11-20T10:00:00.123Z", id: CASE };
+		await client.cases({ bucket: "all", cursor });
+		expect(listCasesForOwner).toHaveBeenCalledWith(tx, ACTOR.userId, {}, { cursor, limit: CASE_PAGE_SIZE });
+	});
+
+	it("refuses a malformed cursor before reading", async () => {
+		await expect(
+			client.cases({ bucket: "all", cursor: { at: "yesterday", id: "nope" } }),
+		).rejects.toBeInstanceOf(ORPCError);
+		expect(listCasesForOwner).not.toHaveBeenCalled();
 	});
 
 	it("refuses an unknown bucket before reading", async () => {

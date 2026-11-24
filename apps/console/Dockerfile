@@ -58,7 +58,13 @@ ENV POSTHOG_PROJECT_ID=$POSTHOG_PROJECT_ID POSTHOG_API_HOST=$POSTHOG_API_HOST
 # next's serverExternalPackages trace pulls @alethia/ee + its deps into the
 # standalone bundle. Without dist/, the loader's tolerant require falls back to the
 # community build (no orgs/teams/SSO).
-RUN pnpm --filter @alethia/ee build
+#
+# Licence custody (EDN-E3): the define marks this as a release image build. The enterprise code
+# then verifies an installed ALETHIA_LICENSE_KEY only against the public keys compiled in from
+# ee/src/license-keys.ts, and ignores the development-only ALETHIA_LICENSE_PUBLIC_KEY and
+# ALETHIA_LICENSE_ACTIVE whatever NODE_ENV the container is started with. The verification key
+# is part of the image, not an operator setting; no signing key is ever present in this build.
+RUN pnpm --filter @alethia/ee build --define:__ALETHIA_LICENSE_IMAGE_BUILD__=true
 # The PostHog write key (BuildKit secret) is exported only for this RUN; absent → empty → no upload.
 RUN --mount=type=secret,id=posthog_api_key \
     POSTHOG_API_KEY="$(cat /run/secrets/posthog_api_key 2>/dev/null || true)" \

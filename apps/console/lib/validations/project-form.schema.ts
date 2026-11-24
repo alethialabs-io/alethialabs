@@ -820,6 +820,29 @@ export const projectFormSchema = z.object({
 	services: z.array(serviceItemSchema).default([]),
 });
 
+/**
+ * The board's SAVE: the same design as {@link projectFormSchema}, except that the project may have
+ * no cloud account yet (#7272).
+ *
+ * The create page says "You can create the project now and connect one on the canvas", and a
+ * project created that way has no `cloud_identity_id`. Saving a design provisions nothing, so it
+ * has no use for one — but Save validated with the deploy schema, which requires it, so the
+ * first-run user who followed the create page's advice could not save anything they drew. Plan and
+ * Deploy still validate with `projectFormSchema`, which still requires the account, and the server
+ * refuses a deploy of a project with none (`tryProvisionProject`).
+ *
+ * An empty or absent account is stored as NULL — the column is a nullable uuid, and the canvas
+ * projects "no account" as `""` (`graphToForm`), which the column would refuse.
+ */
+export const designSaveSchema = projectFormSchema.extend({
+	project: projectSchema.extend({
+		cloud_identity_id: z
+			.string()
+			.nullish()
+			.transform((id) => id || null),
+	}),
+});
+
 export type ProjectFormData = z.infer<typeof projectFormSchema>;
 export type ProjectFormInput = z.input<typeof projectFormSchema>;
 

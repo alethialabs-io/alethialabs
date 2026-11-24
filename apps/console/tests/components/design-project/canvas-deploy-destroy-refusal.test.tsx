@@ -77,6 +77,7 @@ vi.mock("@xyflow/react", () => ({
 // server call under test.
 vi.mock("@/lib/validations/project-form.schema", () => ({
 	projectFormSchema: { safeParse: () => ({ success: true, data: {} }) },
+	designSaveSchema: { safeParse: () => ({ success: true, data: { project: {} } }) },
 }));
 vi.mock("@/components/design-project/canvas/graph/graph-to-form", () => ({
 	graphToForm: () => ({}),
@@ -236,7 +237,7 @@ describe("Canvas Save", () => {
 		expect(saveDesign).toHaveBeenCalledWith({
 			projectId: "proj-1",
 			environmentId: "env-1",
-			design: {},
+			design: { project: {} },
 		});
 		expect(isBoardDirty()).toBe(true);
 		expect(toastSuccess).not.toHaveBeenCalled();

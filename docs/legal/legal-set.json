@@ -151,10 +151,10 @@
 			"route": "/consumer-rights",
 			"source": "apps/marketing/app/consumer-rights/page.tsx",
 			"status": "current",
-			"sealed": false,
-			"version": "2026-11-22",
-			"displayedDate": "2026-11-22",
-			"contentHash": null,
+			"sealed": true,
+			"version": "2026-11-23",
+			"displayedDate": "2026-11-23",
+			"contentHash": "1d57baabd0e9fa3710f4b806b4590aad30a77d5b49a6b6a7e551ca532b243e1b",
 			"owner": "LEG-L1"
 		},
 		{
@@ -1591,6 +1591,75 @@
 			"verifiedOn": "2026-11-22"
 		},
 		{
+			"id": "consumer-rights.console-withdrawal",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "You can also withdraw from the billing settings in the console, which shows what you will get back before you confirm.",
+			"evidence": [
+				{
+					"path": "apps/console/app/(private)/[org]/~/settings/billing/page.tsx",
+					"pattern": "\\{showWithdrawal \\? <WithdrawalSection /> : null\\}",
+					"shows": "The billing settings page mounts the withdrawal control."
+				},
+				{
+					"path": "apps/console/components/billing/withdrawal-section.tsx",
+					"pattern": "Refunded if you withdraw now:",
+					"shows": "The control shows the refund the server computed before the consumer acts."
+				},
+				{
+					"path": "apps/console/components/billing/withdrawal-section.tsx",
+					"pattern": "description=\\{`You will be refunded \\$\\{refund\\} and \\$\\{retained\\} will be retained",
+					"shows": "The confirm step repeats the refund and the retained amount before the withdrawal is made."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-23"
+		},
+		{
+			"id": "consumer-rights.refund-arranged",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "outside-repo",
+			"quote": "If we cannot refund automatically, for example because there was no card payment to refund against, we contact you within 14 days to arrange it.",
+			"evidence": [
+				{
+					"path": "apps/console/app/server/actions/consumer-rights.ts",
+					"pattern": "if \\(!refundIssued\\) \\{\\n\\t\\tawait alertOperator\\(\\{\\n\\t\\t\\ttitle: \"Withdrawal refund owed but not issued\"",
+					"shows": "When an owed refund could not be issued, the withdrawal action alerts the platform operator."
+				},
+				{
+					"path": "apps/console/emails/withdrawal-acknowledgement.tsx",
+					"pattern": "\\{refundIssued \\? null : \\(",
+					"shows": "The acknowledgement repeats the sentence only when the refund was not issued."
+				}
+			],
+			"requires": "A person acting on the operator alert: contacting the consumer and arranging the refund within 14 days of the withdrawal. Nothing in the repository schedules or tracks that contact.",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-23"
+		},
+		{
+			"id": "consumer-rights.bg-payment-obligation-label",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "Бутонът, с който се прави поръчката, гласи „ {CONSUMER_PAYMENT_OBLIGATION_LABEL_BG}“",
+			"evidence": [
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "CONSUMER_PAYMENT_OBLIGATION_LABEL_BG = \"Поръчка със задължение за плащане\";",
+					"shows": "The Bulgarian label is the ЗЗП art. 49(2) formulation."
+				},
+				{
+					"path": "packages/legal/src/commerce.ts",
+					"pattern": "if \\(locale === \"bg-BG\"\\) \\{\\n\\t\\treturn capacity === \"consumer\"\\n\\t\\t\\t\\? CONSUMER_PAYMENT_OBLIGATION_LABEL_BG",
+					"shows": "orderButtonLabel returns it for a consumer addressed in Bulgarian. No checkout renders orderButtonLabel yet; the consumer checkout that will is not built."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-23"
+		},
+		{
 			"id": "security.token-clouds-encrypted",
 			"document": "security",
 			"kind": "security",
@@ -1778,27 +1847,6 @@
 			"foundOn": "2026-11-17"
 		},
 		{
-			"id": "privacy.inventory-window-not-in-retention-register",
-			"document": "privacy",
-			"quote": "Removed cloud inventory and capability observations: 7 days by default.",
-			"says": "The page publishes a 7-day window for removed inventory and capability observations.",
-			"actually": "The window is real (see the claim privacy.retention.removed-inventory), but the retention register has no entry for it, although that file states that nothing may be retained without appearing there. Its test covers only the gc_* SQL functions, and this purge is TypeScript, so nothing reports the gap. Not a false statement on the page; a hole in the register LEG-L4's retention schedule is to agree with.",
-			"evidence": [
-				{
-					"path": "apps/console/lib/retention/registry.ts",
-					"absent": "inventory",
-					"shows": "The retention register does not mention inventory."
-				},
-				{
-					"path": "apps/console/lib/retention/registry.ts",
-					"pattern": "nothing may be retained by this product\\s*//\\s*without appearing here",
-					"shows": "The register's own statement of completeness."
-				}
-			],
-			"owner": "LEG-L4",
-			"foundOn": "2026-11-17"
-		},
-		{
 			"id": "tax.art-97a-statement-incomplete",
 			"document": "tax-market-preconditions",
 			"quote": "Art. 97a(1) imposes the same registration on a company that **receives**",
@@ -1903,38 +1951,6 @@
 			"foundOn": "2026-11-22"
 		},
 		{
-			"id": "privacy.support-retention-not-enforced",
-			"document": "privacy",
-			"quote": "Support and contractual correspondence: up to 3 years after the matter closes",
-			"says": "The policy publishes a maximum of 3 years after closure for support correspondence.",
-			"actually": "No code deletes support cases or messages, and the retention register has no entry for them. The window is a policy applied by hand at best. Filed as #7220: either a deletion job enforces it, or the re-seal states what is actually done.",
-			"evidence": [
-				{
-					"path": "apps/console/lib/retention/registry.ts",
-					"absent": "[Ss]upport (case|message|thread)",
-					"shows": "The retention register has no entry for support cases or messages."
-				}
-			],
-			"owner": "LEG-L4",
-			"foundOn": "2026-11-22"
-		},
-		{
-			"id": "retention-registry.backups-entry-stale",
-			"document": "module-retention-registry",
-			"quote": "requires the backup rotation to be evidenced",
-			"says": "The retention register says the backup rotation is not established.",
-			"actually": "deploy/prod/backup/backup.sh now keeps 14 daily and 8 weekly encrypted off-box copies by default and exports erasure tombstones hourly (REL-L7, #6908). What is still not evidenced is that it runs in production. Filed as #7220.",
-			"evidence": [
-				{
-					"path": "deploy/prod/backup/backup.sh",
-					"pattern": "BACKUP_KEEP_DAILY=\"\\$\\{BACKUP_KEEP_DAILY:-14\\}\"",
-					"shows": "The rotation exists in code."
-				}
-			],
-			"owner": "LEG-L4",
-			"foundOn": "2026-11-22"
-		},
-		{
 			"id": "module-processing.backup-store-unregistered",
 			"document": "module-processing",
 			"quote": null,
@@ -2000,27 +2016,6 @@
 				}
 			],
 			"owner": "LEG-L1",
-			"foundOn": "2026-11-22"
-		},
-		{
-			"id": "consumer-rights.withdrawal-control-missing",
-			"document": "consumer-rights",
-			"quote": "A withdrawal control in the console&rsquo;s billing settings will be in place before consumer sales open.",
-			"says": "The page commits to a console withdrawal control before consumer sales open.",
-			"actually": "The server half exists (getWithdrawalRight, withdrawFromContract) but no component calls it. Filed as #7221; it gates the first consumer PAID_MARKETS cell together with paid-markets.withdrawal-function-not-listed.",
-			"evidence": [
-				{
-					"path": "apps/console/app/server/actions/consumer-rights.ts",
-					"pattern": "export async function withdrawFromContract\\(",
-					"shows": "The server action exists."
-				},
-				{
-					"path": "apps/console/components/billing/payer-declaration-form.tsx",
-					"absent": "withdrawFromContract",
-					"shows": "The billing form that asks for the buyer's capacity does not call it."
-				}
-			],
-			"owner": "REL-L4",
 			"foundOn": "2026-11-22"
 		}
 	]

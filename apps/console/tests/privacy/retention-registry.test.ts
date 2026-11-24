@@ -24,6 +24,7 @@ import {
 	unenforcedRetention,
 } from "@/lib/retention/registry";
 import { registryIsWellFormed } from "@/lib/retention/health";
+import { SUPPORT_CASE_RETENTION_DAYS } from "@/lib/reconcile/gc";
 
 const ROOT = join(process.cwd(), "..", "..");
 const PROGRAMMABLES = readFileSync(
@@ -146,6 +147,48 @@ describe("the register agrees with the accountability record", () => {
 			expect(stated).toBeTruthy();
 			expect(Number(stated?.[1])).toBe(e.windowDays);
 		}
+	});
+});
+
+describe("the register agrees with the TypeScript sweeps", () => {
+	const source = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
+
+	// #7220: the Privacy Policy publishes "up to 3 years after the matter closes" for support
+	// correspondence. The sweep reads its window from the register, and the loop must run it — an
+	// exported sweep nothing calls enforces nothing.
+	it("deletes support cases on the published window, from the reconcile loop", () => {
+		const entry = retentionEntry("support-cases");
+		expect(entry?.mechanism).toBe("reconcile-task");
+		expect(entry?.table).toBe("support_cases");
+		expect(entry?.windowDays).toBe(3 * 365);
+		expect(SUPPORT_CASE_RETENTION_DAYS).toBe(entry?.windowDays);
+		const loop = source("lib/reconcile/loop.ts");
+		expect(loop).toMatch(/runTask\("gc-support-cases", \(\) => gcSupportCases\(db\)\)/);
+		expect(loop).toMatch(/"gc-support-cases": \d/);
+	});
+
+	// The removed-inventory purge predates the register and keeps its own default in sweep.ts; this
+	// is the join, as the SQL-default test above is for the gc_* functions.
+	it("publishes the removed-inventory window the connection sweep defaults to", () => {
+		const entry = retentionEntry("removed-cloud-inventory");
+		expect(entry?.windowDays).toBe(RETENTION_DEFAULT_DAYS.removedInventory);
+		const sweep = source("lib/cloud-providers/sweep.ts");
+		const m = sweep.match(/ALETHIA_INVENTORY_RETENTION_DAYS \?\? "(\d+)"/);
+		expect(m).toBeTruthy();
+		expect(Number(m?.[1])).toBe(entry?.windowDays);
+		for (const fn of ["gcRemovedInventory", "gcRemovedServiceCapabilities", "gcRemovedQuotaCapabilities"]) {
+			expect(sweep).toContain(`${fn}(RETENTION_DAYS)`);
+		}
+	});
+
+	// The backup rotation is real, but the restore does not yet replay the erasure tombstones, so
+	// the entry stays open — with the window it states being the longest a production copy lives.
+	it("states the backup rotation, and keeps the restore replay open", () => {
+		const entry = retentionEntry("backups");
+		expect(entry?.mechanism).toBe("not-enforced");
+		expect(entry?.windowDays).toBe(76);
+		expect(entry?.evidence).toContain("14 dailies and 8 weeklies");
+		expect(entry?.evidence).toMatch(/NOT ESTABLISHED — requires the restore procedure to replay/);
 	});
 });
 

@@ -22,20 +22,32 @@
 // Stripe failure can never orphan an org. If the account still holds its one trial, a
 // card-less "Start trial" path creates a solo trial org instead (trials can't invite).
 // The two-column shell, invite view, and small form primitives are shared with the
-// upgrade-org sheet via ./org-purchase-ui.
+// upgrade-org sheet via ./org-purchase-ui. Everything the sheet remembers besides its form is one
+// pure reducer, ./create-org-machine.ts, and which panel is on screen is that file's `screenOf`.
+//
+// The sheet runs on the wizard engine (./create-org.wizard.ts): `?wizard=create-org&step=` holds the
+// open state and the step, a tab draft holds the name and the slug, and the payment step's gate asks
+// this tab's record and the server where a paid setup stands before anything is shown. The machine
+// still decides the panel and is the only way into `pay` and `invite`; the URL is kept in step with
+// it (the reconcile effect in `CreateOrgFlow`).
 
-import { zodResolver } from "@hookform/resolvers/zod";
 import { ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { type UseFormReturn, useForm, useWatch } from "react-hook-form";
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useReducer,
+	useRef,
+	useSyncExternalStore,
+} from "react";
+import { type UseFormReturn, useWatch } from "react-hook-form";
 import { toast } from "sonner";
-import { z } from "zod";
 import {
 	createNewOrgSubscriptionIntent,
 	getProOffer,
 	isOrgSlugAvailable,
-	type ProOffer,
 	saveNewOrgSetupDetails,
 	startProTrial,
 } from "@/app/server/actions/billing";
@@ -52,12 +64,35 @@ import {
 	type PayerDeclaration,
 } from "@/components/billing/payer-declaration-form";
 import {
+	type CreateOrgEvent,
+	type CreateOrgScreen,
+	type CreateOrgState,
+	type CreateOrgView,
+	CREATE_ORG_STEPS,
+	backEventFor,
+	closeNeedsConfirmation,
+	createOrgReducer,
+	INITIAL_CREATE_ORG_STATE,
+	isCreateOrgView,
+	knownCurrency,
+	type OpenFinding,
+	screenOf,
+	settlementOf,
+	setupUnfinished,
+} from "@/components/org/create-org-machine";
+import {
+	CREATE_ORG_DRAFT_SCOPE,
+	CREATE_ORG_NAME_STEP,
+	CREATE_ORG_WIZARD_ID,
+	type CreateOrgOutput,
+	type CreateOrgValues,
+	defineCreateOrgWizard,
+} from "@/components/org/create-org.wizard";
+import {
 	Field,
 	InviteView,
 	isValidInviteEmail,
 	PurchaseLayout,
-	type Role,
-	type SentInvite,
 } from "@/components/org/org-purchase-ui";
 import {
 	finishPaidSetup,
@@ -66,16 +101,13 @@ import {
 	pendingPaidSetupInPageOnly,
 	type PendingPaidSetup,
 	readStoredPaidSetup,
-	type StoredPaidSetup,
 	recoverUnfinishedPaidSetup,
 	SLUG_TAKEN,
 	pollSettlingPlanState,
 	watchPaidSetup,
 	writePendingPaidSetup,
 } from "@/components/org/pending-paid-setup";
-import type { NewOrgPlanReport } from "@/lib/billing/new-org-plan-state";
 import type { NewOrgSetupState } from "@/lib/billing/new-org-setup";
-import { ORG_SLUG_MAX, tooLongMessage } from "@/lib/billing/billing-field-caps";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
@@ -83,23 +115,21 @@ import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost } from "@/lib/org-url";
-import {
-	ORG_SLUG_RESERVED_CODE,
-	ORG_SLUG_RESERVED_MESSAGE,
-	globalHref,
-	RESERVED_SLUGS,
-} from "@/lib/routing";
+import { WIZARD_PARAM, type WizardUrlShape, wizardStepPatch } from "@/lib/query/view-url-params";
+import { ORG_SLUG_RESERVED_CODE, ORG_SLUG_RESERVED_MESSAGE, globalHref } from "@/lib/routing";
 import { finishSlugDraft, slugifyDraft, slugifyOrEmpty } from "@/lib/utils/slugify";
-import { ORG_SLUG_PATTERN } from "@repo/org-slug";
+import { clearDraft } from "@/lib/wizard/draft";
+import { useWizardEnvironment, wizardOpener } from "@/lib/wizard/location";
+import { checkStep, SETTLE_FAILED_MESSAGE } from "@/lib/wizard/steps";
+import type { Settlement } from "@/lib/wizard/types";
+import { useOpenRequest } from "@/lib/wizard/use-open-request";
+import { useWizard } from "@/lib/wizard/use-wizard";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
-import {
-	SUPPORTED_CURRENCIES,
-	type SupportedCurrency,
-	planMeta,
-} from "@repo/plan-catalog";
+import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
+import { WizardRestoredNotice } from "@repo/ui/wizard";
 import {
 	Sheet,
 	SheetContent,
@@ -111,32 +141,8 @@ import {
  *  Settings rename's and the server-side organization hooks' too (one constant, lib/routing.ts). */
 const SLUG_RESERVED = ORG_SLUG_RESERVED_MESSAGE;
 
-const schema = z.object({
-	name: z.string().trim().min(2, "Give your team a name."),
-	slug: z
-		.string()
-		.trim()
-		// The field holds a DRAFT while it is typed into (`slugifyDraft`, #5453): `acme-` is the state
-		// it is in between `acme` and `acme-cloud`. The checks below judge the slug that draft will be
-		// submitted as, so a half-typed hyphen is not refused mid-word. `commitSlug` writes the same
-		// finished value back into the form before anything reads it with `getValues`.
-		.transform(finishSlugDraft)
-		.pipe(
-			z
-				.string()
-				.min(1, "Pick a slug.")
-				// The server's cap for the slug it records with a paid setup (billing-field-caps.ts).
-				.max(ORG_SLUG_MAX, tooLongMessage(ORG_SLUG_MAX))
-				.regex(ORG_SLUG_PATTERN, "Lowercase letters, numbers and hyphens.")
-				// Checked HERE, not left to `isOrgSlugAvailable`: that action answers one boolean for both
-				// "reserved" and "taken", so a reserved slug ("docs") used to be refused as TAKEN — a
-				// sentence that sends the user looking for an organization that does not exist (#5442).
-				// RESERVED_SLUGS is the same set the action and `configureOnboardingOrg` consult, so the
-				// two cannot disagree.
-				.refine((s) => !RESERVED_SLUGS.has(s), SLUG_RESERVED),
-		),
-});
-type FormData = z.infer<typeof schema>;
+/** The form the engine holds: the team's name and slug (`create-org.wizard.ts`). */
+type CreateOrgForm = UseFormReturn<CreateOrgValues, unknown, CreateOrgOutput>;
 
 /**
  * Writes the finished slug — the typed draft without a dash at either end (#5453) — back into the
@@ -144,170 +150,195 @@ type FormData = z.infer<typeof schema>;
  * steps send `getValues().slug` to the server (the availability check, the intent, the saved setup).
  * Run on the slug field's blur and before every validation that precedes one of those reads.
  */
-function commitSlug(form: UseFormReturn<FormData>) {
+function commitSlug(form: CreateOrgForm) {
 	const draft = form.getValues("slug");
 	const finished = finishSlugDraft(draft.trim());
-	if (finished !== draft) form.setValue("slug", finished, { shouldValidate: true });
+	if (finished !== draft) form.setValue("slug", finished);
 }
 
-type View = "name" | "declare" | "pay" | "invite";
+/**
+ * Checks the name step the way the engine does (`checkStep`), puts each issue on its field and
+ * returns the fields that failed. `only` limits the check to one field — the recovery step shows
+ * the slug alone.
+ */
+function checkNameStep(form: CreateOrgForm, only?: "slug"): ("name" | "slug")[] {
+	form.clearErrors(only ?? ["name", "slug"]);
+	const issues = checkStep(CREATE_ORG_NAME_STEP, form.getValues());
+	if (issues === null) return [];
+	const failed: ("name" | "slug")[] = [];
+	for (const { field, message } of issues.fields) {
+		if (field !== "name" && field !== "slug") continue;
+		if (only !== undefined && field !== only) continue;
+		form.setError(field, { type: "validate", message });
+		failed.push(field);
+	}
+	return failed;
+}
 
 interface CreateOrgSheetProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
 
+/** What the sheet says when the server could not be asked about an unfinished paid setup. */
+const RECOVERY_UNAVAILABLE =
+	"We couldn't check whether you have a team setup to finish. If you just paid for a team, don't pay again — reopen Create a team in a moment, or contact support.";
+
+/**
+ * The gate of the flow that is mounted — one at a time, see "Which sheet answers" below. Set by
+ * `CreateOrgFlow` before the engine boots; with none mounted the gate cannot answer, and says so.
+ */
+let mountedSettle: (() => Promise<Settlement>) | null = null;
+
+/** The sheet's wizard: the definition, with the mounted flow's gate on `pay`. */
+const SHEET_WIZARD = defineCreateOrgWizard(
+	() => mountedSettle?.() ?? Promise.resolve({ kind: "unknown", message: SETTLE_FAILED_MESSAGE }),
+);
+
+/** The overlay's shape, for the URL patches the sheet writes itself. */
+const CREATE_ORG_URL: WizardUrlShape = { id: CREATE_ORG_WIZARD_ID, presentation: "overlay" };
+
 /** The fields the sheet renders from. */
 const WATCHED = ["name", "slug"] as const;
 
+// ── Which sheet answers `?wizard=create-org` ───────────────────────────────────────────────────
+//
+// Three screens render a create-team sheet at once (the org switcher, and the billing and usage
+// panels), and the URL that opens one opens all of them. The one that ASKED for it answers; with
+// nobody asking (a reload or a link with the param already in it), the first one mounted does. A
+// claim is kept until the URL closes, so the others render nothing meanwhile.
+
+/** The sheets mounted, in mount order, and the one that opened the URL. */
+const sheets: { mounted: string[]; claimedBy: string | null } = { mounted: [], claimedBy: null };
+const claimListeners = new Set<() => void>();
+
+/** Re-renders every sheet after a claim or a mount changed. */
+function notifyClaims(): void {
+	for (const listener of claimListeners) listener();
+}
+
+/** Subscribes a sheet to claim changes. */
+function subscribeClaims(listener: () => void): () => void {
+	claimListeners.add(listener);
+	return () => claimListeners.delete(listener);
+}
+
+/** Which sheet answers the URL now: the claimant, else the first mounted. */
+function answeringSheet(): string | null {
+	return sheets.claimedBy ?? sheets.mounted[0] ?? null;
+}
+
+/**
+ * The create-a-team sheet. Open while `?wizard=create-org` is in the URL and this is the sheet that
+ * answers it; `open` and `onOpenChange` are a parent's request, kept in step with the URL
+ * (`useOpenRequest`). The flow inside is mounted only while open, so closing starts the next open
+ * from the draft and the tab's record — never from a half-run sheet.
+ */
 export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
+	const env = useWizardEnvironment();
+	const opener = wizardOpener(env.location, CREATE_ORG_WIZARD_ID);
+	const sheetId = useId();
+	const answering = useSyncExternalStore(subscribeClaims, answeringSheet, () => null);
+
+	useEffect(() => {
+		sheets.mounted.push(sheetId);
+		notifyClaims();
+		return () => {
+			sheets.mounted = sheets.mounted.filter((id) => id !== sheetId);
+			if (sheets.claimedBy === sheetId) sheets.claimedBy = null;
+			notifyClaims();
+		};
+	}, [sheetId]);
+
+	// A claim ends with the URL that it opened.
+	useEffect(() => {
+		if (!opener.open && sheets.claimedBy === sheetId) {
+			sheets.claimedBy = null;
+			notifyClaims();
+		}
+	}, [opener.open, sheetId]);
+
+	useOpenRequest(open, onOpenChange, opener, () => {
+		sheets.claimedBy = sheetId;
+		notifyClaims();
+		env.location.push({ [WIZARD_PARAM]: CREATE_ORG_WIZARD_ID });
+	});
+
+	if (!opener.open || answering !== sheetId) return null;
+	return <CreateOrgFlow close={() => opener.setOpen(false)} />;
+}
+
+/** The sheet's content while open: the engine, the machine, and the panel `screenOf` picks. */
+function CreateOrgFlow({ close }: { close: () => void }) {
 	const router = useRouter();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 	const { viewer } = useViewer();
 	const ownerEmail = viewer?.email ?? "";
 	const viewerId = viewer?.id ?? "";
+	const env = useWizardEnvironment();
 
-	const form = useForm<FormData>({
-		resolver: zodResolver(schema),
-		defaultValues: { name: "", slug: "" },
-		mode: "onChange",
+	// Everything but the form, as one reducer (create-org-machine.ts): the steps, the payment refs,
+	// the post-payment run's outcome and the invite list. What is on screen is `screenOf(state)`.
+	const [state, dispatch] = useReducer(createOrgReducer, INITIAL_CREATE_ORG_STATE);
+	// The latest state, for the payment gate's `settle()`, which the engine calls from its own effect.
+	const latest = useRef(state);
+	useLayoutEffect(() => {
+		latest.current = state;
 	});
+	const wizard = useWizard(SHEET_WIZARD, {
+		defaultValues: { name: "", slug: "" },
+		scope: CREATE_ORG_DRAFT_SCOPE,
+		// The name step is moved past by the sheet, after the server has checked the slug.
+		onSubmit: () => undefined,
+	});
+	const form = wizard.form;
 	const [name, slug] = useWatch({ control: form.control, name: WATCHED });
 
-	const [slugTouched, setSlugTouched] = useState(false);
-	const [showUrl, setShowUrl] = useState(false);
-	const [view, setView] = useState<View>("name");
-	const [offer, setOffer] = useState<ProOffer | null>(null);
-	const [busy, setBusy] = useState(false);
-
-	// Deferred-create payment refs (carried across a Back→retry so neither the customer
-	// nor the incomplete subscription duplicates in Stripe).
-	const [clientSecret, setClientSecret] = useState<string | null>(null);
-	const [customerId, setCustomerId] = useState<string | null>(null);
-	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
-	// Billing currency of the open intent (Stripe locks it) + the validated org name, so the
-	// currency toggle can re-create the intent for the same org.
-	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
-	const [switchingCurrency, setSwitchingCurrency] = useState(false);
-	const [checkoutOrgName, setCheckoutOrgName] = useState("");
-	// The payer facts, declared before the intent and carried all the way to the org that does not
-	// exist yet. Null until the customer answers — nothing here is defaulted.
-	const [declaration, setDeclaration] = useState<PayerDeclaration | null>(null);
-	const [declaring, setDeclaring] = useState(false);
-	/** The gate's own sentence when it refused this declaration, shown on the declaration step. */
-	const [refusal, setRefusal] = useState<string | null>(null);
+	const {
+		view,
+		offer,
+		busy,
+		clientSecret,
+		customerId,
+		subscriptionId,
+		currency,
+		switchingCurrency,
+		checkoutOrgName,
+		declaration,
+		declaring,
+		recovered,
+		pending,
+		createdSlug,
+		createdOrgId,
+		paidPlan,
+		inviteEmail,
+		inviteRole,
+	} = state;
+	const screen = screenOf(state);
 	// A refusal is about the declaration that produced it; an edit to any declared fact drops it (F031).
-	const clearRefusal = useCallback(() => setRefusal(null), []);
-	const [createdSlug, setCreatedSlug] = useState("");
-	/**
-	 * The id of the org this sheet created (paid or trial). Invites NAME it: better-auth's
-	 * `inviteMember` otherwise targets the session's ACTIVE org, which a resumed setup never switched
-	 * — so an invite sent from it went to the team the customer was already in (#4133's class).
-	 */
-	const [createdOrgId, setCreatedOrgId] = useState<string | null>(null);
-	/**
-	 * A paid setup the SERVER says is unfinished, found with no usable record in this tab (a closed
-	 * tab, cleared storage, a record that no longer parses). The payer is asked to declare again —
-	 * the typed attestation was only ever in the lost record — and setup then resumes on the same
-	 * subscription. Never a new purchase.
-	 */
-	const [recovered, setRecovered] = useState<NewOrgSetupState | null>(null);
-	/**
-	 * The paid setup this sheet is finishing — set the moment the charge is confirmed, mirrored from
-	 * the record `finishPaidSetup` persists after each step, and null again only once the payer
-	 * declaration (the last step) succeeded. While it is set, a close is confirmed first.
-	 */
-	const [pending, setPending] = useState<PendingPaidSetup | null>(null);
-	// A post-payment step failed — offer a retry (no second charge) rather than the payment form.
-	const [needsSetupRetry, setNeedsSetupRetry] = useState(false);
-	/**
-	 * The sentence a run ended with when retrying cannot help (`retryable: false`): a hold or the link
-	 * refused the setup, or support has to untangle it. Shown as the run's final answer, with no retry.
-	 */
-	const [stopped, setStopped] = useState<string | null>(null);
-	/**
-	 * The purchase intent's `notice` (ADR 0002 §5.5): a sentence about an earlier checkout that does
-	 * not block this purchase, shown above the payment form. Null when the intent carried none.
-	 */
-	const [intentNotice, setIntentNotice] = useState<string | null>(null);
+	const clearRefusal = useCallback(() => dispatch({ type: "refusal-set", message: null }), []);
 	/**
 	 * Bumped by every `reset()`. A run of the post-payment steps outlives a closed sheet on purpose
 	 * (its progress is persisted either way); this is what stops it writing its OUTCOME into a sheet
 	 * that has since been closed or reopened — a reopened sheet attaches to the run instead.
 	 */
 	const generation = useRef(0);
-	/**
-	 * The charge went through and THEN the slug was refused at the create — claimed by another team
-	 * while this one paid (#5445). The retry must not re-use the colliding slug, so it asks for a new
-	 * one. No new payment intent is needed for that: the intent carries the org's NAME and the payer
-	 * facts, never its slug, and the org itself is only created after the charge — so changing the
-	 * slug before that create is changing nothing anyone has paid for.
-	 */
-	const [slugClaimedAfterPayment, setSlugClaimedAfterPayment] = useState(false);
-	/**
-	 * A close was asked for while a paid setup is unfinished. The sheet stays open and asks first:
-	 * closing used to `reset()` the subscription and customer ids — the only link between the charge
-	 * and the team it was for — so the customer was left charged with no organization, and reopening
-	 * started a new purchase.
-	 */
-	const [confirmingClose, setConfirmingClose] = useState(false);
-
-	// Invite step.
-	const [isTrialOrg, setIsTrialOrg] = useState(false);
-	// The plan state the server reported when a PAID setup finished (#5522); null for a trial, which
-	// says its own thing, and before a paid setup has finished.
-	const [paidPlan, setPaidPlan] = useState<
-		(NewOrgPlanReport & { subscriptionId: string; customerId: string }) | null
-	>(null);
-	const [inviteEmail, setInviteEmail] = useState("");
-	const [inviteRole, setInviteRole] = useState<Role>("operator");
-	const [sent, setSent] = useState<SentInvite[]>([]);
+	/** Set once the sheet has asked to close; see `leave`. */
+	const leaving = useRef(false);
 
 	const meta = planMeta("team");
 	const teamPrice = useLivePlanPrice("team", currency);
-	const trialAvailable = offer?.kind === "trial";
 
 	// Resolve the account's Pro offer (trial vs pay) when the sheet opens.
 	useEffect(() => {
-		if (!open) return;
 		let active = true;
 		getProOffer()
-			.then((o) => active && setOffer(o))
-			.catch(() => active && setOffer({ kind: "none" }));
+			.then((o) => active && dispatch({ type: "offer-resolved", offer: o }))
+			.catch(() => active && dispatch({ type: "offer-resolved", offer: { kind: "none" } }));
 		return () => {
 			active = false;
 		};
-	}, [open]);
-
-	/**
-	 * The sheet's own state restored from this tab's record — called while rendering, on the open
-	 * transition below. It only sets state; the form (an external store) and the run it attaches to
-	 * or restarts are the resume effect's, further down.
-	 */
-	function restoreFromRecord(stored: PendingPaidSetup, running: Promise<PaidSetupOutcome> | undefined) {
-		setSlugTouched(true);
-		setCheckoutOrgName(stored.name);
-		setSubscriptionId(stored.subscriptionId);
-		setCustomerId(stored.customerId);
-		setCurrency(stored.currency);
-		setDeclaration(stored.declaration);
-		setCreatedSlug(stored.createdSlug);
-		setCreatedOrgId(stored.createdOrgId);
-		setPending(stored);
-		if (stored.slugRefusal) setSlugClaimedAfterPayment(true);
-		setView("pay");
-		if (running) {
-			setBusy(true);
-		} else if (stored.stopped) {
-			// What `beginSetupState` sets before a run; the run itself starts in the resume effect.
-			setBusy(true);
-			setNeedsSetupRetry(false);
-			setStopped(null);
-			setSlugClaimedAfterPayment(false);
-		} else {
-			setNeedsSetupRetry(true);
-		}
-	}
+	}, []);
 
 	// Reopening the sheet resumes a pending paid setup instead of starting a new purchase — at the
 	// first step the record says has not completed (each run re-checks that with the server). Only
@@ -321,48 +352,35 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	// one, `recoverFrom` hands what the tab holds to the recovery effect, which asks the SERVER whether
 	// this user has a paid setup that never finished — a charge must not be offered a second purchase
 	// because one tab lost its copy.
-	const openedKey = open && viewerId ? viewerId : null;
-	const [openedFor, setOpenedFor] = useState<string | null>(null);
-	const [resume, setResume] = useState<{
-		record: PendingPaidSetup;
-		running: Promise<PaidSetupOutcome> | undefined;
-	} | null>(null);
-	const [recoverFrom, setRecoverFrom] = useState<StoredPaidSetup | null>(null);
+	const openedKey = viewerId ? viewerId : null;
 	// The resume whose run (or attach) has started — see the resume effect.
-	const startedFor = useRef<typeof resume>(null);
-	if (openedKey !== openedFor) {
-		setOpenedFor(openedKey);
-		setResume(null);
-		setRecoverFrom(null);
+	const startedFor = useRef<typeof state.resume>(null);
+	if (openedKey !== state.openedFor) {
+		let finding: OpenFinding = { kind: "nothing" };
 		if (openedKey !== null && !subscriptionId) {
 			const stored = readStoredPaidSetup(openedKey);
-			if (stored.kind === "ok") {
-				const running = paidSetupInFlight(stored.record.subscriptionId);
-				restoreFromRecord(stored.record, running);
-				setResume({ record: stored.record, running });
-			} else {
-				setRecoverFrom(stored);
-			}
+			finding =
+				stored.kind === "ok"
+					? {
+							kind: "record",
+							resume: {
+								record: stored.record,
+								running: paidSetupInFlight(stored.record.subscriptionId),
+							},
+						}
+					: { kind: "no-record", stored };
 		}
+		dispatch({ type: "open-changed", key: openedKey, finding });
 	}
 
 	/**
 	 * Opens the recovery step for a paid setup the server found with no record in this tab — with the
 	 * slug the customer chose, from the server's record, on screen to confirm or change.
 	 */
-	function beginRecovery(state: NewOrgSetupState) {
-		const name = state.name;
-		const slugIntent = state.org?.slug || state.slug || slugifyOrEmpty(name);
-		form.reset({ name, slug: slugIntent });
-		setSlugTouched(true);
-		setCheckoutOrgName(name);
-		setSubscriptionId(state.subscriptionId);
-		setCustomerId(state.customerId);
-		const known = SUPPORTED_CURRENCIES.find((c) => c === state.currency);
-		if (known) setCurrency(known);
-		setRecovered(state);
-		setRefusal(null);
-		setView("declare");
+	function beginRecovery(found: NewOrgSetupState) {
+		const slugIntent = found.org?.slug || found.slug || slugifyOrEmpty(found.name);
+		form.reset({ name: found.name, slug: slugIntent });
+		dispatch({ type: "recovery-found", state: found });
 	}
 
 	/**
@@ -373,14 +391,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 */
 	async function finishRecovered(next: PayerDeclaration) {
 		if (!recovered || busy) return;
-		setBusy(true);
-		setRefusal(null);
+		dispatch({ type: "busy-set", busy: true });
+		dispatch({ type: "refusal-set", message: null });
 		try {
 			// The URL is the one field on screen when the team does not exist yet; the name is the
 			// server's and is not re-checked here.
 			if (!recovered.org) {
 				commitSlug(form);
-				if (!(await form.trigger("slug"))) return;
+				if (checkNameStep(form, "slug").length > 0) return;
 				if (!(await isOrgSlugAvailable(form.getValues().slug))) {
 					form.setError("slug", { message: SLUG_TAKEN });
 					return;
@@ -388,14 +406,17 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			}
 			const verdict = await payerConversionStatus(next);
 			if (!verdict.allowed) {
-				setRefusal(verdict.message);
+				dispatch({ type: "refusal-set", message: verdict.message });
 				return;
 			}
 		} catch (e) {
-			setRefusal(e instanceof Error ? e.message : "Couldn't check the declaration — try again.");
+			dispatch({
+				type: "refusal-set",
+				message: e instanceof Error ? e.message : "Couldn't check the declaration — try again.",
+			});
 			return;
 		} finally {
-			setBusy(false);
+			dispatch({ type: "busy-set", busy: false });
 		}
 		await runRecovered(recovered, next);
 	}
@@ -410,34 +431,25 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * says what is being created. The slug is the form's: the customer may have chosen another since,
 	 * and one the create refuses comes back as a field error for them to change.
 	 */
-	async function runRecovered(state: NewOrgSetupState, next: PayerDeclaration) {
+	async function runRecovered(found: NewOrgSetupState, next: PayerDeclaration) {
 		const values = form.getValues();
-		if (values.name !== state.name) form.setValue("name", state.name);
-		setCheckoutOrgName(state.name);
-		const known = SUPPORTED_CURRENCIES.find((c) => c === state.currency);
+		if (values.name !== found.name) form.setValue("name", found.name);
 		const record: PendingPaidSetup = {
-			subscriptionId: state.subscriptionId,
-			customerId: state.customerId,
-			name: state.name,
+			subscriptionId: found.subscriptionId,
+			customerId: found.customerId,
+			name: found.name,
 			slug: values.slug,
-			currency: known ?? currency,
+			currency: knownCurrency(found.currency) ?? currency,
 			declaration: next,
-			billing: state.billing,
-			customerDetailsSaved: state.billing === null,
-			createdOrgId: state.org?.id ?? null,
-			createdSlug: state.org?.slug ?? "",
-			linked: state.linked,
+			billing: found.billing,
+			customerDetailsSaved: found.billing === null,
+			createdOrgId: found.org?.id ?? null,
+			createdSlug: found.org?.slug ?? "",
+			linked: found.linked,
 			slugRefusal: null,
 		};
 		writePendingPaidSetup(viewerId, record);
-		setSubscriptionId(state.subscriptionId);
-		setCustomerId(state.customerId);
-		setClientSecret(null);
-		if (known) setCurrency(known);
-		setDeclaration(next);
-		setRecovered(null);
-		setPending(record);
-		setView("pay");
+		dispatch({ type: "recovered-setup-adopted", record });
 		await runSetup(record);
 	}
 
@@ -446,11 +458,11 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * and the confirmation never reached this page. Nothing new was minted; the setup is finished on
 	 * that charge, and the customer is told so rather than being asked to pay again.
 	 */
-	async function resumePaidPrior(state: NewOrgSetupState, next: PayerDeclaration) {
+	async function resumePaidPrior(found: NewOrgSetupState, next: PayerDeclaration) {
 		toast.info(
-			`Your earlier payment for "${state.name}" went through. Finishing the setup of that team with it.`,
+			`Your earlier payment for "${found.name}" went through. Finishing the setup of that team with it.`,
 		);
-		await runRecovered(state, next);
+		await runRecovered(found, next);
 	}
 
 	/**
@@ -481,21 +493,21 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	// setup is unfinished — running or failed — the browser is asked to confirm leaving the page. Not
 	// while a final stop is shown (`stopped`, which a held recovery also sets): nothing in this tab can
 	// finish that setup, so leaving loses nothing.
-	const setupUnfinished = pending !== null && stopped === null;
+	const unfinished = setupUnfinished(state);
 	useEffect(() => {
-		if (!setupUnfinished) return;
+		if (!unfinished) return;
 		/** Asks the browser to confirm leaving while a paid setup is unfinished. */
 		const warn = (e: BeforeUnloadEvent) => {
 			e.preventDefault();
 		};
 		window.addEventListener("beforeunload", warn);
 		return () => window.removeEventListener("beforeunload", warn);
-	}, [setupUnfinished]);
+	}, [unfinished]);
 
 	// While this sheet is open on a paid setup, it is the one that renders the setup's outcome; a run
 	// that ends with no sheet watching toasts it instead (`finishPaidSetup`).
 	const unwatch = useRef<(() => void) | null>(null);
-	const watchedSubscription = open ? pending?.subscriptionId : undefined;
+	const watchedSubscription = pending?.subscriptionId;
 	useEffect(() => {
 		if (!watchedSubscription) return;
 		const stop = watchPaidSetup(watchedSubscription);
@@ -509,7 +521,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	// A paid setup that finished while its payment was still settling re-reads the server for a
 	// minute, so the badge flips to active when Stripe settles the invoice (#5522). Armed once per
 	// charge — the poll follows later answers itself, so its one-minute bound is never re-started.
-	const settlingSub = open && paidPlan ? paidPlan.subscriptionId : null;
+	const settlingSub = paidPlan ? paidPlan.subscriptionId : null;
 	const settlingCustomer = paidPlan?.customerId ?? null;
 	const armedState = useRef(paidPlan?.planState ?? null);
 	// Kept current after commit, never during render; this effect runs before the poll's below.
@@ -522,58 +534,39 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		return pollSettlingPlanState(
 			{ subscriptionId: settlingSub, customerId: settlingCustomer },
 			initial,
-			(report) =>
-				setPaidPlan((prev) =>
-					prev && prev.subscriptionId === settlingSub ? { ...prev, ...report } : prev,
-				),
+			(report) => dispatch({ type: "plan-reported", subscriptionId: settlingSub, report }),
 		);
 	}, [settlingSub, settlingCustomer]);
 
-	function reset() {
+	/**
+	 * Closes the sheet. The flow unmounts once the URL has closed, which is what clears its state; until
+	 * then nothing here may act on the URL again (`leaving`), and no outcome of a run still in flight
+	 * lands here any more. After a finished setup the draft and the params go too (`complete`); any
+	 * other close keeps the draft, so the next open starts from the name and slug typed.
+	 */
+	function leave() {
+		leaving.current = true;
 		generation.current += 1;
 		// Unregistered NOW, not on the next render: a run ending in between must see no sheet
 		// watching, or its outcome would be dropped instead of toasted.
 		unwatch.current?.();
 		unwatch.current = null;
-		form.reset({ name: "", slug: "" });
-		setSlugTouched(false);
-		setShowUrl(false);
-		setView("name");
-		setBusy(false);
-		setClientSecret(null);
-		setCustomerId(null);
-		setSubscriptionId(null);
-		setCreatedSlug("");
-		setCreatedOrgId(null);
-		setRecovered(null);
-		setPending(null);
-		setDeclaration(null);
-		setDeclaring(false);
-		setRefusal(null);
-		setNeedsSetupRetry(false);
-		setStopped(null);
-		setIntentNotice(null);
-		setSlugClaimedAfterPayment(false);
-		setConfirmingClose(false);
-		setIsTrialOrg(false);
-		setPaidPlan(null);
-		setInviteEmail("");
-		setInviteRole("operator");
-		setSent([]);
+		if (view === "invite") wizard.complete();
+		else close();
 	}
 
 	/**
-	 * Opens or closes the sheet. A close while a paid setup is unfinished is held for confirmation
-	 * (see `confirmingClose`), unless a run stopped it for good (`stopped`): the confirmation says the
-	 * setup picks up where it left off, which is not true then. Every other close resets the sheet.
+	 * The sheet's own close (the X, Escape, a click outside). A close while a paid setup is unfinished
+	 * is held for confirmation (see `confirmingClose`), unless a run stopped it for good (`stopped`):
+	 * the confirmation says the setup picks up where it left off, which is not true then.
 	 */
 	function handleOpenChange(next: boolean) {
-		if (!next && pending && !confirmingClose && stopped === null) {
-			setConfirmingClose(true);
+		if (next) return;
+		if (closeNeedsConfirmation(state)) {
+			dispatch({ type: "close-requested" });
 			return;
 		}
-		if (!next) reset();
-		onOpenChange(next);
+		leave();
 	}
 
 	/**
@@ -582,8 +575,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * writing it, so reopening the sheet in this tab resumes at the first unfinished step.
 	 */
 	function closeKeepingPaidSetup() {
-		reset();
-		onOpenChange(false);
+		leave();
 	}
 
 	/** Close the sheet and drop the user into their new organization. */
@@ -599,16 +591,17 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * URL editor, so the field the sentence is about is on screen to change — an auto-derived slug
 	 * is otherwise only a line of preview text under the name.
 	 */
-	async function validate(): Promise<FormData | null> {
+	async function validate(): Promise<CreateOrgValues | null> {
 		commitSlug(form);
-		if (!(await form.trigger())) {
-			if (form.getFieldState("slug").invalid) setShowUrl(true);
+		const failed = checkNameStep(form);
+		if (failed.length > 0) {
+			if (failed.includes("slug")) dispatch({ type: "url-editor-set", open: true });
 			return null;
 		}
 		const data = form.getValues();
 		if (!(await isOrgSlugAvailable(data.slug))) {
 			form.setError("slug", { message: SLUG_TAKEN });
-			setShowUrl(true);
+			dispatch({ type: "url-editor-set", open: true });
 			return null;
 		}
 		return data;
@@ -620,7 +613,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * creates its org in `finishPaidSetup`, which persists the id before anything else runs.
 	 */
 	async function createOrg(
-		data: FormData,
+		data: CreateOrgValues,
 	): Promise<{ id: string; slug: string } | null> {
 		const { data: org, error } = await authClient.organization.create({
 			name: data.name,
@@ -632,19 +625,18 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			// as a collision.
 			if (error?.code === ORG_SLUG_RESERVED_CODE) {
 				form.setError("slug", { message: SLUG_RESERVED });
-				setShowUrl(true);
+				dispatch({ type: "url-editor-set", open: true });
 				return null;
 			}
 			if (/slug|unique|exist|taken/i.test(error?.message ?? "")) {
 				form.setError("slug", { message: SLUG_TAKEN });
-				setShowUrl(true);
+				dispatch({ type: "url-editor-set", open: true });
 				return null;
 			}
 			throw new Error(error?.message ?? "Couldn't create the organization");
 		}
 		const persisted = org.slug ?? data.slug;
-		setCreatedSlug(persisted);
-		setCreatedOrgId(org.id);
+		dispatch({ type: "trial-org-created", orgId: org.id, slug: persisted });
 		await setActiveOrganization(org.id);
 		return { id: org.id, slug: persisted };
 	}
@@ -657,25 +649,25 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 *
 	 * NO INTENT IS OPENED HERE ANY MORE. It used to be, without payer facts, and the eligibility
 	 * gate refused every one of them.
+	 *
+	 * `fromUrl`: the URL asked for the declaration (a reload on it) — on any refusal the URL goes
+	 * back to the name step, where the refusal is shown.
 	 */
-	async function continueToCheckout() {
+	async function continueToCheckout(fromUrl = false) {
 		if (busy) return;
-		setBusy(true);
+		dispatch({ type: "busy-set", busy: true });
+		let accepted = false;
 		try {
 			const data = await validate();
 			if (!data) return;
-			if (trialAvailable) {
-				// Card-less trial — the trial panel confirms; no payment intent needed.
-				setView("pay");
-				return;
-			}
-			setCheckoutOrgName(data.name);
-			setRefusal(null);
-			setView("declare");
+			// Card-less trial — the trial panel confirms; no payment intent needed.
+			dispatch({ type: "name-accepted", name: data.name, trial: offer?.kind === "trial" });
+			accepted = true;
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Something went wrong");
 		} finally {
-			setBusy(false);
+			dispatch({ type: "busy-set", busy: false });
+			if (fromUrl && !accepted) env.location.replace(wizardStepPatch(CREATE_ORG_URL, "name"));
 		}
 	}
 
@@ -694,12 +686,11 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 */
 	async function handleDeclare(next: PayerDeclaration) {
 		if (declaring) return;
-		setDeclaring(true);
-		setRefusal(null);
+		dispatch({ type: "declare-started" });
 		try {
 			const verdict = await payerConversionStatus(next);
 			if (!verdict.allowed) {
-				setRefusal(verdict.message);
+				dispatch({ type: "refusal-set", message: verdict.message });
 				return;
 			}
 			const intent = await createNewOrgSubscriptionIntent("team", {
@@ -717,22 +708,27 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				return;
 			}
 			if (intent.kind === "refused") {
-				setRefusal(intent.message);
+				dispatch({ type: "refusal-set", message: intent.message });
 				return;
 			}
-			setSubscriptionId(intent.subscriptionId);
-			setCustomerId(intent.customerId);
-			setClientSecret(intent.clientSecret);
-			setCurrency(intent.currency);
-			setIntentNotice(intent.notice ?? null);
-			setDeclaration(next);
-			setView("pay");
+			dispatch({
+				type: "intent-opened",
+				intent: {
+					subscriptionId: intent.subscriptionId,
+					customerId: intent.customerId,
+					clientSecret: intent.clientSecret,
+					currency: intent.currency,
+					notice: intent.notice ?? null,
+				},
+				declaration: next,
+			});
 		} catch (e) {
-			setRefusal(
-				e instanceof Error ? e.message : "Couldn't start the purchase — try again.",
-			);
+			dispatch({
+				type: "refusal-set",
+				message: e instanceof Error ? e.message : "Couldn't start the purchase — try again.",
+			});
 		} finally {
-			setDeclaring(false);
+			dispatch({ type: "declare-ended" });
 		}
 	}
 
@@ -741,7 +737,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 *  payer rides along: the new intent passes the same gate the first one did. */
 	async function changeCurrency(next: SupportedCurrency) {
 		if (next === currency || switchingCurrency || !checkoutOrgName || !declaration) return;
-		setSwitchingCurrency(true);
+		dispatch({ type: "currency-switch-started" });
 		try {
 			const intent = await createNewOrgSubscriptionIntent("team", {
 				orgName: checkoutOrgName,
@@ -762,15 +758,20 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				toast.error(intent.message);
 				return;
 			}
-			setSubscriptionId(intent.subscriptionId);
-			setCustomerId(intent.customerId);
-			setClientSecret(intent.clientSecret);
-			setCurrency(intent.currency);
-			setIntentNotice(intent.notice ?? null);
+			dispatch({
+				type: "currency-switched",
+				intent: {
+					subscriptionId: intent.subscriptionId,
+					customerId: intent.customerId,
+					clientSecret: intent.clientSecret,
+					currency: intent.currency,
+					notice: intent.notice ?? null,
+				},
+			});
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't switch currency.");
 		} finally {
-			setSwitchingCurrency(false);
+			dispatch({ type: "currency-switch-ended" });
 		}
 	}
 
@@ -779,19 +780,19 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 *  (no billing) behind. */
 	async function startTrial() {
 		if (busy) return;
-		setBusy(true);
+		dispatch({ type: "busy-set", busy: true });
 		try {
 			// A slug refused here (claimed since Continue, or at the create itself) is a field error on
 			// the NAME step, so go back to it — on the trial panel it rendered nowhere, and the button
 			// simply stopped doing anything.
 			const data = await validate();
 			if (!data) {
-				setView("name");
+				dispatch({ type: "back-to-name" });
 				return;
 			}
 			const org = await createOrg(data);
 			if (!org) {
-				setView("name");
+				dispatch({ type: "back-to-name" });
 				return;
 			}
 			try {
@@ -805,19 +806,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				await authClient.organization
 					.delete({ organizationId: org.id })
 					.catch(() => {});
-				setCreatedSlug("");
-				setCreatedOrgId(null);
+				dispatch({ type: "trial-org-rolled-back" });
 				throw trialErr;
 			}
 			await fetchWorkspace();
-			setIsTrialOrg(true);
-			setPaidPlan(null);
+			dispatch({ type: "trial-started" });
 			toast.success("Trial started — your organization is ready.");
-			setView("invite");
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't start the trial");
 		} finally {
-			setBusy(false);
+			dispatch({ type: "busy-set", busy: false });
 		}
 	}
 
@@ -863,7 +861,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 			slugRefusal: null,
 		};
 		writePendingPaidSetup(viewerId, record);
-		setPending(record);
+		dispatch({ type: "charge-confirmed", record });
 		await runSetup(record);
 	}
 
@@ -873,16 +871,8 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 * been reset since the run started.
 	 */
 	async function runSetup(record: PendingPaidSetup) {
-		beginSetupState();
+		dispatch({ type: "setup-started" });
 		await runSetupSteps(record);
-	}
-
-	/** The state a run of the post-payment steps starts from: busy, with no retry, stop or slug ask. */
-	function beginSetupState() {
-		setBusy(true);
-		setNeedsSetupRetry(false);
-		setStopped(null);
-		setSlugClaimedAfterPayment(false);
 	}
 
 	/** Runs the post-payment steps and shows how they ended, unless the sheet was reset meanwhile. */
@@ -890,7 +880,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		const gen = generation.current;
 		const outcome = await finishPaidSetup(viewerId, record, {
 			onProgress: (next) => {
-				if (generation.current === gen) setPending(next);
+				if (generation.current === gen) dispatch({ type: "setup-progressed", record: next });
 			},
 			fetchWorkspace,
 		});
@@ -899,42 +889,16 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 
 	/**
 	 * Shows how a run of the post-payment steps ended: the invite view, a new-slug ask, the retry, or —
-	 * when retrying cannot help — the run's final sentence with no retry.
+	 * when retrying cannot help — the run's final sentence with no retry. The reducer decides the
+	 * panel; the form's slug error is set here, beside it.
 	 */
 	function applyOutcome(outcome: PaidSetupOutcome) {
-		setBusy(false);
-		if (outcome.kind === "done") {
-			setPending(null);
-			setCreatedSlug(outcome.slug);
-			setCreatedOrgId(outcome.orgId);
-			setIsTrialOrg(false);
-			setPaidPlan({
-				planState: outcome.planState,
-				paymentUrl: outcome.paymentUrl,
-				subscriptionId: outcome.subscriptionId,
-				customerId: outcome.customerId,
-			});
-			setView("invite");
-			return;
-		}
-		if (outcome.kind === "failed" && !outcome.retryable) {
-			// Final. A refused setup's record was cleared by the run (the server keeps the memory), so
-			// nothing is left here to resume, and a close needs no confirmation.
-			setPending(outcome.recordCleared ? null : outcome.record);
-			setNeedsSetupRetry(false);
-			setStopped(outcome.message);
-			return;
-		}
-		setPending(outcome.record);
-		setCreatedSlug(outcome.record.createdSlug);
-		setCreatedOrgId(outcome.record.createdOrgId);
 		if (outcome.kind === "slug-refused") {
 			// Paid, and the slug was refused at the create. Asked for in place — the refusal used to be
 			// written to a field on the NAME step, which is not rendered here.
 			form.setError("slug", { message: outcome.message });
-			setSlugClaimedAfterPayment(true);
 		}
-		setNeedsSetupRetry(true);
+		dispatch({ type: "setup-ended", outcome });
 	}
 
 	/**
@@ -944,14 +908,14 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	 */
 	async function retryWithNewSlug() {
 		if (busy || !pending) return;
-		setBusy(true);
-		let data: FormData | null = null;
+		dispatch({ type: "busy-set", busy: true });
+		let data: CreateOrgValues | null = null;
 		try {
 			data = await validate();
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't check that slug — try again.");
 		} finally {
-			setBusy(false);
+			dispatch({ type: "busy-set", busy: false });
 		}
 		if (data) await runSetup({ ...pending, name: data.name, slug: data.slug });
 	}
@@ -979,8 +943,7 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 				toast.error(error.message ?? "Couldn't send the invite");
 				return;
 			}
-			setSent((p) => [...p, { email, role: inviteRole }]);
-			setInviteEmail("");
+			dispatch({ type: "invite-sent", invite: { email, role: inviteRole } });
 			toast.success(`Invitation sent to ${email}`);
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : "Couldn't send the invite");
@@ -993,19 +956,20 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	// The resume effect: the record's form values (an external store) and the run it attaches to, or
 	// restarts when an earlier run stopped it for support. That sentence may no longer be true (support
 	// can have fixed it), so it is not replayed: the run asks the server again, first, and either stops
-	// with what is true now or finishes. No retry is offered for it (§5.6 rule 4). A layout effect, so
-	// the restored view never paints with the form still blank. Declared below the functions it calls
-	// (the React Compiler's immutability rule).
+	// with what is true now or finishes. No retry is offered for it (§5.6 rule 4). It waits for the
+	// engine (`wizard.ready`), which restores the draft first — the record's name and slug must win
+	// over a draft's. Declared below the functions it calls (the React Compiler's immutability rule).
+	const resume = state.resume;
 	useLayoutEffect(() => {
-		if (!resume) return;
-		const { record, running } = resume;
-		form.reset({ name: record.name, slug: record.slug });
-		if (record.slugRefusal) form.setError("slug", { message: record.slugRefusal });
+		if (!resume || !wizard.ready) return;
 		// At most one attach or run per resume: StrictMode mounts effects twice in development, and a
 		// second `runSetupSteps` would be a second pass at a paid setup. Keyed by the resume (one per
 		// open transition over a record), so a later reopen over the same record still resumes it.
 		if (startedFor.current === resume) return;
 		startedFor.current = resume;
+		const { record, running } = resume;
+		form.reset({ name: record.name, slug: record.slug });
+		if (record.slugRefusal) form.setError("slug", { message: record.slugRefusal });
 		if (running) {
 			const gen = generation.current;
 			void running.then((outcome) => {
@@ -1017,47 +981,116 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 		// Once per resumed record: re-running it on any other change would attach twice or start a
 		// second run beside the first. `form` is stable for the component's life.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [resume]);
+	}, [resume, wizard.ready]);
 
-	// The recovery effect: with no usable record in this tab, ask the server.
-	useEffect(() => {
-		if (!recoverFrom) return;
-		const stored = recoverFrom;
-		let active = true;
-		void recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null).then(
-			(found) => {
-				if (!active) return;
-				if (found.kind === "found") {
-					beginRecovery(found.state);
-				} else if (found.kind === "held") {
-					// A hold refuses this setup (ADR 0002 §5.6): its sentence, and no step to finish it.
-					setStopped(found.notice);
-					setView("pay");
-				} else if (found.kind === "unavailable") {
-					// Not "nothing to finish": the check failed, and it may be hiding a payment. Said, so
-					// a customer who just paid does not pay again.
-					toast.error(
-						"We couldn't check whether you have a team setup to finish. If you just paid for a team, don't pay again — reopen Create a team in a moment, or contact support.",
-					);
-				} else if (stored.kind === "unreadable") {
-					// Unreadable, and the server has nothing unfinished under it (or could not be
-					// asked). Said, not dropped: the customer may still hold a receipt for it.
-					toast.error(
-						"We found an unfinished team setup in this tab that we couldn't read. If you were charged for a team that doesn't exist, contact support with the time of the payment.",
-					);
-				}
-			},
-		);
+	/**
+	 * The payment step's gate (`create-org.wizard.ts`): where a paid setup stands. The machine answers
+	 * first — a finished setup is done, an unfinished one in flight, a stopped one stopped. Otherwise,
+	 * with no usable record in this tab, the SERVER is asked whether this user has a paid setup that
+	 * never finished, once per open: a charge must not be offered a second purchase because one tab
+	 * lost its copy. A question that failed is `unknown`, never "not started".
+	 */
+	async function settlePayment(): Promise<Settlement> {
+		const known = settlementOf(latest.current);
+		if (known !== null) return known;
+		const stored = latest.current.recoverFrom;
+		if (stored === null) return { kind: "not-started" };
+		dispatch({ type: "recovery-asked" });
+		const found = await recoverUnfinishedPaidSetup(stored.kind === "unreadable" ? stored.ids : null);
+		if (found.kind === "found") {
+			beginRecovery(found.state);
+			return { kind: "not-started" };
+		}
+		if (found.kind === "held") {
+			// A hold refuses this setup (ADR 0002 §5.6): its sentence, and no step to finish it.
+			dispatch({ type: "recovery-held", notice: found.notice });
+			return { kind: "stopped", message: found.notice };
+		}
+		if (found.kind === "unavailable") {
+			// Not "nothing to finish": the check failed, and it may be hiding a payment. Said, so
+			// a customer who just paid does not pay again.
+			toast.error(RECOVERY_UNAVAILABLE);
+			return { kind: "unknown", message: RECOVERY_UNAVAILABLE };
+		}
+		if (stored.kind === "unreadable") {
+			// Unreadable, and the server has nothing unfinished under it. Said, not dropped: the
+			// customer may still hold a receipt for it.
+			toast.error(
+				"We found an unfinished team setup in this tab that we couldn't read. If you were charged for a team that doesn't exist, contact support with the time of the payment.",
+			);
+		}
+		return { kind: "not-started" };
+	}
+	useLayoutEffect(() => {
+		mountedSettle = settlePayment;
 		return () => {
-			active = false;
+			if (mountedSettle === settlePayment) mountedSettle = null;
 		};
-		// Once per open with no usable record (`recoverFrom` is reset on every open transition): the
-		// question is for the moment the sheet opens, not for every later render.
+	});
+
+	// The URL and the machine, kept in step. The machine decides what is on screen; the URL says it,
+	// so a link, Back and a reload reproduce it:
+	//   - the machine moved (a button, a server answer): the URL follows — `invite` through the
+	//     engine's gate, which only a finished setup settles as done;
+	//   - the URL moved (Back, Forward, a reload's `?step=`): a Back the machine allows is applied
+	//     (`backEventFor`); a reload on `declare` re-checks the name and slug and goes on; anything
+	//     else — `pay` or `invite` the machine has not reached, a Back past a charge — is put back.
+	// One correction per mismatch, so a step the engine will not show cannot start a loop.
+	const step = wizard.current.id;
+	const seen = useRef<{ step: string; view: CreateOrgView } | null>(null);
+	const corrected = useRef<string | null>(null);
+	useEffect(() => {
+		if (!wizard.ready || leaving.current) return;
+		const before = seen.current;
+		seen.current = { step, view };
+		if (step === view || !isCreateOrgView(step)) {
+			corrected.current = null;
+			return;
+		}
+		const mismatch = `${step}>${view}`;
+		if (corrected.current === mismatch) return;
+		// A reload on the declaration waits for the offer: it decides between the declaration and
+		// the trial panel.
+		if (step === "declare" && view === "name" && (offer === null || busy)) return;
+		corrected.current = mismatch;
+		const shape = CREATE_ORG_URL;
+		if (before === null ? view !== "name" : before.view !== view) {
+			// `invite` only through the gate, from `pay`: `next()` re-asks it, and only a finished setup
+			// answers done. From anywhere else the URL stays where it is.
+			if (view === "invite") {
+				if (step === "pay") void wizard.next();
+			} else if (before === null) env.location.replace(wizardStepPatch(shape, view));
+			else env.location.push(wizardStepPatch(shape, view));
+			return;
+		}
+		const urlBehind = CREATE_ORG_STEPS.indexOf(step) < CREATE_ORG_STEPS.indexOf(view);
+		const back = urlBehind ? backEventFor(screen, step) : null;
+		if (back !== null) {
+			dispatch(back);
+			return;
+		}
+		if (step === "declare" && view === "name") {
+			void continueToCheckout(true);
+			return;
+		}
+		env.location.replace(wizardStepPatch(shape, view));
+		// Keyed on what is compared; the functions it calls are read at the moment it runs.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [recoverFrom]);
+	}, [wizard.ready, step, view, offer === null, busy]);
+
+	// A finished setup's draft is a team that exists now: dropped once the URL says `invite` (the
+	// engine writes the draft on every step change, so not before).
+	const draftAddress = typeof env.viewerId === "string" ? env.viewerId : null;
+	useEffect(() => {
+		if (step !== "invite" || view !== "invite" || draftAddress === null) return;
+		clearDraft({ id: CREATE_ORG_WIZARD_ID, viewerId: draftAddress, scope: CREATE_ORG_DRAFT_SCOPE });
+	}, [step, view, draftAddress]);
+
+	// A failed check on the gate holds the payment: the sentence instead of a way to pay.
+	const heldMessage = wizard.settlement?.kind === "unknown" ? wizard.settlement.message : null;
 
 	return (
-		<Sheet open={open} onOpenChange={handleOpenChange}>
+		<Sheet open onOpenChange={handleOpenChange}>
 			<SheetContent
 				side="right"
 				showCloseButton={false}
@@ -1068,138 +1101,61 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 					Create a Pro team, pay, and invite your teammates.
 				</SheetDescription>
 
-				{(view === "name" || view === "declare" || view === "pay") && (
+				{screen.kind !== "invite" && (
 					<PurchaseLayout
 						meta={meta}
 						heading={heading}
 						onClose={() => handleOpenChange(false)}
 					>
-						{view === "name" ? (
-							<NamePanel
-								form={form}
-								slug={slug}
-								showUrl={showUrl}
-								setShowUrl={setShowUrl}
-								slugTouched={slugTouched}
-								setSlugTouched={setSlugTouched}
-								busy={busy}
-								ready={offer !== null}
-								onContinue={() => void continueToCheckout()}
-							/>
-						) : view === "declare" && recovered ? (
-							<div className="space-y-3">
-								<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
-									We found a payment for a team that isn&apos;t set up yet. Confirm who is
-									paying to finish setting it up.
-									{recovered.billing === null &&
-										" The tax ID from checkout didn't reach us — add it in the team's billing settings once it is set up."}
-								</p>
-								{!recovered.org && <TeamUrlField form={form} slug={slug} />}
-								<PayerDeclarationForm
-									busy={busy}
-									refusal={refusal}
-									onEdit={clearRefusal}
-									submitLabel="Finish setup"
-									onBack={() => handleOpenChange(false)}
-									onDeclare={(d) => void finishRecovered(d)}
-								/>
+						{screen.kind === "name" && wizard.restored ? (
+							<div className="mb-4">
+								<WizardRestoredNotice onStartOver={wizard.discard} />
 							</div>
-						) : view === "declare" ? (
-							<PayerDeclarationForm
-								busy={declaring}
-								refusal={refusal}
-								onEdit={clearRefusal}
-								submitLabel="Continue to payment"
-								onBack={() => setView("name")}
-								onDeclare={(d) => void handleDeclare(d)}
-							/>
-						) : pending && confirmingClose ? (
-							<ConfirmCloseUnfinished
-								running={busy}
-								inPageOnly={pendingPaidSetupInPageOnly(viewerId)}
-								onStay={() => setConfirmingClose(false)}
-								onClose={closeKeepingPaidSetup}
-							/>
-						) : stopped !== null ? (
-							<SetupStoppedPanel message={stopped} onClose={() => handleOpenChange(false)} />
-						) : pending && slugClaimedAfterPayment ? (
-							<RetryWithNewSlug
-								form={form}
-								slug={slug}
-								busy={busy}
-								onRetry={() => void retryWithNewSlug()}
-							/>
-						) : pending ? (
-							<RetrySetup
-								busy={busy}
-								failed={needsSetupRetry}
-								onRetry={() => void runSetup(pending)}
-							/>
-						) : trialAvailable ? (
-							<TrialPanel
-								busy={busy}
-								priceLabel={teamPrice.label}
-								trialDays={offer?.trialDays ?? 30}
-								onBack={() => setView("name")}
-								onStart={() => void startTrial()}
-							/>
+						) : null}
+						{!wizard.ready && screen.kind !== "name" ? (
+							<div role="status" className="text-ui-sm text-text-tertiary">
+								Checking for a team setup to finish…
+							</div>
 						) : (
-							clientSecret && (
-								<div className="flex min-h-0 flex-1 flex-col gap-4">
-									<div className="flex shrink-0 items-center justify-between">
-										<button
-											type="button"
-											onClick={() => {
-												// Back to the DECLARATION, not the name: it is the step
-												// immediately behind this one, and re-declaring is how a
-												// payer corrects a capacity or country they got wrong.
-												setView("declare");
-												setClientSecret(null);
-											}}
-											className="text-left text-ui-sm text-text-tertiary transition-colors hover:text-text-primary"
-										>
-											← Back
-										</button>
-										<CurrencyToggle
-											value={currency}
-											onChange={changeCurrency}
-											disabled={switchingCurrency}
-										/>
-									</div>
-									{intentNotice && (
-										<Alert className="shrink-0">
-											<AlertDescription>{intentNotice}</AlertDescription>
-										</Alert>
-									)}
-									<StripeElementsProvider clientSecret={clientSecret}>
-										<BillingCheckoutForm
-											clientSecret={clientSecret}
-											meta={meta}
-											unitAmount={teamPrice.unitAmount}
-											currency={currency}
-											ownerEmail={ownerEmail}
-											submitLabel="Create"
-											scrollable
-											onPaid={(b) => handlePaid(b)}
-										beforeConfirm={saveDetailsBeforeCharge}
-										/>
-									</StripeElementsProvider>
-								</div>
-							)
+						<PurchasePanel
+							screen={screen}
+							heldMessage={heldMessage}
+							ready={wizard.ready}
+							form={form}
+							slug={slug}
+							state={state}
+							dispatch={dispatch}
+							viewerId={viewerId}
+							ownerEmail={ownerEmail}
+							meta={meta}
+							teamPrice={teamPrice}
+							clearRefusal={clearRefusal}
+							onClose={() => handleOpenChange(false)}
+							onContinue={() => void continueToCheckout()}
+							onFinishRecovered={(d) => void finishRecovered(d)}
+							onDeclare={(d) => void handleDeclare(d)}
+							onCloseKeepingSetup={closeKeepingPaidSetup}
+							onRetryWithNewSlug={() => void retryWithNewSlug()}
+							onRetrySetup={(record) => void runSetup(record)}
+							onStartTrial={() => void startTrial()}
+							onChangeCurrency={changeCurrency}
+							onPaid={(b) => handlePaid(b)}
+							beforeConfirm={saveDetailsBeforeCharge}
+						/>
 						)}
 					</PurchaseLayout>
 				)}
 
-				{view === "invite" && (
+				{screen.kind === "invite" && (
 					<InviteView
-						isTrialOrg={isTrialOrg}
+						isTrialOrg={state.isTrialOrg}
 						paidPlan={paidPlan}
 						ownerEmail={ownerEmail}
 						inviteEmail={inviteEmail}
-						setInviteEmail={setInviteEmail}
+						setInviteEmail={(email) => dispatch({ type: "invite-email-changed", email })}
 						inviteRole={inviteRole}
-						setInviteRole={setInviteRole}
-						sent={sent}
+						setInviteRole={(role) => dispatch({ type: "invite-role-changed", role })}
+						sent={state.sent}
 						onAdd={() => void addInvite()}
 						onFinish={goToOrg}
 						onAddPayment={() => {
@@ -1215,6 +1171,192 @@ export function CreateOrgSheet({ open, onOpenChange }: CreateOrgSheetProps) {
 	);
 }
 
+/**
+ * The right-hand column of every screen but `invite`: one panel per `CreateOrgScreen` member, in the
+ * order `screenOf` decides them. Holds no state; every action goes back to the sheet.
+ */
+function PurchasePanel({
+	screen,
+	heldMessage,
+	ready,
+	form,
+	slug,
+	state,
+	dispatch,
+	viewerId,
+	ownerEmail,
+	meta,
+	teamPrice,
+	clearRefusal,
+	onClose,
+	onContinue,
+	onFinishRecovered,
+	onDeclare,
+	onCloseKeepingSetup,
+	onRetryWithNewSlug,
+	onRetrySetup,
+	onStartTrial,
+	onChangeCurrency,
+	onPaid,
+	beforeConfirm,
+}: {
+	screen: CreateOrgScreen;
+	/** The gate's sentence when its check failed: shown instead of a way to pay. */
+	heldMessage: string | null;
+	/** The engine has restored the draft and asked the gate; until then Continue waits. */
+	ready: boolean;
+	form: CreateOrgForm;
+	slug: string;
+	state: CreateOrgState;
+	dispatch: (event: CreateOrgEvent) => void;
+	viewerId: string;
+	ownerEmail: string;
+	meta: ReturnType<typeof planMeta>;
+	teamPrice: ReturnType<typeof useLivePlanPrice>;
+	clearRefusal: () => void;
+	onClose: () => void;
+	onContinue: () => void;
+	onFinishRecovered: (declaration: PayerDeclaration) => void;
+	onDeclare: (declaration: PayerDeclaration) => void;
+	onCloseKeepingSetup: () => void;
+	onRetryWithNewSlug: () => void;
+	onRetrySetup: (record: PendingPaidSetup) => void;
+	onStartTrial: () => void;
+	onChangeCurrency: (currency: SupportedCurrency) => void;
+	onPaid: (billing: CollectedBilling) => Promise<void>;
+	beforeConfirm: (billing: CollectedBilling) => Promise<CheckoutRefusal | null>;
+}) {
+	if (heldMessage !== null && (screen.kind === "trial" || screen.kind === "checkout")) {
+		return <SetupStoppedPanel message={heldMessage} onClose={onClose} />;
+	}
+	switch (screen.kind) {
+		case "name":
+			return (
+				<NamePanel
+					form={form}
+					slug={slug}
+					showUrl={state.showUrl}
+					setShowUrl={(open) => dispatch({ type: "url-editor-set", open })}
+					slugTouched={state.slugTouched}
+					setSlugTouched={() => dispatch({ type: "slug-edited" })}
+					busy={state.busy}
+					ready={state.offer !== null && ready}
+					onContinue={onContinue}
+				/>
+			);
+		case "declare-recovered":
+			return (
+				<div className="space-y-3">
+					<p className="rounded-lg border border-border bg-surface-sunken px-4 py-3 text-ui-sm text-text-secondary">
+						We found a payment for a team that isn&apos;t set up yet. Confirm who is
+						paying to finish setting it up.
+						{screen.recovered.billing === null &&
+							" The tax ID from checkout didn't reach us — add it in the team's billing settings once it is set up."}
+					</p>
+					{!screen.recovered.org && <TeamUrlField form={form} slug={slug} />}
+					<PayerDeclarationForm
+						busy={state.busy}
+						refusal={state.refusal}
+						onEdit={clearRefusal}
+						submitLabel="Finish setup"
+						onBack={onClose}
+						onDeclare={onFinishRecovered}
+					/>
+				</div>
+			);
+		case "declare":
+			return (
+				<PayerDeclarationForm
+					busy={state.declaring}
+					refusal={state.refusal}
+					onEdit={clearRefusal}
+					submitLabel="Continue to payment"
+					onBack={() => dispatch({ type: "back-to-name" })}
+					onDeclare={onDeclare}
+				/>
+			);
+		case "confirm-close":
+			return (
+				<ConfirmCloseUnfinished
+					running={state.busy}
+					inPageOnly={pendingPaidSetupInPageOnly(viewerId)}
+					onStay={() => dispatch({ type: "close-cancelled" })}
+					onClose={onCloseKeepingSetup}
+				/>
+			);
+		case "stopped":
+			return <SetupStoppedPanel message={screen.message} onClose={onClose} />;
+		case "retry-new-slug":
+			return (
+				<RetryWithNewSlug form={form} slug={slug} busy={state.busy} onRetry={onRetryWithNewSlug} />
+			);
+		case "retry-setup":
+			return (
+				<RetrySetup
+					busy={state.busy}
+					failed={screen.failed}
+					onRetry={() => onRetrySetup(screen.pending)}
+				/>
+			);
+		case "trial":
+			return (
+				<TrialPanel
+					busy={state.busy}
+					priceLabel={teamPrice.label}
+					trialDays={state.offer?.trialDays ?? 30}
+					onBack={() => dispatch({ type: "back-to-name" })}
+					onStart={onStartTrial}
+				/>
+			);
+		case "checkout":
+			return (
+				<div className="flex min-h-0 flex-1 flex-col gap-4">
+					<div className="flex shrink-0 items-center justify-between">
+						<button
+							type="button"
+							onClick={() => {
+								// Back to the DECLARATION, not the name: it is the step
+								// immediately behind this one, and re-declaring is how a
+								// payer corrects a capacity or country they got wrong.
+								dispatch({ type: "back-to-declare" });
+							}}
+							className="text-left text-ui-sm text-text-tertiary transition-colors hover:text-text-primary"
+						>
+							← Back
+						</button>
+						<CurrencyToggle
+							value={state.currency}
+							onChange={onChangeCurrency}
+							disabled={state.switchingCurrency}
+						/>
+					</div>
+					{state.intentNotice && (
+						<Alert className="shrink-0">
+							<AlertDescription>{state.intentNotice}</AlertDescription>
+						</Alert>
+					)}
+					<StripeElementsProvider clientSecret={screen.clientSecret}>
+						<BillingCheckoutForm
+							clientSecret={screen.clientSecret}
+							meta={meta}
+							unitAmount={teamPrice.unitAmount}
+							currency={state.currency}
+							ownerEmail={ownerEmail}
+							submitLabel="Create"
+							scrollable
+							onPaid={onPaid}
+							beforeConfirm={beforeConfirm}
+						/>
+					</StripeElementsProvider>
+				</div>
+			);
+		case "no-intent":
+		case "invite":
+			return null;
+	}
+}
+
+
 // ── Create-specific views ──────────────────────────────────────────────────────
 
 /** State 1 — team name (auto-slug) + a single Continue. Trial-vs-pay is decided in step 2. */
@@ -1229,7 +1371,7 @@ function NamePanel({
 	ready,
 	onContinue,
 }: {
-	form: UseFormReturn<FormData>;
+	form: CreateOrgForm;
 	slug: string;
 	showUrl: boolean;
 	setShowUrl: (v: boolean) => void;
@@ -1388,7 +1530,7 @@ function RetryWithNewSlug({
 	busy,
 	onRetry,
 }: {
-	form: UseFormReturn<FormData>;
+	form: CreateOrgForm;
 	slug: string;
 	busy: boolean;
 	onRetry: () => void;
@@ -1415,7 +1557,7 @@ function RetryWithNewSlug({
 }
 
 /** The "Team URL" field, with the refusal for the slug (if any) under it and tied to it. */
-function TeamUrlField({ form, slug }: { form: UseFormReturn<FormData>; slug: string }) {
+function TeamUrlField({ form, slug }: { form: CreateOrgForm; slug: string }) {
 	const inputId = useId();
 	const errorId = useId();
 	const slugError = form.formState.errors.slug?.message;

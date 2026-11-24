@@ -6,6 +6,11 @@
       "vars": ["CLOUDFLARE_API_TOKEN"],
       "description": "Cloudflare API token (DNS, Workers, status page)."
     },
+    "license-signing": {
+      "source": "keychain",
+      "vars": ["ALETHIA_LICENSE_SIGNING_KEY"],
+      "description": "Alethia licence signing key: base64 of the ed25519 PKCS8 PEM. Maintainer-held; created by ee/scripts/generate-license-keypair.mjs, used only by ee/scripts/issue-license.ts."
+    },
     "stripe-test": {
       "source": "keychain",
       "vars": ["STRIPE_API_KEY"],
@@ -25,6 +30,11 @@
       "source": "keychain",
       "vars": ["GH_TOKEN"],
       "description": "A GitHub token with admin scopes beyond the gh CLI's own login (rulesets, org settings)."
+    },
+    "platform-alert-paging": {
+      "source": "keychain",
+      "vars": ["ALETHIA_PAGING_CHANNEL_SECRET"],
+      "description": "The platform paging channel's destination for scripts/ops/platform-alert-paging.ts: a webhook/Slack/Teams/... URL, or a PagerDuty routing key. Not needed for an email channel."
     },
     "tofu-sandbox": {
       "source": "keychain",

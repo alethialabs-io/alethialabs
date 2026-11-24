@@ -6,15 +6,19 @@
 // release-and-billing §4.5 "Free AI"). Each organization's own session, weekly and per-seat caps
 // (ai-guard.ts) still apply underneath; this bounds the SUM, which no per-org cap can.
 //
-// WHO IT BINDS. An organization whose EFFECTIVE AI tier is `ai_free` (ai-plan.ts: no billing row,
-// `ai_tier = 'ai_free'`, or a paid tier whose AI subscription is not active/trialing). Paid AI tiers
+// WHO IT BINDS. An organization whose EFFECTIVE AI tier is `ai_free`, decided by ai-plan.ts's
+// `billingAiTier` — the same function the AI guard reads its tier through: no billing row,
+// `ai_tier = 'ai_free'`, a paid tier whose AI subscription is not active/trialing, or an OFF-STRIPE
+// AI grant (no AI subscription id) whose term end has passed (#7348). Paid AI tiers
 // are never paused here. A free organization with purchased top-up credits can still spend THOSE
 // while the pool is paused (unless its hard cap says pause at the included allowance): only the
 // included allowance is ours to bound. The gate itself is in ai-guard.ts; this file decides.
 //
 // THE COUNT. Σ `ai_usage_ledger.credits` from the `included` source since 00:00 UTC, over rows whose
 // organization is free by the rule above as it reads NOW (a row of an org that upgraded at noon is no
-// longer counted). Outstanding holds are rows too, so in-flight turns count at their reserve.
+// longer counted; a row of an org whose grant ended at noon is). The database sums per organization
+// and returns each one's billing columns; which of those organizations are free is then answered by
+// `billingAiTier` itself rather than re-stated in SQL, so the pool and the guard cannot disagree. Outstanding holds are rows too, so in-flight turns count at their reserve.
 // The ceiling is `abuseLimit("free_ai_global_daily_credits")` from the typed table (lib/abuse/limits.ts).
 //
 // CACHE AND OVERSPEND BOUND. The ledger has no index that leads with `created_at` for the included
@@ -37,13 +41,14 @@
 // org. The kill switch never depends on the database, so the operator can always close the pool.
 
 import "server-only";
-import { and, eq, gte, isNull, notInArray, or, sum } from "drizzle-orm";
+import { and, eq, gte, sum } from "drizzle-orm";
 import { abuseLimit } from "@/lib/abuse/limits";
 import {
 	COST_GUARD_FAILED_OPEN_EVENT,
 	FREE_AI_PAUSED_EVENT,
 	raisePlatformAbuseAlert,
 } from "@/lib/abuse/platform-alert";
+import { type AiTierBillingFields, billingAiTier } from "@/lib/billing/ai-plan";
 import type { Db } from "@/lib/db";
 import { getServiceDb } from "@/lib/db";
 import { aiUsageLedger, organizationBilling } from "@/lib/db/schema";
@@ -55,9 +60,6 @@ export const FREE_AI_PAUSED_ENV = "ALETHIA_FREE_AI_PAUSED";
 export const FREE_AI_POOL_CACHE_MS = 30_000;
 
 const DAY_MS = 24 * 3_600_000;
-
-/** The billing statuses under which a paid AI tier is effective (ai-plan.ts · effectiveAiTier). */
-const LIVE_AI_STATUSES = ["active", "trialing"] as const;
 
 /** Why free AI is paused: the operator's switch, or the platform's daily ceiling. */
 export type FreeAiPauseCause = "switch" | "ceiling";
@@ -107,27 +109,67 @@ export function decideFreeAiPool(input: {
 	return { open: true };
 }
 
+/** One organization's included credits in the window, and the billing row its AI tier is read from. */
+export interface FreeAiPoolOrgUsage {
+	/** Σ credits, as Postgres returns a `sum` (a numeric string), or null for none. */
+	readonly credits: string | number | null;
+	/** The organization's billing columns; null when it has no billing row (which is free). */
+	readonly billing: AiTierBillingFields | null;
+}
+
 /**
- * Σ included credits booked since `since` by organizations whose effective AI tier is free — the
- * pool's count. Runs on whatever handle it is given (a pooled `Db`, or a transaction / savepoint).
+ * Σ the credits of the organizations whose effective AI tier at `now` is free — the pool's count,
+ * from per-organization sums. Pure. "Free" is `billingAiTier`, never a copy of it, so an expired
+ * off-Stripe AI grant counts here exactly when the guard treats that organization as free.
  */
-export async function readFreeAiPoolUsed(db: Pick<Db, "select">, since: Date): Promise<number> {
-	const [row] = await db
-		.select({ s: sum(aiUsageLedger.credits) })
+export function sumFreeAiPoolUsed(rows: readonly FreeAiPoolOrgUsage[], now: Date): number {
+	let total = 0;
+	for (const row of rows) {
+		if (row.billing !== null && billingAiTier(row.billing, now) !== "ai_free") continue;
+		total += Number(row.credits ?? 0);
+	}
+	return total;
+}
+
+/**
+ * Σ included credits booked since `since` by organizations whose effective AI tier at `now` is free
+ * — the pool's count. Runs on whatever handle it is given (a pooled `Db`, or a transaction /
+ * savepoint). The database sums per organization; {@link sumFreeAiPoolUsed} decides which are free.
+ */
+export async function readFreeAiPoolUsed(
+	db: Pick<Db, "select">,
+	since: Date,
+	now: Date = new Date(),
+): Promise<number> {
+	const rows = await db
+		.select({
+			credits: sum(aiUsageLedger.credits),
+			billingId: organizationBilling.id,
+			aiTier: organizationBilling.aiTier,
+			aiSubscriptionStatus: organizationBilling.aiSubscriptionStatus,
+			aiStripeSubscriptionId: organizationBilling.aiStripeSubscriptionId,
+			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			currentPeriodEnd: organizationBilling.currentPeriodEnd,
+		})
 		.from(aiUsageLedger)
 		.leftJoin(organizationBilling, eq(organizationBilling.organizationId, aiUsageLedger.org_id))
-		.where(
-			and(
-				eq(aiUsageLedger.source, "included"),
-				gte(aiUsageLedger.created_at, since),
-				or(
-					isNull(organizationBilling.id),
-					eq(organizationBilling.aiTier, "ai_free"),
-					notInArray(organizationBilling.aiSubscriptionStatus, [...LIVE_AI_STATUSES]),
-				),
-			),
+		.where(and(eq(aiUsageLedger.source, "included"), gte(aiUsageLedger.created_at, since)))
+		.groupBy(
+			aiUsageLedger.org_id,
+			organizationBilling.id,
+			organizationBilling.aiTier,
+			organizationBilling.aiSubscriptionStatus,
+			organizationBilling.aiStripeSubscriptionId,
+			organizationBilling.stripeSubscriptionId,
+			organizationBilling.currentPeriodEnd,
 		);
-	return Number(row?.s ?? 0);
+	return sumFreeAiPoolUsed(
+		rows.map(({ credits, billingId, ...billing }) => ({
+			credits,
+			billing: billingId === null ? null : billing,
+		})),
+		now,
+	);
 }
 
 /** The last count this process read: which UTC day it belongs to, its value, and when it was read. */
@@ -177,7 +219,8 @@ export async function freeAiPoolState(opts: FreeAiPoolOptions = {}): Promise<Fre
 		used = cached.used;
 	} else {
 		try {
-			const read = opts.read ?? ((since: Date) => readFreeAiPoolUsed(getServiceDb(), since));
+			const read =
+				opts.read ?? ((since: Date) => readFreeAiPoolUsed(getServiceDb(), since, new Date(now)));
 			used = await read(dayStart);
 			cached = { dayStartMs, used, readAtMs: now };
 		} catch (err) {

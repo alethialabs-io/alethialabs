@@ -43,7 +43,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { useShortcut } from "@/lib/shortcuts/use-shortcut";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
-import { projectFormSchema } from "@/lib/validations/project-form.schema";
+import { designSaveSchema } from "@/lib/validations/project-form.schema";
 import type { DestroyOptions } from "./cards/destroy-tree-view";
 import { CanvasCommandPalette } from "./canvas-command-palette";
 import { useHasDrawnNodes } from "./use-has-drawn-nodes";
@@ -81,6 +81,7 @@ import {
 	SHORTCUT_CANVAS_TIDY,
 	SHORTCUT_CANVAS_UNDO,
 } from "./toolbar/canvas-keys";
+import { saveRefusalMessage, schemaIssues } from "./review/review-issues";
 import { CanvasToolbar } from "./toolbar/canvas-toolbar";
 import { freeSpot } from "./toolbar/place-new";
 import { savedRevision } from "./toolbar/saved-revision";
@@ -377,16 +378,22 @@ function CanvasInner({
 	 */
 	const handleSaveDesign = useCallback(() => {
 		if (saveIsPending) return;
-		const parsed = projectFormSchema.safeParse(graphToForm(actions.nodes()));
+		// The SAVE schema, not the deploy one: a project with no cloud account yet can still save its
+		// design (#7272). A refusal is told in the review's words, never as a validator path.
+		const nodes = actions.nodes();
+		const parsed = designSaveSchema.safeParse(graphToForm(nodes));
 		if (!parsed.success) {
-			const first = parsed.error.issues[0];
-			toast.error(
-				`Can't save: ${first?.path.join(".") || "project"} — ${first?.message}`,
-			);
+			toast.error(saveRefusalMessage(schemaIssues(nodes, parsed.error.issues)));
 			return;
 		}
-		writtenRevision.current = savedRevision(board.document.getState().seed?.revision, parsed.data);
-		mutateSave({ projectId, environmentId: environmentId ?? null, design: parsed.data });
+		// The revision is the hash of the design as the server will READ it back, and the read
+		// (`getProjectAsFormData`) answers a project with no account as `""`, not the NULL stored.
+		const design = parsed.data;
+		writtenRevision.current = savedRevision(board.document.getState().seed?.revision, {
+			...design,
+			project: { ...design.project, cloud_identity_id: design.project.cloud_identity_id ?? "" },
+		});
+		mutateSave({ projectId, environmentId: environmentId ?? null, design });
 	}, [projectId, environmentId, saveIsPending, mutateSave, board, actions]);
 
 	const discardIsPending = discardStaged.isPending;

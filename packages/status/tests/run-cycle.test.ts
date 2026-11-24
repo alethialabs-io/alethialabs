@@ -23,6 +23,9 @@ function consoleBody(status: string, db = true, schema = true, openfga: boolean 
 	return JSON.stringify({ status, mode: "status", ts: "x", checks: { db, schema, openfga } });
 }
 
+/** The head of apps/console/public/install.sh — enough to carry the installer markers. */
+const INSTALL_SH = '#!/bin/sh\n# Alethia CLI installer (macOS / Linux).\nmain() {\n\tREPO="alethialabs-io/alethia-cli"\n}\nmain "$@"\n';
+
 /** The URL string of a fetch input. */
 function urlOf(input: string | URL | Request): string {
 	return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -46,6 +49,8 @@ function stubFetch(overrides: Record<string, number | { status: number; body: st
 					: new Response(answer.body, { status: answer.status });
 			}
 			if (url.endsWith("/api/health")) return new Response(consoleBody("healthy"), { status: 200 });
+			// The Installer row reads the body (probes.ts assertInstaller), so it gets a real script.
+			if (url.includes("get.alethialabs.io")) return new Response(INSTALL_SH, { status: 200 });
 			return new Response("<html></html>", { status: 200 });
 		}),
 	);

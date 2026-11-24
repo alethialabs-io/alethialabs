@@ -18,7 +18,7 @@ describe("the case crumb (F044)", () => {
 	it("reads the case number the resolver gives", () => {
 		const crumbs = buildCrumbs(PATH, undefined, (id) => (id === CASE ? "CASE-000002" : undefined));
 		expect(crumbs.at(-1)).toEqual({ label: "CASE-000002" });
-		expect(crumbs.map((c) => c.label)).toEqual(["Support", "My cases", "CASE-000002"]);
+		expect(crumbs.map((c) => c.label)).toEqual(["Support", "Cases", "CASE-000002"]);
 	});
 
 	it("reads 'Case' — never the raw id — when the case is not in the feed", () => {

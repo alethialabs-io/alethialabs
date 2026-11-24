@@ -334,6 +334,7 @@ import { getServiceDb } from "@/lib/db";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { listOrgInvoices } from "@/lib/billing/invoices";
 import { getPurchaseStripe, getStripe } from "@/lib/billing/stripe";
+import { STRIPE_INVOICE_FOOTER } from "@/lib/billing/receipt-footer";
 import { syncSubscriptionToBilling } from "@/lib/billing/sync";
 import { openHold } from "@/lib/billing/payment-holds/store";
 import {
@@ -595,6 +596,7 @@ describe("createCheckoutSession", () => {
 			email: "owner@test.io",
 			name: "Acme",
 			metadata: { organization_id: "org-1", created_by: "user-1" },
+			invoice_settings: { footer: STRIPE_INVOICE_FOOTER },
 		});
 		expect(upsertOrgBilling).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -1314,6 +1316,7 @@ describe("createNewOrgSubscriptionIntent", () => {
 			email: "owner@test.io",
 			name: "NewCo",
 			metadata: { created_by: "user-1" },
+			invoice_settings: { footer: STRIPE_INVOICE_FOOTER },
 		});
 		const subArgs = stripe.subscriptions.create.mock.calls[0][0];
 		expect(subArgs.items).toEqual([{ price: "price_team", quantity: 1 }]);
@@ -3064,6 +3067,7 @@ describe("listInvoices", () => {
 				description: "Team plan",
 				pdfKey: "org-1/in_1.pdf",
 				hostedInvoiceUrl: "https://hosted",
+				facturaStatus: "issued",
 				paidAt,
 				createdAt: paidAt,
 				updatedAt: paidAt,
@@ -3083,13 +3087,51 @@ describe("listInvoices", () => {
 				periodStart: periodStart.toISOString(),
 				periodEnd: periodEnd.toISOString(),
 				description: "Team plan",
-				hasPdf: true,
-				hostedInvoiceUrl: "https://hosted",
+				facturaIssued: true,
 			},
 		]);
+		// Stripe's hosted page is never handed to the UI, even beside an issued фактура (#7341).
+		expect(r[0]).not.toHaveProperty("hostedInvoiceUrl");
 	});
 
-	it("marks hasPdf false when there is neither a stored PDF nor a hosted URL", async () => {
+	// EA-7c (#7341): only OUR issued фактура is a document. Each row below would have counted as
+	// "has a PDF" before — by its hosted URL, or by a pdf_key from before the фактура pipeline.
+	it.each([
+		["pending, with only Stripe's hosted URL", "pending", null, "https://hosted"],
+		["failed, awaiting an operator", "failed", null, null],
+		["mirrored before the фактура pipeline, with only a hosted URL", null, null, "https://hosted"],
+		["mirrored before the фактура pipeline, with a captured Stripe PDF", null, "org-1/in_9.pdf", "https://hosted"],
+		["marked issued but with no stored PDF", "issued", null, "https://hosted"],
+	])("reads a row %s as being issued, with no number", async (_label, facturaStatus, pdfKey, hostedInvoiceUrl) => {
+		const paidAt = new Date("2026-07-01T00:00:00.000Z");
+		orgInvoicesList.mockResolvedValue([
+			{
+				id: "uuid-9",
+				organizationId: "org-1",
+				stripeInvoiceId: "in_9",
+				stripeCustomerId: "cus_1",
+				number: "OQDLWV3B-0031",
+				status: "paid",
+				amountTotal: 2000,
+				currency: "usd",
+				periodStart: null,
+				periodEnd: null,
+				description: null,
+				pdfKey,
+				hostedInvoiceUrl,
+				facturaStatus,
+				paidAt,
+				createdAt: paidAt,
+				updatedAt: paidAt,
+			},
+		] as never);
+		const [row] = await listInvoices();
+		expect(row.facturaIssued).toBe(false);
+		expect(row.number).toBeNull();
+		expect(row).not.toHaveProperty("hostedInvoiceUrl");
+	});
+
+	it("marks facturaIssued false when there is neither a stored PDF nor a hosted URL", async () => {
 		const paidAt = new Date("2026-07-01T00:00:00.000Z");
 		orgInvoicesList.mockResolvedValue([
 			{
@@ -3112,7 +3154,7 @@ describe("listInvoices", () => {
 			},
 		] as never);
 		const [row] = await listInvoices();
-		expect(row.hasPdf).toBe(false);
+		expect(row.facturaIssued).toBe(false);
 		expect(row.periodStart).toBeNull();
 	});
 

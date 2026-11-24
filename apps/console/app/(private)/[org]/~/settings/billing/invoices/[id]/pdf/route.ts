@@ -58,8 +58,10 @@ export async function GET(
 		return invoicePdfError("not-found");
 	}
 
-	// No stored фактура yet: it is being issued. `hostedInvoiceUrl` is deliberately NOT consulted.
-	if (!row.pdfKey) {
+	// No issued фактура yet: it is being issued. `hostedInvoiceUrl` is deliberately NOT consulted, and
+	// neither is a `pdfKey` on a row that is not `issued`: rows from before the фактура pipeline may
+	// hold a stored copy of Stripe's PDF, which is not the invoice (EA-7c, #7341).
+	if (row.facturaStatus !== "issued" || !row.pdfKey) {
 		return invoicePdfError("being-issued");
 	}
 

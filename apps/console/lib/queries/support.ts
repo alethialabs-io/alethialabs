@@ -54,6 +54,39 @@ export interface CaseListFilter {
 	status?: "active" | "resolved";
 }
 
+/**
+ * A keyset position in the case list: the last row a page returned, by the list's own sort key.
+ * `at` is that row's `last_message_at` as an ISO string (millisecond precision — what a JS `Date`
+ * carries), `id` its case id, the tiebreaker that makes the key total.
+ */
+export interface CaseCursor {
+	at: string;
+	id: string;
+}
+
+/** One page request for {@link listCasesForOwner}: rows strictly after `cursor`, at most `limit`. */
+export interface CasePageRequest {
+	cursor?: CaseCursor;
+	limit: number;
+}
+
+/** How many cases one page of the "My cases" list carries. */
+export const CASE_PAGE_SIZE = 50;
+
+/**
+ * The cursor to request the page after `page`, or null when `page` is the last one. A page shorter
+ * than `limit` is the end; a full page may be followed by more (or by an empty page, when the total
+ * is an exact multiple — one wasted read, never a dropped case).
+ */
+export function nextCaseCursor(
+	page: readonly Pick<CaseListItem, "id" | "last_message_at">[],
+	limit: number = CASE_PAGE_SIZE,
+): CaseCursor | null {
+	const last = page.at(-1);
+	if (last === undefined || page.length < limit) return null;
+	return { at: new Date(last.last_message_at).toISOString(), id: last.id };
+}
+
 /** The status values in each lifecycle bucket. */
 const ACTIVE_STATUSES: SupportCaseStatus[] = [
 	"open",
@@ -63,14 +96,28 @@ const ACTIVE_STATUSES: SupportCaseStatus[] = [
 const RESOLVED_STATUSES: SupportCaseStatus[] = ["resolved", "closed"];
 
 /**
- * Lists the owner's cases, newest activity first, joined to the caller's read watermark
- * so each row carries an `unread` flag. Optionally filtered to the active or resolved
- * lifecycle bucket.
+ * The list's sort key, truncated to milliseconds. Postgres keeps microseconds but a cursor travels
+ * as a JS `Date` (milliseconds), so ordering and comparing on the raw column would let a row in the
+ * same millisecond as the cursor, but a later microsecond, fall on the wrong side of it — skipped.
+ * Ordering and the cursor predicate both read THIS expression, so they cannot disagree.
+ */
+const caseSortAt = sql`date_trunc('milliseconds', ${supportCases.last_message_at})`;
+
+/**
+ * Lists the owner's cases, newest activity first (ties broken by id, so the order is total),
+ * joined to the caller's read watermark so each row carries an `unread` flag. Optionally
+ * filtered to the active or resolved lifecycle bucket.
+ *
+ * With `page`, returns at most `page.limit` rows strictly after `page.cursor` by that same
+ * (activity, id) key — keyset paging, so a case can neither be skipped nor repeated at a page
+ * boundary, even among cases whose latest message shares a timestamp. Without `page`, every
+ * case (the shell bell's feed reads it that way).
  */
 export async function listCasesForOwner(
 	tx: Tx,
 	ownerId: string,
 	filter: CaseListFilter = {},
+	page?: CasePageRequest,
 ): Promise<CaseListItem[]> {
 	const statusFilter =
 		filter.status === "active"
@@ -78,8 +125,12 @@ export async function listCasesForOwner(
 			: filter.status === "resolved"
 				? inArray(supportCases.status, RESOLVED_STATUSES)
 				: undefined;
+	const cursor = page?.cursor;
+	const afterCursor = cursor
+		? sql`(${caseSortAt}, ${supportCases.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)`
+		: undefined;
 
-	const rows = await tx
+	const listed = tx
 		.select({
 			id: supportCases.id,
 			case_number: supportCases.case_number,
@@ -107,10 +158,10 @@ export async function listCasesForOwner(
 				eq(supportCaseReads.user_id, ownerId),
 			),
 		)
-		.where(statusFilter)
-		.orderBy(desc(supportCases.last_message_at));
+		.where(and(statusFilter, afterCursor))
+		.orderBy(desc(caseSortAt), desc(supportCases.id));
 
-	return rows;
+	return page ? listed.limit(page.limit) : listed;
 }
 
 /** A thread message safe to return to the customer — the internal-note flag is stripped. */

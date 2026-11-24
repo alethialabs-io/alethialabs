@@ -582,10 +582,11 @@ controls:
     route: /[org]/~/settings/classification
     surface: apps/console/components/classification/classification-manager.tsx
     mutation: deleteDimension
-    # NO reach step. The dimension rail's rows are bare `<div onClick>` with no role and no label
-    # (dimension-rail.tsx), so no step could name one — and none is needed: the manager pre-selects
-    # the first dimension (classification-manager.tsx: `dims.find(…) ?? dims[0]`), and the audit
-    # seeds exactly one (e2e/audit/fixtures-destructive.ts → seedClassification).
+    # NO reach step, because none is needed: the manager pre-selects the first dimension
+    # (classification-manager.tsx: `dims.find(…) ?? dims[0]`), and the audit seeds exactly one
+    # (e2e/audit/fixtures-destructive.ts → seedClassification). Each rail row's selection is a real
+    # `<button aria-pressed>` named by its label, key and counts (dimension-rail.tsx, since #7235),
+    # so a reach step COULD name one if a second dimension were ever seeded.
     control: { role: button, name: "Delete dimension" }
     confirm: alert-dialog
     confirm_action: "Delete"
@@ -599,8 +600,8 @@ controls:
     route: /[org]/~/settings/classification
     surface: apps/console/components/classification/classification-manager.tsx
     mutation: deleteValue
-    # NO reach step. The dimension rail's rows are bare `<div onClick>` with no role and no label
-    # (dimension-rail.tsx), so no step could name one — and none is needed: the manager pre-selects
+    # NO reach step, because none is needed (each rail row's selection is a real
+    # `<button aria-pressed>` since #7235, so one could be named): the manager pre-selects
     # the first dimension (classification-manager.tsx: `dims.find(…) ?? dims[0]`), and its detail
     # renders every value row with its own "Delete value" (dimension-detail.tsx) — there was never
     # a value to "select". The audit seeds one dimension holding one value (seedClassification).
