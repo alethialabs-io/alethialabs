@@ -261,8 +261,10 @@ export function createHandlers(deps: HandlerDeps = defaultHandlerDeps): Record<H
 							next_poll_s: done ? null : NEXT_POLL_S,
 						};
 					}
-				} else if (approvalId !== undefined) {
-					const approval = await deps.readApproval(ctx.actor, approvalId);
+				} else {
+					// The input schema admits exactly one of job_id and approval_id, so this is the
+					// approval; an empty id would read as not found, never as some other approval.
+					const approval = await deps.readApproval(ctx.actor, approvalId ?? "");
 					const done = approval.status !== "pending";
 					if (done || deps.now() + WAIT_POLL_MS > deadline) {
 						return {
@@ -274,8 +276,6 @@ export function createHandlers(deps: HandlerDeps = defaultHandlerDeps): Record<H
 							next_poll_s: done ? null : NEXT_POLL_S,
 						};
 					}
-				} else {
-					throw new McpToolRefusal("invalid_input", "Pass exactly one of job_id and approval_id.");
 				}
 				await deps.sleep(WAIT_POLL_MS);
 			}

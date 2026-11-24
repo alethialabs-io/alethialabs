@@ -257,6 +257,13 @@ describe("plan", () => {
 });
 
 describe("wait_for_job", () => {
+	it("refuses input naming neither a job nor an approval, reading nothing", async () => {
+		const d = deps();
+		await expect(createHandlers(d).wait_for_job.call({}, CTX)).rejects.toThrow();
+		expect(d.jobStatus).not.toHaveBeenCalled();
+		expect(d.readApproval).not.toHaveBeenCalled();
+	});
+
 	it("reports a finished job as done, with no next poll", async () => {
 		const d = deps({ jobStatus: vi.fn(async () => ({ status: "SUCCESS", error_message: null })) });
 		const result = await createHandlers(d).wait_for_job.call({ job_id: "job-1" }, CTX);

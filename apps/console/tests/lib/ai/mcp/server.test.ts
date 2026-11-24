@@ -50,9 +50,11 @@ vi.mock("@/lib/ai/mcp/approval-store", () => ({
 vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
 
 import { type HandledTool, HANDLED_TOOL_NAMES, McpToolRefusal } from "@/lib/ai/mcp/handlers";
-import { buildMcpServer, MCP_SERVER_INSTRUCTIONS, type ToolCallRecord } from "@/lib/ai/mcp/server";
+import { buildMcpServer, MCP_SERVER_INSTRUCTIONS, recordToolCall, type ToolCallRecord } from "@/lib/ai/mcp/server";
 import type { AgentScope, SurfaceQuery } from "@/lib/ai/mcp/surface";
 import type { Actor } from "@/lib/authz/types";
+import { withActorScope } from "@/lib/db";
+import { log } from "@/lib/observability/log";
 
 const UNSCOPED: SurfaceQuery = { readonly: false, projectId: null, features: null };
 
@@ -207,5 +209,79 @@ describe("buildMcpServer — calls", () => {
 		expect(records).toEqual([
 			expect.objectContaining({ tool: "list_projects", errorClass: null, approvalId: null }),
 		]);
+	});
+});
+
+describe("buildMcpServer — error classes and missing handlers", () => {
+	it("records an error's own string code as its class", async () => {
+		const handlers = handlersAnswering({});
+		const coded = Object.assign(new Error("conflict"), { code: "stale_revision" });
+		handlers.cancel_job = { scope: "plan", call: vi.fn(async () => Promise.reject(coded)) };
+		const { records } = build(["read", "plan"], UNSCOPED, handlers);
+		await tool("cancel_job").cb({ job_id: "j1" });
+		expect(records[0]).toMatchObject({ tool: "cancel_job", errorClass: "stale_revision" });
+	});
+
+	it("records a thrown non-Error as unknown", async () => {
+		const handlers = handlersAnswering({});
+		handlers.cancel_job = { scope: "plan", call: vi.fn(async () => Promise.reject("a string")) };
+		const { records } = build(["read", "plan"], UNSCOPED, handlers);
+		const answer = await tool("cancel_job").cb({ job_id: "j1" });
+		expect(answer.isError).toBe(true);
+		expect(records[0]).toMatchObject({ tool: "cancel_job", errorClass: "unknown" });
+	});
+
+	it("does not list a declared tool that has no handler", () => {
+		const handlers = handlersAnswering({});
+		delete handlers.cancel_job;
+		expect(build(["read", "plan"], UNSCOPED, handlers).names).not.toContain("cancel_job");
+	});
+});
+
+describe("recordToolCall", () => {
+	const actor = actorWith(["read", "apply"]);
+	const call: ToolCallRecord = { tool: "request_apply", latencyMs: 12.6, errorClass: null, approvalId: "apr-1", approvalStatus: "pending" };
+
+	/** Runs `withActorScope` against a transaction that captures the inserted row. */
+	function capture() {
+		const inserted: unknown[] = [];
+		const tx = { insert: vi.fn(() => ({ values: vi.fn(async (row: unknown) => inserted.push(row)) })) };
+		vi.mocked(withActorScope).mockImplementation(((_a: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never);
+		return inserted;
+	}
+
+	it("inserts the call with the OAuth client, a rounded latency and the approval, never arguments", async () => {
+		const inserted = capture();
+		await recordToolCall(actor, call);
+		expect(inserted).toEqual([
+			{
+				org_id: "org-1",
+				user_id: "user-1",
+				tool: "request_apply",
+				client_id: "client-1",
+				credential: "agent_oauth",
+				latency_ms: 13,
+				error_class: null,
+				approval_id: "apr-1",
+				approval_status: "pending",
+			},
+		]);
+	});
+
+	it("drops an approval status the column cannot hold, and the client of a non-OAuth actor", async () => {
+		const inserted = capture();
+		await recordToolCall({ ...actor, credential: "session", credentialRef: undefined }, { ...call, latencyMs: -3, approvalStatus: "bogus" });
+		expect(inserted[0]).toMatchObject({ client_id: null, latency_ms: 0, approval_status: null });
+
+		await recordToolCall({ ...actor, credentialRef: undefined }, { ...call, approvalStatus: null });
+		expect(inserted[1]).toMatchObject({ client_id: null, approval_status: null });
+	});
+
+	it("never fails the call when the record cannot be written", async () => {
+		const error = vi.spyOn(log, "error").mockImplementation(() => {});
+		vi.mocked(withActorScope).mockRejectedValue(new Error("db down"));
+		await expect(recordToolCall(actor, call)).resolves.toBeUndefined();
+		expect(error).toHaveBeenCalledWith("[mcp] could not record a tool call", expect.objectContaining({ err: expect.any(Error) }));
+		error.mockRestore();
 	});
 });

@@ -8,8 +8,18 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withScope: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
+vi.mock("@/lib/approvals/context", () => ({ readAgentPolicy: vi.fn() }));
 
-import { type AgentGrant, type McpActorDeps, clientIdFromClaims, resolveMcpActor } from "@/lib/ai/mcp/actor";
+import {
+	type AgentGrant,
+	clientIdFromClaims,
+	defaultMcpActorDeps,
+	type McpActorDeps,
+	resolveMcpActor,
+} from "@/lib/ai/mcp/actor";
+import { readAgentPolicy } from "@/lib/approvals/context";
+import { getServiceDb, withScope } from "@/lib/db";
+import { txAnswering } from "./tx-stub";
 
 /** Reads that answer a person in org-1 with no grant and agent access on, unless overridden. */
 function deps(over: Partial<McpActorDeps> = {}): McpActorDeps {
@@ -105,5 +115,33 @@ describe("clientIdFromClaims", () => {
 		expect(clientIdFromClaims({ client_id: "b" })).toBe("b");
 		expect(clientIdFromClaims({ azp: "" })).toBeNull();
 		expect(clientIdFromClaims({})).toBeNull();
+	});
+});
+
+describe("defaultMcpActorDeps", () => {
+	it("reads the client's live consent grant as an org, its scopes and its projects", async () => {
+		const db = txAnswering([{ org_id: "org-2", scopes: ["read", "plan"], project_ids: ["p1"] }]);
+		// The stub cannot satisfy drizzle's database type; the same shape addons-version.test.ts uses.
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+		expect(await defaultMcpActorDeps.readGrant("user-1", "client-1")).toEqual({
+			orgId: "org-2",
+			scopes: ["read", "plan"],
+			projectIds: ["p1"],
+		});
+		expect(db.select).toHaveBeenCalledTimes(1);
+	});
+
+	it("answers no grant when the client has none (or it was revoked)", async () => {
+		vi.mocked(getServiceDb).mockReturnValue(txAnswering([]) as never);
+		expect(await defaultMcpActorDeps.readGrant("user-1", "client-1")).toBeNull();
+	});
+
+	it("reads the organization's agent switch inside that person's tenancy scope", async () => {
+		const tx = txAnswering();
+		vi.mocked(withScope).mockImplementation(((_scope: unknown, cb: (t: unknown) => unknown) => cb(tx)) as never);
+		vi.mocked(readAgentPolicy).mockResolvedValue({ agentAccessEnabled: false } as never);
+		expect(await defaultMcpActorDeps.agentAccessEnabled({ userId: "user-1", orgId: "org-1" })).toBe(false);
+		expect(withScope).toHaveBeenCalledWith({ ownerId: "user-1", orgId: "org-1" }, expect.any(Function));
+		expect(readAgentPolicy).toHaveBeenCalledWith(tx, "org-1");
 	});
 });
