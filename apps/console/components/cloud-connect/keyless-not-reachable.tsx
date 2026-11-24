@@ -18,7 +18,7 @@ import { ExternalLink, Globe } from "lucide-react";
 import type { KeylessNotReadyReason } from "@/lib/oidc/keyless-readiness";
 
 /** The self-hosting guide's page on the keyless connectors and what they need. */
-const KEYLESS_DOCS_URL = "/docs/guides/self-hosting/managed-cloud-connectors";
+const KEYLESS_DOCS_URL = "/docs/self-host/managed-cloud-connectors";
 
 /** What each reason means for the person reading it. */
 const REASON_TEXT: Record<KeylessNotReadyReason, string> = {
