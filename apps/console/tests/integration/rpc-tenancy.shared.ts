@@ -655,6 +655,14 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: {},
 		markers: (out, s) => ({ x: listsEnvironment(out, s.envX), y: listsEnvironment(out, s.envY) }),
 	},
+	// The Evidence page's recorded-waivers list (#7488): the ADDRESSED org's waivers, keyset-paged.
+	// Each org's seeded job carries an org-level override (no project, no environment), so it is a
+	// waiver every member of that org may see — and the marker of whose log answered.
+	"evidence.waivers": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.jobX), y: hasRow(out, s.jobY) }),
+	},
 	"canvas.cloudInventory": {
 		kind: "by-id",
 		input: (s, org) => ({ identityId: identityOf(s, org) }),
@@ -1319,8 +1327,10 @@ export async function runRpcTenancySuite(opts: {
 			await ensureMemberGrant(ORG_X, W, "admin");
 			await ensureMemberGrant(ORG_Y, W, "admin");
 
-			seeded.jobX = await seedJob(W, ORG_X);
-			seeded.jobY = await seedJob(W, ORG_Y);
+			// Each carries an org-level verification waiver, which `evidence.waivers` lists (#7488).
+			const waiver = { controls: ["KEYLESS-001"], reason: "tenancy marker", by: "w@example.test" };
+			seeded.jobX = await seedJob(W, ORG_X, { verify_override: waiver });
+			seeded.jobY = await seedJob(W, ORG_Y, { verify_override: waiver });
 
 			// #6118: both orgs on a live Team plan, so `overview.alerts` (which answers no rows to a
 			// plan without alerting) has rows to mark, and one delivery in each org's ledger.
