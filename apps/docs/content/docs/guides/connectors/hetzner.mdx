@@ -3,8 +3,6 @@ title: Hetzner Connector
 description: Scoped, project-scoped API token — encrypted at rest, decrypted only on the runner. Provisions a self-managed Talos Linux Kubernetes cluster on cheap Hetzner VMs.
 ---
 
-# Hetzner Connector
-
 Connecting Hetzner Cloud registers a **cloud identity** (`cloud_identities`) that is **token-based**. Unlike AWS, GCP, and Azure — which are
 **keyless** (Alethia federates into a role you grant via short-lived, minted OIDC assertions) —
 Hetzner Cloud offers **no OIDC or workload-identity federation**. Its only auth primitive is a
