@@ -43,7 +43,7 @@ import {
 /** The fixed clock every case is read at. */
 const NOW = new Date("2026-12-01T00:00:00.000Z");
 
-/** The nine capabilities, in display order, written out. */
+/** The ten capabilities, in display order, written out. */
 const ALL_CAPABILITIES = [
 	"organizations",
 	"teams",
@@ -54,9 +54,10 @@ const ALL_CAPABILITIES = [
 	"advancedAlerting",
 	"byoRunners",
 	"managedPools",
+	"agentPolicy",
 ];
 
-/** The enterprise modules as the enterprise package names them today: one built, six planned. */
+/** The enterprise modules as the enterprise package names them today: two built, five planned. */
 const FEATURES = [
 	{ id: "sso-provisioning", built: true },
 	{ id: "enforced-sso", built: false },
@@ -64,7 +65,7 @@ const FEATURES = [
 	{ id: "scim", built: false },
 	{ id: "audit-stream", built: false },
 	{ id: "session-policy", built: false },
-	{ id: "agent-policy", built: false },
+	{ id: "agent-policy", built: true },
 ];
 
 /** A report for a licence in `state`, with dates that agree with that state at {@link NOW}. */
@@ -103,7 +104,7 @@ beforeEach(() => {
 });
 
 describe("the capability list", () => {
-	it("names the nine capabilities a licence can grant, in display order", () => {
+	it("names the ten capabilities a licence can grant, in display order", () => {
 		expect(instanceCapabilities()).toEqual(ALL_CAPABILITIES);
 	});
 });
@@ -251,6 +252,7 @@ describe("the enterprise edition", () => {
 		const { features } = await getInstanceEdition(NOW);
 		expect(features.filter((feature) => feature.built).map((feature) => feature.id)).toEqual([
 			"sso-provisioning",
+			"agent-policy",
 		]);
 		expect(features.find((feature) => feature.id === "scim")).toEqual({ id: "scim", built: false });
 	});
