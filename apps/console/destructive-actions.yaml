@@ -106,8 +106,14 @@ allow:
   # Call sites the census may see that are NOT a destructive control a person clicks. Each needs a
   # reason; an empty reason is refused. Each must also name a file that exists, a mutation that
   # occurs in it and a call site the scan finds — an exemption that suppresses nothing is refused
-  # (#6830). Empty today: `discardChanges` named the store #7168 deleted, and `cancelJob` named a
+  # (#6830). `discardChanges` named the store #7168 deleted, and an earlier `cancelJob` entry named a
   # query hook that no longer calls it (the job page reaches it through `useActionMutation`).
+  - mutation: destroyProject
+    surface: apps/console/lib/ai/mcp/handlers.ts
+    reason: the MCP `request_destroy` tool, not a control a person clicks. It queues a destroy only after a person approved that exact plan in the console, and destroyProject re-checks and consumes that approval once
+  - mutation: cancelJob
+    surface: apps/console/lib/ai/mcp/handlers.ts
+    reason: the MCP `cancel_job` tool, not a control a person clicks. It runs as the person under the token's plan scope, and cancelJob applies the same authorization the job page's Cancel does
 
 controls:
   # ── organisation & project ─────────────────────────────────────────────────────────────────
