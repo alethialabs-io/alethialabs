@@ -9,6 +9,7 @@
 		"destroy",
 		"cluster-access",
 		"mcp",
+		"design-project",
 		"billing"
 	]
 }

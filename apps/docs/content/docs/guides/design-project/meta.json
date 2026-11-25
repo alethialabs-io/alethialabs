@@ -1,5 +1,5 @@
 {
-  "title": "Design a Project",
+  "title": "Design a project",
   "pages": [
     "index",
     "the-canvas",
@@ -7,6 +7,7 @@
     "project-basics",
     "network",
     "cluster",
+    "node-pools",
     "services",
     "databases",
     "keyless-database-auth",
@@ -23,6 +24,6 @@
     "bring-your-own-charts",
     "bring-your-own-iac",
     "migrate-from-ingress-nginx",
-    "cost-sidebar"
+    "cost"
   ]
 }
