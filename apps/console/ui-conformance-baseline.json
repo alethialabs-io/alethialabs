@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 3,
-			"fail": 16,
+			"pass": 5,
+			"fail": 14,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.1579
+			"score": 0.2632
 		},
 		"F6": {
 			"family": "F",
@@ -1322,11 +1322,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1348,11 +1348,11 @@
 				}
 			},
 			"overall": {
-				"pass": 39,
-				"fail": 1,
+				"pass": 40,
+				"fail": 0,
 				"na": 0,
 				"notMeasured": 3,
-				"score": 0.975
+				"score": 1
 			}
 		},
 		{
@@ -2260,11 +2260,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2286,11 +2286,11 @@
 				}
 			},
 			"overall": {
-				"pass": 37,
-				"fail": 1,
+				"pass": 38,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 2,
-				"score": 0.9737
+				"score": 1
 			}
 		},
 		{
@@ -5397,8 +5397,7 @@
 		{
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -8578,8 +8577,7 @@
 		{
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -10406,7 +10404,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F5",
 			"verdict": "FAIL",
-			"detail": "useSsoFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"detail": "useSsoFilters: \"N of M\" / \"Showing …\" prose around the list — totals exist only as facet option counts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
