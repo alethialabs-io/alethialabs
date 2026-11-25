@@ -90,8 +90,7 @@ const hub: AlertsHub = {
 function viewOf(rows: PolicyDTO[]): Parameters<typeof PoliciesPanel>[0]["view"] {
 	return {
 		rows,
-		count: rows.length,
-		total: rows.length,
+		universeEmpty: false,
 		facets: { status: [], kinds: [], channels: [] },
 		stale: false,
 		busy: false,
