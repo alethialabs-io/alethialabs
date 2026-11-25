@@ -58,7 +58,7 @@ GKE runs your workloads on node pools. The template always makes one default poo
 `gke_node_min_size`, `gke_node_max_size` and `gke_node_desired_size`. Set three keys on the
 **cluster** to label your nodes, taint them, and add pools of other machine types, Spot pools
 included. They are the same keys on every cloud. The
-[cluster guide](/guides/design-project/cluster#node-labels-taints-and-extra-pools) describes every
+[pools reference](/reference/node-pools) describes every
 field and every rule.
 
 This example labels every node with its team and adds a Spot batch pool that scales to zero. Only
