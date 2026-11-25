@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 8,
-			"fail": 11,
+			"pass": 9,
+			"fail": 10,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.4211
+			"score": 0.4737
 		},
 		"F6": {
 			"family": "F",
