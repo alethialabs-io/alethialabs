@@ -258,8 +258,9 @@ it is checked in both directions, so an entry that outlives its finding fails to
 
 **Three surfaces resolve their query in memory, deliberately, and each says so.** A runner row is
 a composition of the RLS read (the org's own runners) and the service read (the platform's
-managed fleet, `[]` on hosted), not a table's row, so `getRunnersPage()` narrows over the
-composed universe rather than in SQL (`lib/queries/runners.ts`). A cluster row is composed the same
+managed fleet, `[]` on hosted), not a table's row, so `queryRunnersPage()` narrows over the
+composed universe rather than in SQL and pages it in memory on the server through the keyset
+contract, the org's default runner pinned first on page one (`lib/queries/runners.ts`, #7484). A cluster row is composed the same
 way (the RLS read, the PDP's project visibility, drift and probe evidence) and the status it is
 filtered under is derived from all of it (`lib/queries/clusters.ts`); a project's environments are
 read once for the whole Environments page, whose other panels need every one of them
@@ -383,7 +384,7 @@ org's QueryClient, so each refetch goes back through the read router (RLS + the 
 | Route | Resource | Status |
 | --- | --- | --- |
 | `~/jobs`, `~/jobs/[id]` | jobs | query (pilot) |
-| `~/runners` | runners + fleet | query — the grid is `getRunnersPage(q)` (#4890) |
+| `~/runners` | runners + fleet | keyset — the grid is `useKeysetList(orpc.runners.page, q)` over `queryRunnersPage` (#4890, #7484) |
 | `~/clusters`, `[project]/clusters` | clusters | query — the table is `clusters.page`, scoped by the route (#6819) |
 | `[project]/environments` | environments | query — the table's rows are the read's `page` (#6819) |
 | `~/` overview, switcher, palette | projects | query |
