@@ -40,6 +40,52 @@ manual fallback only.
 
 `github_owner`/`repository` are variables → switching to an org repo is a var change.
 
+## `require_extra_approval_for_unattributed_changes` — false, re-asserted after every apply
+
+**Decision (maintainer, 2026-11-25, #7654):** this `pull_request` rule parameter is **false** on
+`protect-dev` (18583159) and `protect-main` (18465988). It was set live that day.
+
+The provider cannot hold it. `integrations/github` 6.12.1 and 6.13.0 have no attribute for it, so
+every create or update the provider makes PUTs a `pull_request` rule without the field, and GitHub
+then sets it **true**. `main.tf` therefore has one `terraform_data` per ruleset
+(`dev_ruleset_unattributed_changes_false`, `main_ruleset_unattributed_changes_false`). Each has
+`lifecycle.replace_triggered_by = [<that ruleset>]`, so any plan that updates or replaces the ruleset
+also replaces it. The replacement runs a `local-exec` after the ruleset write. That script:
+
+1. GETs `repos/<owner>/<repo>/rulesets/<numeric id>`. It refuses an id that is not a number.
+2. Stops without writing if every `pull_request` rule already reads `false`.
+3. Otherwise PUTs `{"rules": [...]}`: the rules it just read, with only that field set to `false`.
+   Name, target, enforcement, conditions and bypass actors are not in the body, so they cannot change.
+4. GETs the ruleset again and fails the apply unless the field now reads `false`.
+
+What that means for an apply:
+
+- **First apply after #7654:** the plan adds the two `terraform_data` resources. Both scripts find
+  `false` already and write nothing.
+- **An apply that writes a ruleset:** the plan shows that ruleset updated **and** its `terraform_data`
+  replaced. The replacement is the re-assertion, not a change to read past.
+- **A clean plan stays clean.** The provider cannot see the field and `etag` is computed, so the
+  script's own PUT leaves nothing for the next plan to show.
+- **Requirements:** `gh` and `jq` on the PATH of the machine that runs `tofu apply`. The script uses
+  `var.github_token`, the provider's own token.
+
+**What no apply covers:** a hand edit that sets the flag back to `true` and changes nothing else gives
+the provider nothing to plan, so nothing re-asserts it. The drift check covers that case.
+`node scripts/ci/check-required-checks.mjs --live` runs from `workflow-health.yml` and reads
+`rules/branches/<branch>`. It exits 2 and opens the drift issue if either branch reads `true`. If the
+field is missing from the response, that counts as no measurement, not as `false`. The PR-time run
+(`pnpm check:required-checks`) fails if a ruleset with a `pull_request` block has no such
+`terraform_data` wired to it.
+
+To fix it by hand (the same edit the script makes; read before you write):
+
+```bash
+path=repos/alethialabs-io/alethialabs/rulesets/18465988   # or 18583159 for protect-dev
+gh api "$path" \
+  | jq -c '{rules: [.rules[] | if .type == "pull_request" then .parameters.require_extra_approval_for_unattributed_changes = false else . end]}' \
+  | gh api -X PUT "$path" --input -
+```
+
 ## Auth (your own `gh` token — no App)
 
 Applied **locally, once** as part of the admin bootstrap. The provider needs a token with

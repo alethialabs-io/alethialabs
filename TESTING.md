@@ -253,7 +253,12 @@ Nothing runs nowhere any more — `LOCAL_ONLY_REASON` in `playwright.config.ts` 
 "this is covered by e2e" still needs the **leg** named: on a `dev` PR a gate leg runs only when the
 PR carries `release-gate:run` / `release-gate:all` (since 2026-11-22 release-gate.yml does not run on
 an unlabelled dev PR at all), so an unlabelled PR's legs say nothing about the code it changed, and an exclusion justified by a suite nothing
-launched on that PR is justified by nothing.
+launched on that PR is justified by nothing. Adding one of those labels starts the legs through
+`release-gate-label.yml`, so they report as `Gate by label / Release gate (<leg>)`. The bare
+`Release gate (<leg>)` name comes only from release-gate.yml's own runs: a push to a labelled PR, a
+promotion, or a dispatch. Since #7654, release-gate.yml no longer triggers on `labeled`, because a
+label's skipped run superseded a passing run on the same sha and kept a release PR unmergeable.
+`check-required-checks.mjs` fails if it triggers on `labeled` again.
 
 **A gate leg passes by ratchet, and the ledger's bar is: no `failed` entry, and every `{fixme}` cites an open issue.** Each leg fails
 on regression against `apps/console/e2e/gate-baseline.json`. That ledger once recorded 94 `failed`

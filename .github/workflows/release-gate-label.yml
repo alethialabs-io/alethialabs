@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Release gate (label request)
+# THE `release-gate:run` / `release-gate:all` LABELS ON A dev PR, AND NOTHING ELSE (#7654).
+#
+# release-gate.yml used to list `labeled` in its own `pull_request` types. Every label added to ANY PR
+# then created a release-gate.yml run on the PR's head sha, and every label other than these two
+# skipped all of that run's jobs. On a release-please PR, which gets `autorelease: pending` in the same
+# second it is opened, the `opened` run (legs ran and passed) and the `labeled` run (all skipped) were
+# two `pull_request` runs of one workflow on one sha. When the skipped run had the higher run id,
+# GitHub showed ITS check suite for that workflow, and protect-main's seven required
+# `Release gate (<leg>)` contexts read "Expected — Waiting for status to be reported" until a new
+# push. Evidence: #7640 runs 45574672159 (success) < 45574674013 (skipped), never mergeable; #7631
+# had the opposite order and merged. That is the "policy prohibits" release PR in the notes.
+#
+# So release-gate.yml no longer triggers on `labeled` at all: every run it creates on a PR is one that
+# runs the legs, or one on a draft. The label request moved HERE, to a separate workflow, which is a
+# separate check suite. The rules this rests on, each with its source:
+#
+#   · A required status check is matched by CHECK NAME only. "Required status checks do not take
+#     workflow, matrix, or event trigger types into account" (GitHub Docs, "Troubleshooting rules",
+#     the check-name formats table).
+#   · A job of a CALLED workflow reports as `<caller job name> / <called job name>` ("Reusable
+#     workflow: The name format is `<job name> / <reusable job name>`", same table). So the legs this
+#     file starts report as `Gate by label / Release gate (<leg>)` — they can neither satisfy nor
+#     shadow the bare `Release gate (<leg>)` contexts protect-main requires, whatever GitHub does about
+#     superseding check suites.
+#   · "The event payload in the called workflow is the same event payload from the calling workflow"
+#     (GitHub Docs, "Events that trigger workflows", `workflow_call`). release-gate.yml's `legs` job
+#     therefore sees the same `labeled` event it used to see directly — the label just added, the PR's
+#     labels, its base and its diff — and narrows exactly as before. No input is needed.
+#
+# WHAT THIS FILE CANNOT DO, stated: `on:` cannot filter by label name, so an unrelated label on a dev
+# PR still CREATES a run of this workflow, and its one job skips at the job level. When that run is
+# newer than a label run on the same sha, the PR's checks list can show the skipped one for this
+# workflow. That is the same supersession, moved to where it binds nothing: nothing requires a
+# `Gate by label / …` context on dev, no ruleset names one, and `.mergify.yml` names none. The run and
+# its results stay readable in the Actions tab.
+#
+# `branches: [dev]` is load-bearing. A label on a PR into `main` creates NO run here (the branch filter
+# is applied before a run exists), and none in release-gate.yml either, so on a promotion or a
+# release-please PR no label can create a run of anything that names a gate context. A promotion
+# already runs every leg on every push; to re-run it, re-run the release-gate.yml run.
+#
+# `scripts/ci/check-required-checks.mjs` fails if release-gate.yml lists `labeled` again.
+on:
+  pull_request:
+    branches: [dev]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+# NO `concurrency:` HERE. release-gate.yml's own group applies to the called run, and it is the
+# PR's group (`release-gate-pull_request-<n>`, with `cancel-in-progress` false for a `labeled`
+# event): the requested gate queues behind an in-flight gate, and a later push cancels it, exactly as
+# when this label fired release-gate.yml directly. A group here as well would be a second, unrelated
+# lock in front of that one — and GitHub warns that a caller and a called workflow sharing a group
+# cancel the caller.
+
+jobs:
+  gate:
+    name: Gate by label
+    # `contains()` is case-insensitive, as in release-gate.yml's own copy of this test.
+    if: >-
+      github.event.pull_request.draft == false
+      && contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name)
+    # `pull-requests: read` is what release-gate.yml's `legs` job needs for `GET /pulls/{n}/files`.
+    # A called workflow can only keep or narrow the caller's grant, never widen it.
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/release-gate.yml
+    secrets: inherit
