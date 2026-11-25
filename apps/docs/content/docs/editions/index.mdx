@@ -1,61 +1,42 @@
 ---
 title: Editions
-description: Alethia is open-core — a free, open-source Community edition and a licensed Enterprise edition. What each includes, and why the split is where it is.
+description: Alethia's two editions — the open-source Community edition and the licensed Enterprise edition — and where the line between them is.
 ---
 
-Alethia is **open-core**. There are two editions, built from the *same codebase*:
+Alethia is open-core. Both editions are built from the same code:
 
-- <Community>Community</Community> — the free, **open-source** edition, licensed **AGPL-3.0**. The complete
-  single-tenant product. You can run it for yourself or your team forever, at no cost, with no license key.
-- <Enterprise>Enterprise</Enterprise> — the **licensed** edition (commercial). Everything in Community **plus**
-  multi-member organizations, teams, SSO, custom roles, the fine-grained access portal, the OpenFGA policy
-  engine, and activity export.
+- <Community>Community</Community> is open source under AGPL-3.0, and free. It is the complete
+  product for one person or one shared account, with no licence key.
+- <Enterprise>Enterprise</Enterprise> adds what many people in one organization need:
+  multi-member organizations, teams, SSO, custom roles, the access portal, Activity export, and the
+  optional OpenFGA engine. It needs a licence.
 
-<Callout type="info">
-  You can **self-host either edition.** "Self-hosting" is about *where Alethia runs* (your own
-  infrastructure); "edition" is about *which features are licensed*. Community needs nothing extra; Enterprise
-  needs a license key and a couple of extra services (see [Licensing](/editions/licensing)).
-</Callout>
+You can self-host either edition. Where Alethia runs and which edition it runs are separate choices.
+On the hosted service, each organization's plan decides what it can use.
 
-## The dividing line
+## Where the line is
 
-The simplest way to think about it:
+Everything you need to design, deploy and govern infrastructure is in Community, including the
+permission model itself: built-in roles, per-resource grants, deny rules, Row-Level Security between
+tenants, and the Activity log. Enterprise adds the machinery for organizations of people: inviting
+and grouping them, signing them in with SSO, writing custom roles, and deciding access at scale.
 
-> **Everything you need to run Alethia for yourself, or for a team that shares one account, is free and
-> open-source. The Enterprise edition is about *many people, many identities* — organizations with multiple
-> members, the teams and roles to organize them, the SSO to let them in, and the engine to authorize them at
-> scale.**
+The open-source code never depends on the Enterprise package and runs without it. See
+[the open-core architecture](/concepts/access-control/open-core).
 
-Concretely:
+## Pages in this section
 
 <Cards>
-  <Card title="Community — the whole product, one tenant" href="/editions/feature-matrix">
-    The Policy Decision Point, built-in roles, per-resource grants with Org → Project inheritance,
-    Row-Level Security tenant isolation, and the authorization Activity log — all open-source. Your account is a
-    single-owner "personal organization".
+  <Card title="Feature matrix" href="/editions/feature-matrix">
+    Every capability, Community against Enterprise.
   </Card>
-  <Card title="Enterprise — many people, many identities" href="/editions/feature-matrix">
-    Multi-member organizations, teams, member invitations, SSO (OIDC + SAML), configurable custom roles, the
-    AWS-IAM-style access portal (allow/deny, per-resource), the OpenFGA fine-grained engine, and activity export.
+  <Card title="Licensing" href="/editions/licensing">
+    The entitlements a licence turns on, and what happens when it ends.
+  </Card>
+  <Card title="How Alethia compares" href="/editions/compare">
+    Alethia next to Porter, Qovery and Spacelift.
+  </Card>
+  <Card title="Enterprise setup" href="/self-host/enterprise-setup">
+    Turn Enterprise on in a self-hosted instance.
   </Card>
 </Cards>
-
-## Why open-core?
-
-The authorization *model* — how a decision is made — is the same in both editions, and it's open. What
-Enterprise adds is the machinery for **organizations of people**: ways to invite and group them (members,
-teams, invitations), authenticate them (SSO), describe what they can do (custom roles, allow/deny), and decide
-it quickly at scale (OpenFGA). None of that is needed to run Alethia for a single tenant — so it isn't in the
-free core.
-
-The boundary is enforced in code: **the open-source core never depends on the Enterprise package, and runs
-completely without it present.** See the [open-core architecture](/concepts/access-control/open-core) for how that's
-guaranteed (a one-way dependency + CI guards), and [Licensing](/editions/licensing) for how a license turns
-the Enterprise features on.
-
-## Next
-
-- The complete [**feature matrix**](/editions/feature-matrix) — every capability, Community vs Enterprise.
-- How [**licensing**](/editions/licensing) works (entitlements, activation, graceful degradation).
-- The [**Enterprise setup runbook**](/self-host/enterprise-setup) — turning Enterprise on, end to end.
-- The [**Access Control**](/concepts/access-control) section — the full authorization reference.

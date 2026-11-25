@@ -12,18 +12,15 @@ cluster** on Hetzner Cloud:
 - [alethia-starter-chart](https://github.com/alethialabs-io/alethia-starter-chart) becomes a
   **bring-your-own Helm chart**. Alethia installs it as an add-on, in a namespace of its own.
 
-The result is the setup that the starter templates' deploy test proved on Hetzner, with both
-Applications synced at the template's own commit. You build it from the terminal, with one file and
-a few commands.
-
-Plan for about 30 minutes. Most of that is waiting for the cluster.
+This is the setup the templates' own deploy test runs on Hetzner. You build it from the terminal,
+with one file and a few commands, in about 30 minutes, most of it waiting for the cluster.
 
 <Callout type="warn">
   This tutorial creates **real infrastructure that costs money** while it runs. The last step tears
   it down. You are not finished until you run it.
 </Callout>
 
-## What you will build
+## What you build
 
 <Mermaid chart={`
 flowchart TB
@@ -41,7 +38,7 @@ The two templates run under two different trust levels. The apps repository can 
 resource on its cluster. A bring-your-own chart can create only a closed list of namespaced
 workload kinds in its own namespace, and no RBAC. For the full comparison, see [Starter Templates](/guides/design-project/starter-templates).
 
-## Before you start
+## Before you begin
 
 You need:
 
@@ -263,7 +260,7 @@ hack/check-byo-contract.sh chart
 
 It fails if the chart renders a kind that a bring-your-own chart cannot create.
 
-## Step 9 — Tear it down
+## Clean up
 
 ```bash
 alethia project destroy --project starter --env dev --yes --wait

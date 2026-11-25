@@ -1,0 +1,90 @@
+---
+title: Install on a VM
+description: Install the self-hosted Alethia bundle on a Linux VM with one command, with automatic HTTPS for your domain.
+---
+
+Install Alethia on one Linux VM. The installer generates every secret, pulls prebuilt images and
+starts the stack.
+
+## Before you begin
+
+- A Linux VM with an x86-64 CPU, 2 or more vCPU, 8 GB of memory (4 GB is the minimum) and 25 GB of
+  disk. The images are built for `linux/amd64` only.
+- `git`, `openssl` and `curl` on the VM. The installer adds Docker and the Compose plugin if they are
+  missing.
+- A domain whose `A` (or `AAAA`) record points at the VM, and ports 80 and 443 open. Without a
+  domain, the console serves plain HTTP on port 80, which is enough for a test.
+- Outbound access to `ghcr.io`, `github.com` and the clouds you will deploy into.
+
+## Install
+
+<Steps>
+<Step>
+
+### Run the installer
+
+```bash
+curl -fsSL https://get.alethialabs.io/self-host \
+  | DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh
+```
+
+The installer clones the repository to `/opt/alethia`, writes `/opt/alethia/.env` with a generated
+value for every instance secret, and records `ALETHIA_VERSION=latest`. To pin an image tag, add
+`ALETHIA_VERSION=<tag>`. To install somewhere else, add `ALETHIA_DIR=<path>`.
+
+</Step>
+<Step>
+
+### Wait for the stack
+
+The installer runs a preflight check, pulls the images and starts the stack. It prints
+`Alethia is starting at https://alethia.example.com`. Caddy gets a TLS certificate on the first
+request, which can take a minute.
+
+</Step>
+<Step>
+
+### Sign in
+
+Open the URL and sign in with your email. No email provider is set yet, so the console writes the
+code to its log instead of sending it:
+
+```bash
+cd /opt/alethia
+docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml logs app | grep '\[email\]'
+```
+
+</Step>
+</Steps>
+
+## Check that it worked
+
+```bash
+cd /opt/alethia
+docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml ps
+```
+
+`app`, `postgres`, `seaweedfs`, `runner`, `docs`, `blog` and `caddy` are `running`. `preflight` and
+`migrate` have exited with code 0. In the console, **Runners** lists the bundled runner as online.
+
+If the installer stops with `has an instance secret that is not usable`, it names the variable and
+the command that replaces it. Nothing was started.
+
+## Install from a clone instead
+
+To read the files first, clone the repository and run the same script:
+
+```bash
+git clone https://github.com/alethialabs-io/alethialabs.git /opt/alethia
+cd /opt/alethia
+DOMAIN=alethia.example.com ACME_EMAIL=you@example.com sh deploy/install.sh
+```
+
+Do not start the stack with `docker compose up` before the installer has written `.env`: compose
+refuses to start while any instance secret is empty, and names it.
+
+## Related
+
+- [Configuration](/self-host/configuration): sign-in providers, storage, and the client-IP header.
+- [Email](/self-host/email): send sign-in codes instead of logging them.
+- [Upgrade and back up](/self-host/upgrading).
