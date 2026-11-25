@@ -8,7 +8,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: vi.fn() }));
-vi.mock("@/lib/billing/plan", () => ({ resolvePlanEntitlements: vi.fn() }));
+vi.mock("@/lib/billing/plan", () => ({
+	resolvePlanEntitlements: vi.fn(),
+	entitlementStatus: (row: { status: string }) => row.status,
+}));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(() => ({})) }));
 vi.mock("@/lib/queries/runner-usage", () => ({ queryJobMinutesByOrg: vi.fn() }));
 
