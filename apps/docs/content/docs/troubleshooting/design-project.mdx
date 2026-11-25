@@ -1,0 +1,172 @@
+---
+title: Design and GitOps
+description: Fix problems with a design on the canvas, a plan that fails on a design value, and an ArgoCD sync after a deploy.
+---
+
+Find the problem you see, then do what the block says. How to design each resource is in
+[Design a project](/guides/design-project).
+
+## A card is gated
+
+**Symptom:** a card has a faint dot and reads **Gated**.
+
+**Cause:** a core resource (network, cluster or a data service) is placed on a different cloud from
+the project. It is drawn but will not provision.
+
+**Fix:** place the resource on the project's cloud account.
+
+## A card reads Needs setup on a live resource
+
+**Symptom:** a deployed resource shows a hollow ring and **Needs setup**.
+
+**Cause:** its design has a value that would fail the next deploy, such as an empty required field.
+
+**Fix:** open the card. The group with the problem is open, and the problem shows under the field.
+
+## The CIDR block is refused
+
+**Symptom:** the network's **CIDR block** says the cloud needs a wider block.
+
+**Cause:** AWS and Azure need a `/18` or wider, and Hetzner a `/22` or wider, to carve subnets.
+
+**Fix:** use a wider block, such as `10.0.0.0/16`.
+
+## A Hetzner deploy fails on the Kubernetes version
+
+**Symptom:** the deploy fails with an error that names Kubernetes 1.35.6.
+
+**Cause:** the cluster has another version set, for example from the CLI. Talos installs one pinned
+version.
+
+**Fix:** clear the cluster's version, or set it to `1.35`.
+
+## A GCP deploy is refused for the instance type
+
+**Symptom:** a deploy onto `e2-medium` or `n1-standard-1` is refused before it starts.
+
+**Cause:** GKE reserves most of those machines' CPU, so the cluster add-ons cannot run.
+
+**Fix:** choose `e2-standard-2` or larger.
+
+## A node pool key is not a variable of this template
+
+**Symptom:** writing `node_labels`, `node_taints` or `extra_node_pools` fails with
+`not a variable of this template`.
+
+**Cause:** the cloud's template does not accept the key.
+
+**Fix:** remove the key. The [node pools reference](/reference/node-pools) lists which clouds accept
+each key. A plan error that names a rule means a value breaks that rule: fix the value.
+
+## IAM authentication is unavailable
+
+**Symptom:** the database's **IAM authentication** switch is disabled, or a deploy fails with
+"Unavailable on Hetzner".
+
+**Cause:** Hetzner runs PostgreSQL in your cluster, with no cloud identity to mint tokens. A
+database moved there keeps its setting, and Alethia refuses to fall back to a password.
+
+**Fix:** turn **IAM authentication** off to use a generated password, or move the database to AWS,
+GCP or Azure.
+
+## A keyless binding is omitted at deploy
+
+**Symptom:** the **Deploy** tab says a binding was omitted, or the bootstrap Job was skipped.
+
+**Cause:** Alethia could not wire the binding, for example because an identity is missing, or could
+not resolve the Job's admin credential. It leaves them out rather than deploy a workload that points
+at nothing.
+
+**Fix:** read the reason on the **Deploy** tab. Check that the runner has
+`ALETHIA_KEYLESS_DB_AUTH_ENABLED=true` and runs a published image, then deploy again.
+
+## Azure refuses an ordered queue
+
+**Symptom:** a project with an ordered Service Bus queue is blocked before it deploys.
+
+**Cause:** sessions need the Standard or Premium tier, and the queue's `service_bus_sku` is `Basic`.
+
+**Fix:** set `service_bus_sku` to `Standard` (the default) or `Premium` in the queue's
+`provider_config`, or turn off **Ordered (FIFO) delivery**.
+
+## A public bucket is refused on GCP
+
+**Symptom:** the deploy refuses a bucket with **Public access** on.
+
+**Cause:** the organization policy `constraints/iam.allowedPolicyMemberDomains` blocks public grants.
+
+**Fix:** turn **Public access** off, or ask your GCP administrator for an exception.
+
+## The deploy succeeded but the cluster is empty
+
+**Symptom:** ArgoCD's `apps` Application is synced, but none of your resources exist.
+
+**Cause:** the synced directory holds no manifests. ArgoCD reads only the synced directory itself,
+not its subdirectories, unless it is a Kustomize or Helm source.
+
+**Fix:** put your manifests directly in the repository root, or in the overlay path; or add a
+`kustomization.yaml` there.
+
+## The addons Application shows a ComparisonError
+
+**Symptom:** after a successful deploy, ArgoCD shows the `addons` Application in red.
+
+**Cause:** the repository has no `addons/` directory yet.
+
+**Fix:** enable your first add-on in GitOps mode, or create an empty `addons/` directory.
+
+## A manifest fails to sync because of its namespace
+
+**Symptom:** ArgoCD reports that a namespace does not exist.
+
+**Cause:** ArgoCD does not create the namespaces your manifests name.
+
+**Fix:** add a `Namespace` manifest to the same directory.
+
+## The deploy fails because there is no Git access
+
+**Symptom:** the deploy fails and says to connect the Git provider or make the repository public.
+
+**Cause:** the job owner has no token for the repository's host, and an anonymous `https://` probe
+failed. An `ssh://` or `git@host:path` repository is never probed.
+
+**Fix:** connect the [Git provider](/guides/connectors/git-providers) for the job owner, or make the
+repository public.
+
+## GitOps mode is refused
+
+**Symptom:** choosing GitOps mode for an add-on, or queuing a plan, is refused with a message to use
+Managed delivery.
+
+**Cause:** the apps repository is not on GitHub, or is on a host that matches no connected provider.
+Only a GitHub connection can push.
+
+**Fix:** use Managed delivery for those add-ons, or move the apps repository to GitHub.
+
+## A chart is skipped because of its namespace
+
+**Symptom:** the **Deploy** tab warns that a bring-your-own chart was skipped, or moved.
+
+**Cause:** the chart was attached in a namespace the platform reserves. A chart in `default` moves
+to its own namespace. A chart in any other reserved namespace is skipped: its workloads from an
+earlier deploy stay but stop syncing, and its binding secrets are removed.
+
+**Fix:** attach the chart again with a namespace of your own.
+
+## A bring-your-own IaC module cannot be attached or detached
+
+**Symptom:** attaching a module is rejected, or **✕** on the **External IaC** card is refused.
+
+**Cause:** attaching needs an environment with no deployed or in-progress template infrastructure.
+Detaching needs a module that has never deployed.
+
+**Fix:** destroy the environment first, then attach or detach.
+
+## A bring-your-own IaC deploy stays locked
+
+**Symptom:** the module's scan reads **Issues found — resolve before deploying**, and nothing
+deploys.
+
+**Cause:** a failed scan clears the deploy pin.
+
+**Fix:** fix each `error` finding, push, and select **Rescan**.

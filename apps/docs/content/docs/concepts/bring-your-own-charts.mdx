@@ -187,7 +187,7 @@ Some kinds are left out on purpose:
   its own identity could grant itself more than this project allows.
 - **No secret-sync resources.** No `ExternalSecret`, `SecretStore`, `PushSecret`, or any other kind
   from the `external-secrets.io` API groups, generators included. A chart reads only the secrets
-  its [bindings](/guides/design-project/bring-your-own-charts#binding-a-chart-to-your-infrastructure)
+  its [bindings](/guides/design-project/bring-your-own-charts#bind-a-workload-to-your-infrastructure)
   give it, and the runner creates those secrets for it. Each deploy also deletes any such object
   in the chart's namespace that no binding accounts for, and the Deploy tab names every object it
   deletes.

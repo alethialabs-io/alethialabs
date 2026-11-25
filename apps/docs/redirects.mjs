@@ -104,7 +104,7 @@ export const movedPages = [
 	{ source: "/console/design-project/caches", destination: "/guides/design-project/caches", permanent: true },
 	{ source: "/console/design-project/cluster", destination: "/guides/design-project/cluster", permanent: true },
 	{ source: "/console/design-project/container-registry", destination: "/guides/design-project/container-registry", permanent: true },
-	{ source: "/console/design-project/cost-sidebar", destination: "/guides/design-project/cost-sidebar", permanent: true },
+	{ source: "/console/design-project/cost-sidebar", destination: "/guides/design-project/cost", permanent: true },
 	{ source: "/console/design-project/databases", destination: "/guides/design-project/databases", permanent: true },
 	{ source: "/console/design-project/dns", destination: "/guides/design-project/dns", permanent: true },
 	{ source: "/console/design-project/keyless-database-auth", destination: "/guides/design-project/keyless-database-auth", permanent: true },
@@ -210,6 +210,7 @@ export const movedPages = [
 	// Docs rework, guides lane: pages split or merged.
 	{ source: "/guides/connectors/health-and-inventory", destination: "/concepts/connection-health", permanent: true },
 	{ source: "/guides/dashboard/project-detail", destination: "/guides/dashboard", permanent: true },
+	{ source: "/guides/design-project/cost-sidebar", destination: "/guides/design-project/cost", permanent: true },
 	// A cloud the product hides (`availability: hidden` in packages/core/catalog/catalog.json). Its
 	// pages stay in content/ with `availability: hidden` frontmatter, so lib/source.ts drops them, and
 	// these send their URLs to the section index; the two older entries for the same pages, under
