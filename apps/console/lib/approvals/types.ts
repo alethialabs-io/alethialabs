@@ -26,11 +26,8 @@ export const APPLY_OPERATIONS = ["deploy", "destroy"] as const;
 /** One of {@link APPLY_OPERATIONS}. */
 export type ApplyOperation = (typeof APPLY_OPERATIONS)[number];
 
-/** What a token may be limited to, from least to most. `apply` and `destroy` unlock a request. */
-export const AGENT_SCOPES = ["read", "design", "plan", "apply", "destroy"] as const;
-
-/** One of {@link AGENT_SCOPES}. */
-export type AgentScope = (typeof AGENT_SCOPES)[number];
+// Defined in an import-free module so client components can read them (see ./scopes.ts).
+export { AGENT_SCOPES, type AgentScope } from "./scopes";
 
 /** The states of an approval. Only `approved` can be consumed, and only once. */
 export const APPROVAL_STATUSES = [
