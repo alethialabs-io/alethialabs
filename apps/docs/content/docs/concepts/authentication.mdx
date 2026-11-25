@@ -1,122 +1,76 @@
 ---
-title: Authentication flows
-description: Why the console, the CLI and the runner each authenticate differently — OAuth and email OTP sessions for the web, a device grant and service tokens for the CLI, and hashed tokens for runners.
+title: Authentication
+description: How people, the CLI and runners each prove who they are — OAuth and email-code sessions in the console, a device grant and service tokens for the CLI, and hashed tokens for runners.
 ---
 
-The platform has three distinct authentication mechanisms — one for each component.
+Alethia has three callers and a way to sign in for each. People use the console with an OAuth
+provider or an email code; the CLI gets its tokens through the browser or uses a service-account
+token; a runner presents a token whose hash Alethia stores.
 
-<img src="/docs/diagrams/concepts/authentication.svg" alt="Authentication Flows" />
+<Mermaid chart={`
+flowchart LR
+  P["Person in a browser"] -->|OAuth or email code| S["Session cookie"]
+  CLI["alethia CLI"] -->|device grant in the browser| T["Access and refresh tokens"]
+  CI["Pipeline"] -->|ALETHIA_TOKEN| ST["Service-account token"]
+  R["Runner"] -->|X-Runner-ID, X-Runner-Token| H["Token hash check"]
+`} />
 
-## Web Authentication (Console)
+## How it works
 
-Console uses **Better Auth** (in-process, with the Drizzle adapter) for web sessions. Two sign-in paths are supported — social OAuth and email OTP:
+### The console
 
-| Provider | Method |
-|----------|--------|
-| GitHub | OAuth 2.0 (native) |
-| Google | OAuth 2.0 (native) |
-| GitLab | OAuth 2.0 (genericOAuth) |
-| Bitbucket | OAuth 2.0 (genericOAuth) |
-| Email | 6-digit OTP (email OTP plugin) |
+| Sign-in | Method |
+| --- | --- |
+| GitHub, Google | OAuth 2.0 |
+| GitLab, Bitbucket | OAuth 2.0 |
+| Email | A 6-digit one-time code |
 
-### OAuth Flow
+After sign-in, Alethia creates a server-side session and sets a signed, HTTP-only cookie. The session
+is not a JWT. Each request checks the cookie and sets your active organization, and every action then
+goes through [access control](/concepts/access-control). Sign-in with
+[SSO](/guides/access/sso) is an Enterprise feature.
 
-<Steps>
+### The CLI
 
-### User clicks provider button
-The sign-in page shows buttons for each OAuth provider.
+A terminal cannot host an OAuth redirect, and you should never type a password into one. So
+`alethia login` uses a flow modeled on the OAuth 2.0 Device Authorization Grant (RFC 8628): the
+browser does the sign-in with any method the console supports, and the terminal receives a token pair.
 
-### Redirect to provider
-Better Auth redirects to the provider's authorization endpoint (e.g., `github.com/login/oauth/authorize`).
+- The access token lasts 1 hour; the refresh token 90 days.
+- The CLI's tokens are separate from the console's session.
 
-### User authorizes
-The user grants the application access to their account.
+A pipeline has no browser, so it uses a **service-account token**: created once, passed in
+`$ALETHIA_TOKEN`, acting as its creator in one organization, limited by the scopes and projects it was
+created with.
 
-### Callback with code
-The provider redirects back to `/api/auth/[...all]` with an authorization code. Better Auth exchanges it for access and refresh tokens.
+The protocol and its differences from RFC 8628 are in
+[Device Authorization Grant](/reference/standards/device-code). Signing in, token storage and service
+tokens are in [CLI authentication](/reference/cli/authentication).
 
-### Session created
-Better Auth creates a **server-side session** (a row in the `session` table) and sets a signed,
-HTTP-only session cookie. The web session is a cookie-backed Better Auth session — **not** a JWT (the
-`jwt()` plugin is not enabled); JWTs are used only for the CLI and workload identity (see
-[**Standards → JOSE**](/reference/standards/jose)).
+### Runners
 
-</Steps>
+When a runner is registered, Alethia generates a random token, stores only its SHA-256 hash, and shows
+the token once. Every runner request carries `X-Runner-ID` and `X-Runner-Token`; Alethia hashes the
+token and compares it with the stored hash in constant time. A lost token cannot be recovered:
+register the runner again.
 
-### Email OTP Flow
+Managed fleet VMs start with a short-lived bootstrap token minted for that VM and exchange it for
+their runner token. See [Warm-pool scaling](/concepts/runner/scaling).
 
-For password-less email sign-in, the user enters their email, receives a **6-digit one-time code**, and submits it back. Better Auth verifies the code and issues the same cookie-backed session as the OAuth path.
+| Caller | Method | Lifetime | Kept in |
+| --- | --- | --- | --- |
+| Console | OAuth or email code | Session, refreshed | Signed HTTP-only cookie |
+| CLI | Device grant, or a service-account token | Access 1 hour, refresh 90 days; a service token until revoked or expired | The system keychain, or `$ALETHIA_TOKEN` |
+| Runner | Token checked against a stored hash | Until the runner is registered again | The runner's environment |
 
-### Session Management
+## What it does not do
 
-- Sessions are managed by Better Auth (creation, refresh, revocation)
-- The session lives in a signed HTTP-only cookie backed by the `session` table; the Next.js middleware validates it on every request
-- Data access runs through the app's Policy Decision Point (PDP), which sets the active org via `set_config('app.current_org', …)` before queries
-- Coarse Postgres RLS keyed on `org_id` enforces per-organization data isolation (not `auth.uid()`)
+- It does not decide what you may do. That is [access control](/concepts/access-control).
+- It does not store a runner's token, only its hash.
+- It does not use the console's session for the CLI.
 
-Authentication is *who you are*; **authorization** is *what you can do*. Once you're signed in, the PDP decides
-every action — see [**Access Control**](/concepts/access-control) for roles, permissions, grants (allow/deny), and the
-org/team model.
+## Related
 
-## CLI authentication (alethia)
-
-A terminal cannot host an OAuth redirect, and a person should never type a password into one. So
-`alethia login` uses a flow modeled on the OAuth 2.0 **Device Authorization Grant**
-([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) — the same browser-hands-off-to-terminal pattern
-as GitHub CLI, Azure CLI and AWS SSO. The browser does the real sign-in, with any provider the console
-supports; the terminal waits, then receives a token pair.
-
-- It works with every web sign-in method, because the browser handles the login.
-- The access token is short-lived (1 hour); the refresh token lasts 90 days, so people rarely sign in
-  again.
-- The CLI tokens are their own HS256 JWTs, separate from the cookie-backed web session.
-
-A pipeline has no browser and no person, so it uses a **service-account token** instead: minted once,
-passed in `$ALETHIA_TOKEN`, acting as its creator inside one organization.
-
-Where to read more:
-
-- The protocol, its endpoints and its deviations from RFC 8628:
-  [Standards → Device Authorization Grant](/reference/standards/device-code).
-- Signing in, refusing a login you did not start, token storage and service tokens:
-  [CLI → Authentication](/reference/cli/authentication).
-
-## Runner Authentication
-
-Runners authenticate with Console using **token-based auth** via HTTP headers.
-
-### Registration
-
-When a Runner is registered (via UI or CLI), the server:
-
-1. Generates a random token
-2. Hashes it with SHA-256
-3. Stores the **hash** in `runners.token_hash`
-4. Returns the **plaintext** token to the user (shown once, never stored)
-
-### Request Authentication
-
-Every Runner API call includes two headers:
-
-```
-X-Runner-ID: {runner-uuid}
-X-Runner-Token: {plaintext-token}
-```
-
-The server:
-1. Looks up the runner by `X-Runner-ID`
-2. Hashes the provided `X-Runner-Token` with SHA-256
-3. Compares against `runners.token_hash` in constant time
-4. Rejects if mismatch (401)
-
-<Callout type="warn">
-The plaintext token is shown only once at registration. If lost, the Runner must be re-registered. This is intentional — it prevents token reuse and ensures tokens are not stored in a recoverable location.
-</Callout>
-
-## Authentication Summary
-
-| Component | Method | Token Lifetime | Storage |
-|-----------|--------|---------------|---------|
-| **Console** (web) | Better Auth (OAuth + email OTP) | Session-based (auto-refresh) | Signed HTTP-only cookie (session table) |
-| **alethia** (CLI) | Device grant (RFC 8628 variant), or a service-account token | Access: 1h, Refresh: 90d; service token: until revoked or expired | `~/.config/alethia/credentials.json`, or `$ALETHIA_TOKEN` |
-| **Runner** (agent) | SHA-256 token hash | Permanent (until re-registration) | Environment variable |
+- [CLI authentication](/reference/cli/authentication)
+- [Access control](/concepts/access-control)
+- [Security](/concepts/security)

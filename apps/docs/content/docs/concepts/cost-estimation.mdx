@@ -1,97 +1,58 @@
 ---
-title: Cost Estimation
-description: How the platform estimates infrastructure costs in real-time and via Infracost analysis.
+title: Cost estimation
+description: Where Alethia's cost figures come from — Infracost on every plan for the environment's real cost, and a list-price estimate for designs that have not been planned.
 ---
 
-The platform provides two layers of cost estimation: a **real-time cost sidebar** during Project configuration, and a **post-plan Infracost analysis** for precise per-resource costs.
+Alethia shows two cost figures. An environment's cost comes from Infracost, run on its last plan; a
+design that has not been planned yet gets an approximate figure from list prices.
 
-<img src="/docs/diagrams/concepts/cost-estimation.svg" alt="Cost Estimation" />
+<Mermaid chart={`
+flowchart LR
+  Design["Design or proposal"] -->|list prices| Est["Approximate estimate"]
+  Design --> Plan["tofu plan"]
+  Plan -->|Infracost| Break["Per-resource breakdown"]
+  Break --> Chip["Cost chip and Plan tab"]
+  Break --> Gate["Promotion cost gate"]
+`} />
 
-## Cost Sidebar (Real-Time)
+## How it works
 
-The cost sidebar appears on the right side of the Design a Project form. As the user configures infrastructure, the estimated monthly cost updates immediately.
+### After a plan: Infracost
 
-### How Pricing Works
+When a runner plans an environment and an Infracost API key (`INFRACOST_API_KEY`) is configured, it
+runs Infracost on the plan JSON. The breakdown is stored with the plan job:
 
-1. When a region is selected, the `fetchPrices(region)` action fetches pricing from the AWS Pricing API
-2. Prices are cached in the Zustand store with a 24-hour TTL
-3. Each component contributes a cost line item
+- The **cost chip** on the canvas shows the environment's monthly total from its last plan. An
+  environment never planned shows **Not priced**, not `$0.00`.
+- The **Plan tab** lists each priced resource with its monthly and hourly cost, most expensive first.
+- The [promotion cost gate](/concepts/promotions#protection-gates) compares this total with the
+  target's previous one.
 
-### Pricing Sources
+Without an Infracost key, plans have no cost figure. See [Cost](/guides/design-project/cost).
 
-The `getRegionPrices(region)` server action fetches:
+### Before a plan: list prices
 
-| Resource | Pricing Key | Source |
-|----------|------------|--------|
-| EKS control plane | Fixed $0.10/hour | Hardcoded |
-| EC2 instances | Per instance type | AWS Pricing API (on-demand, Linux, shared tenancy) |
-| NAT Gateway | $0.048/hour | AWS Pricing API |
-| Aurora ACU | $0.14/ACU-hour | AWS Pricing API |
-| ElastiCache nodes | Per node type | AWS Pricing API |
-| WAF web ACL | ~$5/month | Hardcoded |
-| Secrets | $0.40/secret/month | Hardcoded |
+The assistant's design proposals and the provider comparison show an approximate monthly figure
+before anything is planned. It covers the main cost drivers: the control plane, nodes, NAT gateways,
+databases and caches. On AWS it uses live on-demand list prices from the public AWS pricing API,
+cached for 24 hours; on other clouds, and when that API fails, it uses the prices in Alethia's cloud
+catalog. A month is 730 hours.
 
-### Cost Calculation
+| | List-price estimate | Infracost |
+| --- | --- | --- |
+| When | While you design | After a plan |
+| Accuracy | Approximate, main drivers only | Every resource in the plan |
+| Use | Comparing options | Reviewing before you apply |
 
-```
-Monthly cost = Σ (hourly_rate × 730 hours/month)
-```
+## What it does not do
 
-Per component:
-- **Cluster**: EKS control plane ($73/mo) + node_desired_size × average_instance_rate × 730
-- **NAT Gateway**: $0.048 × count × 730 (single = 1, HA = AZ count)
-- **Database**: min_capacity × ACU_rate × 730 per instance
-- **Cache**: node_rate × num_cache_nodes × 730 per cache
-- **WAF**: $5 per enabled WAF option
-- **Secrets**: $0.40 per secret
-- **NoSQL/Queues/Topics**: $0 (usage-based, not estimable from config)
+- It does not price usage. NoSQL, messaging, object storage requests and data transfer depend on use,
+  and neither figure includes them.
+- It does not update the cost chip when you change the design. Plan again.
+- It does not price capacity created outside OpenTofu, such as nodes Karpenter launches.
 
-### Fallback Pricing
+## Related
 
-If the AWS Pricing API call fails (network error, rate limit), hardcoded fallback rates are used:
-
-```typescript
-const FALLBACK_EC2: Record<string, number> = {
-  't3.medium': 0.0416,
-  't3.large': 0.0832,
-  'm5a.large': 0.086,
-  // ...
-};
-```
-
-## Infracost Analysis (Post-Plan)
-
-After a runner runs `tofu plan`, it optionally runs [Infracost](https://www.infracost.io/) for a precise cost breakdown based on the actual planned resources.
-
-### How It Works
-
-<Steps>
-
-### `tofu plan` completes
-The runner generates a plan JSON via `tofu show -json plan.tfplan`.
-
-### Infracost analyzes the plan
-If an `INFRACOST_API_KEY` is configured, the runner runs:
-```bash
-infracost breakdown --path plan.json --format json
-```
-
-### Cost data stored
-The Infracost output is parsed and stored in the job's `execution_metadata.cost_breakdown` field.
-
-### UI displays breakdown
-The Plan tab in the Project detail page shows per-resource costs and a total monthly estimate.
-
-</Steps>
-
-### Why Both?
-
-| | Cost Sidebar | Infracost |
-|---|---|---|
-| **When** | During form editing | After plan generation |
-| **Speed** | Instant | Requires plan job |
-| **Accuracy** | Approximate (simple formulas) | Precise (analyzes actual planned resources) |
-| **Scope** | Major cost drivers only | Every resource in the plan |
-| **Use case** | Quick feedback while configuring | Final review before apply |
-
-The sidebar gives instant feedback to guide decisions. Infracost gives the precise number for sign-off before deploying.
+- [Cost](/guides/design-project/cost)
+- [Promotions](/concepts/promotions)
+- [Cost in the CLI](/reference/cli/cost)

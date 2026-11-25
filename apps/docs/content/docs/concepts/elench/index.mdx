@@ -1,97 +1,96 @@
 ---
 title: Elench
-description: The verification layer and agent harness — Alethia generates infrastructure and proves it, then keeps proving it.
+description: Alethia's verification layer — a deterministic check of every OpenTofu plan before it is applied, a signed receipt of the result, audits of infrastructure you bring, and drift and vulnerability posture after the apply.
 ---
 
-<Enterprise />
-
-**Elench** (Greek _elenchus_ — proof by cross-examination) is Alethia's verification layer and agent
-harness. The thesis is simple: don't just generate infrastructure — **scrutinise it and produce
-evidence**. Every change, human- or agent-initiated, runs through a deterministic gate between
-`tofu plan` and `tofu apply`, and leaves a signed evidence receipt; drift re-checks keep proving it
-after apply.
-
-<Callout type="info">
-  **Honest framing.** Elench produces *evidence that named, versioned controls passed on a specific
-  plan* — not a claim of "provably compliant" or "guaranteed least-privilege". A verdict is
-  reproducible **given the same plan**; compliance is an auditor's judgment, not a property of one
-  apply. The docs here are deliberately precise about what the engine can and cannot see.
-</Callout>
-
-## The load-bearing principle
-
-> The **deterministic engine is the trusted verdict. The LLM only proposes** — and every proposal is
-> re-validated by that engine before it is trusted.
-
-This division of labor runs through the whole system. The policy gate over the OpenTofu plan JSON is
-pure, reproducible code. An LLM may explain a failing control or suggest a fix, but a suggested fix is
-offered only if re-running the gate confirms it resolves the failure with no regression. The model is
-never the gate and has no write path.
-
-## Layered architecture
+Elench is the check Alethia runs on every OpenTofu plan between `tofu plan` and `tofu apply`. Named,
+versioned controls evaluate the plan JSON, a failing hard control stops the apply unless someone with
+authority waives it, and the result is sealed in an evidence receipt.
 
 <Mermaid chart={`
-flowchart TD
-  UI[in-app agent UI]
-  EXT[Claude Code · ChatGPT · Codex · Gemini/Zed]
-  UI -->|native AI SDK| MCP
-  EXT -->|remote MCP| MCP
-  MCP[Exposure — one adapter: remote MCP server<br/>reads, plans, approval requests]
-  MCP --> CORE
-  CORE[Elench core<br/>Tool Registry SSOT · agent-as-data runtime · supervisor]
-  CORE -->|calls| ACT[Platform actions<br/>PDP-gated]
-  CORE -->|calls| VER[Verification engine<br/>plan-JSON gate · override · signed receipt · drift]
-  VER -->|new verify stage| RUN[Go runner · OpenTofu]
+flowchart LR
+  Plan["tofu plan → plan JSON"] --> Eval["Controls: pass, fail, warn, not_evaluable"]
+  Eval -->|fail, not waived| Stop["Deploy stops before apply"]
+  Eval -->|otherwise| Apply["tofu apply"]
+  Eval --> Rec["Evidence receipt"]
+  Apply --> Drift["Drift and security posture"]
 `} />
 
-Two halves, joined at the runner:
+## How it works
 
-- **The verification engine** (`packages/core/verify`, `packages/core/drift`,
-  `packages/core/accessanalyzer`) — the deterministic gate, the signed receipt, and continuous drift.
-  This is the headline.
-- **The agent harness** (`apps/console/lib/ai/tools`, `lib/agent/*`, `app/api/mcp`) — one tool registry
-  exposed read-only to external agents, scoped per-agent identities with isolated memory, and a
-  supervisor that delegates to a colony of sub-agents.
+### The verdict comes from code
 
-## Where to go next
+The controls are deterministic code with no side effects: the same plan always gives the same
+verdict, which is what lets a receipt be checked later. A language model may explain a failing control
+or suggest a fix in the [assistant](/guides/assistant), but a fix is offered only if running the
+controls again shows it resolves the failure without a new one. The model is never the gate.
 
-Start with the **[Architecture](/concepts/elench/architecture)** page for the full repos → verified-GitOps-cluster
-system (the "A" infer-and-generate flow and the "B" bring-your-own + audit flow); the pages below go deep
-on each layer.
+The controls cover keyless access, least privilege and OIDC subject pinning on AWS, GCP and Azure, and
+a Kubernetes set for manifests. Each control, what it detects and what it cannot see is in the
+[control catalog](/reference/control-catalog).
 
-<Callout type="info">
-  **Two things share the name "Elench."** These pages are the engine + harness **internals**. For the
-  in-console **assistant** — its workspaces, knowledge base, dashboards, and artifacts, written for
-  people using it — see the [Assistant guide](/guides/assistant) under Console.
-</Callout>
+### Statuses
 
-<Cards>
-  <Card title="Assistant (using Elench)" href="/guides/assistant">
-    The user-facing guide: workspaces, a knowledge base, per-chat dashboards, and artifacts. Start here
-    if you want to *use* Elench rather than understand its internals.
-  </Card>
-  <Card title="Architecture (start here)" href="/concepts/elench/architecture">
-    The whole A→B system — scan → provision → generate → GitOps → verify → drift — and where the Elench
-    proof layer sits. Core; the proof layers are Enterprise.
-  </Card>
-  <Card title="Multi-cloud GitOps seam" href="/concepts/elench/multi-cloud">
-    How AWS / GCP / Azure all deploy apps: cloud-agnostic InfraFacts, per-cloud workload identity, and
-    manifest generation.
-  </Card>
-  <Card title="Verification engine" href="/concepts/elench/engine-internals">
-    The Evaluate seam, statuses and fail-closed gating, the override workflow, Access Analyzer
-    corroboration, signed receipts, and drift posture.
-  </Card>
-  <Card title="Control catalog" href="/reference/control-catalog">
-    The AWS / GCP / Azure controls, what each detects, the blind spots, framework mapping, and catalog
-    versioning.
-  </Card>
-  <Card title="Agent harness" href="/concepts/elench/agent-runtime">
-    The tool-registry SSOT, the MCP surface, agents-as-data + memory isolation, the stateless
-    executor, and the supervisor/colony.
-  </Card>
-  <Card title="Extending & running" href="/concepts/elench/extending">
-    Adding a control, the injection seams ("AI proposes, the gate disposes"), the `elench-verify` CLI,
-    and the gated live exercises.
-  </Card>
-</Cards>
+| Status | Meaning |
+| --- | --- |
+| `pass` | Evaluated, and the plan satisfies it. |
+| `fail` | Evaluated, and violated. On a deploy this stops the apply unless waived. |
+| `warn` | A concern that does not stop the apply. |
+| `not_evaluable` | The plan does not hold what the control needs. Never counted as a pass. |
+
+The overall verdict is the worst status: `fail`, then `warn`, then `not_evaluable`, then `pass`. A
+policy computed only at apply time, or an AWS managed policy referenced only by ARN, is
+`not_evaluable` with a note saying why, never a silent pass.
+
+### Plan and deploy
+
+On a plan, the report is shown in the Plan tab and stops nothing. On a deploy, the same check runs on
+the reviewed plan, and a failing hard control stops the job before any resource changes.
+
+### Overrides
+
+An override is an authorized, time-limited waiver of specific control IDs, never of the whole check.
+Alethia records who granted it and when it expires, and the runner applies only the controls it names.
+The verdict is not rewritten to `pass`: the waiver is sealed into the receipt as an exception. See
+[Override a verify failure](/guides/jobs/verify-override).
+
+### IAM Access Analyzer
+
+On AWS, the check can also ask IAM Access Analyzer whether a planned policy could grant any action from
+a list of sensitive actions, before anything is deployed. It is off unless the runner sets
+`ALETHIA_VERIFY_ACCESS_ANALYZER=1`. An error from the analyzer is `not_evaluable`.
+
+### Receipts
+
+Every apply seals a receipt bound to the SHA-256 of the plan, the verdict, the control catalog version
+and any exception. With a signing key it is signed with ed25519 and can be checked offline. See
+[Receipts and signing](/concepts/elench/receipts).
+
+### Audits of infrastructure you bring
+
+The controls work on any plan, so an `AUDIT` job can check a `tofu show -json` plan or Kubernetes
+manifests that Alethia did not generate, with the same controls. It provisions nothing and writes the
+report to the project's feed. Queue it from the assistant; it needs the `project:audit` permission.
+
+### After the apply
+
+- **Drift.** Scheduled refresh-only plans check that live resources still match the state. See
+  [Drift detection](/concepts/drift).
+- **Vulnerabilities.** If the Trivy Operator add-on runs in the cluster, Alethia reads its
+  vulnerability reports on each deploy and drift check and sums them by severity. The Evidence page
+  shows the highest severity found, **Clean**, or **Not scanned** when there are no reports.
+
+## What it does not do
+
+- It does not prove compliance. A receipt is evidence that named controls passed on one plan; whether
+  that meets a standard is an auditor's judgment.
+- It does not judge what the plan cannot show. Those controls are `not_evaluable`.
+- It does not let a model decide a verdict or apply a fix.
+- It does not see resources outside the plan. Drift detection covers resources in state only.
+
+## Related
+
+- [Receipts and signing](/concepts/elench/receipts)
+- [Control catalog](/reference/control-catalog)
+- [Override a verify failure](/guides/jobs/verify-override)
+- [Agent harness](/concepts/elench/agent-runtime)

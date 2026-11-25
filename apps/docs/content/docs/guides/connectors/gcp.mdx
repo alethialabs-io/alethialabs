@@ -86,7 +86,7 @@ publish or consume, add-on service accounts, project metadata, and DNS-zone IAM.
 `cloudkms.admin` lets the provisioner create the key that encrypts Kubernetes Secrets. It cannot
 use the key, so it cannot read a Secret. IAM grants are scoped to one zone, one secret, or one
 service account, so the provisioner does not need project `setIamPolicy`. Details are in
-[Security](/concepts/security#gcp-workload-identity-federation).
+[Security](/concepts/security#per-cloud).
 
 ## Optional APIs you enable yourself
 

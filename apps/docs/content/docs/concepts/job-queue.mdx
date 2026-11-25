@@ -1,130 +1,80 @@
 ---
 title: Job queue
-description: How infrastructure operations are queued, claimed atomically, and executed by Runners.
+description: How Alethia queues provisioning work as jobs in Postgres, how a runner claims each job exactly once, and how a job is recovered when its runner dies or stalls.
 ---
 
-Every provisioning operation in the platform — planning, deploying, destroying, drift detection,
-bring-your-own scans — is modeled as a **job** in a PostgreSQL queue. Runners poll for jobs, claim
-them atomically, execute them, and report results. (Cloud-account connection is *not* a job; it runs
-server-side in the Console — see [Connectors](/concepts/connectors).)
-
-<img src="/docs/diagrams/concepts/job-queue.svg" alt="Job Queue" />
-
-## Why a Job Queue?
-
-Infrastructure provisioning is slow (minutes to hours) and must be reliable. A job queue provides:
-
-- **Decoupling** — the web UI and CLI queue work without waiting for completion
-- **Exactly-once execution** — atomic claiming prevents two Runners from running the same job
-- **Resumability** — if a runner dies, the job can be retried from persisted OpenTofu state
-- **Auditability** — every operation is logged with timestamps, status, and metadata
-
-## Job types
-
-Plan, deploy and destroy are the common jobs, but the `provision_job_type` enum also covers runner
-lifecycle, scans, drift, probes, builds and break-glass state repair. The full catalog is
-[Job types](/guides/jobs/job-types).
-
-## Job Lifecycle
+Every piece of runner work, such as a plan, a deploy, a destroy, a drift check or a scan, is a job in a
+Postgres queue. Runners claim jobs atomically, run them and report the result, so the console and the
+CLI never wait on the work itself.
 
 <Mermaid chart={`
 stateDiagram-v2
   [*] --> QUEUED
-  QUEUED --> CLAIMED: claim_next_job()
-  CLAIMED --> PROCESSING: execution starts
+  QUEUED --> CLAIMED: a runner claims it
+  CLAIMED --> PROCESSING: work starts
   PROCESSING --> SUCCESS
   PROCESSING --> FAILED
-  QUEUED --> CANCELLED: user cancels
-  CLAIMED --> CANCELLED
-  SUCCESS --> [*]
-  FAILED --> [*]
-  CANCELLED --> [*]
+  CLAIMED --> QUEUED: recovered (runner died or stalled)
+  PROCESSING --> QUEUED: recovered (runner died or stalled)
+  QUEUED --> CANCELLED: you cancel
+  CLAIMED --> CANCELLED: you cancel
 `} />
 
-| Status | Meaning |
-|--------|---------|
-| `QUEUED` | Waiting for a Runner to pick it up |
-| `CLAIMED` | A Runner has locked it (prevents double-execution) |
-| `PROCESSING` | Runner is actively running `tofu` |
-| `SUCCESS` | Completed successfully |
-| `FAILED` | Failed with error message |
-| `CANCELLED` | User cancelled before completion |
+## How it works
 
-## Atomic Job Claiming
+### Queuing
 
-The critical invariant: **exactly one Runner executes each job**. This is enforced by PostgreSQL's `FOR UPDATE SKIP LOCKED`. The body below is **simplified** — the real `claim_next_job` also takes the runner's token hash and cloud identity, orders by `priority DESC, created_at ASC` (not pure FIFO), and applies per-org fairness and concurrency caps for managed runners:
+You plan, deploy or destroy in the console or the CLI, and Alethia adds a `QUEUED` job with the
+environment's frozen [configuration snapshot](/concepts/provisioning-pipeline#2-snapshot). Connecting
+a cloud account is not a job: the control plane does it. The job types are listed in
+[Job types](/guides/jobs/job-types).
 
-```sql
-CREATE OR REPLACE FUNCTION claim_next_job(p_runner_id uuid)
-RETURNS jobs AS $$
-DECLARE
-  job jobs;
-BEGIN
-  SELECT * INTO job
-  FROM jobs
-  WHERE status = 'QUEUED'
-  ORDER BY created_at ASC
-  FOR UPDATE SKIP LOCKED
-  LIMIT 1;
+### Claiming
 
-  IF job IS NOT NULL THEN
-    UPDATE jobs
-    SET status = 'CLAIMED',
-        runner_id = p_runner_id,
-        claimed_at = now()
-    WHERE id = job.id;
-  END IF;
+A runner learns that a job is claimable from its wake stream, or from a 30-second poll when the
+stream is down, and asks for one. The database picks the next job with `FOR UPDATE SKIP LOCKED`: a
+row another runner has locked is skipped, not waited on, so two runners can never claim the same job.
 
-  RETURN job;
-END;
-$$ LANGUAGE plpgsql;
-```
+The pick also respects:
 
-<Callout type="info">
-`FOR UPDATE SKIP LOCKED` is the key mechanism. If Runner A has locked a row, Runner B's query **skips** it entirely rather than waiting. B either gets the next queued job or gets nothing. No distributed locks, no coordination — just PostgreSQL.
-</Callout>
+- **Priority.** Higher priority first, then oldest first.
+- **Cloud.** A runner gets only jobs for the clouds it serves, and only jobs its cloud identity allows.
+- **Self-operated jobs.** A job marked for a self-operated runner, such as a Hetzner job whose token
+  stays in your runner, is never given to a managed runner.
+- **Fairness and limits.** On managed runners, organizations share capacity fairly, and each plan's
+  limit on jobs running at once applies. Extra jobs wait; they are not refused.
+- **One job per environment.** Jobs on one environment run one at a time.
 
-## Config Snapshot
+### Running and reporting
 
-When a job is created, the current Project configuration is serialized as a **config_snapshot** in the job record. This ensures the Runner executes exactly the configuration that was planned, even if the user modifies the Project after queuing.
+The runner sets the job `PROCESSING`, mints a credential, runs it, streams logs, and reports `SUCCESS`
+or `FAILED` with its results. For a deploy, the control plane then writes the cluster and database
+endpoints onto the environment. See [Job execution](/concepts/runner/job-execution).
 
-When a signing key is configured, the config_snapshot is also signed (HMAC-SHA256, stored as `config_snapshot_sig`) and the signature is re-verified when a Runner claims the job — if the snapshot was altered after it was enqueued, the job is failed as tampered rather than executed. A DEPLOY reuses its `PLAN` job's saved plan by reference via `plan_job_id`.
+### Failure recovery
 
-## Job Execution Flow
+A runner refreshes its liveness about every 10 seconds; after 45 seconds of silence it is marked
+offline. A background sweep then recovers its job when:
 
-<Steps>
+- it was claimed over 15 minutes ago and its runner has sent no heartbeat for 5 minutes, or
+- its runner is alive but the job made no progress for 30 minutes.
 
-### Job Created
-User plans / applies / destroys an environment in the Console (or runs `alethia project plan` /
-`alethia project apply` / `alethia project destroy` in the CLI). A `jobs` row is inserted with status `QUEUED`.
+A recovered job goes back to `QUEUED` for another runner, which reads the state and continues. Two
+cases fail instead:
 
-### Runner Claims Job
-The runner's wake stream (SSE) signals that a job is claimable — or, while that stream is down, a 30-second fallback poll fires — and the runner calls `POST /api/jobs/claim`. The server executes `claim_next_job()`. If a job is returned, the runner proceeds.
+- **The apply had started.** A retry would run the apply a second time, so the job fails with a
+  message saying cloud resources may have changed. Check the environment before you deploy again.
+- **It reached 5 attempts.** A job whose runner died or stalled five times fails, to protect the queue.
 
-### Credential Assumption
-The runner reads the `cloud_identity` from the job and assumes temporary, **keyless** credentials — `AssumeRoleWithWebIdentity` (AWS), Workload Identity Federation token exchange (GCP), or federated identity (Azure) — using a minted OIDC assertion, no static key. See [Security](/concepts/security).
+## What it does not do
 
-### Execution
-The runner runs the job-type-specific logic (`tofu` plan/apply/destroy, ArgoCD install, etc.) while streaming logs.
+- It does not run one job on two runners.
+- It does not retry an apply that may have started.
+- It does not push job status to the browser. Status is polled; see
+  [Real-time updates](/concepts/realtime#poll-everything-else).
 
-### Result Reporting
-On completion, the runner calls `PUT /api/jobs/{id}/status` with SUCCESS or FAILED, plus execution metadata (`tofu` outputs, cost data, cluster info, and the verify report).
+## Related
 
-### Finalization
-For DEPLOY jobs, the Console calls `finalizeDeployment()` to extract cluster metadata from `tofu` outputs and update the environment's component tables (cluster endpoint, ArgoCD URL, database endpoints, etc.).
-
-</Steps>
-
-## Failure Recovery
-
-When a Runner dies mid-job:
-
-1. Heartbeat stops → Console marks the Runner OFFLINE once its last heartbeat is older than 45 seconds (the SSE wake connection refreshes it every ~10 seconds, so a 45-second gap means the runner is genuinely gone)
-2. Job stays in `CLAIMED`/`PROCESSING` with no new log updates
-3. A background sweep (`recover_stale_jobs`) **requeues** the job automatically once it is stale — a dead runner (claimed over 15 minutes ago with no heartbeat in the last 5 minutes) or a live-but-stalled runner (no forward progress for 30 minutes)
-4. Each recovery increments `attempts`; below `max_attempts` (5) the job is requeued (back to `QUEUED`, runner cleared) so another Runner picks it up — at the cap it is failed **terminally** to protect the queue
-5. OpenTofu state is preserved in S3-compatible storage, so the requeued run continues from the last successful state
-
-## Status in the UI
-
-The job detail page streams a job's **logs** live over [Postgres LISTEN/NOTIFY → SSE](/concepts/realtime). Job **status** is not pushed: the jobs list and the job detail page poll, fast while a job is in flight — see [Real-time updates](/concepts/realtime#poll-everything-else).
+- [Job execution](/concepts/runner/job-execution)
+- [Runners](/concepts/runner)
+- [Troubleshoot a deploy](/troubleshooting/deploy)
