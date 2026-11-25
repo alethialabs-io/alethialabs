@@ -81,8 +81,7 @@ const hub: AlertsHub = {
 
 const view: Parameters<typeof PoliciesPanel>[0]["view"] = {
 	rows: [alpha, beta],
-	count: 2,
-	total: 2,
+	universeEmpty: false,
 	facets: { status: [], kinds: [], channels: [] },
 	stale: false,
 	busy: false,
