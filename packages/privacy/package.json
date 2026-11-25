@@ -1,6 +1,7 @@
 {
   "name": "@repo/privacy",
   "version": "0.1.0",
+  "description": "Cookie consent for the Alethia web apps: a React consent provider and a privacy-settings button.",
   "private": true,
   "exports": {
     "./consent": "./src/consent.ts",
