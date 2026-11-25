@@ -1,95 +1,135 @@
 ---
 title: Helm chart
-description: Run the Alethia bundle on any managed Kubernetes cluster with the Helm chart.
+description: Install the self-hosted Alethia bundle on a Kubernetes cluster with the Helm chart, with the bundled or a managed Postgres and object store.
 ---
 
-For teams already on Kubernetes, the chart deploys the same bundle as the
-[compose stack](/self-host) — console, docs, runner, and (optionally) bundled Postgres + object
-store — wired behind a single Ingress (console at `/`, docs at `/docs`).
+Install Alethia on a Kubernetes cluster you already run. The chart deploys the console, the docs, a
+runner, and optionally Postgres and SeaweedFS, behind one Ingress: the console at `/`, the docs at
+`/docs`.
 
-> **x86 only.** The published app-bundle images are built `linux/amd64`, so every pod carries a
-> `nodeSelector` of `kubernetes.io/arch=amd64`. Use an x86 node pool, or clear it with
-> `--set nodeSelector=null` once you publish multi-arch images.
+## Before you begin
 
-## What it deploys
-- **console** Deployment + Service. Two init containers run first: `wait-for-postgres`, then
-  `migrate` (idempotent — applies schema/programmables and sets the app-role password).
-- **docs** Deployment + Service.
-- **runner** Deployment (self-registers with the console over the in-cluster Service URL).
-- **postgres** StatefulSet + headless Service + PVC — *optional* (`postgres.enabled`).
-- **seaweedfs** StatefulSet + headless Service + PVC + ConfigMap (S3 identity) — *optional*
-  (`objectStore.enabled`).
-- **Ingress** (`/docs*` → docs, `/` → console) with optional cert-manager TLS.
-- **Secret** holding the connection strings + app secrets (or bring your own via
-  `secrets.existingSecret`).
-
-## Prerequisites
-- A Kubernetes cluster with an **x86 node pool**, an **Ingress controller** (e.g. ingress-nginx),
-  and a **default StorageClass** (for the bundled Postgres/object-store PVCs).
-- **cert-manager** with a `ClusterIssuer` if you want automatic TLS.
+- A cluster with x86 nodes. The images are `linux/amd64` only, so every pod has the node selector
+  `kubernetes.io/arch=amd64`.
+- An Ingress controller. The defaults match ingress-nginx.
+- A default StorageClass, for the bundled Postgres and object store.
+- cert-manager with a `ClusterIssuer`, for automatic TLS.
+- A clone of the repository, `helm`, and `openssl`.
 
 ## Install
+
+<Steps>
+<Step>
+
+### Generate the instance secrets
+
+The chart does not generate secrets. Generate the same set the VM installer makes, from the clone:
+
+```bash
+git clone --depth 1 https://github.com/alethialabs-io/alethialabs.git && cd alethialabs
+(umask 077; : > secrets.env; . deploy/selfhost/secrets.sh; fill_required_secrets secrets.env >/dev/null)
+```
+
+</Step>
+<Step>
+
+### Write a values file
+
+```bash
+DOMAIN=alethia.example.com
+(umask 077; . ./secrets.env; {
+  echo "domain: $DOMAIN"
+  echo "postgres: { password: \"$ALETHIA_DB_PASSWORD\", appPassword: \"$ALETHIA_APP_DB_PASSWORD\" }"
+  echo "objectStore: { accessKey: \"$ALETHIA_STORAGE_ACCESS_KEY_ID\", secretKey: \"$ALETHIA_STORAGE_SECRET_ACCESS_KEY\" }"
+  echo "secrets:"
+  echo "  cliJwtSecret: \"$CLI_JWT_SECRET\""
+  echo "  betterAuthSecret: \"$BETTER_AUTH_SECRET\""
+  echo "  extraEnv:"
+  echo "    NEXT_PUBLIC_APP_URL: \"https://$DOMAIN\""
+  echo "    BETTER_AUTH_URL: \"https://$DOMAIN\""
+  grep -vE '^(CLI_JWT_SECRET|BETTER_AUTH_SECRET)=' secrets.env | sed -E 's/^([A-Z0-9_]+)=(.*)$/    \1: "\2"/'
+} > alethia-values.yaml)
+```
+
+`secrets.extraEnv` becomes environment variables of the console and the runner. Add OAuth and
+email keys there too: see [Configuration](/self-host/configuration) and [Email](/self-host/email).
+
+</Step>
+<Step>
+
+### Install the chart
+
 ```bash
 helm install alethia deploy/helm/alethia \
   --namespace alethia --create-namespace \
-  --set domain=alethialabs.io \
-  --set secrets.cliJwtSecret="$(openssl rand -hex 32)" \
-  --set secrets.betterAuthSecret="$(openssl rand -hex 32)" \
-  --set postgres.password="$(openssl rand -hex 16)" \
-  --set postgres.appPassword="$(openssl rand -hex 16)" \
-  --set objectStore.secretKey="$(openssl rand -hex 16)" \
-  --set ingress.tls.clusterIssuer=letsencrypt-prod
+  -f alethia-values.yaml
 ```
 
-Then point DNS for your domain at the ingress controller's external IP.
+Then point your domain's DNS record at the Ingress controller's external address.
 
-## Bring your own Postgres / object store
-Disable the bundled ones and point at managed services:
+</Step>
+</Steps>
+
+Keep `secrets.env` and `alethia-values.yaml` in a secret store, and delete them from disk.
+
+## Check that it worked
+
 ```bash
-helm install alethia deploy/helm/alethia \
-  --set postgres.enabled=false \
-  --set postgres.host=db.internal --set postgres.port=5432 \
-  --set postgres.user=alethia --set postgres.password=... \
-  --set postgres.database=alethia --set postgres.appPassword=... \
-  --set objectStore.enabled=false \
-  --set objectStore.endpoint=https://s3.amazonaws.com \
-  ...
+kubectl -n alethia get pods
 ```
 
-## App secrets (OAuth, email, …)
-Provider client IDs/secrets, `ALETHIA_SES_*` (email), and other app env go under `secrets.extraEnv` as a
-map — they're merged into the chart-managed Secret and exposed to the console/runner via `envFrom`:
-```yaml
-secrets:
-  extraEnv:
-    ALETHIA_SES_REGION: eu-central-1
-    AUTH_EMAIL_FROM: Alethia <no-reply@auth.yourdomain>
-    GITHUB_CLIENT_ID: ...
-    GITHUB_CLIENT_SECRET: ...
+The console, docs, runner, Postgres and SeaweedFS pods are `Running`. The console pod ran two init
+containers first: `wait-for-postgres` and `migrate`. Open `https://<domain>` and sign in. Until email
+is set up, the sign-in code is in the console's log: `kubectl -n alethia logs deploy/alethia-alethia-console`. Resources are named
+`<release>-alethia-<component>`.
+
+## Use a managed database or object store
+
+Turn off the bundled services and point the chart at yours:
+
+```bash
+helm install alethia deploy/helm/alethia -f alethia-values.yaml \
+  --set postgres.enabled=false \
+  --set postgres.host=db.internal --set postgres.user=alethia --set postgres.database=alethia \
+  --set objectStore.enabled=false \
+  --set objectStore.endpoint=https://s3.eu-central-1.amazonaws.com
 ```
-Or manage everything yourself in one Secret and set `secrets.existingSecret=my-secret` (it must hold
+
+`postgres.password` is the schema owner's password. `migrate` creates the `alethia_app` role with
+`postgres.appPassword`. For a managed store, set `ALETHIA_STORAGE_ACCESS_KEY_ID` and
+`ALETHIA_STORAGE_SECRET_ACCESS_KEY` in `secrets.extraEnv` to that store's credentials.
+
+To manage the Kubernetes Secret yourself, set `secrets.existingSecret=<name>`. It must hold
 `ALETHIA_DATABASE_URL`, `ALETHIA_APP_DATABASE_URL`, `ALETHIA_APP_DB_PASSWORD`,
-`ALETHIA_STORAGE_ENDPOINT`, `CLI_JWT_SECRET`, `BETTER_AUTH_SECRET`).
+`ALETHIA_STORAGE_ENDPOINT`, `CLI_JWT_SECRET`, `BETTER_AUTH_SECRET` and every key you would put in
+`extraEnv`.
 
 ## Upgrade
+
 ```bash
-helm upgrade alethia deploy/helm/alethia --reuse-values --set image.tag=v1.2.3
+helm upgrade alethia deploy/helm/alethia --reuse-values --set image.tag=<tag>
 ```
-The migrate init container re-runs on each rollout, so schema changes apply automatically.
+
+The `migrate` init container runs on every rollout, so the schema moves before the new console
+serves. Back up the database first; see [Upgrade and back up](/self-host/upgrading#what-to-back-up).
 
 ## Key values
-| Value | Default | Notes |
-|---|---|---|
-| `image.registry` / `image.tag` | `ghcr.io/alethialabs-io` / `latest` | Pinned across components |
-| `nodeSelector` | `kubernetes.io/arch=amd64` | `null` to disable |
-| `domain` | `alethialabs.io` | Ingress host |
-| `postgres.enabled` | `true` | `false` → set `postgres.host` |
-| `objectStore.enabled` | `true` | `false` → set `objectStore.endpoint` |
-| `ingress.className` | `nginx` | Ingress controller class |
-| `ingress.trustedIpHeader` | `x-real-ip` | Header the ingress overwrites with the client IP for authentication throttling |
-| `ingress.tls.clusterIssuer` | `letsencrypt-prod` | cert-manager issuer |
 
-The default matches ingress-nginx, which overwrites `X-Real-IP` before forwarding a request. If you
-use another ingress controller, set `ingress.trustedIpHeader` to a single-value client IP header
-that controller overwrites. Authentication returns HTTP 503 in production when that contract is
-missing or malformed, instead of placing every client in one shared rate-limit bucket.
+| Value | Default | What it does |
+| --- | --- | --- |
+| `domain` | `alethialabs.io` | The Ingress host. Always set it. |
+| `image.tag` | `latest` | One tag for every Alethia image. |
+| `nodeSelector` | `kubernetes.io/arch: amd64` | Set to `{}` once multi-arch images exist. |
+| `postgres.enabled`, `objectStore.enabled` | `true` | `false` uses your own service. |
+| `ingress.className` | `nginx` | The Ingress class. |
+| `ingress.trustedIpHeader` | `x-real-ip` | The client-IP header the Ingress overwrites. |
+| `ingress.tls.clusterIssuer` | `letsencrypt-prod` | The cert-manager issuer. |
+
+With another Ingress controller, set `ingress.trustedIpHeader` to a single-value header that
+controller overwrites with the client address. In production, sign-in answers `503` when the header
+is missing or invalid.
+
+## Related
+
+- [Configuration](/self-host/configuration): every key you can add to `extraEnv`.
+- [Scaling out](/self-host/scaling-out): run more console replicas.
