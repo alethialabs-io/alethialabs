@@ -7,16 +7,16 @@ import type { ToolSet } from "ai";
 import { z } from "zod";
 
 /**
- * The "one tool layer, two consumers" bridge (B7): re-expose the exact same AI-SDK
- * tool set the in-app agent uses (buildAgentTools()) as MCP tools, so Claude /
- * claude.ai connectors drive the identical PDP-gated surface over the wire. No new
- * authority — each tool's execute() still resolves currentActor() and enforces its
- * verb; the MCP route binds the token-derived actor via runWithActor() first.
+ * A generic bridge that registers an AI-SDK tool set (the in-app agent's tools) as MCP tools under
+ * their in-app names.
  *
- * This function is a generic bridge over whatever tool set it is given. The MCP
- * route MUST pass the READ-ONLY external projection — `buildExternalAgentTools()`
- * (lib/ai/tools), which filters by audience (registry.ts) — so HITL/canvas/
- * job-queuing tools are never exposed to a customer's agent at launch.
+ * THE MCP SERVER NO LONGER USES IT. `lib/ai/mcp/server.ts` lists only the declared external tools
+ * (`lib/ai/mcp/surface.ts`), and each declared read answers through the in-app tools it `replaces`
+ * by running them in-process (`lib/ai/mcp/in-app.ts`), not by registering them. What still calls
+ * this bridge is `tests/lib/ai/tools/registry.test.ts`, which serialises the in-app external
+ * projection with it. Any caller must pass that READ-ONLY projection — `buildExternalAgentTools()`
+ * (lib/ai/tools), filtered by audience (registry.ts) — never the full in-app set, whose HITL, canvas
+ * and job-queuing tools must not reach a customer's agent.
  */
 
 /** The runtime slice of an AI-SDK tool the bridge needs. Tool's published type erases
