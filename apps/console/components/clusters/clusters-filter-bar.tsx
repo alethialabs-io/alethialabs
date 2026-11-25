@@ -18,7 +18,7 @@ import { CLUSTER_STATUS_KEYS, type ClusterStatusKey } from "@/components/cluster
 import { type ClusterPageFilters, DEFAULT_CLUSTER_FILTERS } from "@/components/clusters/clusters-query";
 import { CloudFilter } from "@/components/filters/cloud-filter";
 import { CLOUD_ACCOUNT } from "@/lib/copy/vocabulary";
-import { type ClustersPage, UNKNOWN_CLOUD } from "@/lib/queries/clusters";
+import { type ClusterFacetSet, UNKNOWN_CLOUD } from "@/lib/queries/clusters";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import type { useClustersFilters } from "@/lib/stores/use-clusters-filters";
 
@@ -67,7 +67,7 @@ export function ClustersFilterBar({
 	filters: ClusterPageFilters;
 	onFilter: ClustersFilterStore["set"];
 	onReset: ClustersFilterStore["reset"];
-	facets: ClustersPage["facets"] | undefined;
+	facets: ClusterFacetSet | undefined;
 	className?: string;
 }) {
 	const statusOptions = (facets?.statuses ?? [])
