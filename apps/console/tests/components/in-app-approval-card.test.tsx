@@ -52,6 +52,7 @@ function detail(status: InAppApprovalDetail["approval"]["status"], requestedByRe
 			digest_prefix: "9f3c1a7e",
 			expires_at: REQUEST.expires_at,
 			decided_at: null,
+			decision_reason: null,
 			consumed_job_id: status === "consumed" ? JOB : null,
 		},
 		plan: {

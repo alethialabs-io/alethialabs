@@ -56,7 +56,7 @@ import { randomUUID } from "node:crypto";
 import { createORPCClient } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import { ORPCError } from "@orpc/server";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { headers } from "next/headers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "@/app/(private)/[org]/~/rpc/[[...rest]]/route";
@@ -66,9 +66,11 @@ import { ensureMemberGrant } from "@/lib/authz/grants";
 import { seedAuthz } from "@/lib/authz/seed";
 import { getServiceDb } from "@/lib/db";
 import {
+	agentOauthGrants,
 	alertChannels,
 	alertDeliveries,
 	alertRules,
+	applyApprovals,
 	authzActivityLog,
 	classificationAssignment,
 	classificationDimension,
@@ -79,8 +81,11 @@ import {
 	invoice,
 	jobs,
 	member,
+	oauthClient,
+	oauthConsent,
 	organization,
 	organizationBilling,
+	orgAgentPolicy,
 	projectCluster,
 	projectEnvironments,
 	projectFabrics,
@@ -161,6 +166,12 @@ export interface Seeded {
 	/** The resource id of one recorded Activity-log entry per org (W's), which marks whose log answered. */
 	activityX: string;
 	activityY: string;
+	/** AGT-L2: one approval per org, on its project's default environment (W requested, W denied). */
+	approvalX: string;
+	approvalY: string;
+	/** AGT-L2: one connected agent of the CALLER U per org — a grant is only ever its own person's. */
+	grantX: string;
+	grantY: string;
 }
 
 /** One of the two seeded orgs. */
@@ -307,6 +318,30 @@ function codeOf(outcome: Outcome): string {
 	return isNotFound(outcome.error) ? "NOT_FOUND" : String(outcome.error);
 }
 
+/** Whether a decision-sheet read (`{ approval: { id } }`) is the approval with this id. */
+function isApprovalSheet(out: unknown, id: string): boolean {
+	if (typeof out !== "object" || out === null || !("approval" in out)) return false;
+	const approval: unknown = out.approval;
+	return typeof approval === "object" && approval !== null && "id" in approval && approval.id === id;
+}
+
+/** The request TTL in an agent-policy read (`{ settings: { approvalTtlMinutes } }`), or null. */
+function policyTtl(out: unknown): number | null {
+	if (typeof out !== "object" || out === null || !("settings" in out)) return null;
+	const settings: unknown = out.settings;
+	if (typeof settings !== "object" || settings === null || !("approvalTtlMinutes" in settings)) return null;
+	return typeof settings.approvalTtlMinutes === "number" ? settings.approvalTtlMinutes : null;
+}
+
+/** Whether a connected-agents read (`{ connected: [{ grantId }] }`) carries this grant. */
+function connectedHas(out: unknown, grantId: string): boolean {
+	if (typeof out !== "object" || out === null || !("connected" in out)) return false;
+	const connected: unknown = out.connected;
+	return (
+		Array.isArray(connected) &&
+		connected.some((row: unknown) => typeof row === "object" && row !== null && "grantId" in row && row.grantId === grantId)
+	);
+}
 
 /** Whether a page-shaped output (`{ rows: [{ id }] }`) carries a row with this id. */
 function hasRow(out: unknown, id: string): boolean {
@@ -451,6 +486,42 @@ export const FIXTURES: Record<string, Fixture> = {
 		kind: "by-id",
 		input: (s, org) => ({ id: caseOf(s, org) }),
 		reveals: (out, s, org) => isCase(out, caseOf(s, org)),
+	},
+	// AGT-L2. The approvals list is the addressed org's approvals on projects the caller may view; the
+	// decision sheet's read is addressed by id, and only the addressed org's approval is revealed.
+	"approvals.list": {
+		kind: "org-scoped",
+		input: {},
+		markers: (out, s) => ({ x: hasRow(out, s.approvalX), y: hasRow(out, s.approvalY) }),
+	},
+	"approvals.get": {
+		kind: "by-id",
+		input: (s, org) => ({ id: org === "x" ? s.approvalX : s.approvalY }),
+		reveals: (out, s, org) => isApprovalSheet(out, org === "x" ? s.approvalX : s.approvalY),
+	},
+	// The org's agent policy: X keeps requests open 15 minutes, Y 240.
+	"agents.policy": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out) => ({ x: policyTtl(out) === 15, y: policyTtl(out) === 240 }),
+	},
+	"agents.serviceTokens": {
+		kind: "gated",
+		reason: "org:manage_tokens, which U (a viewer in both orgs) does not hold",
+		input: undefined,
+		enterprise: { x: "FORBIDDEN", y: "FORBIDDEN" },
+	},
+	"agents.tokenEnvironments": {
+		kind: "gated",
+		reason: "org:manage_tokens, which U (a viewer in both orgs) does not hold",
+		input: {},
+		enterprise: { x: "FORBIDDEN", y: "FORBIDDEN" },
+	},
+	// The caller's own connected agents in the addressed org: U holds one grant in each.
+	"agents.connected": {
+		kind: "org-scoped",
+		input: undefined,
+		markers: (out, s) => ({ x: connectedHas(out, s.grantX), y: connectedHas(out, s.grantY) }),
 	},
 	"workspace.setupGuide": {
 		// Its counts are the addressed org's: X has three members (U, V, W), Y has two (U, W).
@@ -1155,6 +1226,10 @@ export async function runRpcTenancySuite(opts: {
 		valueY: "",
 		activityX: randomUUID(),
 		activityY: randomUUID(),
+		approvalX: "",
+		approvalY: "",
+		grantX: "",
+		grantY: "",
 	};
 
 	/** One call through the ROUTE HANDLER, as the browser makes it, under the given request. */
@@ -1455,6 +1530,50 @@ export async function runRpcTenancySuite(opts: {
 			};
 			({ sso: seeded.ssoX, dimension: seeded.dimensionX, value: seeded.valueX } = await seedSettings(ORG_X, "x"));
 			({ sso: seeded.ssoY, dimension: seeded.dimensionY, value: seeded.valueY } = await seedSettings(ORG_Y, "y"));
+			// AGT-L2's markers. An approval per org on its project's default environment — decided, so its
+			// read needs no plan binding — and a distinct request TTL in each org's agent policy. And one
+			// connected agent of U per org: a grant is its own person's, so U must hold it to see it.
+			const seedAgents = async (orgId: string, org: Org): Promise<{ approval: string; grant: string }> => {
+				const env = org === "x" ? seeded.envX : seeded.envY;
+				const project = org === "x" ? seeded.projectX : seeded.projectY;
+				const plan = await seedJob(W, orgId, {
+					project_id: project,
+					environment_id: env,
+					status: "SUCCESS",
+					plan_sha256: "a2".repeat(32),
+				});
+				const [a] = await db
+					.insert(applyApprovals)
+					.values({
+						org_id: orgId,
+						project_id: project,
+						environment_id: env,
+						operation: "deploy",
+						plan_job_id: plan,
+						plan_sha256: "a2".repeat(32),
+						requester_user_id: W,
+						requester_credential: "cli_session",
+						status: "rejected",
+						approver_user_id: W,
+						decided_at: new Date(),
+						expires_at: new Date(Date.now() + 60 * 60_000),
+					})
+					.returning({ id: applyApprovals.id });
+				await db.insert(orgAgentPolicy).values({ org_id: orgId, approval_ttl_minutes: org === "x" ? 15 : 240 });
+				const clientId = `https://it-agt-l2-${org}-${orgId.slice(0, 8)}.example.test/client.json`;
+				await db.insert(oauthClient).values({ clientId, name: `it-agt-l2-${org}`, redirectUris: ["https://example.test/cb"] });
+				const [c] = await db
+					.insert(oauthConsent)
+					.values({ clientId, userId: U, scopes: ["openid", "read"] })
+					.returning({ id: oauthConsent.id });
+				const [g] = await db
+					.insert(agentOauthGrants)
+					.values({ consent_id: c.id, org_id: orgId, user_id: U, client_id: clientId, scopes: ["read"] })
+					.returning({ id: agentOauthGrants.id });
+				return { approval: a.id, grant: g.id };
+			};
+			({ approval: seeded.approvalX, grant: seeded.grantX } = await seedAgents(ORG_X, "x"));
+			({ approval: seeded.approvalY, grant: seeded.grantY } = await seedAgents(ORG_Y, "y"));
 			// #6127's markers, on the billing records #6118 seeded above (both on a live Team plan): an AI
 			// cap and a distinct paid period per org; then one invoice per org and one more project in X.
 			// U's `manage_billing` in X is granted per read (`billingAdminInX`), never suite-wide.
@@ -1525,6 +1644,10 @@ export async function runRpcTenancySuite(opts: {
 			await db.delete(classificationDimension).where(inArray(classificationDimension.org_id, [ORG_X, ORG_Y]));
 			await db.delete(ssoProvider).where(inArray(ssoProvider.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(role).where(inArray(role.organization_id, [ORG_X, ORG_Y]));
+			await db.delete(orgAgentPolicy).where(inArray(orgAgentPolicy.org_id, [ORG_X, ORG_Y]));
+			await db.delete(agentOauthGrants).where(inArray(agentOauthGrants.org_id, [ORG_X, ORG_Y]));
+			await db.delete(oauthConsent).where(eq(oauthConsent.userId, U));
+			await db.delete(oauthClient).where(like(oauthClient.clientId, "https://it-agt-l2-%"));
 			await db.delete(member).where(inArray(member.organizationId, [ORG_X, ORG_Y]));
 			await db.delete(organization).where(inArray(organization.id, [ORG_X, ORG_Y]));
 			await db.delete(user).where(inArray(user.id, USERS));
