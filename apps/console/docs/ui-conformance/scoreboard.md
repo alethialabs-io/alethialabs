@@ -7,10 +7,19 @@ Every **private** console route, scored against the static half of
 [`RUBRIC.md`](./RUBRIC.md).
 
 **Everything below the marker is generated. Do not edit it.**
-Run `pnpm -C apps/console run audit:report --write` and commit the result; a bare
+`pnpm -C apps/console run audit:report --write` regenerates it; a bare
 `pnpm -C apps/console run audit:report` checks the two generated artifacts against the tree and exits 2
-naming the command, the same contract `PROGRAMME.md`'s derived half uses. The machine-readable
-twin is [`apps/console/ui-conformance-baseline.json`](../../ui-conformance-baseline.json).
+naming the command. The machine-readable twin is
+[`apps/console/ui-conformance-baseline.json`](../../ui-conformance-baseline.json).
+
+**A pull request does not commit either file (#7594).** Both carry aggregate totals, and the
+regenerations of N parallel PRs merge cleanly and wrongly. CI regenerates them against each PR's
+merge ref and **reports** the diff in the log and the step summary, so a reviewer sees the PR's
+conformance effect, but it does not fail on it. `dev`'s copy is regenerated after every merge by
+`.github/workflows/ui-conformance-scoreboard.yml`, which opens or updates one bot PR,
+`chore(console): regenerate the UI conformance scoreboard`. **The freshness bound is 24 hours**:
+that workflow goes red if the bot PR stays open longer, or if `dev` is stale and no bot PR exists.
+So this file can lag `dev` by one bot PR, and never by more than a day without something red.
 
 ## What this is, and what it is not
 
@@ -64,7 +73,10 @@ so for H8 in as many words — "a page scores FAIL on H8 today and the number ca
 The numbers this file was committed with were measured on an **unmodified `dev`**, before any
 conformance lane changed a component. A guard shipped in the same commit as its fix is
 tautological, and this repo has paid for that more than once. Every conformance lane that follows
-lowers a number here in the same commit as its code.
+lowers a number here; since #7594 the number moves in the bot PR that follows the lane's merge,
+and the lane's own PR shows the move as a CI report. The ratchets that GATE a lane —
+`route-states-baseline.yaml` and `shared-surface-allowlist.yaml` — still move in the same commit
+as its code.
 
 <!-- BEGIN GENERATED: audit-report · tree-derived · DO NOT EDIT BELOW -->
 
@@ -263,7 +275,6 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | route | S | T | H | F | R | B | overall |
 |---|---|---|---|---|---|---|---|
 | `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 2 withheld of 44 |
 | `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | all withheld (5) | **0.97** · 5 withheld of 44 |
 | `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]` · | all N/A | 3/3 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
@@ -289,6 +300,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/settings/billing/early-access` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | all N/A or withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
+| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/connected` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | all N/A or withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
