@@ -3,8 +3,11 @@
 
 // The Environments page's read, for its component tests: a project with a default `development`
 // environment and a non-default `production`, a viewer who may change and promote, nothing in
-// flight. A test overrides what it is about.
+// flight — and the table's and the promotions history's first pages (LST-3 #7485). A test overrides what it is about.
 
+import type { QueryClient } from "@tanstack/react-query";
+import type { EnvironmentFacetSet, EnvironmentFacts, EnvironmentsPage } from "@/lib/queries/environments";
+import type { PromotionsPage } from "@/lib/queries/promotions";
 import type { EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
 
 export const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
@@ -31,29 +34,60 @@ export const PROD = envRow({
 	updated_at: "2026-10-02T00:00:00.000Z",
 });
 
-/** The list half of the read for `envs` with every one of them matching: what a pristine bar gets. */
-export function pageOf(envs: EnvRow[]): EnvironmentsOverview["page"] {
+/** The table's row for an environment: the facts `environments.page` returns. */
+export function factsOf(env: EnvRow): EnvironmentFacts {
+	return { id: env.id, name: env.name, stage: env.stage, status: env.status, created_at: env.updated_at };
+}
+
+/** Facet counts over `envs`, as the first page carries them. */
+export function facetsOf(envs: EnvRow[]): EnvironmentFacetSet {
 	const statuses = [...new Set(envs.map((e) => e.status))].sort();
 	return {
-		rowIds: envs.map((e) => e.id),
-		resultCount: envs.length,
-		total: envs.length,
-		facets: {
-			stages: ["development", "staging", "production"].map((stage) => ({
-				value: stage,
-				label: null,
-				count: envs.filter((e) => e.stage === stage).length,
-			})),
-			statuses: statuses.map((status) => ({
-				value: status,
-				label: null,
-				count: envs.filter((e) => e.status === status).length,
-			})),
-		},
+		stages: ["development", "staging", "production"].map((stage) => ({
+			value: stage,
+			label: null,
+			count: envs.filter((e) => e.stage === stage).length,
+		})),
+		statuses: statuses.map((status) => ({
+			value: status,
+			label: null,
+			count: envs.filter((e) => e.status === status).length,
+		})),
 	};
 }
 
-/** The read. `page` follows `envs` unless a test gives its own (a filtered answer). */
+/**
+ * The table's first (and last) page: `rows` matched, with the facets and the emptiness of `all`.
+ * `rows` defaults to every environment — what a pristine bar gets.
+ */
+export function pageOf(all: EnvRow[], rows: EnvRow[] = all): EnvironmentsPage {
+	return { rows: rows.map(factsOf), nextCursor: null, facets: facetsOf(all), universeEmpty: all.length === 0 };
+}
+
+/** The infinite cache entry a route's prefetch leaves for one first page. */
+function firstPage<T>(page: T) {
+	return { pages: [page], pageParams: [null] };
+}
+
+/** The keys the view's two paged reads use for the pristine list of project `payments`. */
+const TABLE_KEY = [["environments", "page"], { input: { project: "payments" }, type: "infinite" }];
+const PROMOTIONS_KEY = [["environments", "promotions"], { input: { project: "payments" }, type: "infinite" }];
+
+/**
+ * Seeds the table's first page (`page`, default: every environment of `overview`) and an empty
+ * promotions history, as the route's prefetch leaves them.
+ */
+export function seedLists(
+	qc: QueryClient,
+	overview: EnvironmentsOverview,
+	page: EnvironmentsPage = pageOf(overview.envs),
+	promotions: PromotionsPage = { rows: [], nextCursor: null, facets: null, universeEmpty: true },
+) {
+	qc.setQueryData(TABLE_KEY, firstPage(page));
+	qc.setQueryData(PROMOTIONS_KEY, firstPage(promotions));
+}
+
+/** The panels' read. */
 export function overviewOf(over: Partial<EnvironmentsOverview> = {}): EnvironmentsOverview {
 	const envs = over.envs ?? [DEV, PROD];
 	return {
@@ -61,10 +95,8 @@ export function overviewOf(over: Partial<EnvironmentsOverview> = {}): Environmen
 		canManage: true,
 		canPromote: true,
 		envs,
-		page: pageOf(envs),
 		consistency: { envs: [], rows: [] },
 		reconcile: [],
-		promotions: [],
 		activePromotion: null,
 		protectionByEnv: {},
 		...over,

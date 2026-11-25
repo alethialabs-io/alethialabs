@@ -7,7 +7,7 @@
 // ROUTES read a link into the same shape to prefetch the page the client will ask for.
 
 import { type ParamReader, filterStateFromUrl } from "@/lib/query/filter-url-codec";
-import type { ClustersPageInput } from "@/lib/rpc/procedures/clusters";
+import type { ClustersListQuery } from "@/lib/rpc/procedures/clusters";
 
 /** Active filter selections for the clusters list (a type alias, not an interface, so it
  * satisfies the store factory's Record constraint). Empty = "no filter". */
@@ -48,8 +48,8 @@ export function normalizeClustersQuery(
 	filters: ClusterPageFilters,
 	search: string,
 	projectId?: string,
-): ClustersPageInput {
-	const query: ClustersPageInput = {};
+): ClustersListQuery {
+	const query: ClustersListQuery = {};
 	if (projectId) query.projectId = projectId;
 	const trimmed = search.trim();
 	if (trimmed) query.search = trimmed;
@@ -66,7 +66,7 @@ export function normalizeClustersQuery(
  * The list's query for a URL — the key the client settles on once `useFilterUrlSync` has read the
  * link, so it is the key a route must prefetch for a filtered link to render filtered.
  */
-export function clustersQueryFromUrl(params: ParamReader, projectId?: string): ClustersPageInput {
+export function clustersQueryFromUrl(params: ParamReader, projectId?: string): ClustersListQuery {
 	const filters = filterStateFromUrl(params, DEFAULT_CLUSTER_FILTERS);
 	return normalizeClustersQuery(filters, filters.search, projectId);
 }

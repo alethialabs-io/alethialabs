@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 13,
-			"fail": 6,
+			"pass": 16,
+			"fail": 3,
 			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
-			"score": 0.6842
+			"score": 0.8421
 		},
 		"F6": {
 			"family": "F",
@@ -987,11 +987,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1013,11 +1013,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 1,
+				"pass": 35,
+				"fail": 0,
 				"na": 3,
 				"notMeasured": 5,
-				"score": 0.9714
+				"score": 1
 			}
 		},
 		{
@@ -1054,11 +1054,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1080,11 +1080,11 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 1,
+				"pass": 36,
+				"fail": 0,
 				"na": 4,
 				"notMeasured": 3,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
@@ -1657,11 +1657,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 6,
-					"fail": 1,
+					"pass": 7,
+					"fail": 0,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 0.8571
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1683,11 +1683,11 @@
 				}
 			},
 			"overall": {
-				"pass": 33,
-				"fail": 1,
+				"pass": 34,
+				"fail": 0,
 				"na": 5,
 				"notMeasured": 4,
-				"score": 0.9706
+				"score": 1
 			}
 		},
 		{
@@ -4330,8 +4330,7 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4554,8 +4553,7 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useEnvironmentsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -6601,8 +6599,7 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/clusters",
