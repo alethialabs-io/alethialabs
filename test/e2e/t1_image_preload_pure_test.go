@@ -249,6 +249,33 @@ func TestPreloadIntoKindWaitsForNodesWithoutCountingFailures(t *testing.T) {
 	}
 }
 
+// With an archive the load is `kind load image-archive` of that file (#7698): `docker-image` saves the
+// whole multi-platform index on a containerd-store Docker, and kind's --all-platforms import fails.
+// "no nodes found" is still the waiting state, and a give-up names the subcommand that failed.
+func TestPreloadIntoKindLoadsTheArchiveWhenGiven(t *testing.T) {
+	noNodes := kindAnswer{out: `ERROR: no nodes found for cluster "c"`, err: errKindExit}
+	f := &scriptedKind{answers: []kindAnswer{noNodes, {out: ""}}}
+	logf, lines := collectPreloadLogs()
+	opt := PreloadOptions{MaxFailures: 1, Archive: "/tmp/t1.tar"}
+	if err := PreloadIntoKind(context.Background(), "c", []string{"a:1", "b:2"}, f.run, opt, logf); err != nil {
+		t.Fatalf("archive load: %v", err)
+	}
+	for i, call := range f.calls {
+		if want := []string{"load", "image-archive", "--name", "c", "/tmp/t1.tar"}; !reflect.DeepEqual(call, want) {
+			t.Fatalf("call %d argv = %q, want %q", i, call, want)
+		}
+	}
+	if got := strings.Join(*lines, "\n"); !strings.Contains(got, "pre-loaded 2 image(s)") {
+		t.Fatalf("logs:\n%s", got)
+	}
+
+	g := &scriptedKind{answers: []kindAnswer{{out: "ctr: content digest sha256:ab: not found", err: errKindExit}}}
+	err := PreloadIntoKind(context.Background(), "c", []string{"a:1"}, g.run, PreloadOptions{MaxFailures: 2, Archive: "/tmp/t1.tar"}, logf)
+	if err == nil || !strings.Contains(err.Error(), "kind image-archive into c failed 2 times") {
+		t.Fatalf("err = %v, want a give-up naming image-archive", err)
+	}
+}
+
 func TestPreloadIntoKindLogsThatASuccessRetried(t *testing.T) {
 	f := &scriptedKind{answers: []kindAnswer{{out: "ctr: failed to import", err: errKindExit}, {out: ""}}}
 	logf, lines := collectPreloadLogs()
