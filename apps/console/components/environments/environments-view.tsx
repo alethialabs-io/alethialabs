@@ -2,34 +2,39 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The project's Environments surface. Opens with the page toolbar (the count, one line of
-// description, New Environment / Promote) — NO page title: the sidebar entry and the breadcrumb
-// already name the page (F010). Then what needs a decision (a failed environment that may still
-// hold cloud resources, a cluster found deleted), the active-promotion panel (when a promotion is
-// in flight), the environments LIST — the filter bar and the table — a consistency matrix, and the
-// promotions history. Destructive actions go through the shared ConfirmAction.
+// The project's Environments surface. Opens with the page toolbar (one line of description, New
+// Environment / Promote; no count, lib/query/README.md → "Counts") — NO page title: the sidebar
+// entry and the breadcrumb already name the page (F010). Then what needs a decision (a failed
+// environment that may still hold cloud resources, a cluster found deleted), the active-promotion
+// panel (when a promotion is in flight), the environments LIST — the filter bar and the table — a
+// consistency matrix, and the promotions history. Destructive actions go through the shared ConfirmAction.
 //
-// DATA (#6120, ADR 0005). Everything here is ONE read, `environments.overview`, which the route
-// prefetches on the server and hydrates — so the first paint carries it and nothing is fetched on
-// mount. It is live by the change stream: an environment, a promotion, an approval slot or a
-// protection rule that changes is an `environments` hint that invalidates this read
-// (lib/query/topics.ts); a job that moves a promotion or a reconcile badge is a `jobs` hint. Every
-// write goes through `useActionMutation` and invalidates the reads that show what it changed.
+// DATA (#6120, ADR 0005; LST-3 #7485). Three reads, each prefetched by the route on the server and
+// hydrated, so the first paint carries them and nothing is fetched on mount:
+//   · `environments.overview` — every environment and the panels' facts (the failure notices, the
+//     active promotion, the matrix, the promote dialog), which need EVERY environment whatever the
+//     bar selects;
+//   · `environments.page` — the TABLE's rows, one keyset page at a time, paged in memory on the
+//     server (lib/queries/environments.ts) and joined here to the overview's record of each;
+//   · `environments.promotions` — the promotions history, its own SQL keyset read
+//     (./promotions-history.tsx).
+// All three are live by the change stream: an environment, a promotion, an approval slot or a
+// protection rule that changes is an `environments` hint that invalidates `orpc.environments.key()`
+// — a prefix of every one of their keys (lib/query/topics.ts); a job that moves a promotion or a
+// reconcile badge is a `jobs` hint. Every write goes through `useActionMutation` and invalidates the
+// reads that show what it changed.
 //
 // THE LIST IS ON THE FILTER STANDARD (lib/query/README.md). The bar's selections are a store
-// mirrored into the URL; the normalized query is the read's input, so the SERVER decides which
-// environments match and counts the facets over all of them (lib/queries/environments.ts); the
-// previous rows stay, dimmed, while the next answer loads. The project is the route's scope and is
-// never a filter. Everything that is not the list — the promote dialog, the matrix, the history —
-// reads `envs`, which is every environment whatever the bar selects.
+// mirrored into the URL; the normalized query is the table read's key, so the SERVER decides which
+// environments match and counts the facets over all of them; the previous rows stay, dimmed, while
+// the next answer loads. The project is the route's scope and is never a filter.
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
-import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 import { ArrowUpFromLine, Layers, Plus, SearchX, TriangleAlert } from "lucide-react";
 import Link from "next/link";
@@ -57,6 +62,8 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { JOB_ACTION } from "@/lib/copy/vocabulary";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import { type KeysetList, useKeysetList } from "@/lib/query/use-keyset-list";
+import type { EnvironmentFacetSet, EnvironmentFacts } from "@/lib/queries/environments";
 import { envHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import type { EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
@@ -96,24 +103,27 @@ export const FAILED_NOTICE =
 	"may still have cloud resources. Its last run failed, and a run that fails part-way can leave what it had already created. Deleting the environment does not remove them.";
 
 /**
- * The Environments page for the project `project` (its slug) of org `org`. Reads the page's data
+ * The Environments page for the project `project` (its slug) of org `org`. Reads the page's panels
  * through the `environments.overview` query the route prefetched, and renders the states of that
  * read distinctly (RUBRIC B4): pending (the route's own skeleton), refused (forbidden, or a project
- * that is not there), failed (a region error with a retry), and the data.
+ * that is not there), failed (a region error with a retry), and the data. The table's rows are
+ * their own keyset read (`environments.page`), keyed by the normalized filter query.
  */
 export function EnvironmentsView({ org, project }: { org: string; project: string }) {
 	const filters = useEnvironmentsFilters((s) => s.filters);
 	const urlRead = useFilterUrlSync(useEnvironmentsFilters, DEFAULT_ENVIRONMENT_FILTERS);
 	// Only TYPING waits: a search the link carried lands in the key at once (`urlRead`).
 	const debouncedSearch = useDebouncedValue(filters.search, 250, { urlRead });
-	const input = useMemo(
+	const listQuery = useMemo(
 		() => normalizeEnvironmentsQuery(project, filters, debouncedSearch),
 		[project, filters, debouncedSearch],
 	);
-	const overview = useQuery(
-		orpc.environments.overview.queryOptions({ input, placeholderData: keepPreviousData }),
-	);
-	// One array per input, so the rows that carry it are rebuilt when the read changes, not on
+	// The table: one keyset page at a time. A filter change is a new key, so the walk restarts at
+	// page one; the cursor is the infinite query's page param and never part of `listQuery`.
+	const list = useKeysetList(orpc.environments.page, listQuery);
+	const input = useMemo(() => ({ project }), [project]);
+	const overview = useQuery(orpc.environments.overview.queryOptions({ input }));
+	// One array per project, so the rows that carry it are rebuilt when the read changes, not on
 	// every render.
 	const overviewKey = useMemo(() => orpc.environments.overview.queryKey({ input }), [input]);
 
@@ -146,9 +156,8 @@ export function EnvironmentsView({ org, project }: { org: string; project: strin
 			project={project}
 			data={overview.data}
 			overviewKey={overviewKey}
-			query={overview}
-			busy={!urlRead || overview.isPlaceholderData || filters.search !== debouncedSearch}
-			stale={overview.isPlaceholderData}
+			list={list}
+			busy={!urlRead || list.isPlaceholderData || filters.search !== debouncedSearch}
 		/>
 	);
 }
@@ -159,23 +168,20 @@ function EnvironmentsBody({
 	project,
 	data,
 	overviewKey,
-	query,
+	list,
 	busy,
-	stale,
 }: {
 	org: string;
 	project: string;
 	data: EnvironmentsOverview;
 	/** The key of the read on screen — what an optimistic auto-heal change patches. */
 	overviewKey: readonly unknown[];
-	/** The read itself, for the table's loading, stale-refresh and retry states. */
-	query: { isLoading: boolean; isError: boolean; data?: unknown; refetch: () => unknown };
+	/** The table's keyset read: its rows, facets, first-page state and footer state. */
+	list: KeysetList<EnvironmentFacts, EnvironmentFacetSet>;
 	/** What the list shows may not answer the URL and the bar yet. */
 	busy: boolean;
-	/** The rows are the previous query's, kept while the next answer loads. */
-	stale: boolean;
 }) {
-	const { projectId, envs, page, consistency, reconcile, promotions, activePromotion, protectionByEnv } = data;
+	const { projectId, envs, consistency, reconcile, activePromotion, protectionByEnv } = data;
 	const filters = useEnvironmentsFilters((s) => s.filters);
 	const set = useEnvironmentsFilters((s) => s.set);
 	const reset = useEnvironmentsFilters((s) => s.reset);
@@ -240,13 +246,14 @@ function EnvironmentsBody({
 		envs.map((e) => e.id),
 	);
 
-	// The list's rows: the environments the SERVER matched, in its order, each with what the page
-	// read about it.
+	// The table's rows: the environments the SERVER matched, page by page in its order, each joined
+	// to what the overview read about it. A row the overview does not (yet) hold is left out until
+	// both reads agree — the stream invalidates them together.
 	const rows = useMemo<EnvironmentRow[]>(() => {
 		const byId = new Map(envs.map((env) => [env.id, env]));
 		const reconcileById = new Map(reconcile.map((r) => [r.environmentId, r]));
 		const listed: EnvironmentRow[] = [];
-		for (const id of page.rowIds) {
+		for (const { id } of list.rows) {
 			const env = byId.get(id);
 			if (!env) continue;
 			listed.push({
@@ -260,7 +267,10 @@ function EnvironmentsBody({
 			});
 		}
 		return listed;
-	}, [envs, reconcile, page.rowIds, protectionByEnv, classMap, projectId, overviewKey]);
+	}, [envs, reconcile, list.rows, protectionByEnv, classMap, projectId, overviewKey]);
+	// The table renders the joined rows; the paging state (footer, stale notice) is the list's own.
+	const table = useMemo(() => ({ ...list, rows }), [list, rows]);
+	const firstPageFailed = list.query.isError && list.query.data === undefined;
 
 	// The columns are built once per project and permission, so a cell keeps its identity (an open
 	// row menu, a switch in flight) while the read refreshes under it. Every handler only sets state,
@@ -295,9 +305,8 @@ function EnvironmentsBody({
 
 	return (
 		<div className="space-y-8">
-			{/* The count rides the toolbar's pill — the console's one place for a result count. */}
+			{/* No count: the list standard carries no list sizes (lib/query/README.md → "Counts"). */}
 			<PageToolbar
-				count={page.resultCount}
 				description={DESCRIPTION}
 				actions={
 					<>
@@ -400,7 +409,13 @@ function EnvironmentsBody({
 
 			{/* The environments list */}
 			<section className="space-y-4" aria-label="Environments" aria-busy={busy}>
-				{page.total === 0 ? (
+				{firstPageFailed ? (
+					<RegionError
+						title="Couldn't load environments"
+						description="Something went wrong fetching this project's environments. Check your connection and try again."
+						onRetry={() => void list.query.refetch()}
+					/>
+				) : list.universeEmpty === true ? (
 					// No environment at all — never "no match". Its next action is the one that makes one.
 					<EmptyState
 						level={2}
@@ -418,8 +433,13 @@ function EnvironmentsBody({
 					/>
 				) : (
 					<>
-						<EnvironmentsFilterBar filters={filters} onFilter={set} onReset={reset} facets={page.facets} />
-						{rows.length === 0 ? (
+						<EnvironmentsFilterBar
+							filters={filters}
+							onFilter={set}
+							onReset={reset}
+							facets={list.facets ?? undefined}
+						/>
+						{list.universeEmpty === false && list.rows.length === 0 ? (
 							<EmptyState
 								level={2}
 								icon={<SearchX />}
@@ -432,13 +452,13 @@ function EnvironmentsBody({
 								}
 							/>
 						) : (
-							<div className={cn("transition-opacity", stale && "opacity-60")}>
-								<DataTable columns={columns} data={rows} query={query} pageSize={50} />
+							<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
+								<DataTable columns={columns} keyset={table} />
 							</div>
 						)}
 						{/* A note under a POPULATED list, so NOT an `EmptyState`: sitting under the one
 						    environment it would read as "this list is empty" when it is not. */}
-						{page.total === 1 && (
+						{envs.length === 1 && (
 							<p className="rounded-lg border border-dashed border-border-strong px-4 py-3 text-ui-md text-text-tertiary">
 								Only one environment. Create another to compare configuration and promote changes up
 								the chain.
@@ -449,17 +469,12 @@ function EnvironmentsBody({
 			</section>
 
 			{consistency.rows.length > 0 && <ConsistencyMatrix consistency={consistency} />}
-			{promotions.length > 0 && (
-				<section>
-					<SectionHeading className="mb-3" level={2} title="Promotions" count={promotions.length} />
-					<PromotionsHistory
-						promotions={promotions}
-						envName={envName}
-						activeId={activePromotion?.id ?? null}
-						onView={openDetail}
-					/>
-				</section>
-			)}
+			<PromotionsHistory
+				project={project}
+				envName={envName}
+				activeId={activePromotion?.id ?? null}
+				onView={openDetail}
+			/>
 
 			{/* Overlays */}
 			<NewEnvironmentDialog
