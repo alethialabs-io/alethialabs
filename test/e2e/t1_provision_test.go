@@ -462,6 +462,16 @@ func startT1ImagePreload(t *testing.T, ctx context.Context, clusterName string) 
 	if err != nil {
 		t.Fatalf("read the pre-load image list: %v", err)
 	}
+	// The archive is what makes the load work on a containerd-store Docker (#7698). The merge-queue
+	// job must provide it; a missing file there is a workflow bug, never a reason to fall back.
+	archive := strings.TrimSpace(os.Getenv(T1PreloadArchiveEnv))
+	if archive != "" {
+		if _, err := os.Stat(archive); err != nil {
+			t.Fatalf("the pre-load archive %s=%s: %v", T1PreloadArchiveEnv, archive, err)
+		}
+	} else if isTruthy(os.Getenv("ALETHIA_E2E_T1_REQUIRE")) {
+		t.Fatalf("%s is unset: the workflow must archive ArgoCD's images for T1 to load into kind (#7698)", T1PreloadArchiveEnv)
+	}
 	p.images = images
 	p.done = make(chan error, 1)
 	lctx, cancel := context.WithCancel(ctx)
@@ -470,7 +480,7 @@ func startT1ImagePreload(t *testing.T, ctx context.Context, clusterName string) 
 	go func() {
 		defer close(exited)
 		p.done <- PreloadIntoKind(lctx, clusterName, images, ExecKind,
-			PreloadOptions{Poll: 5 * time.Second, MaxFailures: 10}, t.Logf)
+			PreloadOptions{Poll: 5 * time.Second, MaxFailures: 10, Archive: archive}, t.Logf)
 	}()
 	// A t.Fatal between here and finish would otherwise leave the goroutine logging into a test that
 	// has completed. Registered after the teardown, so it runs BEFORE it: loading stops before the
@@ -514,15 +524,15 @@ func (p *t1ImagePreload) finish(t *testing.T, jobSucceeded bool) {
 }
 
 // t1PreloadWarning says which images did not reach kind and the likeliest reason. kind v0.30 imports
-// with `ctr images import --all-platforms`; when the runner's Docker uses the containerd image store,
-// `docker save` of a multi-platform image references other platforms' blobs it never pulled, and
-// every import fails the same way.
+// with `ctr images import --all-platforms`, so an archive holding an index whose other platforms'
+// blobs were never pulled fails every import the same way — what `kind load docker-image` produced
+// on a containerd-store Docker until the archive was saved for one platform (#7698).
 func t1PreloadWarning(images []string, err error) string {
 	return fmt.Sprintf("ArgoCD's images were NOT loaded into kind, so the kubelet pulled them itself "+
 		"(the anonymous ECR Public exposure is back for this run): %s. Error: %v. If every attempt failed "+
-		"in `ctr images import`, the likely cause is Docker's containerd image store (check `docker info "+
-		"-f '{{.DriverStatus}}'` for io.containerd.snapshotter) against kind's `ctr images import "+
-		"--all-platforms`.", strings.Join(images, ", "), err)
+		"in `ctr images import` with `content digest … not found`, the archive carries platforms it has "+
+		"no blobs for: check that scripts/e2e/t1-kind-images.sh saved it with `--platform` (#7698), and "+
+		"that the T1 step sets %s.", strings.Join(images, ", "), err, T1PreloadArchiveEnv)
 }
 
 // testLogWriter pipes provisioner teardown output into the test log.

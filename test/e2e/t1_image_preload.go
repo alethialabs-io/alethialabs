@@ -24,6 +24,14 @@ package e2e
 //     (PreloadIntoKind). The cluster is created by the runner's `tofu apply`, inside the test, so
 //     there is no earlier point at which a workflow step could load them.
 //
+// Part 3 loads an ARCHIVE, not docker's images (#7698). On a runner whose Docker uses the containerd
+// image store, `kind load docker-image` saves each image's whole multi-platform index while holding
+// only one platform's blobs, and kind's `ctr images import --all-platforms` failed every attempt
+// with `content digest …: not found` — so the kubelet pulled redis from ECR Public after all.
+// scripts/e2e/t1-kind-images.sh now saves the list for the runner's platform only, ci.yml caches
+// that archive (keyed on the list), and the test runs `kind load image-archive` on it
+// (PreloadOptions.Archive).
+//
 // Part 3 races the runner, and that is safe in both orders. No container the chart renders is
 // pulled when its node already holds the image (PreloadImageList refuses the list otherwise; at
 // 9.5.11 every one is IfNotPresent), so a pod scheduled after the load never pulls, and a pod whose
@@ -48,6 +56,10 @@ import (
 
 // T1PreloadImagesEnv names the file, one image per line, that the workflow pulled for T1 to load.
 const T1PreloadImagesEnv = "ALETHIA_E2E_T1_PRELOAD_IMAGES"
+
+// T1PreloadArchiveEnv names the single-platform `docker save` archive of those images that the
+// workflow built or restored from cache (scripts/e2e/t1-kind-images.sh, #7698).
+const T1PreloadArchiveEnv = "ALETHIA_E2E_T1_PRELOAD_ARCHIVE"
 
 // ChartImage is one container image a rendered chart names, with the pull policy and the place it
 // came from (kind/name/container), so a refusal can say which workload it is about.
@@ -263,10 +275,23 @@ type PreloadOptions struct {
 	Poll time.Duration
 	// MaxFailures is how many failed loads ON AN EXISTING CLUSTER are tolerated before giving up.
 	MaxFailures int
+	// Archive, when set, is a `docker save` archive holding the images, loaded with `kind load
+	// image-archive` instead of `kind load docker-image` (#7698). The images are then only named in
+	// the logs.
+	Archive string
 }
 
-// PreloadIntoKind waits for the kind cluster `cluster` to have nodes, then runs `kind load
-// docker-image` for images. Until the nodes exist, kind's "no nodes found" answer is the expected
+// preloadArgs is the kind argv PreloadIntoKind runs: an image-archive load when opt.Archive is set,
+// otherwise a docker-image load of every image.
+func preloadArgs(cluster string, images []string, opt PreloadOptions) []string {
+	if opt.Archive != "" {
+		return []string{"load", "image-archive", "--name", cluster, opt.Archive}
+	}
+	return append([]string{"load", "docker-image", "--name", cluster}, images...)
+}
+
+// PreloadIntoKind waits for the kind cluster `cluster` to have nodes, then loads images into it — from
+// opt.Archive with `kind load image-archive` when set, else with `kind load docker-image`. Until the nodes exist, kind's "no nodes found" answer is the expected
 // waiting state and is not counted. Any other failure is logged and retried, up to MaxFailures; a
 // load that succeeds after a failure logs that it retried. It returns an error if ctx ends first or
 // the failures run out.
@@ -274,7 +299,7 @@ func PreloadIntoKind(ctx context.Context, cluster string, images []string, run K
 	if len(images) == 0 {
 		return errors.New("no images to pre-load")
 	}
-	args := append([]string{"load", "docker-image", "--name", cluster}, images...)
+	args := preloadArgs(cluster, images, opt)
 	failures := 0
 	waited := false
 	for {
@@ -297,7 +322,7 @@ func PreloadIntoKind(ctx context.Context, cluster string, images []string, run K
 			failures++
 			logf("pre-load into kind %s: attempt failed (%d/%d): %v: %s", cluster, failures, opt.MaxFailures, err, out)
 			if failures >= opt.MaxFailures {
-				return fmt.Errorf("kind load docker-image into %s failed %d times; last: %v: %s", cluster, failures, err, out)
+				return fmt.Errorf("kind %s into %s failed %d times; last: %v: %s", args[1], cluster, failures, err, out)
 			}
 		}
 		select {
