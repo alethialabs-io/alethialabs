@@ -8,7 +8,7 @@
 //
 // EVERY FILTER IS APPLIED ON THE SERVER (#7396). The normalized query below IS the
 // `support.cases` input, and so the query key: bucket, search, severity and type all reach
-// `listCasesForOwner`'s SQL, so a filter finds a case on any page, not only the pages loaded so
+// `queryCasesPage`'s SQL, so a filter finds a case on any page, not only the pages loaded so
 // far. A pristine query is `{ bucket }` alone — the key `my-cases/page.tsx` prefetches for a bare
 // link — and the route prefetches the link's full normalized query too, so a filtered link also
 // paints from the server.
@@ -30,7 +30,7 @@ import type { ResourceKind } from "@/lib/db/schema/enums";
  */
 export const CASE_RESOURCE_KIND: ResourceKind = "support_case";
 
-/** The lifecycle buckets `listCasesForOwner` understands; "all" means no server filter. */
+/** The lifecycle buckets the cases read understands; "all" means no server filter. */
 export const CASE_BUCKETS = ["all", "active", "resolved"] as const;
 
 export type CaseBucket = (typeof CASE_BUCKETS)[number];
