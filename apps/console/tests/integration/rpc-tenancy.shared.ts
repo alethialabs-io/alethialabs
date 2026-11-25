@@ -778,9 +778,10 @@ export const FIXTURES: Record<string, Fixture> = {
 		reason: "manage_billing (U holds it in X only)",
 		input: {},
 		enterprise: { x: "ok", y: "FORBIDDEN" },
+		// A keyset page since #7493: the seeded invoices are among its `rows`.
 		markers: (out) => ({
-			x: hasElement(out, "number", "IT-6127-X"),
-			y: hasElement(out, "number", "IT-6127-Y"),
+			x: hasElement(field(out, "rows"), "number", "IT-6127-X"),
+			y: hasElement(field(out, "rows"), "number", "IT-6127-Y"),
 		}),
 	},
 	"billing.transactions": {
