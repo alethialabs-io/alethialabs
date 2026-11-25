@@ -18,6 +18,7 @@ import type { AiTier } from "@/lib/billing/ai-plan";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import {
 	COMMUNITY_ENTITLEMENTS,
+	entitlementStatus,
 	isBillingActive,
 	isManualGrantExpired,
 	resolvePlanEntitlements,
@@ -57,7 +58,7 @@ export async function resolveOrgEntitlements(
 	// An off-Stripe grant (Enterprise contract) lapses at its term end — fail closed to
 	// community rather than granting paid features past a term nothing else enforces.
 	if (isManualGrantExpired(billing)) return COMMUNITY_ENTITLEMENTS;
-	return resolvePlanEntitlements(billing.plan, billing.status);
+	return resolvePlanEntitlements(billing.plan, entitlementStatus(billing));
 }
 
 /** Fields the Stripe webhook writes onto an org's billing record. */

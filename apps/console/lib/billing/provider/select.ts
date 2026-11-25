@@ -12,11 +12,13 @@
 //   providerForOrg(row)   — where an EXISTING subscription lives: the row's own `billing_provider`,
 //                           so flipping `BILLING_PROVIDER` never strands a subscriber elsewhere.
 //
-// No imports beyond the key readers and the closed provider list, so lib/billing/config.ts can build
-// `isBillingConfigured` on top of this without a cycle.
+// No imports beyond the key readers, the closed provider list and the adapters, so lib/billing/config.ts
+// can build `isBillingConfigured` on top of this without a cycle (the Paddle adapter imports only
+// lib/billing/paddle/* and types from lib/billing/config).
 
 import { z } from "zod";
 import { paddleApiKey } from "@/lib/billing/paddle-key";
+import { createPaddleProvider } from "@/lib/billing/paddle/provider";
 import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { BILLING_PROVIDERS, type BillingProviderId } from "@/lib/db/schema/billing-provider";
 import type { BillingProvider } from "@/lib/billing/provider/types";
@@ -78,13 +80,14 @@ export function isSalesProviderConfigured(env: Env = process.env): boolean {
 }
 
 /**
- * The adapter factory per provider. Null until that provider's adapter lands (Paddle: L3/L4; Stripe:
- * the thin wrapper over billing.ts) — those lanes fill in their entry here. A mapped type over
+ * The adapter factory per provider. Null until that provider's adapter lands (Stripe: the thin
+ * wrapper over billing.ts). Paddle's carries the webhook today (L3); its purchase and plan methods
+ * arrive with L4 and throw until then. A mapped type over
  * `BillingProviderId`, so adding a provider to the closed list fails to compile until it has an entry.
  */
 const ADAPTERS: { readonly [K in BillingProviderId]: (() => BillingProvider) | null } = {
 	stripe: null,
-	paddle: null,
+	paddle: createPaddleProvider,
 };
 
 /** The adapter for a provider id, or null while that provider has no adapter on this build. */
