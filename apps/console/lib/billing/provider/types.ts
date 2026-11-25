@@ -16,6 +16,8 @@ import type { PaidAiTier, PaidPlan } from "@/lib/billing/config";
 import type { SupportedCurrency } from "@repo/plan-catalog";
 import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 import type { BillingStatus } from "@/lib/db/schema/enums";
+import type { PaddleTransactionStatus } from "@/lib/db/schema/paddle-transaction";
+import type { PaddleTransactionCustomData } from "@/types/jsonb.types";
 
 export type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 
@@ -153,6 +155,10 @@ export interface SubscriptionUpsertedEvent extends NormalizedEventBase {
 	currentPeriodEnd: Date | null;
 	/** When a scheduled cancellation takes effect; null when none is scheduled. */
 	cancelEffectiveAt: Date | null;
+	/** The provider's business (company) record on the subscription, when it has one. */
+	businessId?: string | null;
+	/** The provider's address record on the subscription, when it has one. */
+	addressId?: string | null;
 }
 
 /** A subscription ended for good. */
@@ -160,6 +166,26 @@ export interface SubscriptionCanceledEvent extends NormalizedEventBase {
 	kind: "subscription_canceled";
 	slot: SubscriptionSlot;
 	subscriptionId: string;
+}
+
+/**
+ * A provider transaction's state as the event carried it — what the local transaction mirror
+ * (`paddle_transaction`) stores. Amounts are the transaction's own totals, in its currency.
+ */
+export interface TransactionSnapshot {
+	/** The provider's own transaction status (Paddle: `PADDLE_TRANSACTION_STATUSES`). */
+	status: PaddleTransactionStatus;
+	/** The provider's `origin` (web, subscription_recurring, subscription_charge, …), as given. */
+	origin: string | null;
+	subtotal: Money;
+	tax: Money;
+	total: Money;
+	invoiceNumber: string | null;
+	billedAt: Date | null;
+	billingPeriodStart: Date | null;
+	billingPeriodEnd: Date | null;
+	/** What we put on the transaction when we created it — validated, still untrusted. */
+	customData: PaddleTransactionCustomData | null;
 }
 
 /** Money was collected: a checkout, a renewal, a usage charge, a credit pack. */
@@ -174,6 +200,8 @@ export interface TransactionCompletedEvent extends NormalizedEventBase {
 	tax: Money;
 	billingPeriodStart: Date | null;
 	billingPeriodEnd: Date | null;
+	/** The full state, for the transaction mirror. */
+	transaction: TransactionSnapshot;
 }
 
 /** A collection attempt failed (dunning). */
@@ -181,6 +209,18 @@ export interface TransactionPaymentFailedEvent extends NormalizedEventBase {
 	kind: "transaction_payment_failed";
 	transactionId: string;
 	subscriptionId: string | null;
+	customerId: string | null;
+	/** The full state, for the transaction mirror. */
+	transaction: TransactionSnapshot;
+}
+
+/** A transaction moved without completing (paid, past due) — the mirror follows it, nothing else. */
+export interface TransactionUpdatedEvent extends NormalizedEventBase {
+	kind: "transaction_updated";
+	transactionId: string;
+	subscriptionId: string | null;
+	customerId: string | null;
+	transaction: TransactionSnapshot;
 }
 
 /** A refund or chargeback against a transaction changed state. */
@@ -191,11 +231,15 @@ export interface AdjustmentEvent extends NormalizedEventBase {
 	action: "refund" | "chargeback" | "chargeback_reverse" | "credit" | "other";
 	status: "pending_approval" | "approved" | "rejected" | "reversed";
 	total: Money;
+	/** Whether it covers the whole transaction; null when the provider does not say. */
+	full: boolean | null;
 }
 
 /** An event the seam does not act on — acknowledged and recorded, nothing else. */
 export interface IgnoredEvent extends NormalizedEventBase {
 	kind: "ignored";
+	/** Why it is not acted on, for the log line. */
+	reason?: string;
 }
 
 /** Every provider's webhook, as the provider-neutral `applyBillingEvent` (L3) consumes it. */
@@ -204,6 +248,7 @@ export type NormalizedBillingEvent =
 	| SubscriptionCanceledEvent
 	| TransactionCompletedEvent
 	| TransactionPaymentFailedEvent
+	| TransactionUpdatedEvent
 	| AdjustmentEvent
 	| IgnoredEvent;
 

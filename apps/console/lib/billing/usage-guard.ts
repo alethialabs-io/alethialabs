@@ -6,7 +6,7 @@
 // server actions before inserting a job. Self-host / self-operated runners are never
 // metered, so an org that only uses its own runners has used=0 and never trips this.
 
-import { resolvePlanEntitlements } from "@/lib/billing/plan";
+import { entitlementStatus, resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { effectiveBillingPeriodStart } from "@/lib/billing/period";
 import { getServiceDb } from "@/lib/db";
@@ -34,7 +34,7 @@ export class UsageLimitError extends Error {
 export async function assertUsageAllowed(orgId: string): Promise<void> {
 	const billing = await getOrgBilling(orgId).catch(() => null);
 	const plan = billing?.plan ?? "community";
-	const status = billing?.status ?? "none";
+	const status = billing ? entitlementStatus(billing) : "none";
 	const included =
 		resolvePlanEntitlements(plan, status).quotas.includedRunnerMinutes;
 
