@@ -1,45 +1,113 @@
 ---
-title: Upgrading & Backups
-description: Update a self-hosted Alethia bundle and back up its data.
+title: Upgrade and back up
+description: Back up a self-hosted Alethia bundle, upgrade it to a new image tag, and restore it from a backup.
 ---
 
-Re-run the installer (it's idempotent — it pulls the latest images and restarts):
+Back up the three things that hold state, then upgrade by running the installer again. To roll back,
+restore the backup: never run an older image against a newer database schema.
+
+The commands on this page run on the VM, from `/opt/alethia`. Define this shortcut first:
 
 ```bash
-curl -fsSL https://get.alethialabs.io/self-host | sh
+cd /opt/alethia
+alias dc='docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml'
 ```
 
-Or manually from `/opt/alethia`:
+## What to back up
+
+| What | Why it matters |
+| --- | --- |
+| `.env` | Holds the instance secrets. Without `ALETHIA_CRED_ENCRYPTION_KEY`, stored connector secrets cannot be decrypted. Keep this copy somewhere encrypted. |
+| Postgres | Every project, environment, job and user. |
+| The `alethia_seaweedfs-data` volume | OpenTofu state and plan files. State cannot be rebuilt, and without it Alethia cannot change or destroy what it created. |
+
+## Back up
+
+<Steps>
+<Step>
+
+### Dump the database
 
 ```bash
-git pull
-docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml pull
-docker compose -f docker-compose.yml -f deploy/prod/docker-compose.prod.yml up -d --remove-orphans
+dc exec -T postgres pg_dump -U alethia -d alethia -Fc > alethia-$(date +%F).dump
 ```
 
-Database migrations run automatically on boot (the one-shot `migrate` service runs
-before `app` starts). Your `.env` is never overwritten.
+Run it from cron every day. It does not stop the console.
 
-# Backups
+</Step>
+<Step>
 
-Two things hold state: **Postgres** and the **object store** (OpenTofu state +
-plan artifacts). OpenTofu state is the only un-regenerable data — back it up.
+### Copy the object store
 
-**Postgres** (schedule via cron):
+Stop the store for a consistent copy, then start it again:
 
 ```bash
-docker compose exec -T postgres pg_dump -U alethia alethia | gzip > backup-$(date +%F).sql.gz
+dc stop seaweedfs
+docker run --rm -v alethia_seaweedfs-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/seaweedfs-$(date +%F).tgz -C /data .
+dc start seaweedfs
 ```
 
-**Object storage** — snapshot the `seaweedfs-data` volume, or `aws s3 sync` it to
-an off-box bucket. If you point `ALETHIA_STORAGE_*` at managed S3/R2, use that
-provider's backups instead.
+</Step>
+<Step>
 
-On managed hosts, also enable the provider's **volume/server snapshots** for an
-off-box copy (e.g. Hetzner backups, EBS snapshots).
+### Move the copies off the VM
 
-# Inspecting the database
+Copy `.env`, the dump and the archive to storage outside the VM, such as a bucket in another
+account. A cloud snapshot of the VM's disk (EBS snapshots, Hetzner backups) is a second copy, not a
+replacement: it restores the whole VM, not one table.
+
+</Step>
+</Steps>
+
+## Upgrade
+
+1. Take a backup.
+2. Run the installer again, with the tag you want:
+
+   ```bash
+   curl -fsSL https://get.alethialabs.io/self-host | ALETHIA_VERSION=<tag> sh
+   ```
+
+   Without `ALETHIA_VERSION`, it keeps the tag recorded in `.env`. With `latest`, each run pulls
+   the newest build.
+
+The installer updates the compose files in `/opt/alethia`, adds any new instance secret to `.env`,
+and keeps every value already there. The `migrate` service applies the new schema before `app`
+starts. Move one minor version at a time.
+
+## Check that it worked
 
 ```bash
-docker compose --profile tools up -d pgweb   # → http://localhost:8081
+dc ps
 ```
+
+`migrate` has exited with code 0, and `app` is `running`. If `migrate` failed, read
+`dc logs migrate`, then restore the backup.
+
+## Restore
+
+```bash
+dc stop app runner
+dc exec -T postgres pg_restore -U alethia -d alethia --clean --if-exists < alethia-<date>.dump
+dc stop seaweedfs
+docker run --rm -v alethia_seaweedfs-data:/data -v "$PWD":/backup alpine \
+  sh -c 'rm -rf /data/* && tar xzf /backup/seaweedfs-<date>.tgz -C /data'
+dc up -d
+```
+
+Restore the `.env` from the same backup first, and set `ALETHIA_VERSION` in it to the tag the backup
+was taken on.
+
+## Inspect the database
+
+```bash
+dc --profile tools up -d pgweb
+```
+
+pgweb listens on port 8081 of the VM. Reach it through an SSH tunnel; do not open the port.
+
+## Related
+
+- [Configuration](/self-host/configuration): rotate instance secrets.
+- [Changelog](/changelog): breaking changes and upgrade steps.

@@ -1,0 +1,92 @@
+---
+title: Run untrusted code on the fleet
+description: Turn on the per-job container sandbox on a managed runner fleet, prove it on a canary pool, then allow bring-your-own charts and IaC.
+---
+
+Turn on the container sandbox before your fleet runs code your users wrote, such as bring-your-own
+Helm charts. Alethia's own templates do not need it.
+
+Each job then runs in a nested rootless Podman container. It sees only an allowlisted set of
+environment variables and its own processes, and reaches the network only through a proxy that
+allows listed domains. It cannot reach the cloud metadata address `169.254.169.254`.
+
+The sandbox cannot be tested in CI, so prove it on one real VM before you rely on it.
+
+## Before you begin
+
+- A working fleet. See [Managed provisioning](/self-host/managed-provisioning).
+- SSH access to the fleet's VMs (`HCLOUD_SSH_KEYS`).
+
+## Turn it on
+
+<Steps>
+<Step>
+
+### Turn on the sandbox, without egress enforcement
+
+Set on the console and restart it:
+
+```bash
+FLEET_SANDBOX_CONTAINER=1
+FLEET_EGRESS_PROXY_IMAGE=ubuntu/squid@sha256:<digest>   # default ubuntu/squid:latest; pin a digest
+FLEET_EGRESS_EXTRA_DOMAINS=charts.example.com           # optional, comma-separated
+```
+
+New VMs get the proxy, a network with no other route out, and the container backend. Leave
+`FLEET_SANDBOX_EGRESS_ENFORCED` unset: until it is set, managed jobs refuse to run in the container.
+That proves the container starts before you trust its network.
+
+</Step>
+<Step>
+
+### Prove it on a canary VM
+
+On a new fleet VM, every check must pass:
+
+- `podman run --rm <runner-image> true`, as the `runner` user, succeeds.
+- Inside the nested container, `/proc/1/environ`, `$ALETHIA_RUNNER_TOKEN` and the storage and
+  registration secrets cannot be read, and only the container's own processes are visible.
+- `curl --max-time 3 http://169.254.169.254/` from the container times out, with the proxy
+  variables set and unset.
+- Through the proxy, an allowed domain (your console, `registry.opentofu.org`) answers, and
+  `example.com` is refused with `403`. With `HTTPS_PROXY` unset, a direct request fails.
+
+</Step>
+<Step>
+
+### Enforce egress
+
+Set `FLEET_SANDBOX_EGRESS_ENFORCED=1` and restart the console. On the canary, run a real plan and
+deploy, and check that both finish.
+
+</Step>
+<Step>
+
+### Roll out and allow bring-your-own code
+
+1. Optional: set `FLEET_SANDBOX_ENFORCE_MANAGED=1`. A pool without the container backend then refuses
+   managed jobs instead of running them unsandboxed.
+2. Set `ALETHIA_BYO_HELM_ENABLED=true` to let users attach their own charts.
+
+</Step>
+</Steps>
+
+## Check that it worked
+
+A user attaches a chart and its safety scan finishes. On the VM that ran the job, the job's process
+runs inside a Podman container, and the proxy's log shows the job's requests.
+
+## If nested Podman fails
+
+Nested rootless Podman on the ARM Hetzner kernel is the part most likely to fail. Try, in order:
+
+1. Set the storage driver in `storage.conf` to `vfs`. It is slower and more robust.
+2. Add `--cap-add SETUID --cap-add SETGID` to the outer container, for `newuidmap`.
+3. Move to a VM type that runs microVMs, such as Kata Containers. This is a larger change.
+
+Until the canary passes, keep `ALETHIA_BYO_HELM_ENABLED` off. Alethia's own templates run as before.
+
+## Related
+
+- [Isolated execution](/concepts/isolated-execution)
+- [Bring-your-own IaC](/concepts/bring-your-own-iac)

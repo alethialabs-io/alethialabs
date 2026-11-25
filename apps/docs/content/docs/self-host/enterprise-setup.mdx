@@ -1,122 +1,100 @@
 ---
 title: Enterprise setup
-description: The end-to-end runbook for turning on the licensed Enterprise edition — packages, migrations, OpenFGA, and the license.
+description: Turn on the Enterprise edition of a self-hosted Alethia with a licence key, and optionally the OpenFGA engine and SSO.
 ---
 
 <Enterprise />
 
-The ordered checklist to take a deployment from <Community>Community</Community> to
-<Enterprise>Enterprise</Enterprise>. None of this is needed for the open-source edition — see
-[Licensing](/editions/licensing) for the mechanism this turns on.
+Turn a self-hosted instance from <Community>Community</Community> into
+<Enterprise>Enterprise</Enterprise>. The published console image already contains the Enterprise
+code. A licence key turns it on. What each edition includes is in the
+[feature matrix](/editions/feature-matrix).
 
-<Callout type="info">
-  Everything below is **additive and reversible.** If the license is removed, the deployment degrades back to
-  Community behavior without data loss.
-</Callout>
+## Before you begin
 
-## Prerequisites
+- A self-hosted instance running the published images. See [Install on a VM](/self-host/install).
+- A licence key from Alethia Labs. It is a signed token.
 
-- A commercial **license key** for Alethia Enterprise.
-- The Enterprise package `@alethia/ee` (ships with the Enterprise distribution; absent from the open-source build).
-
-## Steps
+## Activate the licence
 
 <Steps>
-
 <Step>
-### Install the Enterprise dependencies
 
-`@alethia/ee` and its peers add the organization/SSO/OpenFGA machinery:
+### Add the key
+
+Set the key in `/opt/alethia/.env`:
 
 ```bash
-pnpm install
-# brings in @alethia/ee, @openfga/sdk, @better-auth/sso (+ samlify, jose)
+ALETHIA_LICENSE_KEY=<the licence you were issued>
 ```
 
-The core never imports these — they're loaded only through the `lib/enterprise.ts` seam at runtime.
 </Step>
-
 <Step>
-### Run the database migrations
 
-The org/team/SSO/authz tables ship as ordinary migrations (inert in Community — never written without the
-plugins). Apply them:
+### Restart the console
+
+From `/opt/alethia`:
 
 ```bash
-pnpm -F console db:migrate   # applies all pending migrations + programmables (RLS, triggers)
+docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml up -d app
 ```
 
-Then reconcile the Better Auth org/team/SSO tables against the plugin's expected shape:
-
-```bash
-npx @better-auth/cli generate
-```
-</Step>
-
-<Step>
-### (Optional) Bring up OpenFGA
-
-Enterprise runs fine on the Postgres engine. To use the [OpenFGA fine-grained engine](/concepts/access-control/openfga),
-start the `enterprise` compose profile (OpenFGA + its own datastore):
-
-```bash
-docker compose --profile enterprise up -d openfga
-```
-
-Create a store, then point the app at it:
-
-```bash
-OPENFGA_API_URL=http://openfga:8080
-OPENFGA_STORE_ID=<the store id you created>
-```
-
-On boot the app writes the authorization model (generated from the registry) and backfills tuples from your
-existing grants and hierarchy. Leaving `OPENFGA_*` unset keeps `PostgresRbacPDP` as the engine.
-</Step>
-
-<Step>
-### Activate the license
-
-Install the signed license so the Enterprise entitlements resolve to `true`. The license is a compact
-EdDSA (ed25519) JWT that Alethia Labs mints offline; the console verifies it **offline** against the
-issuer public key you bake in — no phone-home:
-
-```bash
-ALETHIA_LICENSE_KEY=<the signed license JWT Alethia Labs issued you>
-ALETHIA_LICENSE_PUBLIC_KEY=<base64(SPKI PEM) ed25519 public key it verifies against>
-```
-
-Restart the console. The org switcher, Members, Teams, Roles (custom), Access, SSO, and activity export now light
-up.
-
-<Callout type="info">
-  `ALETHIA_LICENSE_ACTIVE=true` is a **non-production dev bypass only** — it is ignored in production,
-  where a signed `ALETHIA_LICENSE_KEY` is required. Verification is fail-closed: a missing, expired, or
-  forged license leaves the instance unlicensed and degrades to per-org billing (Community), never a boot
-  crash.
-</Callout>
-</Step>
-
-<Step>
-### (Optional) Register an SSO provider
-
-In **Settings → Single Sign-On**, register your IdP over [OIDC or SAML](/guides/access/sso). Members signing
-in with a matching email domain are routed to it and provisioned into the org.
-</Step>
-
-<Step>
-### Verify
-
-- Create an organization, invite a second member, and confirm the [invite lifecycle](/guides/access/members-and-invitations).
-- In **Settings → Access**, grant a role to a member or team, then add a **deny** exception
-  ([grants & scopes](/guides/access/grants-and-scopes)) and confirm it takes effect.
-- If OpenFGA is on, run the parity check — the two engines must agree across roles, scopes, and actions.
+The console checks the licence's signature offline, against keys built into the image. It sends
+nothing to Alethia Labs.
 
 </Step>
-
 </Steps>
 
-## What you get
+The database tables for organizations, teams and SSO are already there: the `migrate` service
+applies every migration on each start.
 
-Once the license is active, the full Enterprise surface is available — see the
-[feature matrix](/editions/feature-matrix) and the [Access Control](/concepts/access-control) reference.
+## Optional: use OpenFGA
+
+Enterprise runs on the built-in Postgres authorization engine. To use the
+[OpenFGA engine](/concepts/access-control/openfga) instead:
+
+1. Start it:
+
+   ```bash
+   docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml --profile enterprise up -d openfga
+   ```
+
+2. Create a store, and note the `id` in the answer:
+
+   ```bash
+   curl -X POST http://localhost:8082/stores -H 'content-type: application/json' -d '{"name":"alethia"}'
+   ```
+
+3. Set `OPENFGA_API_URL=http://openfga:8080` and `OPENFGA_STORE_ID=<id>` in `.env`, and restart the
+   console as above.
+
+On start, the console writes the authorization model and copies your existing grants into OpenFGA.
+With either key empty, the Postgres engine stays in use.
+
+## Optional: register an SSO provider
+
+In **Settings → Single Sign-On**, register your identity provider over
+[OIDC or SAML](/guides/access/sso).
+
+## Check that it worked
+
+- The organization switcher and **Settings → Members**, **Teams** and **Roles** are available.
+- Invite a second member, and accept the invitation. See
+  [Members and invitations](/guides/access/members-and-invitations).
+- In **Settings → Access**, grant a role and add a deny exception, then check that it applies. See
+  [Grants and scopes](/guides/access/grants-and-scopes).
+
+If none of this appears, the licence did not verify. A licence that is missing, expired, or signed by
+another key grants nothing, and the console runs as Community. The console still starts.
+
+## What happens when the licence ends
+
+A licence keeps working for a grace period after its end date: 30 days, unless the licence states
+another period. No restart is needed for either change. After the grace period, the instance goes
+back to Community behaviour. No data is deleted. Members already in an
+organization keep their data, and Enterprise-only operations stop until a valid licence is set.
+
+## Related
+
+- [Licensing](/editions/licensing): entitlements and how the licence is checked.
+- [Access control](/concepts/access-control)
