@@ -1,18 +1,17 @@
 ---
 title: Troubleshooting
-description: Find the message you see, learn what causes it, and fix it — for sign-in, connecting a cloud, deploying, destroying, and billing.
+description: Find the message you see, learn what causes it, and fix it — for sign-in, connecting a cloud, deploying, destroying, cluster access and billing.
 ---
 
-Each page in this section starts from what you see: a message in the console, a message from the
-`alethia` CLI, or a step that does not finish. It then says what causes it and what to do. The
-messages are quoted as the product shows them, so you can search this section for the text you see.
+Each page lists problems by what you see: a console message, a CLI message, or a step that does not
+finish. Messages are quoted as the product shows them, so search for the text you see.
 
 <Cards>
   <Card title="Sign-in" href="/troubleshooting/sign-in">
     Sign-in codes, sign-up refusals, and `alethia login`.
   </Card>
   <Card title="Connect a cloud" href="/troubleshooting/connect">
-    A connection that fails to verify, or verifies with limited permissions, on AWS, GCP, Azure, or Hetzner.
+    A connection that fails to verify, or has limited permissions.
   </Card>
   <Card title="Deploy" href="/troubleshooting/deploy">
     A job that waits for a runner, a blocked verify gate, and job limits.
@@ -20,18 +19,23 @@ messages are quoted as the product shows them, so you can search this section fo
   <Card title="Destroy" href="/troubleshooting/destroy">
     A destroy that is refused, fails, or leaves load balancers behind.
   </Card>
+  <Card title="Design and GitOps" href="/troubleshooting/design-project">
+    A gated card, a design value a plan refuses, and an ArgoCD sync that delivers nothing.
+  </Card>
+  <Card title="Cluster access" href="/troubleshooting/cluster-access">
+    A kubeconfig you cannot get, and `kubectl` saying Unauthorized.
+  </Card>
   <Card title="Billing and plans" href="/troubleshooting/billing">
-    Plans that are not open yet, trials, failed payments, and usage limits.
+    Plans not open yet, trials, failed payments, and usage limits.
   </Card>
 </Cards>
 
-## Before you start
+## First checks
 
-- **Read the job log.** Most deploy and destroy failures name their cause in the log. Open the job
-  from **Jobs** in the sidebar, or run `alethia jobs logs --latest`.
-- **Check the CLI's exit code.** Every CLI failure exits with a code that names its class. The table
-  is in [Exit codes](/agents/cli#exit-codes).
+- **Read the job log.** Most deploy and destroy failures name their cause there. Open the job from
+  **Jobs**, or run `alethia jobs logs --latest`.
+- **Read the CLI's exit code.** It names the class of failure. See [Exit codes](/agents/cli#exit-codes).
 - **Check the limits.** A refusal that names a number is often a ceiling. See [Limits](/reference/limits).
 
-If a page here does not help, open a support case from **Support** in the console's sidebar, and include the job
-ID and the exact message.
+If nothing here helps, open a case from **Support** in the console, with the job ID and the exact
+message.

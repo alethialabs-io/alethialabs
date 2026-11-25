@@ -3,9 +3,10 @@ title: Claude Code
 description: Add the Alethia MCP server to Claude Code, sign in, and let Claude Code run the alethia CLI in agent mode.
 ---
 
-Claude Code can reach Alethia two ways: the MCP server, to read, and the `alethia` CLI, to act.
+Claude Code can reach Alethia two ways: the MCP server, to read, plan and request approvals, and the
+`alethia` CLI, to do anything the CLI does.
 
-## Before you start
+## Before you begin
 
 - Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
   `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
@@ -33,7 +34,7 @@ sign-in page. Sign in, and approve access if the page asks.
 
 ### Check the tools
 
-Ask Claude Code to list your Alethia projects. It calls `list_projects`. The
+Ask Claude Code to list your Alethia projects. It calls `list_resources`. The
 [tool reference](/agents/tools) lists every tool.
 
 </Steps>
@@ -52,3 +53,8 @@ no prompts, no colour, and JSON output. You do not need to configure anything.
 Claude Code runs the CLI with your stored sign-in, so it can do what you can do. Claude Code asks you
 before it runs a shell command, unless you have allowed that command. Do not allow
 `alethia apply` or `alethia project destroy` without review. See [the CLI for agents](/agents/cli).
+
+## Related
+
+- [MCP tool reference](/agents/tools): what each tool reads or does.
+- [Security model for agents](/agents/security): what limits the agent.

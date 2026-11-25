@@ -8,6 +8,7 @@
 // runners are never metered; we never bill the customer's own cloud compute.
 
 import { type Money, money } from "@repo/format";
+import { RUNNER_MINUTE_OVERAGE_PER_1000 } from "@repo/plan-catalog";
 
 /**
  * Overage price beyond the included allowance, in USD per job-minute.
@@ -19,7 +20,9 @@ import { type Money, money } from "@repo/format";
  * The day this becomes a per-currency rate, it becomes a `PriceByCurrency` and the wire field has
  * to gain a currency the way `get_billing_summary` did.
  */
-export const OVERAGE_RATE_PER_MIN = 0.012;
+// Derived from @repo/plan-catalog (minor units per 1000 minutes → major units per minute), so the
+// estimate shown here and the amount the Paddle overage charge posts come from one number.
+export const OVERAGE_RATE_PER_MIN = RUNNER_MINUTE_OVERAGE_PER_1000.usd / 100_000;
 
 /** Threshold (fraction of included) at which we surface a friendly heads-up. */
 export const USAGE_ALERT_THRESHOLD = 0.8;

@@ -12,6 +12,7 @@
 // `runTask` catches a throw per task, so one failing reconciler never aborts its siblings in the tick.
 
 import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
+import { paddleOverageSweepEnabled, runPaddleOverageSweep } from "@/lib/billing/paddle/overage-sweeper";
 import { stripeSecretKey } from "@/lib/billing/stripe-key";
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
@@ -73,6 +74,10 @@ const INTERVALS = {
 	// paged at day 3, so an hourly retry leaves ample room; each retry reads Stripe once per owed
 	// invoice (lib/billing/factura/sweeper.ts).
 	"factura-sweep": 60 * 60_000,
+	// 15m — a Paddle period's overage is claimed in the 6h before it ends (OVERAGE_LEAD_MS), so a
+	// 15m gap gives each subscription ~24 chances, and an unconfirmed claim (STALE_CLAIM_MS, 15m) is
+	// reconciled on the next run (lib/billing/paddle/overage-sweeper.ts).
+	"paddle-overage-sweep": 15 * 60_000,
 	// 1m — a cancelled job whose runner died holds its state lock until this releases it, and the
 	// next job on that state object waits behind it: the wait is the drain window plus at most one
 	// gap between runs here (lib/reconcile/state-locks.ts).
@@ -176,6 +181,12 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// without Stripe configured has no invoices to sweep.
 		if (stripeSecretKey() && isDue("factura-sweep", INTERVALS["factura-sweep"], now)) {
 			await runTask("factura-sweep", () => runFacturaSweep(now));
+		}
+		// Paddle overage (L5): post each Paddle subscription's runner-minute overage once per period,
+		// ~6h before it ends, and reconcile unconfirmed charges. Off unless ALETHIA_PADDLE_OVERAGE_SWEEP=1
+		// and Paddle is configured.
+		if (paddleOverageSweepEnabled() && isDue("paddle-overage-sweep", INTERVALS["paddle-overage-sweep"], now)) {
+			await runTask("paddle-overage-sweep", () => runPaddleOverageSweep(now));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already

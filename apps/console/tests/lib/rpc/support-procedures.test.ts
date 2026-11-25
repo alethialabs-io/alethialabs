@@ -40,7 +40,7 @@ vi.mock("@/lib/queries/support", async (importOriginal) => ({
 }));
 
 import { ForbiddenError } from "@/lib/authz/types";
-import { CASE_PAGE_SIZE } from "@/lib/queries/support";
+import { encodeKeysetCursor, KEYSET_DEFAULT_LIMIT, KEYSET_MAX_LIMIT } from "@/lib/queries/keyset";
 import { supportRouter } from "@/lib/rpc/procedures/support";
 
 const ACTOR = { userId: "user-1", orgId: "org-1", credential: "session" as const };
@@ -50,7 +50,7 @@ const client = createRouterClient(supportRouter, { context: { actor: ACTOR } });
 beforeEach(() => {
 	vi.clearAllMocks();
 	authorizeQuiet.mockResolvedValue(ACTOR);
-	queryCasesPage.mockResolvedValue({ rows: [], facets: null });
+	queryCasesPage.mockResolvedValue({ rows: [], nextCursor: null, facets: null, universeEmpty: null });
 });
 
 describe("support.cases", () => {
@@ -66,7 +66,7 @@ describe("support.cases", () => {
 			tx,
 			ACTOR.userId,
 			{ ...filter, search: undefined, severity: undefined, type: undefined },
-			{ cursor: undefined, limit: CASE_PAGE_SIZE },
+			{ cursor: undefined, limit: KEYSET_DEFAULT_LIMIT },
 		);
 	});
 
@@ -76,7 +76,7 @@ describe("support.cases", () => {
 			tx,
 			ACTOR.userId,
 			{ status: "active", search: "registry", severity: ["urgent"], type: ["billing"] },
-			{ cursor: undefined, limit: CASE_PAGE_SIZE },
+			{ cursor: undefined, limit: KEYSET_DEFAULT_LIMIT },
 		);
 	});
 
@@ -85,21 +85,30 @@ describe("support.cases", () => {
 		expect(queryCasesPage).not.toHaveBeenCalled();
 	});
 
-	it("passes a cursor through to the builder as the page's keyset position", async () => {
-		const cursor = { at: "2026-11-20T10:00:00.123Z", id: CASE };
-		await client.cases({ bucket: "all", cursor });
+	it("decodes the opaque cursor and passes it to the builder as the page's keyset position", async () => {
+		const position = { at: "2026-11-20T10:00:00.123Z", id: CASE };
+		await client.cases({ bucket: "all", cursor: encodeKeysetCursor(position), limit: 20 });
 		expect(queryCasesPage).toHaveBeenCalledWith(
 			tx,
 			ACTOR.userId,
 			{ search: undefined, severity: undefined, type: undefined },
-			{ cursor, limit: CASE_PAGE_SIZE },
+			{ cursor: position, limit: 20 },
 		);
 	});
 
-	it("refuses a malformed cursor before reading", async () => {
-		await expect(
-			client.cases({ bucket: "all", cursor: { at: "yesterday", id: "nope" } }),
-		).rejects.toBeInstanceOf(ORPCError);
+	it.each([
+		["not a cursor at all", "nope"],
+		["an object, the pre-#7494 cursor shape", { at: "2026-11-20T10:00:00.123Z", id: CASE }],
+		["a cursor whose id is not a case id", encodeKeysetCursor({ at: "2026-11-20T10:00:00.123Z", id: "c-1" })],
+	])("refuses %s as a 400 before reading — never page one", async (_name, cursor) => {
+		// @ts-expect-error — the point is a value the input type does not allow
+		const error = await client.cases({ bucket: "all", cursor }).catch((e: unknown) => e);
+		expect(error instanceof ORPCError ? error.code : error).toBe("BAD_REQUEST");
+		expect(queryCasesPage).not.toHaveBeenCalled();
+	});
+
+	it("refuses a limit above the contract's maximum rather than clamping it", async () => {
+		await expect(client.cases({ bucket: "all", limit: KEYSET_MAX_LIMIT + 1 })).rejects.toBeInstanceOf(ORPCError);
 		expect(queryCasesPage).not.toHaveBeenCalled();
 	});
 

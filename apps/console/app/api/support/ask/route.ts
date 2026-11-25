@@ -8,6 +8,7 @@ import {
 	type UIMessage,
 } from "ai";
 import { z } from "zod";
+import { agentAccessDisabledSystem, guardThreadlessSupportTools } from "@/lib/agent/kill-switch";
 import { readTurnRequest, serveTurnBody } from "@/lib/agent/turn-route";
 import { providerErrorMessage, providerErrorSummary } from "@/lib/ai/provider-error";
 import { cachedSystemMessage } from "@/lib/ai/provider-options";
@@ -97,7 +98,8 @@ export async function POST(req: Request): Promise<Response> {
  * A support turn that names no thread: the per-request hold, as before ADR 0003 (§12). The org is the
  * session's, the hold is reserved by `assertAiAllowed`, settled from `onFinish`, released by `onError`
  * and `onAbort`, and nothing is stored. The three callbacks also keep `req` reachable until the model's
- * stream ends, so a client's disconnect still aborts the model after a GC (#5817).
+ * stream ends, so a client's disconnect still aborts the model after a GC (#5817). Its tools run as the
+ * person, and the org's agent kill switch binds them on the support surface (#7646).
  */
 async function answerThreadless(req: Request, raw: object): Promise<Response> {
 	const parsed = supportBodySchema.safeParse(raw);
@@ -133,12 +135,19 @@ async function answerThreadless(req: Request, raw: object): Promise<Response> {
 	};
 	try {
 		const resolved = getAiModel(model);
+		// The org's kill switch (#7646): the tools still run as the person, but while agent access is off
+		// only the docs search and the case proposal work; every account read is refused, and the prompt
+		// carries the support notice. With access on the tools are the same tools, as before.
+		const guarded = await guardThreadlessSupportTools(buildSupportTools(), actor);
+		const system = guarded.disabledAtStart
+			? `${supportSystemPrompt()}\n\n${agentAccessDisabledSystem("support")}`
+			: supportSystemPrompt();
 
 		const result = streamText({
 			model: resolved.model,
 			// Cache the (stable) support persona so repeated turns read it from cache.
 			messages: [
-				cachedSystemMessage(supportSystemPrompt()),
+				cachedSystemMessage(system),
 				...(await convertToModelMessages(messages)),
 			],
 			// Our own system prompt (cached) is intentionally a system message; user turns are
@@ -147,7 +156,7 @@ async function answerThreadless(req: Request, raw: object): Promise<Response> {
 			// Wire the request's abort signal so a client disconnect aborts generation (and fires
 			// onAbort) instead of streaming — and paying — into the void with the hold left open.
 			abortSignal: req.signal,
-			tools: buildSupportTools(),
+			tools: guarded.tools,
 			stopWhen: stepCountIs(8),
 			// Record once the run completes, with the real token usage for cost-of-serve. Reconciles the
 			// reserved hold IN PLACE (holdId) so the provisional estimate becomes the turn's real cost.

@@ -24,9 +24,17 @@
 // reportJobUsageOnce for the same job (a re-posted terminal status or mint result), and
 // no alert covers a retry past that window — the "usage metering failed" error log at the
 // call sites is the only signal.
+//
+// PADDLE (L5). An org whose billing routes to Paddle (`providerForOrg`) has no provider meter: the
+// job row itself is the ledger the overage sweeper (lib/billing/paddle/overage-sweeper.ts) prices
+// at period end. Its job is delegated to the Paddle adapter's `reportJobUsage`, which records it
+// there and sends nothing; the watermark is claimed the same way and never rolled back, since no
+// call left this process. The Stripe path is unchanged.
 
 import { and, eq, isNull } from "drizzle-orm";
 import { isStripeConfigured, RUNNER_MINUTES_METER_EVENT } from "@/lib/billing/config";
+import { isPaddleConfigured } from "@/lib/billing/paddle/config";
+import { providerById, providerForOrg } from "@/lib/billing/provider/select";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
 import { jobs, organizationBilling, runners } from "@/lib/db/schema";
@@ -74,7 +82,7 @@ export async function reportRunnerMinutes(
  * billing isn't wired. Best-effort — callers should not fail the status update on error.
  */
 export async function reportJobUsageOnce(jobId: string): Promise<void> {
-	if (!isStripeConfigured()) return;
+	if (!isStripeConfigured() && !isPaddleConfigured()) return;
 	const db = getServiceDb();
 
 	const [row] = await db
@@ -84,6 +92,13 @@ export async function reportJobUsageOnce(jobId: string): Promise<void> {
 			completedAt: jobs.completed_at,
 			reportedAt: jobs.usage_reported_at,
 			customerId: organizationBilling.stripeCustomerId,
+			orgId: jobs.org_id,
+			billingProvider: organizationBilling.billingProvider,
+			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			aiStripeSubscriptionId: organizationBilling.aiStripeSubscriptionId,
+			paddleSubscriptionId: organizationBilling.paddleSubscriptionId,
+			aiPaddleSubscriptionId: organizationBilling.aiPaddleSubscriptionId,
+			paddleCustomerId: organizationBilling.paddleCustomerId,
 		})
 		.from(jobs)
 		.leftJoin(runners, eq(runners.id, jobs.runner_id))
@@ -98,6 +113,18 @@ export async function reportJobUsageOnce(jobId: string): Promise<void> {
 	if (!row.startedAt || !row.completedAt) return;
 	const minutes = (row.completedAt.getTime() - row.startedAt.getTime()) / 60_000;
 	if (minutes <= 0) return;
+	const orgId = row.orgId ?? null;
+	const viaPaddle =
+		orgId !== null &&
+		isPaddleConfigured() &&
+		providerForOrg({
+			billingProvider: row.billingProvider ?? null,
+			stripeSubscriptionId: row.stripeSubscriptionId ?? null,
+			aiStripeSubscriptionId: row.aiStripeSubscriptionId ?? null,
+			paddleSubscriptionId: row.paddleSubscriptionId ?? null,
+			aiPaddleSubscriptionId: row.aiPaddleSubscriptionId ?? null,
+		}) === "paddle";
+	if (!viaPaddle && !isStripeConfigured()) return;
 
 	// Claim the report (idempotency): only the request that flips the watermark sends.
 	const claimed = await db
@@ -106,6 +133,16 @@ export async function reportJobUsageOnce(jobId: string): Promise<void> {
 		.where(and(eq(jobs.id, jobId), isNull(jobs.usage_reported_at)))
 		.returning({ id: jobs.id });
 	if (claimed.length === 0) return; // already reported by a concurrent request
+
+	if (viaPaddle && orgId !== null) {
+		await providerById("paddle")?.reportJobUsage({
+			organizationId: orgId,
+			customerId: row.paddleCustomerId ?? null,
+			minutes,
+			idempotencyKey: jobId,
+		});
+		return;
+	}
 
 	try {
 		await reportRunnerMinutes(jobId, row.customerId, minutes);

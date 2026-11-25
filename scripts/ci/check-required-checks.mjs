@@ -19,6 +19,12 @@
 // a document in the tree claims a review control the ruleset does not have. Its own section, below
 // the fourth, states its bound — the claims it holds are an enumerated list.
 //
+// The SEVENTH and EIGHTH (#7654) sit just above the self-test. The seventh asks whether a workflow
+// that reports a context protect-main requires can be triggered by an event whose run supersedes a
+// decided one on the same sha (release-gate.yml's `labeled` did, and release PRs went unmergeable).
+// The eighth holds the maintainer's `require_extra_approval_for_unattributed_changes = false`: in the
+// tree, that infra/github re-asserts it after every ruleset write; under `--live`, that it is false.
+//
 // Measured 2026-08-28: the live `protect-dev` ruleset was last updated 2026-07-29 and carries 9
 // contexts; the HCL names 11 for dev. So the repository had been carrying written-down requirements
 // that nothing enforced, for a month. That is the SECOND occurrence — .mergify.yml's own header
@@ -494,7 +500,9 @@ export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, 
 			} catch (e) {
 				reviewError = String(e instanceof Error ? e.message : e).split("\n")[0];
 			}
-			rulesets.push({ name, branch, checks, review, reviewError });
+			// And the unattributed-changes flag (#7654), from the same response. Its reader does not throw.
+			const unattributed = unattributedFromBranchRules(rules);
+			rulesets.push({ name, branch, checks, review, reviewError, unattributed });
 		}
 		return { rulesets, error: null };
 	} catch (e) {
@@ -1433,6 +1441,257 @@ export function hclReviewByBranch(hcl, branches = RULESET_BRANCHES.map(([b]) => 
 	return byBranch;
 }
 
+// ── THE SEVENTH QUESTION: can a label create a run that SUPERSEDES a required context? (#7654) ─────
+//
+// Every question above asks what is REQUIRED. This one asks whether what reports a required context
+// can be HIDDEN after it reported. On #7640 all seven `Release gate (<leg>)` contexts passed, and
+// protect-main still read them as "Expected — Waiting for status to be reported": release-please had
+// added `autorelease: pending` in the same second it opened the PR, release-gate.yml listed `labeled`
+// in its `pull_request` types, and the `labeled` run (every job skipped) was newer than the `opened`
+// run on the same head sha, so its check suite was the one GitHub showed for that workflow. No list
+// above could see it. Every name agreed; a run that should never have existed hid the ones that did.
+//
+// THE RULE IS AN ALLOWLIST OF ACTIVITY TYPES, not a ban on `labeled`. A workflow that reports a
+// context protect-main requires may trigger on `pull_request` / `pull_request_target` only for
+// `opened`, `synchronize`, `reopened` and `ready_for_review` (or for no `types:` at all, which GitHub
+// reads as the first three). Each of those runs the full workflow on a non-draft PR. `labeled` is the
+// type that fired; `unlabeled`, `edited`, `assigned` and the rest are the same shape on a different
+// day, and a deny-list naming only the one that fired is the guard whose cheapest escape route is to
+// deepen the defect.
+//
+// WHICH WORKFLOWS, and the bound. A workflow is in scope when it is release-gate.yml (its job name is
+// a TEMPLATE that renders all seven gate contexts, read by the fifth question's parser), or when one
+// of its jobs carries a literal `name:` (or, with no name, a job key) equal to a context in
+// `required_status_checks`. A context rendered from an expression other than the gate's
+// `matrix.project`, or one reported by an app rather than a job, is outside that net. Today all of
+// protect-main's contexts are in it (ci.yml's `CI required`, branch-flow-guard.yml, cla.yml's
+// `contribution-legal`, and the seven legs), and the self-test asserts the real tree finds them.
+
+/** Activity types a required-context workflow may trigger on. See the section note above. */
+export const SAFE_PR_TYPES = ["opened", "synchronize", "reopened", "ready_for_review"];
+
+/**
+ * The `pull_request` / `pull_request_target` triggers in a workflow's `on:` block, each with the
+ * activity types it lists, or `null` when it lists none (GitHub's default set).
+ *
+ * Line-wise, like every parser here. It understands `on: pull_request`, `on: [a, b]`, and a block
+ * `on:` whose event keys sit at two spaces with `types:` at four, as a flow list or a block list. A
+ * `types:` it cannot read THROWS: an unreadable trigger is not a safe one.
+ *
+ * @param {string} text the workflow file
+ * @param {string} file its path, for messages
+ * @returns {{event: string, types: string[] | null}[]}
+ */
+export function parsePullRequestTriggers(text, file) {
+	const lines = text.split("\n");
+	const at = lines.findIndex((l) => /^(on|"on"|'on'):/.test(l));
+	if (at < 0) throw new Error(`${file}: no top-level \`on:\` key. A workflow with no trigger is not a shape this check has seen; the parse is wrong.`);
+	const inline = lines[at].replace(/^[^:]+:/, "").replace(/\s+#.*$/, "").trim();
+	const PR = /^(pull_request|pull_request_target)$/;
+	if (inline !== "") {
+		const names = inline.replace(/^\[|\]$/g, "").split(",").map((s) => s.trim()).filter(Boolean);
+		return names.filter((n) => PR.test(n)).map((event) => ({ event, types: null }));
+	}
+	const block = [];
+	for (let i = at + 1; i < lines.length; i++) {
+		if (/^\S/.test(lines[i])) break;
+		block.push(lines[i]);
+	}
+	const out = [];
+	for (let i = 0; i < block.length; i++) {
+		const m = /^ {2}(pull_request|pull_request_target):\s*(.*?)\s*(#.*)?$/.exec(block[i]);
+		if (!m) continue;
+		const event = m[1];
+		if (m[2] !== "" && m[2] !== "{}" && m[2] !== "null") throw new Error(`${file}: \`${event}: ${m[2]}\` is a shape this check does not read.`);
+		let types = null;
+		for (let j = i + 1; j < block.length && !/^ {0,2}\S/.test(block[j]); j++) {
+			const t = /^ {4}types:\s*(.*?)\s*(#.*)?$/.exec(block[j]);
+			if (!t) continue;
+			if (/^\[.*\]$/.test(t[1])) {
+				types = t[1].slice(1, -1).split(",").map((s) => s.trim().replace(/^(['"])(.*)\1$/, "$2")).filter(Boolean);
+			} else if (t[1] === "") {
+				types = [];
+				for (let k = j + 1; k < block.length; k++) {
+					const item = /^ {6}- +['"]?([A-Za-z_]+)['"]?\s*(#.*)?$/.exec(block[k]);
+					if (item) types.push(item[1]);
+					else if (/^\s*(#.*)?$/.test(block[k])) continue;
+					else break;
+				}
+			} else {
+				types = [t[1].replace(/^(['"])(.*)\1$/, "$2")];
+			}
+			if (types.length === 0) throw new Error(`${file}: \`${event}.types\` parsed to ZERO types. An empty list is not GitHub's default; the parse is wrong.`);
+		}
+		out.push({ event, types });
+	}
+	return out;
+}
+
+/**
+ * The required contexts a workflow reports through a literal job `name:` (or a nameless job's key).
+ *
+ * @param {string} text
+ * @param {string[]} required
+ * @returns {string[]}
+ */
+export function literalRequiredContexts(text, required) {
+	let jobs;
+	try {
+		jobs = parseWorkflowJobs(text);
+	} catch {
+		return [];
+	}
+	const out = [];
+	for (const j of jobs) {
+		const m = /^ {4}name:[ \t]*(.+?)[ \t]*$/m.exec(j.body);
+		const name = m ? m[1].replace(/^(['"])(.*)\1$/, "$2") : j.key;
+		if (required.includes(name)) out.push(name);
+	}
+	return out;
+}
+
+/**
+ * Findings for every in-scope workflow whose `pull_request` triggers list an activity type outside
+ * SAFE_PR_TYPES. Pure, so the self-test drives it with fixture texts.
+ *
+ * @param {object} args
+ * @param {{path: string, text: string}[]} args.workflows every workflow file
+ * @param {string[]} args.required `required_status_checks`, unfiltered (what protect-main takes)
+ * @param {string} args.gateWorkflow the path of the gate workflow, always in scope
+ * @returns {{failures: string[], scoped: {path: string, contexts: string[]}[]}}
+ */
+export function compareTriggerTypes({ workflows, required, gateWorkflow }) {
+	const failures = [];
+	const scoped = [];
+	for (const w of workflows) {
+		const contexts = literalRequiredContexts(w.text, required);
+		if (w.path === gateWorkflow) contexts.push("Release gate (<leg>)");
+		if (contexts.length === 0) continue;
+		scoped.push({ path: w.path, contexts });
+		for (const { event, types } of parsePullRequestTriggers(w.text, w.path)) {
+			const bad = (types ?? []).filter((t) => !SAFE_PR_TYPES.includes(t));
+			if (bad.length === 0) continue;
+			failures.push(
+				`${w.path} reports ${contexts.map((c) => `\`${c}\``).join(", ")}, which protect-main requires, and its \`${event}\` trigger lists ${bad.map((t) => `\`${t}\``).join(", ")}. ` +
+					`Such an event creates a newer run on the SAME head sha; when its jobs skip, GitHub shows that run's suite for the workflow and the required context reads "Expected" with nothing red (#7640, #7654). ` +
+					`Allowed: ${SAFE_PR_TYPES.join(", ")}. Serve the event from a separate workflow that calls this one (release-gate-label.yml is the pattern): a called job reports as \`<caller job> / <job>\`, which no required check names.`,
+			);
+		}
+	}
+	return { failures, scoped };
+}
+
+// ── THE EIGHTH QUESTION: require_extra_approval_for_unattributed_changes stays FALSE (#7654) ───────
+//
+// Maintainer decision, 2026-11-25: false on protect-dev and protect-main. The provider cannot set it
+// and GitHub defaults it TRUE on any ruleset write that omits it, so infra/github/main.tf re-asserts it
+// after every ruleset write with a `terraform_data` per ruleset. Two halves, as everywhere here:
+//
+//   · IN-TREE: every `github_repository_ruleset` with a `pull_request` block has a `terraform_data`
+//     whose `replace_triggered_by` names it and whose environment passes its `ruleset_id`. Deleting
+//     one, or adding a ruleset without one, fails the PR.
+//   · LIVE (`--live`): `rules/branches/<branch>` carries the parameter in each `pull_request` rule.
+//     `true` on any of them is DRIFT (exit 2, workflow-health.yml's tracker issue). A rule that does
+//     not carry the field at all is "could not look" (exit 1 when nothing else drifted), never a pass:
+//     a field GitHub stops returning is not a field that is false.
+
+/** The parameter, named once. */
+export const UNATTRIBUTED = "require_extra_approval_for_unattributed_changes";
+
+/**
+ * Each ruleset label in main.tf that declares a `pull_request` block, and whether a `terraform_data`
+ * re-asserts the flag for it.
+ *
+ * @param {string} mainText
+ * @returns {{failures: string[], wired: string[]}}
+ */
+export function compareUnattributedReassert(mainText) {
+	const src = stripHclComments(mainText);
+	const rulesets = parseRulesetWiring(mainText).map((r) => r.label);
+	const blocks = [];
+	const re = /resource\s+"terraform_data"\s+"([^"]+)"\s*\{/g;
+	for (let m = re.exec(src); m; m = re.exec(src)) {
+		const next = src.indexOf("\nresource ", re.lastIndex);
+		blocks.push({ label: m[1], body: src.slice(m.index, next < 0 ? src.length : next) });
+	}
+	const failures = [];
+	const wired = [];
+	for (const label of rulesets) {
+		const start = src.search(new RegExp(`resource\\s+"github_repository_ruleset"\\s+"${escapeRe(label)}"`));
+		const next = src.indexOf("\nresource ", start + 1);
+		const body = src.slice(start, next < 0 ? src.length : next);
+		if (!/\bpull_request\s*\{/.test(body)) continue;
+		const ref = `github_repository_ruleset.${label}`;
+		const hit = blocks.find(
+			(b) =>
+				new RegExp(`replace_triggered_by\\s*=\\s*\\[[^\\]]*\\b${escapeRe(ref)}\\b(?!\\.)`).test(b.body) &&
+				new RegExp(`\\b${escapeRe(ref)}\\.ruleset_id\\b`).test(b.body) &&
+				/local-exec/.test(b.body),
+		);
+		if (hit) wired.push(`${label} → terraform_data.${hit.label}`);
+		else
+			failures.push(
+				`${MAIN}: ruleset \`${label}\` has a \`pull_request\` block and no \`terraform_data\` re-asserts \`${UNATTRIBUTED} = false\` after it is written (a block with \`replace_triggered_by = [${ref}]\`, \`${ref}.ruleset_id\` and a local-exec). ` +
+					`The provider omits the field and GitHub then sets it TRUE, so the next apply would undo the maintainer's 2026-11-25 decision without the plan showing it (#7654).`,
+			);
+	}
+	return { failures, wired };
+}
+
+/**
+ * The flag's value in every `pull_request` rule GitHub returns for one branch.
+ *
+ * @param {unknown[]} rules the `rules/branches/<branch>` response
+ * @returns {{values: (boolean|undefined)[], rulesetIds: (number|undefined)[]}}
+ */
+export function unattributedFromBranchRules(rules) {
+	const prs = rules.filter((r) => r?.type === "pull_request");
+	return {
+		values: prs.map((r) => {
+			const v = r?.parameters?.[UNATTRIBUTED];
+			return typeof v === "boolean" ? v : undefined;
+		}),
+		rulesetIds: prs.map((r) => r?.ruleset_id),
+	};
+}
+
+/**
+ * The `--live` verdict for the flag across the protected branches.
+ *
+ * @param {{branch: string, name: string, unattributed: ReturnType<typeof unattributedFromBranchRules> | null}[]} rulesets
+ * @returns {{lines: string[], drift: boolean, blind: boolean}}
+ */
+export function reportUnattributed(rulesets) {
+	const lines = [];
+	let drift = false;
+	let blind = false;
+	for (const rs of rulesets) {
+		const u = rs.unattributed;
+		if (!u) {
+			blind = true;
+			lines.push(`- **${rs.name}** (branch \`${rs.branch}\`) — could not read the rules. Not "false"; no measurement.`);
+			continue;
+		}
+		if (u.values.length === 0) {
+			lines.push(`- **${rs.name}** (branch \`${rs.branch}\`) — no \`pull_request\` rule, so the flag does not apply (the review-requirements section above reports that absence).`);
+			continue;
+		}
+		const on = u.values.map((v, i) => ({ v, id: u.rulesetIds[i] }));
+		const tru = on.filter((x) => x.v === true);
+		const unknown = on.filter((x) => x.v === undefined);
+		if (tru.length) {
+			drift = true;
+			lines.push(`- **${rs.name}** (branch \`${rs.branch}\`) — \`${UNATTRIBUTED}: true\` on ruleset ${tru.map((x) => x.id ?? "?").join(", ")}. DRIFT from the maintainer's 2026-11-25 decision (false). A ruleset write that omitted the field (any provider write does) or a hand edit put it back; re-run the apply, whose \`terraform_data\` re-asserts it, or PUT it false (infra/github/README.md).`);
+		} else if (unknown.length) {
+			blind = true;
+			lines.push(`- **${rs.name}** (branch \`${rs.branch}\`) — the \`pull_request\` rule on ruleset ${unknown.map((x) => x.id ?? "?").join(", ")} does not carry a boolean \`${UNATTRIBUTED}\`. An absent field is not a false one; no measurement.`);
+		} else {
+			lines.push(`- **${rs.name}** (branch \`${rs.branch}\`) — \`${UNATTRIBUTED}: false\` · as decided`);
+		}
+	}
+	return { lines, drift, blind };
+}
+
 function ok(label, cond, detail = "") {
 	if (cond) {
 		console.log(`ok   - ${label}`);
@@ -2009,6 +2268,118 @@ resource "github_repository_ruleset" "dev_codeowners" {
 	} else {
 		console.log(`skip - the captured branch-rules assertions need ${RULES_FIXTURE}; run the self-test from the repo root`);
 	}
+	// ── the seventh question: trigger types on required-context workflows (#7654) ───────────────
+	{
+		const req = ["CI required", "Release gate (hero)"];
+		const wf = (on, jobs = "jobs:\n  agg:\n    name: CI required\n    runs-on: x\n") => `name: X\n${on}\n${jobs}`;
+		const GATE = ".github/workflows/release-gate.yml";
+		const run = (text, path = ".github/workflows/x.yml") => compareTriggerTypes({ workflows: [{ path, text }], required: req, gateWorkflow: GATE });
+		P("trigger: `pull_request:` with no types (GitHub's default three) is allowed", run(wf("on:\n  pull_request:\n  push:\n    branches: [main]")).failures.length === 0);
+		P("trigger: the four safe types in a flow list are allowed", run(wf("on:\n  pull_request:\n    branches: [main]\n    types: [opened, synchronize, reopened, ready_for_review]")).failures.length === 0);
+		// The regression itself — the exact line release-gate.yml carried until #7654.
+		const regressed = run(wf("on:\n  pull_request:\n    branches: [main, staging, dev]\n    types: [opened, synchronize, reopened, ready_for_review, labeled]"));
+		P("trigger: `labeled` on a required-context workflow FAILS (#7640's shape)", regressed.failures.length === 1 && /`labeled`/.test(regressed.failures[0]), JSON.stringify(regressed));
+		P("trigger: a block-list `types:` carrying `unlabeled` FAILS (an allowlist, not a `labeled` deny-list)", run(wf("on:\n  pull_request_target:\n    types:\n      - opened\n      # a comment\n      - unlabeled")).failures.length === 1);
+		P("trigger: `on: [push, pull_request]` reads as default types — allowed", run(wf("on: [push, pull_request]")).failures.length === 0);
+		P("trigger: a workflow reporting NO required context may trigger on `labeled`", run(wf("on:\n  pull_request:\n    types: [labeled]", "jobs:\n  gate:\n    name: Gate by label\n    uses: ./.github/workflows/release-gate.yml\n")).failures.length === 0);
+		P("trigger: the gate workflow is in scope by PATH even with no literal required name", run(wf("on:\n  pull_request:\n    types: [opened, labeled]", "jobs:\n  gate:\n    name: Release gate (${{ matrix.project }})\n"), GATE).failures.length === 1);
+		P("trigger: a nameless job whose KEY is a required context is in scope", compareTriggerTypes({ workflows: [{ path: ".github/workflows/y.yml", text: wf("on:\n  pull_request:\n    types: [edited]", "jobs:\n  branch-flow-guard:\n    runs-on: x\n") }], required: ["branch-flow-guard"], gateWorkflow: GATE }).failures.length === 1);
+		P("trigger: an unreadable `types:` (empty block list) is an ERROR, not a pass", throws(() => run(wf("on:\n  pull_request:\n    types:\n  push:"))));
+		P("trigger: a workflow with no `on:` is an ERROR", throws(() => run("name: x\njobs:\n  agg:\n    name: CI required\n")));
+		// THE REAL TREE: every workflow that reports a protect-main context must be found, or the
+		// green above is a guard that stopped looking.
+		if (fs.existsSync(VARIABLES) && fs.existsSync(GATE_WORKFLOW)) {
+			const dir = ".github/workflows";
+			const workflows = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).map((f) => ({ path: `${dir}/${f}`, text: fs.readFileSync(`${dir}/${f}`, "utf8") }));
+			const hcl = parseRequiredStatusChecks(fs.readFileSync(VARIABLES, "utf8"));
+			const real = compareTriggerTypes({ workflows, required: hcl, gateWorkflow: GATE_WORKFLOW });
+			const found = new Set(real.scoped.flatMap((w) => w.contexts));
+			const nonGate = hcl.filter((c) => !/^Release gate \(/.test(c));
+			P("trigger (real tree): every non-gate required context is reported by a workflow in scope", nonGate.every((c) => found.has(c)), JSON.stringify({ nonGate, found: [...found] }));
+			P("trigger (real tree): release-gate.yml is in scope", real.scoped.some((w) => w.path === GATE_WORKFLOW));
+			P("trigger (real tree): no finding", real.failures.length === 0, JSON.stringify(real.failures));
+			const label = workflows.find((w) => w.path === `${dir}/release-gate-label.yml`);
+			P("trigger (real tree): release-gate-label.yml exists, triggers on `labeled`, and reports no required context", label !== undefined && /types:\s*\[labeled\]/.test(label.text) && !real.scoped.some((w) => w.path === label.path));
+			// MUTATION CONTROL on the real file: put `labeled` back and the real tree must go red.
+			const gate = workflows.find((w) => w.path === GATE_WORKFLOW);
+			const mutated = gate.text.replace(/types: \[opened, synchronize, reopened, ready_for_review\]/, "types: [opened, synchronize, reopened, ready_for_review, labeled]");
+			P("trigger (real tree): the mutation applied (the types line is where this test expects it)", mutated !== gate.text);
+			P("trigger (real tree): release-gate.yml with `labeled` restored FAILS", compareTriggerTypes({ workflows: [{ path: GATE_WORKFLOW, text: mutated }], required: hcl, gateWorkflow: GATE_WORKFLOW }).failures.length === 1);
+		} else {
+			console.log("skip - the real-tree trigger assertions need the repo root");
+		}
+	}
+
+	// ── the eighth question: require_extra_approval_for_unattributed_changes (#7654) ────────────
+	{
+		const tf = (extra) => `
+resource "github_repository_ruleset" "dev" {
+  name = "protect-dev"
+  rules {
+    pull_request {
+      required_approving_review_count = 0
+    }
+    required_status_checks {
+      dynamic "required_check" {
+        for_each = local.dev_required_status_checks
+      }
+    }
+  }
+}
+resource "github_repository_ruleset" "tags" {
+  name = "protect-tags"
+  rules {
+    deletion = true
+  }
+}
+${extra}`;
+		const wiredDev = `resource "terraform_data" "d" {
+  triggers_replace = [github_repository_ruleset.dev.ruleset_id]
+  lifecycle {
+    replace_triggered_by = [github_repository_ruleset.dev]
+  }
+  provisioner "local-exec" {
+    command = "x"
+  }
+}`;
+		P("reassert: a pull_request ruleset with its terraform_data is wired", compareUnattributedReassert(tf(wiredDev)).failures.length === 0);
+		P("reassert: a ruleset with no pull_request block needs none", compareUnattributedReassert(tf(wiredDev)).wired.length === 1);
+		P("reassert: a pull_request ruleset with NO terraform_data FAILS", compareUnattributedReassert(tf("")).failures.length === 1);
+		P("reassert: a terraform_data keyed on an ATTRIBUTE (`.etag`) instead of the resource FAILS", compareUnattributedReassert(tf(wiredDev.replace("replace_triggered_by = [github_repository_ruleset.dev]", "replace_triggered_by = [github_repository_ruleset.dev.etag]"))).failures.length === 1);
+		P("reassert: a commented-out terraform_data does not count", compareUnattributedReassert(tf(wiredDev.split("\n").map((l) => `# ${l}`).join("\n"))).failures.length === 1);
+		if (fs.existsSync(MAIN)) {
+			const real = compareUnattributedReassert(fs.readFileSync(MAIN, "utf8"));
+			P("reassert (real main.tf): protect-dev and protect-main are both wired", real.failures.length === 0 && real.wired.length === 2, JSON.stringify(real));
+		}
+
+		// LIVE, against two VERBATIM captures: 2026-09-23 (before the decision — `true` on both) and
+		// 2026-11-25 (after it — `false` on both). Neither is composed, so the reader meets GitHub's shape.
+		const readCap = (f) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null);
+		const before = readCap("scripts/ci/fixtures/rules-branches.2026-09-23.json");
+		const after = readCap("scripts/ci/fixtures/rules-branches.2026-11-25.json");
+		if (before && after) {
+			const live = (cap) => readLiveRulesets("alethialabs-io/alethialabs", (a) => JSON.stringify(cap[/rules\/branches\/(\w+)$/.exec(a[1])[1]])).rulesets;
+			const rAfter = reportUnattributed(live(after));
+			P("unattributed (2026-11-25 capture): false on both branches — no drift, not blind", !rAfter.drift && !rAfter.blind && rAfter.lines.length === 2, JSON.stringify(rAfter));
+			const rBefore = reportUnattributed(live(before));
+			P("unattributed (2026-09-23 capture): TRUE on both — DRIFT", rBefore.drift && rBefore.lines.filter((l) => /DRIFT/.test(l)).length === 2, JSON.stringify(rBefore));
+			const flipped = JSON.parse(JSON.stringify(after));
+			flipped.main.find((x) => x.type === "pull_request").parameters[UNATTRIBUTED] = true;
+			const rFlip = reportUnattributed(live(flipped));
+			P("unattributed: one branch flipped to true is drift on that branch alone", rFlip.drift && rFlip.lines.filter((l) => /DRIFT/.test(l)).length === 1 && rFlip.lines.some((l) => /protect-main/.test(l) && /DRIFT/.test(l)));
+			const gone = JSON.parse(JSON.stringify(after));
+			delete gone.dev.find((x) => x.type === "pull_request").parameters[UNATTRIBUTED];
+			const rGone = reportUnattributed(live(gone));
+			P("unattributed: a field GitHub stops returning is BLIND, never a pass", !rGone.drift && rGone.blind, JSON.stringify(rGone));
+			const noPr = JSON.parse(JSON.stringify(after));
+			noPr.dev = noPr.dev.filter((x) => x.type !== "pull_request");
+			const rNoPr = reportUnattributed(live(noPr));
+			P("unattributed: no pull_request rule is neither drift nor blind (the review section reports it)", !rNoPr.drift && !rNoPr.blind);
+		} else {
+			console.log("skip - the unattributed-flag captures need scripts/ci/fixtures; run the self-test from the repo root");
+		}
+	}
+
 	P("folded prose finds a claim wrapped across `#` comment lines and reports its first line", (() => { const f = foldProse("x\n# a ruleset on\n#   `dev` here\n"); const m = /ruleset on `dev`/.exec(f.flat); return m !== null && f.lineOf(m.index) === 2; })());
 
 	console.log(pass ? "\nself-test: all passed" : "\nself-test: FAILED");
@@ -2089,6 +2460,27 @@ function main() {
 	failures.push(...claimsDeclared.failures);
 	notes.push(...claimsDeclared.notes);
 
+	// THE SEVENTH QUESTION (#7654): no workflow that reports a context protect-main requires may
+	// trigger on an activity type whose run can supersede a decided one on the same head sha.
+	const WORKFLOW_DIR = ".github/workflows";
+	let triggerFindings;
+	let reassert;
+	try {
+		const workflows = fs
+			.readdirSync(WORKFLOW_DIR)
+			.filter((f) => /\.ya?ml$/.test(f))
+			.sort()
+			.map((f) => ({ path: `${WORKFLOW_DIR}/${f}`, text: fs.readFileSync(`${WORKFLOW_DIR}/${f}`, "utf8") }));
+		triggerFindings = compareTriggerTypes({ workflows, required: hclAll, gateWorkflow: GATE_WORKFLOW });
+		// THE EIGHTH, in-tree half: the post-apply re-assertion is wired to every ruleset it must follow.
+		reassert = compareUnattributedReassert(read(MAIN));
+	} catch (e) {
+		console.error(`::error::check-required-checks: ${e.message}`);
+		process.exit(1);
+	}
+	failures.push(...triggerFindings.failures);
+	failures.push(...reassert.failures);
+
 	if (argv.includes("--live")) {
 		const repo = process.env.GITHUB_REPOSITORY ?? "alethialabs-io/alethialabs";
 		const { rulesets, error } = readLiveRulesets(repo);
@@ -2136,6 +2528,13 @@ function main() {
 		const claimReport = reportLiveClaims(liveClaims);
 		for (const line of claimReport.lines) console.log(line);
 		drifted = drifted || reviewDrift || claimReport.drift;
+
+		// THE EIGHTH QUESTION, live half (#7654): the maintainer's 2026-11-25 decision, false on both.
+		console.log(`\n## \`${UNATTRIBUTED}\` — decided false (2026-11-25, #7654)\n`);
+		const unattributed = reportUnattributed(rulesets);
+		for (const line of unattributed.lines) console.log(line);
+		drifted = drifted || unattributed.drift;
+		reviewBlind = reviewBlind || unattributed.blind;
 
 		// THE FOURTH QUESTION. `hclAll` is what an apply would require on `main` — main takes the
 		// list unfiltered, which is why it is the branch a never-satisfiable context wedges.
@@ -2193,7 +2592,12 @@ function main() {
 		// Drift wins over blindness so the tracker issue still opens, and its body carries the
 		// "could not read the review rule" line; with no drift, a blind review half is exit 1 — the
 		// workflow's "could not look" code — never a clean 0.
-		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || wedgeRisk ? 2 : reviewBlind ? 1 : 0);
+		// The seventh and eighth questions' in-tree findings, for the same reason as the two above.
+		if (triggerFindings.failures.length || reassert.failures.length) {
+			console.log(`\n## Trigger types and the post-apply re-assertion (#7654)\n`);
+			for (const f of [...triggerFindings.failures, ...reassert.failures]) console.log(`- ${f}`);
+		}
+		process.exit(drifted || gateFailures.length || legNameFailures.failures.length || triggerFindings.failures.length || reassert.failures.length || wedgeRisk ? 2 : reviewBlind ? 1 : 0);
 	}
 
 	for (const n of notes) console.log(`::warning::check-required-checks: ${n}`);
@@ -2202,6 +2606,7 @@ function main() {
 		// it was written and now half the question. A reader who sees this line is told what was
 		// actually compared, whatever the step above it is called.
 		console.log(`check-required-checks: ${devHcl.length} required on ${DEV_RULESET}, ${mergify.length} in ${MERGIFY} — they agree; and ${legTable.legs.length} release-gate leg(s) derived from ${GATE_WORKFLOW} match the contexts typed in ${VARIABLES}.`);
+		console.log(`check-required-checks: ${triggerFindings.scoped.length} workflow(s) report a context protect-main requires (${triggerFindings.scoped.map((w) => w.path.replace(/^\.github\/workflows\//, "")).join(", ")}); none triggers on an activity type outside ${SAFE_PR_TYPES.join("/")}. \`${UNATTRIBUTED}\` re-asserted after: ${reassert.wired.join("; ")}.`);
 		process.exit(0);
 	}
 	for (const f of failures) console.error(`::error::check-required-checks: ${f}`);

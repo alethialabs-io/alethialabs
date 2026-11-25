@@ -5,8 +5,12 @@
 // The Evidence surface — the org-wide "keep proving it" roll-up, and the reference
 // implementation of the console filter standard: a URL-synced zustand filter store
 // feeds a filter-in-key TanStack query (server-side filtering), the table dims while
-// a refetch is in flight, and the count pill next to the Environments heading carries
-// the result count. Read-only: the data is produced by the PLAN/DEPLOY + drift jobs.
+// a refetch is in flight. No result count beside the Environments heading: the console carries no
+// list counts (#7481; the status facet's option counts are where the numbers live). The posture table
+// is deliberately unpaged — one row per visible environment, a roll-up that must not truncate; that
+// bound is recorded in apps/console/list-standard/evidence.json. The recorded-waivers panel below it
+// is a list of its own, read page by page (evidence-waivers.tsx). Read-only: the data is produced by
+// the PLAN/DEPLOY + drift jobs.
 //
 // FOUR RENDERS, NEVER CONFUSED (#6126): the rows (or onboarding / no-match when there are none);
 // the skeleton while the read has not answered; the refusal when the read router said FORBIDDEN;
@@ -182,15 +186,7 @@ export function EvidenceClient() {
 								: "transition-opacity"
 						}
 					>
-						{/* The filter standard reference page finally takes the shared heading too:
-						    the count beside it is the FILTERED result count, which is the one number
-						    a filter bar exists to move. */}
-						<SectionHeading
-							className="mb-2.5"
-							level={2}
-							title="Environments"
-							count={result.resultCount}
-						/>
+						<SectionHeading className="mb-2.5" level={2} title="Environments" />
 
 						{result.resultCount === 0 && filtersActive ? (
 							<EvidenceNoMatch onClear={reset} />
@@ -199,7 +195,7 @@ export function EvidenceClient() {
 						)}
 
 						<div className="mt-6">
-							<EvidenceWaivers org={org} waivers={result.waivers} />
+							<EvidenceWaivers org={org} />
 						</div>
 					</div>
 				</>

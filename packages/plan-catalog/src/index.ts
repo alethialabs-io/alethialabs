@@ -282,6 +282,29 @@ export function planIncludedCreditCents(
 	return planMeta(plan).includedCredit?.[currency] ?? 0;
 }
 
+// ── Runner-minute overage ──
+
+/**
+ * The managed-runner overage rate beyond a plan's included minutes, in MINOR units per 1000
+ * minutes: $0.012 / €0.011 per minute. Per 1000 because a per-minute rate is a fraction of a cent
+ * and `PriceByCurrency` holds whole minor units. The Stripe meter price (`scripts/stripe-setup.ts`)
+ * quotes the same two numbers, and the Paddle overage charge (console `lib/billing/paddle/overage.ts`)
+ * is priced from here.
+ */
+export const RUNNER_MINUTE_OVERAGE_PER_1000: Readonly<Required<PriceByCurrency>> = {
+	usd: 1200,
+	eur: 1100,
+};
+
+/**
+ * What `minutes` of overage cost in `currency`, in whole minor units. Rounded DOWN: a fraction of
+ * a cent is never charged.
+ */
+export function runnerOverageAmountMinor(minutes: number, currency: SupportedCurrency): number {
+	if (!(minutes > 0)) return 0;
+	return Math.floor((minutes * RUNNER_MINUTE_OVERAGE_PER_1000[currency]) / 1000);
+}
+
 // ── Currency resolution (shared by the console billing flow + the marketing pricing page) ──
 
 /** EU + EEA country codes billed in EUR (ISO 3166-1 alpha-2). */

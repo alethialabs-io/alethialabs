@@ -91,6 +91,11 @@ beforeEach(() => {
 	vi.mocked(currentActor).mockResolvedValue(ACTOR as never);
 });
 
+/** The paging argument a read hands its builder: the ledger's page one, nothing for the unpaged lists. */
+function pageArgs(name: string): unknown[] {
+	return name === "deliveries" ? [{ cursor: undefined, limit: 50 }] : [];
+}
+
 describe("the alerts hub's three page reads", () => {
 	const cases = [
 		["channels", getAlertChannelsPage, queryAlertChannelsPage],
@@ -105,7 +110,9 @@ describe("the alerts hub's three page reads", () => {
 			await action(HOSTILE as never);
 
 			expect(authorize).toHaveBeenCalledWith("view_alerts", { type: "alert" });
-			expect(builder).toHaveBeenCalledWith("org-real", HOSTILE);
+			// The ledger pages by keyset (#7489): its read splits the paging fields off the query and
+			// hands them over as a third argument — page one, the default limit.
+			expect(builder).toHaveBeenCalledWith("org-real", HOSTILE, ...pageArgs(name));
 			// Not the org the query claimed.
 			expect(vi.mocked(builder).mock.calls[0][0]).not.toBe("org-someone-elses");
 		});
@@ -121,7 +128,7 @@ describe("the alerts hub's three page reads", () => {
 		it(`${name}: defaults to an empty query when called with no arguments`, async () => {
 			vi.mocked(builder).mockResolvedValue({ rows: [] } as never);
 			await action();
-			expect(builder).toHaveBeenCalledWith("org-real", {});
+			expect(builder).toHaveBeenCalledWith("org-real", {}, ...pageArgs(name));
 		});
 	}
 });

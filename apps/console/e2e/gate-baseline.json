@@ -166,11 +166,11 @@
 			},
 			"flows/alerts.spec.ts": {
 				"Alerts — the hub › a Pro org gets all three surfaces as section headings": "passed",
-				"Alerts — the hub › each section heading carries a Docs link and a count pill": "passed",
+				"Alerts — the hub › each section heading carries a Docs link and no count pill": "passed",
 				"Alerts — the hub › an authenticated Pro user is never bounced to login": "passed",
 				"Alerts — empty states, through EmptyState › channels: the shared EmptyState, its title in the outline, and the Add action": "passed",
 				"Alerts — empty states, through EmptyState › policies: the shared EmptyState, its title in the outline, and the New action": "passed",
-				"Alerts — empty states, through EmptyState › an empty universe leaves both count pills reading 0": "passed",
+				"Alerts — empty states, through EmptyState › an empty universe draws no count beside either heading, only the EmptyState": "passed",
 				"Alerts — the guided add-a-channel sheet › opens with the transport gallery": "passed",
 				"Alerts — the guided add-a-channel sheet › picking a transport swaps the credential field": "passed",
 				"Alerts — the guided add-a-channel sheet › email: a blank name is rejected inline": "passed",
@@ -199,7 +199,7 @@
 				"Alerts — the policy filter store (policy*) › a `policyStatus` deep link arrives already filtered": "passed",
 				"Alerts — the policy filter store (policy*) › the status facet keeps its unfiltered counts while `off` is selected": "passed",
 				"Alerts — the policy filter store (policy*) › the three stores are independent: a policy filter leaves the channel rail alone": "passed",
-				"Alerts — the delivery ledger and its activity* filters › the ledger lists the seeded deliveries and the count pill agrees": "passed",
+				"Alerts — the delivery ledger and its activity* filters › the ledger lists the seeded deliveries, one row each, and draws no count": "passed",
 				"Alerts — the delivery ledger and its activity* filters › a failed delivery carries its last error into the Event cell": "passed",
 				"Alerts — the delivery ledger and its activity* filters › the Failed chip narrows the ledger to failed deliveries": "passed",
 				"Alerts — the delivery ledger and its activity* filters › an `activityStatus` deep link arrives filtered, chips still unfiltered": "passed"
@@ -255,7 +255,7 @@
 			},
 			"flows/connectors.spec.ts": {
 				"Connectors — the board and its filter bar › loads the board authenticated, on the shared filter grammar": "passed",
-				"Connectors — the board and its filter bar › the page toolbar carries the result count, and the page carries no title": "passed",
+				"Connectors — the board and its filter bar › the page toolbar carries the description and no count, and the page carries no title": "passed",
 				"Connectors — the board and its filter bar › every catalog group renders as its own section": "passed",
 				"Connectors — the board and its filter bar › each group header reports how many of its connectors are connected": "passed",
 				"Connectors — the board and its filter bar › search narrows the board to the matching connector's section": "passed",

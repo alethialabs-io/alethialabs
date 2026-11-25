@@ -1,20 +1,18 @@
 ---
 title: Alethia for agents
-description: How an AI agent such as Claude Code, Cursor or Codex works with Alethia today — the MCP server, the CLI in agent mode, and docs served as Markdown.
+description: How an AI agent such as Claude Code, Cursor or Codex works with Alethia — the MCP server, the CLI in agent mode, and docs served as Markdown.
 ---
 
-An AI agent can work with Alethia in three ways. Each one acts as **you**: it can reach only what
-your own role in the organization allows.
+An AI agent works with Alethia in three ways. Each acts as **you**: it reaches only what your role
+in the organization allows.
 
 | Way in | What it can do | Credential |
 | --- | --- | --- |
-| [MCP server](/guides/assistant/mcp) | Read projects, jobs, plan results, clusters, drift, cost and usage. Plan, and ask you to approve an apply or a destroy. | An OAuth token that you approve in the browser |
-| [The `alethia` CLI](/agents/cli) | Everything the CLI does, including plan, apply and destroy | Your CLI sign-in, or a service-account token |
+| [MCP server](/guides/assistant/mcp) | Read projects, jobs, plans, clusters, drift, cost and usage. Start a plan, and ask you to approve an apply or a destroy. | An OAuth token you approve in the browser |
+| [The `alethia` CLI](/agents/cli) | Everything the CLI does, including apply and destroy | Your CLI sign-in, or a service-account token |
 | [Docs as Markdown](/agents/markdown-docs) | Read these docs: `/docs/llms.txt`, and any page with `.md` added | None |
 
 ## Pick a client
-
-Each page shows how to add the MCP server to one client:
 
 - [Claude Code](/agents/claude-code)
 - [Claude on the web and on the desktop](/agents/claude)
@@ -23,26 +21,24 @@ Each page shows how to add the MCP server to one client:
 - [Codex](/agents/codex)
 
 <Callout type="info">
-  Alethia has not yet published a test record for any of these clients. The server speaks only the
-  current generation of the MCP protocol and refuses requests in the 2025 format. It also expects the
-  client to identify itself with a Client ID Metadata Document. A client that cannot do both cannot
-  connect. [Connect a client](/guides/assistant/mcp#connect-a-client) explains both.
+  Alethia has not yet published a test record for any of these clients. The server accepts only the
+  current generation of the MCP protocol, not the 2025 format, and expects the client to identify
+  itself with a Client ID Metadata Document. [Connect a client](/guides/assistant/mcp#connect-a-client)
+  explains both.
 </Callout>
 
-## What an agent can and cannot do today
+## What an agent can and cannot do
 
-- **Read and plan over MCP.** The MCP server offers 20 read tools and six operation tools, listed in
-  the [tool reference](/agents/tools). An agent can start a plan. It can ask for an apply or a destroy,
-  and the job starts only after you approve that request in the console.
-- **Act through the CLI.** An agent that runs `alethia` in your shell uses your CLI credential. It can
-  do what you can do from the CLI, so it can also plan, apply and destroy. `alethia apply` and
-  `alethia project destroy` ask for confirmation first. In agent mode nothing can ask, so they stop
-  and exit `9` unless the command carries `--yes`.
-- **Not approve over MCP.** No MCP tool approves a deploy or anything else.
+- **Read, design and plan over MCP.** 19 tools; see the [tool reference](/agents/tools). An agent
+  can change a design, scan a repository and start a plan. It can ask for an apply or a destroy. The
+  job starts only after you approve the request in the console.
+- **Act through the CLI.** An agent running `alethia` in your shell can do what you can do,
+  including apply and destroy. In agent mode those commands stop with exit `9` unless the command
+  carries `--yes`.
+- **Never approve over MCP.** No tool approves a deploy or anything else.
 
-Keep apply and destroy for yourself: review the plan, then run the apply, or tell the agent to run it
-with `--yes` only after you have read the plan. The [security model](/agents/security) explains what
-holds an agent to your permissions and what does not yet.
+Keep apply and destroy for yourself: read the plan, then run the apply, or tell the agent to add
+`--yes` after you have read it. The [security model](/agents/security) lists every control.
 
 ## Instructions for agents
 

@@ -166,7 +166,7 @@ export const DESIRED_PRODUCTS: DesiredProduct[] = [
 		tag: "runner_minutes",
 		name: "Alethia runner minutes",
 		taxCategory: TAX_CATEGORY,
-		envVar: "PADDLE_PRODUCT_RUNNER_OVERAGE",
+		envVar: "PADDLE_PRODUCT_RUNNER_MINUTES",
 	},
 ];
 

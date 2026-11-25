@@ -70,10 +70,12 @@ Switching organizations in the console does not change it.
 It can read projects and their configuration, jobs and their results, clusters, runners, connectors,
 cloud accounts and their inventory, drift, the service catalog, docs, repository scans, and usage.
 Results leave secrets out: never ArgoCD passwords, tokens or credentials. The
-[tool reference](/agents/tools) lists the 20 read tools and six operation tools.
+[tool reference](/agents/tools) lists all 19 tools.
 
 | Tool | What it does |
 | --- | --- |
+| `create_project`, `apply_design_patch` | Creates a project from a design, or changes a design. Changes nothing in the cloud. |
+| `scan_repo` | Starts a scan that infers what a repository needs. Never runs the repository. |
 | `plan` | Starts a plan of one environment. Changes nothing in the cloud. |
 | `request_apply`, `request_destroy` | Asks you to approve an apply or a destroy, and starts it once you approve. |
 | `cancel_job` | Cancels a queued or running job. |
@@ -82,8 +84,8 @@ Every apply or destroy needs your approval. The agent shows a link and an 8-char
 link, check the digest, and approve in the console. Every deploy still passes the
 [verification engine](/concepts/elench).
 
-The agent cannot approve anything, start a repository scan or audit, change a design, open console
-pages, build dashboards, or use [artifacts](/guides/assistant/artifacts). Use the
+The agent cannot approve anything, start an audit of existing infrastructure, open console pages,
+build dashboards, or use [artifacts](/guides/assistant/artifacts). Use the
 [assistant](/guides/assistant) for those.
 
 <Callout type="warn">
@@ -94,7 +96,7 @@ most it can lead to is a plan, or a request that you still approve.
 
 ## Check that it worked
 
-Ask the agent to list your Alethia projects. It calls `list_projects` and names your projects.
+Ask the agent to list your Alethia projects. It calls `list_resources` and names your projects.
 
 ## Related
 

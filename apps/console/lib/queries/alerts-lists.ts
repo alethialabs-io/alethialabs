@@ -46,6 +46,17 @@ import {
 	searchTerm,
 	tally,
 } from "./facets";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetAfter,
+	keysetFetchLimit,
+	keysetListPage,
+	keysetOrderBy,
+	keysetPage,
+	keysetSortKey,
+} from "./keyset";
 
 // The Alerts hub's three lists — channels, policies, and the delivery ledger — filtered in
 // SQL (the console filter standard's server half). Service path with an explicit `org_id`
@@ -133,12 +144,20 @@ export interface AlertChannelsQuery {
 	status?: string[];
 }
 
-/** Rows + the facet options behind the Channels filter bar. */
+/**
+ * The most alert channels one org may configure. Channels are configuration, not a ledger, so the
+ * Channels list is UNPAGED by a recorded decision (`apps/console/list-standard/alert-channels.json`)
+ * — and this is the server-side bound that decision names, enforced when a channel is created
+ * (`addChannel`, app/server/actions/alerts.ts). The read never cuts at it: an org that predates the
+ * cap still sees every channel it has.
+ */
+export const ALERT_CHANNELS_MAX = 50;
+
+/** Rows + the facet options behind the Channels filter bar. Unpaged: see {@link ALERT_CHANNELS_MAX}. */
 export interface AlertChannelsPage {
 	rows: ChannelDTO[];
-	resultCount: number;
-	/** Every channel in the org — the count pill's denominator. */
-	total: number;
+	/** The org has no channel at all (the first-run empty state), whatever the filters. Never a count. */
+	universeEmpty: boolean;
 	facets: {
 		/** Types present in the org, in the panel's transport order. */
 		types: FacetOption[];
@@ -231,8 +250,7 @@ export async function queryAlertChannelsPage(
 
 	return {
 		rows: rows.map(toChannelDTO),
-		resultCount: rows.length,
-		total: facetRows.length,
+		universeEmpty: facetRows.length === 0,
 		facets: {
 			// Every type the org actually uses, in the transport catalog's order.
 			types: CHANNEL_TYPE_ORDER.filter((t) => (typeCounts.get(t) ?? 0) > 0).map(
@@ -282,12 +300,18 @@ export interface AlertPoliciesQuery {
 	channels?: string[];
 }
 
-/** Rows + the facet options behind the Policies filter bar. */
+/**
+ * The most alert policies one org may configure — the server-side bound behind the Policies list's
+ * `bounded` decision (`apps/console/list-standard/alert-policies.json`), enforced when a policy is
+ * created (`createPolicy`). Like {@link ALERT_CHANNELS_MAX}, the read never cuts at it.
+ */
+export const ALERT_POLICIES_MAX = 100;
+
+/** Rows + the facet options behind the Policies filter bar. Unpaged: see {@link ALERT_POLICIES_MAX}. */
 export interface AlertPoliciesPage {
 	rows: PolicyDTO[];
-	resultCount: number;
-	/** Every policy in the org — the count pill's denominator. */
-	total: number;
+	/** The org has no policy at all (the first-run empty state), whatever the filters. Never a count. */
+	universeEmpty: boolean;
 	facets: {
 		/** Both statuses, always. */
 		status: FacetOption[];
@@ -398,8 +422,7 @@ export async function queryAlertPoliciesPage(
 		rows: ruleRows.map((r) =>
 			toPolicyDTO(r.rule, channelsByRule.get(r.rule.id) ?? [], r.isSecurity),
 		),
-		resultCount: ruleRows.length,
-		total: facetRules.length,
+		universeEmpty: facetRules.length === 0,
 		facets: {
 			status: orderedOptions(statusCounts, POLICY_STATUSES),
 			kinds: orderedOptions(kindCounts, POLICY_KINDS),
@@ -422,59 +445,48 @@ const DELIVERY_STATUS_ORDER: AlertDeliveryStatus[] = [
 	"dead",
 ];
 
-/** How many ledger rows a filtered read returns (the bootstrap's window). */
-const DELIVERIES_LIMIT = 50;
-
-/** The hard ceiling on `limit`, so a client cannot ask for the whole ledger. */
-const DELIVERIES_MAX_LIMIT = 200;
-
 /** The Activity panel's normalized query (the `normalizeActivityQuery()` output). */
 export interface AlertDeliveriesQuery {
 	/** Contains-match over the rendered title and the event key. */
 	search?: string;
 	/** Restrict to these delivery statuses; empty/unknown = all. */
 	status?: string[];
-	/** Ledger rows to return (default 50, the bootstrap's window; capped at 200). */
-	limit?: number;
 }
 
-/** Rows + the facet options behind the Activity filter bar. */
-export interface AlertDeliveriesPage {
-	/** The newest matching deliveries, capped at `limit`. */
-	rows: DeliveryDTO[];
-	/**
-	 * How many deliveries match the query — ALL of them, not the size of the window. When it is
-	 * larger than `rows.length` the ledger is showing only the newest `limit`, and says so.
-	 */
-	resultCount: number;
-	/** The window `rows` was cut to: the most rows a read returns. */
-	limit: number;
-	/**
-	 * Every delivery in the org's ledger — NOT the size of the window. The filter selects
-	 * from the whole ledger (that is the point of filtering in SQL), so the counts beside
-	 * the facet options describe the whole ledger too.
-	 */
-	total: number;
-	facets: { status: FacetOption[] };
+/** The facet options behind the Activity filter bar. */
+export interface AlertDeliveriesFacets {
+	/** All four statuses, always, counted over the WHOLE ledger. */
+	status: FacetOption[];
 }
+
+/** One keyset page of the delivery ledger (lib/query/README.md → "Paging"). */
+export type AlertDeliveriesPage = KeysetListPage<DeliveryDTO, AlertDeliveriesFacets>;
 
 /**
- * The org's delivery ledger for `query` — filtered in SQL and THEN windowed, so a status
- * nobody sent recently is still findable, plus status facet counts over the whole
- * UNFILTERED ledger (a single grouped aggregate, not a fetch-and-tally).
+ * One keyset page of the org's delivery ledger for `query` (epic #7481, LST-7 #7489).
+ *
+ * The ledger is append-only, so it is paged, never windowed: it used to return the newest 50 (at
+ * most 200) and leave every older delivery unreachable, with a "showing the newest N of M" line in
+ * place of a way to reach them. Now the rows pass is filtered in SQL, ordered by
+ * `(created_at truncated to ms, id)` descending — a TOTAL order, so two deliveries in one
+ * millisecond can neither be skipped nor repeated at a page boundary — and cut after the request's
+ * cursor. Any row in the ledger is reachable by walking the pages.
+ *
+ * The status facet is a single grouped aggregate over the org's UNFILTERED ledger, issued on the
+ * first page only (a later page walks the same universe), and it also answers `universeEmpty`.
+ * There is no result count: totals exist only as facet option counts (README → "Counts").
  */
 export async function queryAlertDeliveriesPage(
 	orgId: string,
 	query: AlertDeliveriesQuery = {},
+	page: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<AlertDeliveriesPage> {
 	const db = getServiceDb();
 	const search = searchTerm(query.search);
 	const like = search ? likeTerm(search) : undefined;
 	const statuses = narrowTo(alertDeliveryStatus.enumValues, query.status);
-	const limit = Math.min(
-		Math.max(1, Math.trunc(query.limit ?? DELIVERIES_LIMIT)),
-		DELIVERIES_MAX_LIMIT,
-	);
+	const sortKey = keysetSortKey(alertDeliveries.created_at);
+	const scope = eq(alertDeliveries.org_id, orgId);
 
 	const filterConditions = [
 		statuses ? inArray(alertDeliveries.status, statuses) : undefined,
@@ -486,49 +498,44 @@ export async function queryAlertDeliveriesPage(
 			: undefined,
 	].filter((c) => c !== undefined);
 
-	const [rows, facetRows] = await Promise.all([
-		// ROWS: org scope + the query's predicates, newest first, then the window.
+	const [fetched, facetRows] = await Promise.all([
+		// ROWS: org scope + the query's predicates + the cursor, in the total order, one extra row
+		// read so the end of the ledger is known exactly.
 		db
 			.select()
 			.from(alertDeliveries)
-			.where(and(eq(alertDeliveries.org_id, orgId), ...filterConditions))
-			.orderBy(desc(alertDeliveries.created_at))
-			.limit(limit),
-		// FACETS: the org predicate ONLY, aggregated in the database.
-		db
-			.select({ status: alertDeliveries.status, n: count() })
-			.from(alertDeliveries)
-			.where(eq(alertDeliveries.org_id, orgId))
-			.groupBy(alertDeliveries.status),
+			.where(
+				and(
+					scope,
+					...filterConditions,
+					keysetAfter(sortKey, alertDeliveries.id, page.cursor),
+				),
+			)
+			.orderBy(...keysetOrderBy(sortKey, alertDeliveries.id))
+			.limit(keysetFetchLimit(page.limit)),
+		// FACETS: the org predicate ONLY, aggregated in the database — first page only.
+		page.cursor === undefined
+			? db
+					.select({ status: alertDeliveries.status, n: count() })
+					.from(alertDeliveries)
+					.where(scope)
+					.groupBy(alertDeliveries.status)
+			: null,
 	]);
 
-	const statusCounts = new Map<string, number>();
-	let total = 0;
-	for (const r of facetRows) {
-		statusCounts.set(r.status, r.n);
-		total += r.n;
-	}
-
-	// A window that is not full holds every match, so its length IS the count. Only a full one can
-	// be hiding older matches, and only then is the true count asked for — with the rows pass's own
-	// predicates, so it counts exactly what the window was cut from.
-	const resultCount =
-		rows.length < limit
-			? rows.length
-			: ((
-					await db
-						.select({ n: count() })
-						.from(alertDeliveries)
-						.where(and(eq(alertDeliveries.org_id, orgId), ...filterConditions))
-				)[0]?.n ?? rows.length);
-
-	return {
-		rows: rows.map(toDeliveryDTO),
-		resultCount,
-		limit,
-		total,
-		facets: {
-			status: orderedOptions(statusCounts, DELIVERY_STATUS_ORDER),
-		},
-	};
+	const cut = keysetPage(fetched, page.limit, (r) => ({ at: r.created_at, id: r.id }));
+	return keysetListPage(
+		{ rows: cut.rows.map(toDeliveryDTO), nextCursor: cut.nextCursor },
+		facetRows === null
+			? null
+			: {
+					facets: {
+						status: orderedOptions(
+							new Map(facetRows.map((r) => [r.status, r.n])),
+							DELIVERY_STATUS_ORDER,
+						),
+					},
+					universeEmpty: facetRows.every((r) => r.n === 0),
+				},
+	);
 }

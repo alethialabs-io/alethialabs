@@ -6,7 +6,7 @@
 // route's `loading.tsx` is a server component.
 //
 // It is the loaded page's own geometry, not a sketch of it: the filter bar (search + funnel), the
-// "Environments" heading with its count pill, the posture table drawn with the table's real header
+// "Environments" heading (no count beside it, #7481), the posture table drawn with the table's real header
 // cells and column widths (`evidence-layout.ts`) — one project group header and its environment
 // rows, two text lines each like the real ones — and the waivers panel below it.
 
@@ -77,10 +77,9 @@ export function EvidenceSkeleton({ rows = 3 }: { rows?: number }) {
 				<Skeleton className="size-10 rounded-md" />
 			</div>
 
-			{/* "Environments" + its count pill. */}
+			{/* The "Environments" heading. */}
 			<div className="mb-2.5 flex items-center gap-2">
 				<Skeleton className="h-5 w-28" />
-				<Skeleton className="h-5 w-7 rounded-full" />
 			</div>
 
 			<div className={EVIDENCE_CARD}>

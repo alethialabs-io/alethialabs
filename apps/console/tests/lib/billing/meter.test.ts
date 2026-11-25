@@ -13,11 +13,18 @@ vi.mock("@/lib/billing/config", () => ({
 }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+vi.mock("@/lib/billing/paddle/config", () => ({ isPaddleConfigured: vi.fn(() => false), getPaddleConfig: vi.fn() }));
+const { paddleReport } = vi.hoisted(() => ({ paddleReport: vi.fn(async () => true) }));
+vi.mock("@/lib/billing/provider/select", async (orig) => {
+	const real = await orig<typeof import("@/lib/billing/provider/select")>();
+	return { ...real, providerById: vi.fn(() => ({ reportJobUsage: paddleReport })) };
+});
 
 import { reportJobUsageOnce, reportRunnerMinutes } from "@/lib/billing/meter";
 import { isStripeConfigured } from "@/lib/billing/config";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
+import { isPaddleConfigured } from "@/lib/billing/paddle/config";
 
 function mockStripe() {
 	const create = vi.fn(async () => ({}));
@@ -49,6 +56,7 @@ function mockDb(selectRows: unknown[], updateRows: unknown[] = [{ id: "j1" }]) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(isStripeConfigured).mockReturnValue(true);
+	vi.mocked(isPaddleConfigured).mockReturnValue(false);
 });
 
 describe("reportRunnerMinutes", () => {
@@ -83,7 +91,7 @@ const managedRow = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("reportJobUsageOnce — guards", () => {
-	it("no-ops when Stripe isn't configured (no DB touch)", async () => {
+	it("no-ops when neither Stripe nor Paddle is configured (no DB touch)", async () => {
 		vi.mocked(isStripeConfigured).mockReturnValue(false);
 		await reportJobUsageOnce("j1");
 		expect(getServiceDb).not.toHaveBeenCalled();
@@ -177,5 +185,47 @@ describe("reportJobUsageOnce — meter identifier (#5746)", () => {
 			"runner_minutes-job-j1",
 			"runner_minutes-job-j2",
 		]);
+	});
+});
+
+// L5: an org billed through Paddle has no provider meter. Its job is delegated to the Paddle
+// adapter (which records it in our own ledger) and Stripe is never called — even on an instance
+// where Stripe is configured too.
+describe("reportJobUsageOnce — Paddle delegation (L5)", () => {
+	const paddleRow = (over: Record<string, unknown> = {}) =>
+		managedRow({ orgId: "org-1", billingProvider: "paddle", paddleSubscriptionId: "sub_1", paddleCustomerId: "ctm_1", customerId: null, ...over });
+
+	it("delegates a Paddle org's minutes to the Paddle adapter and never meters Stripe", async () => {
+		vi.mocked(isPaddleConfigured).mockReturnValue(true);
+		const { create } = mockStripe();
+		const { setSpy } = mockDb([paddleRow()], [{ id: "j1" }]);
+		await reportJobUsageOnce("j1");
+		expect(paddleReport).toHaveBeenCalledWith({ organizationId: "org-1", customerId: "ctm_1", minutes: 2, idempotencyKey: "j1" });
+		expect(create).not.toHaveBeenCalled();
+		expect(setSpy).not.toHaveBeenCalledWith({ usage_reported_at: null });
+	});
+
+	it("works on an instance with Paddle and no Stripe", async () => {
+		vi.mocked(isStripeConfigured).mockReturnValue(false);
+		vi.mocked(isPaddleConfigured).mockReturnValue(true);
+		mockDb([paddleRow()], [{ id: "j1" }]);
+		await reportJobUsageOnce("j1");
+		expect(paddleReport).toHaveBeenCalledTimes(1);
+	});
+
+	it("leaves a Stripe subscriber on the Stripe meter when Paddle is also configured", async () => {
+		vi.mocked(isPaddleConfigured).mockReturnValue(true);
+		const { create } = mockStripe();
+		mockDb([managedRow({ orgId: "org-1", billingProvider: "stripe", stripeSubscriptionId: "sub_s" })], [{ id: "j1" }]);
+		await reportJobUsageOnce("j1");
+		expect(create).toHaveBeenCalledTimes(1);
+		expect(paddleReport).not.toHaveBeenCalled();
+	});
+
+	it("does nothing for a Paddle org when the concurrent claim is lost", async () => {
+		vi.mocked(isPaddleConfigured).mockReturnValue(true);
+		mockDb([paddleRow()], []);
+		await reportJobUsageOnce("j1");
+		expect(paddleReport).not.toHaveBeenCalled();
 	});
 });

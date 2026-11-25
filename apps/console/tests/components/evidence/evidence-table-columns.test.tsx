@@ -12,10 +12,20 @@
 //   · the environment cell's content contributes no width (`w-0 min-w-full`), so a long name
 //     truncates instead of widening the table.
 
-import { render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+import type { FakeHandler } from "@/tests/helpers/fake-orpc";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "acme" }) }));
+
+// The waivers panel reads its own list (`evidence.waivers`, #7488): one waiver, page one, the end.
+const rpc = vi.hoisted(() => ({ handlers: {} as Record<string, FakeHandler> }));
+vi.mock("@/lib/rpc/client", async () => {
+	const { fakeOrpc } = await import("@/tests/helpers/fake-orpc");
+	return { orpc: fakeOrpc(rpc.handlers).orpc };
+});
 
 const { EvidenceTable } = await import("@/components/evidence/evidence-table");
 const { EvidenceSkeleton } = await import("@/components/evidence/evidence-skeleton");
@@ -86,25 +96,33 @@ describe("evidence column widths (F019)", () => {
 		expect(headerWidths(container)).toEqual(EXPECTED);
 	});
 
-	it("the waivers table declares no <colgroup> and leaves its prose column unsized", () => {
-		const { container } = render(
-			<EvidenceWaivers
-				org="acme"
-				waivers={[
-					{
-						jobId: "j1",
-						projectName: "payments",
-						environmentName: "prod",
-						controls: ["KEYLESS-001"],
-						reason: "window",
-						by: "admin@example.test",
-						expiry: null,
-						active: true,
-						createdAt: "2026-10-01T00:00:00.000Z",
-					},
-				]}
-			/>,
+	it("the waivers table declares no <colgroup> and leaves its prose column unsized", async () => {
+		const id = "00000000-0000-4000-8000-000000000001";
+		rpc.handlers["evidence.waivers"] = async () => ({
+			rows: [
+				{
+					id,
+					jobId: id,
+					projectName: "payments",
+					environmentName: "prod",
+					controls: ["KEYLESS-001"],
+					reason: "window",
+					by: "admin@example.test",
+					expiry: null,
+					active: true,
+					createdAt: "2026-10-01T00:00:00.000Z",
+				},
+			],
+			nextCursor: null,
+			facets: null,
+			universeEmpty: false,
+		});
+		const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={qc}>{children}</QueryClientProvider>
 		);
+		const { container } = render(<EvidenceWaivers org="acme" />, { wrapper });
+		await screen.findByText("window");
 		expect(container.querySelector("colgroup")).toBeNull();
 		expect(headerWidths(container)).toEqual(["w-[24%]", "", "w-[170px]", "w-[128px]"]);
 	});

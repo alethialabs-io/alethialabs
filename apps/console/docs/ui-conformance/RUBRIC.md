@@ -719,7 +719,10 @@ not in a component it renders.
 `apps/console/scripts/audit-report.mjs` generates [`scoreboard.md`](./scoreboard.md) and
 `apps/console/ui-conformance-baseline.json`: `pnpm -F console audit:report --write` regenerates
 them, a bare `pnpm -F console audit:report` checks them against the tree and exits 2 naming the
-command — the contract `PROGRAMME.md`'s derived half uses. Never hand-edit either file.
+command. Never hand-edit either file. **A pull request does not commit them** (#7594): their
+aggregate totals merge cleanly and wrongly across parallel PRs, so CI only *reports* a PR's diff
+against them, and `.github/workflows/ui-conformance-scoreboard.yml` regenerates `dev`'s copy into
+one bot PR after every merge, going red if `dev` stays stale for more than 24 hours.
 
 **The live half is measured in CI and committed, not inferred.** TWO Playwright projects write
 THREE files — `test-results/ui-audit.json` (T5, T6, R1–R7, as the run's own owner in a fresh empty

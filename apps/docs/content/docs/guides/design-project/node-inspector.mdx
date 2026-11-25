@@ -1,152 +1,100 @@
 ---
-title: The node inspector
-description: Use the one docked panel beside the canvas to rename a resource, edit its settings, connect a service, read its status and cost, and duplicate or delete it, without leaving the board.
+title: Use the inspector
+description: Rename a resource, change its settings, connect a service, read its status and cost, and duplicate, delete or destroy, from the panel beside the canvas.
 ---
 
-The inspector is the one panel docked on the right of the [canvas](/guides/design-project/the-canvas).
-Everything you select on the board opens in it: a resource, the vault of secrets, an add-on, a chart,
-the environment itself, or several cards at once. It does not cover the board, so the board stays
-usable while it is open.
+Change a resource from the inspector, the panel docked on the right of the
+[canvas](/guides/design-project/the-canvas). The board stays usable while it is open.
 
-<Callout>
-The inspector is part of the **Architecture** view only. It opens when you select something and
-closes when nothing is selected.
-</Callout>
+## Before you begin
+
+- Open a project's **Architecture** view.
 
 ## Open and close the inspector
 
-1. Open a project's **Architecture** view.
-2. Click a card. To use the keyboard instead, move the focus to the card with **Tab** and press
-   **Enter**.
+1. Select a card. With the keyboard, move to it with **Tab** and press **Enter**.
+2. To close the inspector, select an empty area of the board, select **✕**, or press **Esc**.
 
-Clicking a different card switches the inspector to that card. To close it, click an empty area of
-the board, click **✕** in the inspector, or press **Esc**.
-
-While the [review view](/guides/design-project/the-canvas) is open, opening a card puts the review
-aside. Close the card and the review comes back.
-
-## What the inspector shows
-
-Every subject is drawn in the same frame, in the same order, so the name, the state and the close
-control are always in the same place:
-
-1. **Back**, only when you came from another subject (for example a secret you opened from the vault).
-2. **Identity**: the icon, the kind, the name, and a one-line summary.
-3. **One action**, when there is an obvious next step. A resource that needs setup offers
-   **Open settings** from its other tabs.
-4. **Status**: one badge and one sentence. If the cloud has drifted from what Alethia recorded, a
-   `N drifted` chip rides beside it; hover it to see the OpenTofu addresses that drifted.
-5. **Tabs**, when the subject has more than one view.
-6. **Messages**: what is staged and what went wrong, in one place.
-7. **The body**, which scrolls on its own.
-
-There is no **Save** button in the inspector. An edit goes into the design as soon as you make it,
-and the changes bar at the bottom of the board counts it. Review and deploy your changes from there.
-
-What opens depends on what you select:
+Every subject has the same layout. From the top: **Back**, when you came from another subject. Then
+the icon, kind, name and a summary. Then one suggested action, a status badge, the tabs, messages,
+and the body.
 
 | You select | The inspector shows |
 | --- | --- |
 | A resource | **Settings** and **Status**, and **Connections** for a service |
-| The secrets vault | Its members, with a filter. A row opens that secret, with **Back** to the vault |
+| The secrets vault | Its secrets, with a filter. A row opens that secret |
 | An add-on | Its configuration and how it is installed |
 | A bring-your-own chart | Its safety scan |
-| A chart workload | What the chart describes, and how it is connected |
-| An external card from a bring-your-own IaC module | The read-only list of its resources |
+| A chart workload | What the chart describes, and its connections |
+| A bring-your-own IaC card | The read-only list of its resources |
 | The environment | **Settings**, **Sources**, **Status** and **Activity** |
-| Several cards | What you can do to all of them at once: **Duplicate** or **Remove**, as one undo step |
+| Several cards | **Duplicate** or **Remove**, as one undo step |
+
+There is no **Save** button. Each edit goes into the design at once, and the changes bar counts it.
 
 ## Rename a resource
 
-The name is in the identity row, next to the kind.
-
-1. Click the name.
+1. Select the name in the identity row.
 2. Type the new name.
 
-Only resources with a name of their own can be renamed: the project, and the resources you can add
-many of (databases, caches, secrets, and so on). For those, the name is made lowercase as you type, to
-match cloud naming rules.
+You can rename the project and any resource you can add more than one of. Names are lowercased as
+you type, to match cloud naming rules.
 
-<Callout>
-The cloud account is **not** set in the inspector. It is chosen once, when the project is created, so
-there is no cloud selector per resource.
-</Callout>
+## Change settings
 
-## Edit settings (Settings)
+1. Open the **Settings** tab.
+2. Select a group to open it. A collapsed group shows a summary of its values.
+3. Edit a field. The change applies when you leave the field, or when you close the inspector or
+   select another card.
 
-The **Settings** tab is where you change a resource. Its fields come from the resource's own
-configuration schema, so each kind shows only the settings that apply to it.
+A group with a value that would stop the deploy opens by itself, and the problem shows under the
+field. A group for one cloud carries a badge, such as `AWS only`. Groups for other clouds are not
+shown. The inspector remembers which groups you open for each kind.
 
-The fields are in groups, one column wide. When you first open a resource, a group is open only if
-it holds a value that would stop the deploy, such as a required field that is empty. Every other group
-is collapsed, and shows a one-line summary of its values, so you can read the resource without
-opening anything.
+The cloud account is not set here. It is chosen once, when the project is created.
 
-1. Click a group to open it.
-2. Edit a field. The change goes into the design when you leave the field.
+## Connect a service
 
-A problem with a value is shown under the field. A group that you opened to fix a problem stays open
-while you type, even after the value becomes valid. The inspector remembers which groups you open
-and close for each kind of resource.
+1. Select a service and open **Connections**.
+2. Add the database, cache, queue or secret it uses, and choose what it gets from each one.
 
-A value you typed is kept even if you leave without leaving the field first: close the inspector or
-select another card and the value still goes to the resource you typed it into.
+A connection you draw on the board opens this tab too.
 
-Groups that apply to one cloud only carry a badge with that cloud's name (for example `AWS only`). A
-group that does not apply to your project's cloud is not shown.
+## Read status, endpoints and cost
 
-<Callout type="warn">
-A **core** resource placed on a different cloud than the project is **gated**: **Settings** shows a
-notice that it can be drawn, but the project does not provision until the resource is on the
-project's cloud.
-</Callout>
-
-## Connect a service (Connections)
-
-A service has a **Connections** tab. It lists the backing infrastructure the service uses (databases,
-caches, queues and secrets) and what Alethia gives the service from each one when it deploys.
-
-You can add a connection here, or draw it on the board: drag from the service's bottom handle to a
-card, or select the service and press **C**. A connection drawn on the board opens this tab, so you
-can choose what the service gets from it. See
-[The canvas → Connect a service to what it uses](/guides/design-project/the-canvas).
-
-## Read status, endpoints and cost (Status)
-
-The **Status** tab is read only:
+The **Status** tab is read-only:
 
 | Section | Shows |
 | --- | --- |
-| **State** | The resolved state and the reason for it |
-| **Endpoints** | What the deploy produced, for example a database hostname, each with a copy button |
+| **State** | The state and the reason for it |
+| **Endpoints** | What the deploy produced, such as a database hostname, each with a copy button. Shown after a deploy. |
 | **Drift** | Each OpenTofu address that drifted |
-| **Cost** | The monthly cost from the last plan, itemised by OpenTofu address |
-
-Endpoints appear only after the resource is deployed. A resource that was never priced says
-**Not priced yet** rather than showing `$0`. Review a plan from the changes bar and its cost appears.
-See [The canvas → Status without colour](/guides/design-project/the-canvas) for what each state means.
+| **Cost** | The monthly cost from the last plan, per OpenTofu address. **Not priced yet** until a plan runs. |
 
 ## Duplicate or delete a resource
 
-The **Danger zone** is at the bottom of the **Settings** tab.
+1. Open **Settings** and scroll to **Danger zone**.
+2. Select **Duplicate** to copy the resource, or **Delete** to remove it. Press **⌘Z** to undo.
 
-- **Duplicate**: creates a copy with the same configuration. It is offered for the resources you can
-  add many of.
-- **Delete**: removes the resource from the design. Press **⌘Z** to undo it.
-
-You can also select a card on the board and press **Delete**, or right-click it and choose
-**Remove**.
-
-The Danger zone is not shown for the project, which cannot be deleted, or for resources that are
-managed where they were installed, such as add-ons and bring-your-own charts.
+You can also select a card and press **Delete**, or right-click it and choose **Remove**. The
+project, add-ons and bring-your-own charts have no **Danger zone**.
 
 ## Destroy an environment
 
-The environment's **Settings** tab carries **Destroy**. To open the environment, click its name at the
-start of the toolbar, or choose **Environment settings** from the **⋯** menu.
-
-1. Open the environment's **Settings** tab.
-2. Click **Destroy**.
+1. Select the environment's name in the toolbar, or choose **Environment settings** from the **⋯**
+   menu.
+2. On **Settings**, select **Destroy**.
 3. Confirm with **Destroy environment**.
 
-This queues a `DESTROY` job that removes the environment's cloud infrastructure. It cannot be undone.
+This queues a job that removes the environment's cloud infrastructure. You cannot undo it.
+
+## Check that it worked
+
+The changes bar counts your edit as a pending change. After you deploy, **Status** shows the new
+state and endpoints.
+
+## Related
+
+- [Use the canvas](/guides/design-project/the-canvas)
+- [Read the canvas](/concepts/canvas): what each state means.
+- [Troubleshoot a destroy](/troubleshooting/destroy): when a destroy does not finish.

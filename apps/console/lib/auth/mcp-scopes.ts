@@ -49,10 +49,20 @@ export function agentScopesFromClaims(claims: { scope?: unknown }): McpScopeRead
 
 /**
  * The ceiling an MCP access token carries, or `null` when its scopes cannot be read (see
- * {@link agentScopesFromClaims}); a `null` is a refusal. The project list is every project: a
- * per-grant list arrives with the consent page's project picker.
+ * {@link agentScopesFromClaims}) or the project list is empty; a `null` is a refusal.
+ *
+ * `projectIds` is the consent grant's project list (`agent_oauth_grants.project_ids`), and `null`
+ * means every project in the org — what a grant without a project choice, and a token with no grant
+ * row at all, carry. It is required so that no caller can drop the grant's projects by omission.
  */
-export function ceilingFromAccessTokenClaims(claims: { scope?: unknown }): ScopeCeiling | null {
+export function ceilingFromAccessTokenClaims(
+	claims: { scope?: unknown },
+	projectIds: readonly string[] | null,
+): ScopeCeiling | null {
 	const reading = agentScopesFromClaims(claims);
-	return reading.ok ? { scopes: reading.scopes, projectIds: null } : null;
+	if (!reading.ok) return null;
+	// ScopeCeiling.projectIds is never empty: an empty list would read as "no limit" to a careless
+	// reader, so it is refused here rather than carried.
+	if (projectIds !== null && projectIds.length === 0) return null;
+	return { scopes: reading.scopes, projectIds: projectIds === null ? null : [...projectIds] };
 }

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The handlers behind the declared external tools (lib/ai/mcp/surface.ts) that the MCP server serves
-// under their own names: the operations a connected agent runs — plan, apply, destroy — and the job
-// tools it follows them with.
+// under their own names: the operations a connected agent runs — scan, plan, apply, destroy — the job
+// tools it follows them with, and feedback. The reads live in lib/ai/mcp/reads.ts and the design
+// tools in lib/ai/mcp/design.ts; HANDLED_TOOL_NAMES below names all three modules' tools.
 //
 // HOW AN APPLY OR A DESTROY RUNS. `request_apply` / `request_destroy` are the only tools that can
 // lead to a DEPLOY or a DESTROY, and they lead to one only through a person:
@@ -27,23 +28,21 @@ import "server-only";
 import { z } from "zod";
 import { destroyProject, planProject, provisionProject } from "@/app/server/actions/projects";
 import { cancelJob } from "@/app/server/actions/jobs";
+import { scanRepo } from "@/app/server/actions/scanner";
 import type { ActionResult } from "@/lib/actions/result";
 import { approvePath } from "@/lib/approvals/http";
 import type { ApprovalView } from "@/lib/approvals/read";
-import type { AgentScope, ApplyOperation } from "@/lib/approvals/types";
+import type { ApplyOperation } from "@/lib/approvals/types";
 import type { Actor } from "@/lib/authz/types";
 import { isEnumMember } from "@/lib/coerce";
 import { readJobStatus } from "@/lib/rpc/procedures/jobs";
 import { appliedPlanFor, findOwnApproval, readOwnOrgApproval, requestOwnApproval } from "./approval-store";
 import { readJobLogPage, type JobLogPage } from "./job-logs";
+import { DESIGN_TOOL_NAMES } from "./design";
+import { type FeedbackSubmission, sendAgentFeedback } from "./feedback";
+import { READ_TOOL_NAMES } from "./reads";
+import { type HandledTool, type HandlerContext, McpToolRefusal, served } from "./served";
 import { EXTERNAL_TOOLS, type ExternalToolName } from "./surface";
-
-/** Who is calling, and where the console a person approves in lives. */
-export interface HandlerContext {
-	actor: Actor;
-	/** The console's origin, e.g. `https://alethialabs.io`; approval links are built on it. */
-	appOrigin: string;
-}
 
 /** Everything the handlers reach outside themselves, so tests can stand each one in. */
 export interface HandlerDeps {
@@ -65,21 +64,12 @@ export interface HandlerDeps {
 	jobStatus(jobId: string): Promise<{ status: string; error_message: string | null }>;
 	jobLogPage(jobId: string, afterId: number, limit: number): Promise<JobLogPage>;
 	cancelJob(jobId: string): Promise<ActionResult<null>>;
+	/** Queues a repository scan; a repeated `key` returns the first scan's job. */
+	queueScan(input: { repo: string; key: string }): Promise<{ jobId: string }>;
+	/** Hands feedback to the vendor inbox; false when this deployment has none. */
+	sendFeedback(actor: Actor, submission: FeedbackSubmission): Promise<boolean>;
 	sleep(ms: number): Promise<void>;
 	now(): number;
-}
-
-/** A refusal a tool answers with: a machine-readable code and a sentence for the person. */
-export class McpToolRefusal extends Error {
-	/** The machine-readable reason. */
-	readonly code: string;
-
-	/** Builds the refusal from its reason and the sentence to show. */
-	constructor(code: string, message: string) {
-		super(message);
-		this.name = "McpToolRefusal";
-		this.code = code;
-	}
 }
 
 /** The statuses after which a job changes no more. */
@@ -118,6 +108,8 @@ export const defaultHandlerDeps: HandlerDeps = {
 	jobStatus: readJobStatus,
 	jobLogPage: readJobLogPage,
 	cancelJob: (jobId) => cancelJob({ jobId }),
+	queueScan: ({ repo, key }) => scanRepo(repo, { idempotencyKey: key }),
+	sendFeedback: sendAgentFeedback,
 	sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 	now: () => Date.now(),
 };
@@ -163,43 +155,30 @@ async function requestOrComplete(
 	return approvalResult(view, ctx, jobId);
 }
 
-/** The schemas of one declared tool. */
-interface ToolSchemas<I extends z.ZodObject, O extends z.ZodObject> {
-	scope: AgentScope | null;
-	inputSchema: I;
-	outputSchema: O;
-}
-
-/** One served tool: the scope it needs and the call that validates, runs and validates again. */
-export interface HandledTool {
-	scope: AgentScope | null;
-	call(rawInput: unknown, ctx: HandlerContext): Promise<Record<string, unknown>>;
-}
-
-/**
- * Pairs a declared tool's schemas with its handler. The input is parsed by the tool's own schema and
- * the result by its own output schema, so a handler can return neither more nor other than the
- * contract says.
- */
-function served<I extends z.ZodObject, O extends z.ZodObject>(
-	contract: ToolSchemas<I, O>,
-	run: (input: z.output<I>, ctx: HandlerContext) => Promise<z.input<O>>,
-): HandledTool {
-	const output: z.ZodObject = contract.outputSchema;
-	return {
-		scope: contract.scope,
-		call: async (rawInput, ctx) => output.parse(await run(contract.inputSchema.parse(rawInput), ctx)),
-	};
-}
-
-/** The declared tools this module serves. Every other declared tool is not listed yet. */
-export const HANDLED_TOOL_NAMES = [
+/** The declared tools this module serves: the operations, the job tools, the scan and feedback. */
+const OPERATION_TOOL_NAMES = [
+	"scan_repo",
 	"plan",
 	"request_apply",
 	"request_destroy",
 	"wait_for_job",
 	"get_job_logs",
 	"cancel_job",
+	"send_feedback",
+] as const satisfies readonly ExternalToolName[];
+
+/** One of {@link OPERATION_TOOL_NAMES}. */
+export type OperationToolName = (typeof OPERATION_TOOL_NAMES)[number];
+
+/**
+ * Every declared tool that has a handler, across the three handler modules: the reads
+ * (lib/ai/mcp/reads.ts), the design tools (lib/ai/mcp/design.ts) and the ones here. Today that is
+ * all nineteen; `tests/lib/ai/mcp/surface.test.ts` fails when a declared tool is missing.
+ */
+export const HANDLED_TOOL_NAMES = [
+	...READ_TOOL_NAMES,
+	...DESIGN_TOOL_NAMES,
+	...OPERATION_TOOL_NAMES,
 ] as const satisfies readonly ExternalToolName[];
 
 /** One of {@link HANDLED_TOOL_NAMES}. */
@@ -210,9 +189,24 @@ export function isHandledToolName(name: string): name is HandledToolName {
 	return isEnumMember(name, HANDLED_TOOL_NAMES);
 }
 
-/** The handlers, over `deps`. */
-export function createHandlers(deps: HandlerDeps = defaultHandlerDeps): Record<HandledToolName, HandledTool> {
+/** The operation, job, scan and feedback handlers, over `deps`. */
+export function createHandlers(deps: HandlerDeps = defaultHandlerDeps): Record<OperationToolName, HandledTool> {
 	return {
+		scan_repo: served(EXTERNAL_TOOLS.scan_repo, async (input) => {
+			const { jobId } = await deps.queueScan({
+				repo: input.repo,
+				key: `${MCP_KEY_PREFIX}${input.idempotency_key}`,
+			});
+			return { job_id: jobId };
+		}),
+
+		send_feedback: served(EXTERNAL_TOOLS.send_feedback, async (input, ctx) => ({
+			received: await deps.sendFeedback(ctx.actor, {
+				text: input.text,
+				missingCapability: input.missing_capability ?? null,
+			}),
+		})),
+
 		plan: served(EXTERNAL_TOOLS.plan, async (input) => {
 			const { jobId } = await deps.queuePlan({
 				projectId: input.project_id,

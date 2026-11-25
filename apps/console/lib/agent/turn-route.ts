@@ -85,7 +85,8 @@ import {
 	TURN_REFUSAL_STATUS,
 } from "./turn-claims";
 import { inAppAgentActor } from "./in-app-credential";
-import { AGENT_ACCESS_DISABLED_SYSTEM, guardAgentTools } from "./kill-switch";
+import { agentAccessDisabledSystem, guardAgentTools } from "./kill-switch";
+import type { AgentSurface } from "./support-surface";
 import { pendingClientToolCalls, type TurnRequest } from "./turn-key";
 
 /** The transient part the stream opens with, once the turn is accepted (ADR 0003 §5.1 step 9). */
@@ -618,9 +619,12 @@ async function streamAcceptedTurn<R>(
 		// `currentActor()`; a deploy or destroy it asks for then needs a person's approval (table 4.2).
 		const toolActor = inAppAgentActor(actor, turn.threadId);
 		// The org's kill switch (#7477): while agent access is off every tool the model calls is refused,
-		// reads included, and the prompt says so. Read here and again before each tool call.
-		const guarded = await guardAgentTools(prepared.tools, toolActor);
-		const system = guarded.disabledAtStart ? `${prepared.system}\n\n${AGENT_ACCESS_DISABLED_SYSTEM}` : prepared.system;
+		// reads included, and the prompt says so. Read here and again before each tool call. The surface
+		// is the ROUTE's thread kind, never the body's: only the support route declares `support`, and
+		// there the documentation search and the support-case proposal stay available (#7646).
+		const surface: AgentSurface = spec.threadKind ?? "agent";
+		const guarded = await guardAgentTools(prepared.tools, toolActor, surface);
+		const system = guarded.disabledAtStart ? `${prepared.system}\n\n${agentAccessDisabledSystem(surface)}` : prepared.system;
 
 		const stream = createUIMessageStream({
 			execute: ({ writer }) => runWithActor(toolActor, async () => {

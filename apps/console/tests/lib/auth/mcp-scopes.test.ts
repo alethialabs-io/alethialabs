@@ -49,15 +49,26 @@ describe("agentScopesFromClaims", () => {
 });
 
 describe("ceilingFromAccessTokenClaims", () => {
-	it("limits to the granted scopes over every project", () => {
-		expect(ceilingFromAccessTokenClaims({ scope: "openid read" })).toEqual({
+	it("limits a token with no project list to its scopes over every project", () => {
+		expect(ceilingFromAccessTokenClaims({ scope: "openid read" }, null)).toEqual({
 			scopes: ["read"],
 			projectIds: null,
 		});
 	});
 
+	it("carries the consent grant's project list in place of every project", () => {
+		expect(ceilingFromAccessTokenClaims({ scope: "read plan" }, ["p1", "p2"])).toEqual({
+			scopes: ["read", "plan"],
+			projectIds: ["p1", "p2"],
+		});
+	});
+
 	it("is null — a refusal — when the scopes cannot be read", () => {
-		expect(ceilingFromAccessTokenClaims({ scope: "openid" })).toBeNull();
-		expect(ceilingFromAccessTokenClaims({ scope: "read write" })).toBeNull();
+		expect(ceilingFromAccessTokenClaims({ scope: "openid" }, null)).toBeNull();
+		expect(ceilingFromAccessTokenClaims({ scope: "read write" }, ["p1"])).toBeNull();
+	});
+
+	it("is null — a refusal, never \"no limit\" — for an empty project list", () => {
+		expect(ceilingFromAccessTokenClaims({ scope: "read" }, [])).toBeNull();
 	});
 });
