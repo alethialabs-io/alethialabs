@@ -1,0 +1,115 @@
+---
+title: The apps repository
+description: How ArgoCD syncs an environment's apps repository, what Alethia commits back into it, how a shared-cluster placement differs, and what your manifests may create.
+---
+
+The apps repository is the Git repository ArgoCD syncs an environment's application manifests from.
+Alethia wires ArgoCD to it at every deploy; after that, a commit to its default branch is a deploy.
+To connect one, see [Connect an apps repository](/guides/design-project/repositories).
+
+```text
+  apps repository (default branch)
+    ├── <synced path>      ──►  Application "apps"             (one directory)
+    ├── overlays/<name>/   ──►  ApplicationSet "apps-overlays" (only with no overlay path)
+    └── addons/            ──►  Application "addons"           (recursive)
+```
+
+## How it works
+
+### On a dedicated cluster
+
+Naming a repository creates an ArgoCD Application called `apps`. It tracks `HEAD`, the default
+branch, and syncs one path: the overlay path, or the root. It does not read subdirectories. No
+field changes the tracked branch.
+
+Alethia also creates an `addons` Application for the `addons/` directory, which does read
+subdirectories. It exists from the first deploy, so until `addons/` exists in Git, ArgoCD reports it
+as a ComparisonError. The error clears when the first GitOps add-on is seeded or when you create the
+directory.
+
+With no overlay path, an `apps-overlays` ApplicationSet scans the root for `overlays/*` and creates
+one Application per directory (`overlays/dev` becomes `apps-dev`). With an overlay path, it is not
+created: discovery starts at the root and matches every overlay, so two environments would fight
+over the same resources.
+
+### How the sync behaves
+
+The Application syncs automatically, prunes and self-heals:
+
+- A commit to the default branch deploys.
+- Deleting a manifest deletes its resource.
+- A hand edit to a resource is undone at the next sync.
+- A manifest's namespace must already exist. The Application declares no destination namespace, so
+  ArgoCD creates none. Put a `Namespace` manifest in the same directory.
+
+### Access
+
+At each deploy, Alethia connects ArgoCD to the repository:
+
+1. With the job owner's Git token, as the Secret `repo-apps` in the `argocd` namespace.
+2. Without a token, if an anonymous probe of the `https://` URL succeeds.
+3. Otherwise the deploy fails and says to connect the Git provider or make the repository public.
+
+Alethia sends each provider the username it requires with the token: `x-access-token` for GitHub,
+`oauth2` for GitLab, `x-token-auth` for Bitbucket. Bitbucket refuses any other username.
+
+### What Alethia commits back
+
+On a dedicated cluster, with a Git token, Alethia can push two things. It never changes your own
+files.
+
+- **Service manifests.** If the project has services and the repository root holds no `.yaml` or
+  `.yml` file, Alethia generates manifests for them and commits them to the root. Only the root is
+  checked, so a repository whose manifests are all under `overlays/` still gets them. One manifest
+  at the root opts the repository out. An environment with an overlay path does not sync the root,
+  so it does not deliver these.
+- **GitOps add-on manifests.** Enabling an add-on in GitOps mode writes `addons/<add-on>.yaml` once
+  and never overwrites it. When the add-on leaves GitOps mode, Alethia removes only the files it
+  wrote, which carry the label `alethia.io/managed-by: addon-marketplace`.
+
+### Which Git providers support GitOps mode
+
+| Provider | GitOps mode | Why |
+| --- | --- | --- |
+| GitHub | Yes | The connection can push. |
+| GitLab | No | The connection asks for `read_repository`, which cannot push. |
+| Bitbucket | No | The connection asks for `repository`, which is read-only. |
+
+The console refuses GitOps mode for an apps repository off GitHub, or on a host that matches no
+connected provider. It refuses when you choose the mode and again before a plan, build or deploy;
+the second refusal names each GitOps add-on. Both say to use Managed delivery instead. Reading the
+repository works on all three providers.
+
+### On a shared cluster
+
+A [namespace or vcluster placement](/concepts/fabrics-and-placement) gets one Application,
+`app-<project>-<namespace>`, under an AppProject `tenant-<project>-<namespace>`. It syncs the same
+repository and path. There is no `addons` Application, no overlay discovery, and nothing is
+committed back.
+
+### What your manifests may create
+
+| | Dedicated cluster | Namespace placement | vcluster placement |
+| --- | --- | --- | --- |
+| Source repository | The apps repository only | The apps repository only | The apps repository only |
+| Destinations | Any namespace | Its own namespace | Any namespace in its vcluster |
+| Cluster-scoped resources | Any kind | None | Any kind, in the vcluster |
+| Blocked namespaced kinds | None | `Role`, `RoleBinding`, `NetworkPolicy`, `ResourceQuota`, `LimitRange`, ArgoCD `Application` and `AppProject` | None |
+
+So on a dedicated cluster, a `CustomResourceDefinition`, a `ClusterRole` or a `StorageClass` belongs
+in the apps repository. A [bring-your-own chart](/concepts/bring-your-own-charts#what-your-chart-may-create)
+runs under a default-deny project and cannot create them.
+
+The `addons` project accepts any source repository. Treat `addons/` as trusted content.
+
+## What it does not do
+
+- It does not track a branch other than the default branch.
+- It does not create the namespaces your manifests name.
+- It does not overwrite a file it seeded, or delete a file it did not write.
+
+## Related
+
+- [Connect an apps repository](/guides/design-project/repositories)
+- [GitOps and ArgoCD](/concepts/gitops-argocd)
+- [Bring your own Helm chart](/guides/design-project/bring-your-own-charts)

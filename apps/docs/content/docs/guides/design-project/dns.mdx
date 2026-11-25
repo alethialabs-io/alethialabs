@@ -1,81 +1,52 @@
 ---
-title: DNS & WAF
-description: Domain configuration, managed certificates, and Web Application Firewall options.
+title: Configure DNS, certificates and a WAF
+description: Give an environment a DNS zone, a managed TLS certificate and an in-cluster Let's Encrypt issuer, and put a web application firewall in front of it.
 ---
 
-The DNS section is optional (controlled by a master toggle). When enabled, it configures domain management, SSL/TLS certificates, and web application firewall protection.
+Manage the environment's domain, get TLS certificates, and protect it with a web application
+firewall (WAF).
 
-## Fields
+## Before you begin
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Enabled** | Toggle | Master switch for DNS configuration |
-| **DNS Provider** | Select | Cloud-native (Route 53 / Cloud DNS / Azure DNS) or a [pluggable connector](/guides/connectors/pluggable) |
-| **Zone ID** | Select or text | Existing DNS hosted zone |
-| **Domain Name** | Text input | Auto-filled from zone, or manually entered |
-| **Managed Certificate** | Toggle | Auto-provision SSL/TLS certificate (cloud-native only) |
-| **WAF Options** | Toggles | Provider-specific WAF configuration (cloud-native only) |
+- You own the domain. To use a zone you already have, it is in the project's cloud account, or in
+  a connected [Cloudflare connector](/guides/connectors/pluggable).
 
-## DNS Provider
+## Steps
 
-The **DNS Provider** selector decouples *what* the Project needs (a managed zone) from *who* provides it:
+1. Select **Add**, then **DNS** in the **Networking** group. The environment has one DNS card.
+2. Leave **Enabled** on.
+3. Choose the **DNS provider**: the cluster cloud's own DNS (Route 53, Cloud DNS or Azure DNS), or
+   **Cloudflare**. For Cloudflare, also set the zone ID and whether records are proxied. Alethia
+   reads the Cloudflare credential at deploy and never stores it in the project.
+4. Enter the **Domain name**, such as `example.com`.
+5. Optional: in **Existing zone ID**, enter a zone you already own. Leave it empty to create a zone.
 
-- **Cloud-native** (default) — uses the cluster cloud's DNS service; the managed-certificate and WAF toggles apply.
-- **Cloudflare** — manages records on Cloudflare instead. Requires a connected [Cloudflare connector](/guides/connectors/pluggable); set the **Zone ID** and the **Proxied** option (orange-cloud). The cloud-native DNS/cert resources are skipped at provision time.
+   | Cloud | Zone ID looks like |
+   | --- | --- |
+   | AWS | A public Route 53 hosted zone: `Z1234567890ABC` |
+   | GCP | A Cloud DNS managed zone: `projects/…/managedZones/…` |
+   | Azure | An Azure DNS zone: `example.com` |
 
-When a pluggable provider is selected, its credential is pulled from `connector_credentials` on the runner at provision time — never stored in the Project.
+6. Turn on **Managed TLS certificate** to get a certificate for the domain.
+7. Turn on **Web application firewall (WAF)** to protect the load balancer.
 
-## DNS Zones
+The certificate and the WAF apply to the cloud's own DNS only, not to Cloudflare.
 
-The zone selector shows existing DNS zones from Alethia's server-side [asset inventory](/concepts/connection-health):
+### Certificates
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    **Route 53** hosted zones (public only). Zone ID format: `Z1234567890ABC`.
-  </Tab>
-  <Tab value="GCP">
-    **Cloud DNS** managed zones. Zone name format: `my-zone`.
-  </Tab>
-  <Tab value="Azure">
-    **Azure DNS** zones. Zone name format: `example.com`.
-  </Tab>
-</Tabs>
+| Cloud | Issued by | Validation |
+| --- | --- | --- |
+| AWS | AWS Certificate Manager (ACM) | DNS, through Route 53 |
+| GCP | cert-manager in your cluster, from Let's Encrypt | ACME DNS01, through Cloud DNS |
+| Azure | cert-manager in your cluster, from Let's Encrypt | ACME DNS01, through Azure DNS |
+| Hetzner | Nothing. Bring your own certificate. | — |
 
-<Callout type="info">
-DNS zones are provider-specific. When duplicating a project across providers, the zone ID and domain are cleared and must be re-configured. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
-</Callout>
+Certificates renew before they expire. On AWS the certificate stays in ACM, because an Application
+Load Balancer can only use a certificate from ACM or IAM.
 
-## Managed Certificates
-
-When enabled, the platform provisions a TLS certificate automatically:
-
-| Provider | Issued by | Validation |
-|----------|-----------|------------|
-| AWS | ACM (AWS Certificate Manager) | DNS validation via Route 53 |
-| GCP | cert-manager, in your cluster | ACME DNS01 via Cloud DNS |
-| Azure | cert-manager, in your cluster | ACME DNS01 via Azure DNS |
-| Hetzner | Not available — bring your own | — |
-
-Certificates are renewed automatically before expiration.
-
-On **GCP and Azure** the certificate is a free Let's Encrypt one, issued and renewed inside your
-cluster by cert-manager and served by the cloud's own ingress — the GKE Ingress reads it from a
-Kubernetes Secret, and the Application Gateway has it lifted onto its listener by AGIC. Neither
-cloud provisions a cloud-native certificate any more.
-
-On **AWS** the certificate stays in ACM. That is not an oversight: an Application Load Balancer can
-only reference a certificate by ARN in ACM or IAM, and ACM will not bind a certificate whose private
-key it never held — so a cert-manager certificate cannot terminate an ALB at all. ACM is free and
-renews itself, so nothing is lost by it.
-
-On **Hetzner** nothing issues a certificate. cert-manager ships no DNS01 solver for Hetzner's DNS.
-Bring your own.
-
-### In-cluster certificates
-
-On AWS, GCP and Azure the same toggle also installs `cert-manager` in the cluster and creates a
-`ClusterIssuer` named `letsencrypt-prod`. Reference it from an Ingress to get a Let's Encrypt
-certificate for any hostname in your zone:
+On AWS, GCP and Azure the same switch installs cert-manager and creates a `ClusterIssuer` named
+`letsencrypt-prod`. Reference it from an Ingress to get a Let's Encrypt certificate for any host in
+your zone:
 
 ```yaml
 metadata:
@@ -83,41 +54,34 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-prod
 ```
 
-The issuer solves ACME **DNS01** challenges, so it works before you have a public ingress, and it
-can issue wildcard certificates. It writes its challenge records with the same cloud identity
-`external-dns` uses, so there is no API key to supply.
+The issuer solves DNS01 challenges, so it works before you have a public ingress and can issue
+wildcard certificates. It writes challenge records with the same cloud identity as `external-dns`,
+so there is no API key to supply.
 
-<Callout type="warn">
-Not available on Hetzner. `cert-manager` ships no DNS01 solver for its DNS service, so Alethia
-creates no issuer rather than one whose challenges never complete. Bring your own certificate on
-Hetzner. The deploy records the skip and its reason with the environment's
-other infrastructure-service decisions.
-</Callout>
+### WAF
 
-## Web Application Firewall
+| Cloud | WAF |
+| --- | --- |
+| AWS | AWS WAFv2 on the load balancer, with AWS managed rule groups. A CloudFront WAF is available only through `provider_config` (`cloudfront_waf`), for your own distribution. |
+| GCP | Cloud Armor at the load balancer |
+| Azure | Azure WAF |
+| Hetzner | None. Hetzner sells no WAF. |
 
-WAF protects web applications from common attacks (SQL injection, XSS, bot traffic).
+On Hetzner the canvas still shows both switches, but they create nothing.
 
-Alethia provisions a WAF on AWS, Google Cloud and Azure only. Hetzner sells no web application firewall
-at all.
+## Check that it worked
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    Two WAF options (can enable both):
+After the deploy, look up the domain:
 
-    | Option | Protects | Cost |
-    |--------|----------|------|
-    | **CloudFront WAF** | CDN-level protection | ~$5/mo base |
-    | **Application WAF (ALB)** | Load balancer level | ~$5/mo base |
+```bash
+dig +short NS example.com
+```
 
-    AWS WAFv2 with managed rule groups (AWS Managed Rules, Bot Control).
-  </Tab>
-  <Tab value="GCP">
-    **Cloud Armor** — DDoS and application-layer protection at the load balancer.
-  </Tab>
-  <Tab value="Azure">
-    **Azure WAF** — protection via Application Gateway or Front Door.
-  </Tab>
-</Tabs>
+The name servers are your cloud's (or Cloudflare's). With a certificate, `https://` on a host in the
+zone answers with a valid certificate.
 
-WAF costs are reflected in the [cost sidebar](/guides/design-project/cost-sidebar) immediately when toggled.
+## Related
+
+- [Pluggable connectors](/guides/connectors/pluggable): connect Cloudflare.
+- [Multi-cloud conversion](/concepts/multi-cloud-conversion): duplicating a project onto another cloud clears the zone ID and domain.
+- [See the cost](/guides/design-project/cost)

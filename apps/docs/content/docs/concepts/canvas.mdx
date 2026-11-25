@@ -1,0 +1,123 @@
+---
+title: Read the canvas
+description: What a card on the Architecture canvas tells you, how status and drift show without colour, and how collections and bring-your-own IaC modules are drawn.
+---
+
+The Architecture canvas draws one environment as cards, one per resource. It is fully grayscale,
+so every state is carried by shape, structure and text, never by colour.
+
+```text
+   ┌─ classification rule (top edge) ───────────┐
+   │ [glyph] DATABASE              ● status     │  ← glyph, kind, status dot
+   │ orders-db                                  │  ← name
+   │ Engine  PostgreSQL 16   Capacity  0.5–4    │  ← the facts
+   │ [aws] inherits core                        │  ← provider chip
+   └────────────────────────────────────────────┘
+```
+
+## How it works
+
+### The parts of a card
+
+- **Glyph and kind**, top left: what kind of resource this is.
+- **Facts**, in the middle: the two or three settings that matter for that kind, for example
+  `PostgreSQL 16 · 0.5–4 · 7 d` for a database or `private · on · 2 origins` for a bucket. A fact
+  with no value shows a muted dash.
+- **Provider chip**: the cloud account the resource lands in. Most resources inherit the project's
+  account, and the chip says `inherits core`.
+- **Classification rule**, the band across the top edge:
+
+| Rule | Meaning |
+| --- | --- |
+| Solid, full ink | **Root**: the project itself. |
+| Solid, strong | **Core**: must be on the project's cloud (network, cluster, data services). |
+| Hairline | **Periphery**: can be on another cloud (DNS, buckets, registry, secrets, GitOps). |
+| Dashed | **External**: not managed by this design (a bring-your-own chart or IaC module). |
+
+The facts say how a resource really runs. On Hetzner, which has no managed data services, a
+database card says `Runs as · CloudNativePG`. Caches run as Valkey and queues as RabbitMQ.
+
+The cloud's own logo is the one thing in colour, because it belongs to the cloud.
+
+### Status
+
+A dot shows the state, read by its fill and shape. A healthy resource shows only the dot; every
+other state adds a short label.
+
+| Dot | State |
+| --- | --- |
+| Solid | **Live** or **Ready** |
+| Hollow ring | **Needs setup** or **Not deployed** |
+| Haloed | **Queued**, **Updating**, **Update pending** or **Destroying** |
+| Blinking | **Applying**: a runner is changing it now |
+| Hollow centre | **Failed** or **Unreachable** |
+| Faint | **Gated** or **Destroyed** |
+
+When several states are true at once, the card shows the first that applies:
+
+1. **Failed**.
+2. In flight: queued, applying, updating or destroying.
+3. **Needs setup**: the design is invalid, so the next deploy fails. This shows even on a live
+   resource.
+4. **Gated**.
+5. **Destroyed**, then **Not deployed**.
+6. **Unreachable**: the cluster's API server did not answer the last probe.
+7. **Update pending**: live, but the design changed since the deploy.
+8. **Live** or **Ready**.
+
+### Drift
+
+Drift does not replace the state. A live resource whose cloud copy changed outside Alethia stays
+**Live** and carries a chip such as `2 drifted`. Its **Status** tab lists the OpenTofu addresses
+that drifted. Drift that cannot be traced to one resource is reported on the environment instead
+of on a card.
+
+### Gated resources
+
+A core resource placed on a different cloud from the project is **gated**. You can design it, but
+the project does not provision until it is on the project's cloud.
+
+### Collections
+
+Secrets collapse into one card, the vault. It shows the count, a few names, and the state of its
+worst member, so a vault with one failed secret never reads **Live**. Open the vault to list,
+filter, add or remove secrets, and to open one. Each secret is still its own resource, with its own
+status and its own line in the plan.
+
+### Bring-your-own IaC modules
+
+When an environment runs [your own OpenTofu module](/guides/design-project/bring-your-own-iac),
+Alethia draws the module's resources as dashed, read-only cards:
+
+- Resources are grouped by kind and by module. An `aws_vpc` and its subnets become one
+  **Network** card; the `aws_eks_*` resources become a **Cluster** card.
+- A resource type that Alethia does not recognise goes into an **Other** card. Nothing is dropped.
+- Open a card to see each resource's address, what the last plan does to it, its cost and its
+  drift.
+- After a scan, cards read `Source · declared`: what your code declares, so `count = 3` is still
+  one resource. After a plan, they read `Source · planned`: the real, expanded resources.
+
+**Sources** in the toolbar shows the repository, the ref, the commit the safety scan pinned (a
+deploy applies that commit, not the branch), and the scan's verdict. A module the scan rejected
+reads **Needs setup**.
+
+### Zoom
+
+| Zoom | Shows |
+| --- | --- |
+| Far out | Glyph, name and status dot |
+| Middle | Header, name and the most important fact |
+| Close in | The full card |
+
+## What it does not do
+
+- It does not colour-code anything, so a status is never only a colour.
+- It does not draw the cluster or the network as cards. Size them from the environment's name in
+  the toolbar.
+- It does not let you edit a bring-your-own IaC card. Change the module in its repository.
+
+## Related
+
+- [Use the canvas](/guides/design-project/the-canvas)
+- [Use the inspector](/guides/design-project/node-inspector)
+- [Drift](/concepts/drift)
