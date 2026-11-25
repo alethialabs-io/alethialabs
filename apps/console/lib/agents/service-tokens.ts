@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Service tokens as the console's settings page reads them, and the write path for the environments
+// The service token types the console's settings page reads (the list itself is
+// lib/queries/service-tokens.ts, a keyset page), the picker's environments, and the write path for the environments
 // a token may deploy to without a person (AGT-L2, gaps G10 and G11; decision D2).
 //
 // THE AUTO-APPROVE RULE, held here so the database never holds a value the picker could not have
@@ -15,16 +16,16 @@
 // Who may write is two verbs: `org:manage_tokens` to touch a token at all, and `org:manage_agents`
 // to choose its auto-approve environments. The server actions ask both.
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { AgentScope } from "@/lib/approvals/types";
 import { getServiceDb } from "@/lib/db";
-import { cliServiceTokens, projectEnvironments, projects, user } from "@/lib/db/schema";
+import { cliServiceTokens, projectEnvironments, projects } from "@/lib/db/schema";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 
 /** A token's state, from its revocation and expiry. */
 export type ServiceTokenStatus = "active" | "revoked" | "expired";
 
-/** A service token as the settings page lists it. Never a secret: the prefix only. */
+/** A service token as the settings page lists it (`lib/queries/service-tokens.ts`). Never a secret: the prefix only. */
 export interface ConsoleServiceToken {
 	id: string;
 	name: string;
@@ -46,46 +47,6 @@ export function serviceTokenStatus(token: { revoked_at: Date | null; expires_at:
 	if (token.revoked_at) return "revoked";
 	if (token.expires_at && token.expires_at.getTime() <= now.getTime()) return "expired";
 	return "active";
-}
-
-/**
- * The org's service tokens, newest first, revoked ones included (their audit trail matters, as the
- * CLI route's list says). Read on the service role, bound to `orgId` by the WHERE.
- */
-export async function listConsoleServiceTokens(orgId: string, now: Date = new Date()): Promise<ConsoleServiceToken[]> {
-	const rows = await getServiceDb()
-		.select({
-			id: cliServiceTokens.id,
-			name: cliServiceTokens.name,
-			token_prefix: cliServiceTokens.token_prefix,
-			scopes: cliServiceTokens.scopes,
-			project_ids: cliServiceTokens.project_ids,
-			auto_approve_environment_ids: cliServiceTokens.auto_approve_environment_ids,
-			created_at: cliServiceTokens.created_at,
-			created_by: cliServiceTokens.created_by,
-			creator_name: user.name,
-			expires_at: cliServiceTokens.expires_at,
-			last_used_at: cliServiceTokens.last_used_at,
-			revoked_at: cliServiceTokens.revoked_at,
-		})
-		.from(cliServiceTokens)
-		.leftJoin(user, eq(user.id, cliServiceTokens.created_by))
-		.where(eq(cliServiceTokens.organization_id, orgId))
-		.orderBy(desc(cliServiceTokens.created_at));
-	return rows.map((r) => ({
-		id: r.id,
-		name: r.name,
-		tokenPrefix: r.token_prefix,
-		scopes: r.scopes,
-		projectIds: r.project_ids,
-		autoApproveEnvironmentIds: r.auto_approve_environment_ids,
-		createdAt: r.created_at.toISOString(),
-		createdBy: r.created_by ? { id: r.created_by, name: r.creator_name } : null,
-		expiresAt: r.expires_at?.toISOString() ?? null,
-		lastUsedAt: r.last_used_at?.toISOString() ?? null,
-		revokedAt: r.revoked_at?.toISOString() ?? null,
-		status: serviceTokenStatus(r, now),
-	}));
 }
 
 /** One environment the picker offers. */
