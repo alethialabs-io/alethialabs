@@ -56,7 +56,7 @@ function offered() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	h.handlers["clusters.page"] = async () => ({ rows: [], resultCount: 0, total: 0, facets: { clouds: [], statuses: [], regions: [] } });
+	h.handlers["clusters.page"] = async () => ({ rows: [], nextCursor: null, facets: { clouds: [], statuses: [], regions: [] }, universeEmpty: true });
 	h.handlers["environments.overview"] = async () => null;
 	h.handlers["workspace.environments"] = async () => [];
 });

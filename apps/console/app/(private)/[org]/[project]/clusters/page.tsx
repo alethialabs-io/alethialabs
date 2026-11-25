@@ -3,12 +3,11 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { clustersQueryFromUrl } from "@/components/clusters/clusters-query";
+import { prefetchClustersList } from "@/components/clusters/clusters-prefetch";
 import { isClustersRead } from "@/components/clusters/clusters-reads";
 import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
 import { paramReader } from "@/lib/query/filter-url-codec";
-import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 import { ClustersClient } from "../../~/clusters/clusters-client";
 
@@ -20,9 +19,9 @@ export const metadata = pageMetadata({
 /**
  * `/{org}/{project}/clusters` — the project's clusters, one per environment that runs one. The org
  * clusters list, SCOPED to this project: the project id is part of the read's input, so the rows,
- * the count and the facet options are the project's own, and it is never a filter in the bar or the
- * query string. Prefetches the pristine page and the page for the link's filters, as the org route
- * does. `loading.tsx` covers the prefetch window.
+ * and the facet options are the project's own, and it is never a filter in the bar or the query
+ * string. Prefetches the first keyset page of the pristine list and of the link's filters, as the
+ * org route does. `loading.tsx` covers the prefetch window.
  */
 export default async function ProjectClustersRoute({
 	params,
@@ -35,15 +34,8 @@ export default async function ProjectClustersRoute({
 	// Null is the project 404; a lost session or a real failure never reaches this line.
 	const projectId = (await resolveProjectOr404(project)) ?? notFound();
 
-	const reader = paramReader(await searchParams);
 	const queryClient = getQueryClient();
-	const rpc = serverOrpc();
-	await Promise.all([
-		queryClient.prefetchQuery(rpc.clusters.page.queryOptions({ input: { projectId }, retry: false })),
-		queryClient.prefetchQuery(
-			rpc.clusters.page.queryOptions({ input: clustersQueryFromUrl(reader, projectId), retry: false }),
-		),
-	]);
+	await prefetchClustersList(queryClient, paramReader(await searchParams), projectId);
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isClustersRead })}>
