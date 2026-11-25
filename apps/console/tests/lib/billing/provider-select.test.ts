@@ -93,7 +93,10 @@ describe("providerForOrg — the row wins", () => {
 });
 
 describe("providerById", () => {
-	it("has no adapter for any provider yet (they land in later lanes)", () => {
-		for (const id of BILLING_PROVIDERS) expect(providerById(id)).toBeNull();
+	it("has the Paddle adapter (L3) and no Stripe adapter yet", () => {
+		expect(providerById("paddle")?.id).toBe("paddle");
+		expect(providerById("paddle")?.sellerOfRecord).toBe("paddle");
+		expect(providerById("stripe")).toBeNull();
+		expect(BILLING_PROVIDERS).toEqual(["stripe", "paddle"]);
 	});
 });
