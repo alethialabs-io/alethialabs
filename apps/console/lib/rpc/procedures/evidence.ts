@@ -24,9 +24,12 @@ import { viewableProjectIds } from "@/lib/jobs/visibility";
 import {
 	type EvidenceSummary,
 	type EvidenceWaiver,
+	type EvidenceWaiversPage,
 	type OrgEvidence,
+	queryEvidenceWaiversPage,
 	queryOrgEvidence,
 } from "@/lib/queries/evidence";
+import { keysetPageInput } from "@/lib/queries/keyset";
 import { query } from "@/lib/rpc/base";
 
 // The Evidence surface's read (day-2 "keep proving it"): the verification + drift + waiver roll-up,
@@ -72,7 +75,10 @@ export interface EvidenceResult {
 	resultCount: number;
 	/** Environments the reader can see (the facet-count / "N of M" denominator). */
 	total: number;
-	/** Recorded verification waivers (newest first) — the waivers panel. */
+	/**
+	 * The waivers IN FORCE (newest first, uncapped) — the drawer's per-environment list. The full log
+	 * the waivers panel shows is its own paged read, `evidence.waivers`.
+	 */
 	waivers: EvidenceWaiver[];
 	/** The posture counters over every visible environment (unfiltered). */
 	summary: EvidenceSummary;
@@ -158,9 +164,30 @@ export async function readOrgEvidence(input: EvidenceQuery = {}): Promise<Eviden
 }
 
 /**
+ * The recorded-waivers list's input: the paging half only (an opaque cursor, a limit). The list has
+ * no filter bar, so there are no filter fields beside it.
+ */
+const evidenceWaiversInput = z.object({ ...keysetPageInput("uuid") });
+
+/**
+ * One page of the addressed org's recorded waivers — in force and expired, newest first — over the
+ * projects the reader may view (the same visibility as {@link readOrgEvidence}; org-level waivers are
+ * org-wide). Keyset-paged (#7488): every waiver is reachable, none is cut at a cap.
+ */
+export async function readOrgEvidenceWaivers(
+	input: z.infer<typeof evidenceWaiversInput>,
+): Promise<EvidenceWaiversPage> {
+	const actor = await currentActor();
+	const projectIds = await viewableProjectIds(actor);
+	return queryEvidenceWaiversPage(actor.orgId, projectIds, { cursor: input.cursor, limit: input.limit });
+}
+
+/**
  * The evidence domain's reads (ADR 0005 D1, #6126). `page` backs `/{org}/~/evidence`: the route
- * prefetches it in-process for the link's filters and the client reads the same key.
+ * prefetches it in-process for the link's filters and the client reads the same key. `waivers` is
+ * the page's recorded-waivers list, read page by page (`useKeysetList`).
  */
 export const evidenceRouter = {
 	page: query.input(evidencePageInput).handler(({ input }) => readOrgEvidence(input)),
+	waivers: query.input(evidenceWaiversInput).handler(({ input }) => readOrgEvidenceWaivers(input)),
 };

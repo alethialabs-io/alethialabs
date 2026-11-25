@@ -110,9 +110,9 @@ tier_separation:
     reason: The environment-to-serving-cluster resolution join, verified against real Postgres.
 
   - path: lib/queries/evidence.ts
-    suite: [tests/integration/evidence-query.test.ts]
-    symbols: [queryOrgEvidence]
-    reason: The org evidence roll-up across drift, security and job rows, verified against real Postgres.
+    suite: [tests/integration/evidence-query.test.ts, tests/integration/evidence-waivers-page.test.ts]
+    symbols: [queryOrgEvidence, queryEvidenceWaiversPage]
+    reason: The org evidence roll-up across drift, security and job rows, and the keyset waivers page, verified against real Postgres.
 
   - path: lib/queries/projects.ts
     suite:
