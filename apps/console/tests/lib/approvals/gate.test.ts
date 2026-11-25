@@ -261,6 +261,26 @@ describe("the org's agent policy", () => {
 		}
 	});
 
+	it.each(["agent_oauth", "agent_in_app"] as const)(
+		"an approval a person granted to %s BEFORE agent access was turned off cannot be used after it (#7477)",
+		async (credential) => {
+			const granted = [approvalRow({ requester_credential: credential, status: "approved" })];
+			const off = { agent_access_enabled: false, agents_may_not_apply_to_production: false, require_different_approver: false, approval_ttl_minutes: 60 };
+			const requester = { kind: "actor" as const, actor: actorOf(credential) };
+			// The same row, switch on: it is a valid approval the gate consumes.
+			const on = setup({ approval: granted });
+			await expect(requireApplyAuthorization(on.db, requester, "deploy", DEPLOY_TARGET, APPROVAL)).resolves.toEqual({
+				approvalId: APPROVAL,
+			});
+			// Switch off: refused, and the approval is neither consumed nor a job queued.
+			const f = setup({ policy: [off], approval: granted });
+			const err = await refusal(requireApplyAuthorization(f.db, requester, "deploy", DEPLOY_TARGET, APPROVAL));
+			expect(err.code).toBe("not_permitted");
+			expect(err.message).toContain("Agent access is turned off");
+			expect(f.writes).toEqual([]);
+		},
+	);
+
 	it("refuses an agent's production deploy outright when agents may not apply to production, approval or not", async () => {
 		const f = setup({
 			stage: "production",
