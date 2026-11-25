@@ -4,7 +4,9 @@
 import "server-only";
 
 import { activityRouter } from "@/lib/rpc/procedures/activity";
+import { agentsRouter } from "@/lib/rpc/procedures/agents";
 import { alertsRouter } from "@/lib/rpc/procedures/alerts";
+import { approvalsRouter } from "@/lib/rpc/procedures/approvals";
 import { billingRouter } from "@/lib/rpc/procedures/billing";
 import { canvasRouter } from "@/lib/rpc/procedures/canvas";
 import { classificationRouter } from "@/lib/rpc/procedures/classification";
@@ -29,7 +31,9 @@ import { workspaceRouter } from "@/lib/rpc/procedures/workspace";
  */
 export const router = {
 	activity: activityRouter,
+	agents: agentsRouter,
 	alerts: alertsRouter,
+	approvals: approvalsRouter,
 	billing: billingRouter,
 	canvas: canvasRouter,
 	classification: classificationRouter,
