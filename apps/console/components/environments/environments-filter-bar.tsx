@@ -17,7 +17,7 @@ import {
 	DEFAULT_ENVIRONMENT_FILTERS,
 	type EnvironmentPageFilters,
 } from "@/components/environments/environments-query";
-import type { EnvironmentsPage } from "@/lib/queries/environments";
+import type { EnvironmentFacetSet } from "@/lib/queries/environments";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import type { useEnvironmentsFilters } from "@/lib/stores/use-environments-filters";
 
@@ -38,7 +38,7 @@ export function EnvironmentsFilterBar({
 	filters: EnvironmentPageFilters;
 	onFilter: EnvironmentsFilterStore["set"];
 	onReset: EnvironmentsFilterStore["reset"];
-	facets: EnvironmentsPage["facets"] | undefined;
+	facets: EnvironmentFacetSet | undefined;
 	className?: string;
 }) {
 	return (
