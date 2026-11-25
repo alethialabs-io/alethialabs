@@ -106,9 +106,21 @@ async function runners(searchParams: SearchParams): Promise<DehydratedState> {
 	return dehydratedOf(await Reflect.apply(child.type, undefined, [child.props]));
 }
 
-/** The browser's key for the runners grid's page read with `input`. */
+/**
+ * The browser's key for the runners grid's FIRST keyset page with `input` — the infinite key
+ * `useKeysetList(orpc.runners.page, input)` asks for (#7484): the initial page param is null, so
+ * the cursor is never in it.
+ */
 function runnersPageKey(input: Record<string, unknown>): readonly unknown[] {
-	return serverOrpc().runners.page.queryKey({ input });
+	return serverOrpc().runners.page.infiniteKey({
+		input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+		initialPageParam: null,
+	});
+}
+
+/** The dehydrated infinite data of a first page the fake read answered for `query`. */
+function firstPage(query: unknown): unknown {
+	return { pages: [{ query, rows: [] }], pageParams: [null] };
 }
 
 /** The browser's key for the members page read of `query` (`orpc.members.page`). */
@@ -132,13 +144,13 @@ describe("~/runners prefetches the link's filtered grid", () => {
 		const state = await runners({ versions: "1.4.0,1.10.0" });
 		// Sorted by the normalize step — the key the client builds, character for character.
 		const filtered = runnersPageKey({ versions: ["1.10.0", "1.4.0"] });
-		expect(dataAt(state, filtered)).toEqual({ query: { versions: ["1.10.0", "1.4.0"] }, rows: [] });
+		expect(dataAt(state, filtered)).toEqual(firstPage({ versions: ["1.10.0", "1.4.0"] }));
 		expect(runnersPage).toHaveBeenCalledWith({ versions: ["1.10.0", "1.4.0"] });
 	});
 
 	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
 		const state = await runners({ versions: "1.4.0" });
-		expect(dataAt(state, runnersPageKey({}))).toEqual({ query: {}, rows: [] });
+		expect(dataAt(state, runnersPageKey({}))).toEqual(firstPage({}));
 	});
 
 	it("fetches the pristine grid once for a pristine link", async () => {
