@@ -374,12 +374,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 19,
+			"pass": 20,
 			"fail": 0,
-			"na": 23,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -388,12 +388,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 19,
+			"pass": 20,
 			"fail": 0,
-			"na": 23,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -402,12 +402,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 19,
+			"pass": 20,
 			"fail": 0,
-			"na": 23,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -416,12 +416,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 19,
+			"pass": 20,
 			"fail": 0,
-			"na": 23,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -430,26 +430,26 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 16,
-			"fail": 3,
-			"na": 23,
+			"pass": 6,
+			"fail": 14,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.8421
+			"score": 0.3
 		},
 		"F6": {
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 19,
+			"pass": 20,
 			"fail": 0,
-			"na": 23,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -458,12 +458,12 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 19,
+			"pass": 20,
 			"fail": 0,
-			"na": 23,
+			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 23
+				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -987,11 +987,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 8,
@@ -1013,11 +1013,11 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 0,
+				"pass": 34,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 5,
-				"score": 1
+				"score": 0.9714
 			}
 		},
 		{
@@ -1054,11 +1054,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 8,
@@ -1080,11 +1080,11 @@
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 35,
+				"fail": 1,
 				"na": 4,
 				"notMeasured": 3,
-				"score": 1
+				"score": 0.9722
 			}
 		},
 		{
@@ -1255,11 +1255,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1281,11 +1281,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 0,
 				"notMeasured": 5,
-				"score": 1
+				"score": 0.9737
 			}
 		},
 		{
@@ -1590,11 +1590,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1616,10 +1616,77 @@
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 0,
+				"pass": 35,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 5,
+				"score": 0.9722
+			}
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"redirectOnly": false,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"notMeasured": 3,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 10,
+					"of": 10,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 3,
+					"score": 1
+				},
+				"R": {
+					"instrumented": 8,
+					"of": 8,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 8,
+					"score": null
+				},
+				"B": {
+					"instrumented": 5,
+					"of": 6,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 5,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 23,
+				"fail": 0,
+				"na": 1,
+				"notMeasured": 19,
 				"score": 1
 			}
 		},
@@ -1657,11 +1724,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 7,
-					"fail": 0,
+					"pass": 6,
+					"fail": 1,
 					"na": 3,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.8571
 				},
 				"R": {
 					"instrumented": 8,
@@ -1683,11 +1750,11 @@
 				}
 			},
 			"overall": {
-				"pass": 34,
-				"fail": 0,
+				"pass": 33,
+				"fail": 1,
 				"na": 5,
 				"notMeasured": 4,
-				"score": 1
+				"score": 0.9706
 			}
 		},
 		{
@@ -1791,11 +1858,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -1817,11 +1884,11 @@
 				}
 			},
 			"overall": {
-				"pass": 37,
-				"fail": 0,
+				"pass": 36,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 1
+				"score": 0.973
 			}
 		},
 		{
@@ -2193,11 +2260,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -2219,11 +2286,11 @@
 				}
 			},
 			"overall": {
-				"pass": 37,
-				"fail": 0,
+				"pass": 36,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 1
+				"score": 0.973
 			}
 		},
 		{
@@ -2562,73 +2629,6 @@
 			}
 		},
 		{
-			"route": "/[org]/~/settings/connected",
-			"redirectOnly": false,
-			"families": {
-				"S": {
-					"instrumented": 4,
-					"of": 4,
-					"pass": 4,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"T": {
-					"instrumented": 7,
-					"of": 7,
-					"pass": 3,
-					"fail": 0,
-					"na": 1,
-					"notMeasured": 3,
-					"score": 1
-				},
-				"H": {
-					"instrumented": 9,
-					"of": 9,
-					"pass": 9,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 0,
-					"score": 1
-				},
-				"F": {
-					"instrumented": 10,
-					"of": 10,
-					"pass": 0,
-					"fail": 0,
-					"na": 7,
-					"notMeasured": 3,
-					"score": null
-				},
-				"R": {
-					"instrumented": 8,
-					"of": 8,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 8,
-					"score": null
-				},
-				"B": {
-					"instrumented": 5,
-					"of": 6,
-					"pass": 0,
-					"fail": 0,
-					"na": 0,
-					"notMeasured": 5,
-					"score": null
-				}
-			},
-			"overall": {
-				"pass": 16,
-				"fail": 0,
-				"na": 8,
-				"notMeasured": 19,
-				"score": 1
-			}
-		},
-		{
 			"route": "/[org]/~/settings/general",
 			"redirectOnly": false,
 			"families": {
@@ -2729,11 +2729,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -2755,11 +2755,11 @@
 				}
 			},
 			"overall": {
-				"pass": 40,
-				"fail": 0,
+				"pass": 39,
+				"fail": 1,
 				"na": 3,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.975
 			}
 		},
 		{
@@ -2796,11 +2796,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -2822,11 +2822,11 @@
 				}
 			},
 			"overall": {
-				"pass": 41,
-				"fail": 0,
+				"pass": 40,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 0,
-				"score": 1
+				"score": 0.9756
 			}
 		},
 		{
@@ -2930,11 +2930,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -2956,11 +2956,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 0,
+				"pass": 37,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 3,
-				"score": 1
+				"score": 0.9737
 			}
 		},
 		{
@@ -3265,11 +3265,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 10,
-					"fail": 0,
+					"pass": 9,
+					"fail": 1,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 1
+					"score": 0.9
 				},
 				"R": {
 					"instrumented": 8,
@@ -3291,11 +3291,11 @@
 				}
 			},
 			"overall": {
-				"pass": 39,
-				"fail": 0,
+				"pass": 38,
+				"fail": 1,
 				"na": 2,
 				"notMeasured": 2,
-				"score": 1
+				"score": 0.9744
 			}
 		},
 		{
@@ -4330,7 +4330,8 @@
 		{
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4341,7 +4342,7 @@
 			"route": "/[org]/[project]/clusters",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/clusters",
@@ -4553,7 +4554,8 @@
 		{
 			"route": "/[org]/[project]/environments",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useEnvironmentsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4564,7 +4566,7 @@
 			"route": "/[org]/[project]/environments",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/environments",
@@ -4785,7 +4787,7 @@
 			"route": "/[org]/[project]/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/jobs",
@@ -5241,7 +5243,8 @@
 		{
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useAccessFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -5252,7 +5255,7 @@
 			"route": "/[org]/[project]/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/access",
@@ -5472,7 +5475,7 @@
 			"route": "/[org]/[project]/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/[project]/settings/activity",
@@ -6375,7 +6378,8 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useAlertPolicyFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertChannelFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6386,7 +6390,7 @@
 			"route": "/[org]/~/alerts",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/alerts",
@@ -6542,6 +6546,242 @@
 			"reason": "no-restricted-surface"
 		},
 		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B1",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B2",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B4",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F10",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F8",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F9",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R1",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R2",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R3",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R4",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R6",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R8",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T6",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
+		},
+		{
 			"route": "/[org]/~/clusters",
 			"predicate": "B1",
 			"verdict": "NOT MEASURED",
@@ -6599,7 +6839,8 @@
 		{
 			"route": "/[org]/~/clusters",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useClustersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6610,7 +6851,7 @@
 			"route": "/[org]/~/clusters",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/clusters",
@@ -6833,7 +7074,7 @@
 			"route": "/[org]/~/connectors",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/connectors",
@@ -7046,7 +7287,8 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useEvidenceFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7057,7 +7299,7 @@
 			"route": "/[org]/~/evidence",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/evidence",
@@ -7276,7 +7518,7 @@
 			"route": "/[org]/~/jobs",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/jobs",
@@ -7959,7 +8201,7 @@
 			"route": "/[org]/~/runners",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/runners",
@@ -8415,7 +8657,8 @@
 		{
 			"route": "/[org]/~/settings/access",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useAccessFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -8426,7 +8669,7 @@
 			"route": "/[org]/~/settings/access",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/access",
@@ -8647,7 +8890,7 @@
 			"route": "/[org]/~/settings/activity",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/activity",
@@ -9345,7 +9588,7 @@
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
@@ -9733,248 +9976,6 @@
 			"reason": "no-restricted-surface"
 		},
 		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "B1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "B2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "B3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "B4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "B5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F1",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F10",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F2",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F3",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F4",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F5",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F6",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F7",
-			"verdict": "N/A",
-			"reason": "not-a-list-page"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "F9",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H5",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H6",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H7",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H8",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "H9",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R1",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R2",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R3",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R4",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R6",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "R8",
-			"verdict": "NOT MEASURED",
-			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "S1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "S2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "S3",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "S4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T1",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T2",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T3",
-			"verdict": "N/A",
-			"reason": "does-not-call-not-found"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T4",
-			"verdict": "PASS"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T5",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T6",
-			"verdict": "NOT MEASURED",
-			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
-		},
-		{
-			"route": "/[org]/~/settings/connected",
-			"predicate": "T7",
-			"verdict": "NOT MEASURED",
-			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
-		},
-		{
 			"route": "/[org]/~/settings/general",
 			"predicate": "B1",
 			"verdict": "PASS"
@@ -10258,7 +10259,8 @@
 		{
 			"route": "/[org]/~/settings/members",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useMembersFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -10269,7 +10271,7 @@
 			"route": "/[org]/~/settings/members",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/members",
@@ -10478,7 +10480,8 @@
 		{
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useRolesFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -10489,7 +10492,7 @@
 			"route": "/[org]/~/settings/roles",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/roles",
@@ -10714,7 +10717,7 @@
 			"route": "/[org]/~/settings/sso",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/sso",
@@ -10924,7 +10927,8 @@
 		{
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useTeamsFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -10935,7 +10939,7 @@
 			"route": "/[org]/~/settings/teams",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/settings/teams",
@@ -12069,7 +12073,8 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F5",
-			"verdict": "PASS"
+			"verdict": "FAIL",
+			"detail": "useSupportFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
@@ -12080,7 +12085,7 @@
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F7",
 			"verdict": "PASS",
-			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",
