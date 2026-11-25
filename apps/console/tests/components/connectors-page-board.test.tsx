@@ -260,13 +260,13 @@ describe("ConnectorsPage — a cloud that takes no new connection", () => {
 });
 
 describe("ConnectorsPage — a connector that needs a cloud that is not offered", () => {
-	it("is left off the board, and the count is the listed rows'", () => {
+	it("is left off the board, and no list-size pill is drawn", () => {
 		settle({ integrations: [aws, awsRegistry, farSecrets, datadog], canManage: true });
 		const { container } = renderBoard();
 
 		expect(screen.queryByText("Far Secrets (cross-account)")).toBeNull();
 		expect(screen.getAllByText("Amazon ECR (cross-account)").length).toBeGreaterThan(0);
-		expect(container.querySelector('[data-slot="count-pill"]')).toHaveTextContent("3");
+		expect(container.querySelector('[data-slot="count-pill"]')).toBeNull();
 	});
 });
 
