@@ -73,6 +73,8 @@ import {
 } from "@/lib/queries/destroy-tree";
 import { serviceBindingsByOwner } from "@/lib/db/normalized-reads";
 import { parsePlanJSON } from "@/lib/plan/parse-plan";
+import { queryEnvironmentJobsPage } from "@/lib/queries/environment-jobs";
+import { KEYSET_DEFAULT_LIMIT, type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
 import { assertProjectCloudOffered } from "@/lib/queries/projects";
 import {
 	auditLog,
@@ -924,79 +926,24 @@ async function assertEnvironmentInOrg(projectId: string, environmentId: string, 
 	if (!env) throw new ActionRefusal("not-found", "Environment not found.");
 }
 
-/** The keyset cursor: the last row's `created_at` (ISO) and id, joined so ties on time are stable. */
-function encodeCursor(job: { created_at: Date; id: string }): string {
-	return `${job.created_at.toISOString()}|${job.id}`;
-}
-
-/** Parse a cursor back into its two keys; a malformed one reads as "no cursor" (first page). */
-function decodeCursor(cursor: string | undefined): { at: Date; id: string } | null {
-	if (!cursor) return null;
-	const sep = cursor.lastIndexOf("|");
-	if (sep <= 0) return null;
-	const at = new Date(cursor.slice(0, sep));
-	if (Number.isNaN(at.getTime())) return null;
-	return { at, id: cursor.slice(sep + 1) };
-}
-
 /**
  * The environment's jobs — the activity card. Scoped to ONE environment, because the board only
  * ever shows one, and a project-wide list would attribute another environment's failure to the
  * design you're looking at.
  *
- * Keyset-paginated on `(created_at, id)`: the floating rail this used to feed took the newest
- * eight and stopped, so an environment's history ended wherever the list did. `before` is the
- * cursor the previous page returned; a page fetches one row past `limit` to know whether there
- * is another, and never returns that extra row.
+ * Keyset-paged on the console's one contract (`queryEnvironmentJobsPage`, LST-10 #7492): newest
+ * first by `created_at` to the millisecond, the id breaking ties. The floating rail this used to
+ * feed took the newest eight and stopped, so an environment's history ended wherever the list did.
+ * The cursor arrives already decoded — a malformed one was refused by the input schema as a 400.
  */
 export async function readEnvironmentJobs(
 	projectId: string,
 	environmentId: string,
-	opts: { limit?: number; before?: string } = {},
+	page: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<EnvironmentJobsPage> {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	await assertEnvironmentInOrg(projectId, environmentId, actor.orgId);
-	const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
-	const before = decodeCursor(opts.before);
-
-	const db = getServiceDb();
-	const rows = await db
-		.select({
-			id: jobs.id,
-			job_type: jobs.job_type,
-			status: jobs.status,
-			created_at: jobs.created_at,
-			error_message: jobs.error_message,
-		})
-		.from(jobs)
-		.where(
-			and(
-				eq(jobs.project_id, projectId),
-				eq(jobs.environment_id, environmentId),
-				eq(jobs.org_id, actor.orgId),
-				before
-					? or(
-							lt(jobs.created_at, before.at),
-							and(eq(jobs.created_at, before.at), lt(jobs.id, before.id)),
-						)
-					: undefined,
-			),
-		)
-		.orderBy(desc(jobs.created_at), desc(jobs.id))
-		.limit(limit + 1);
-
-	const page = rows.slice(0, limit);
-	const last = page.at(-1);
-	return {
-		jobs: page.map((r) => ({
-			id: r.id,
-			type: r.job_type,
-			status: r.status,
-			createdAt: r.created_at.toISOString(),
-			error: r.error_message,
-		})),
-		nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
-	};
+	return queryEnvironmentJobsPage({ orgId: actor.orgId, projectId, environmentId }, page);
 }
 
 // ── The review plan: the environment's latest plan, and whether it is the one to deploy ────────
@@ -1525,14 +1472,13 @@ export const canvasRouter = {
 			z.object({
 				projectId: z.string().uuid(),
 				environmentId: z.string().uuid(),
-				limit: z.number().int().min(1).max(100).optional(),
-				before: z.string().max(200).optional(),
+				...keysetPageInput("uuid"),
 			}),
 		)
 		.handler(({ input }) =>
 			readEnvironmentJobs(input.projectId, input.environmentId, {
+				cursor: input.cursor,
 				limit: input.limit,
-				before: input.before,
 			}),
 		),
 	/** What destroying the environment destroys: its live tenants first, the environment last. */
