@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.11.0...runner-v0.12.0) (2026-11-25)
+
+
+### Features
+
+* **agents:** deploys apply the reviewed plan (AGT-S0b) ([#7410](https://github.com/alethialabs-io/alethialabs/issues/7410)) ([908cbcc](https://github.com/alethialabs-io/alethialabs/commit/908cbcc9279b59ab532ce9db105f945960294151))
+* **runner:** validate repository URLs before cloning ([#7534](https://github.com/alethialabs-io/alethialabs/issues/7534)) ([d3c5733](https://github.com/alethialabs-io/alethialabs/commit/d3c573381eec63cc8b7964c4162600adc3e9c488)), closes [#7526](https://github.com/alethialabs-io/alethialabs/issues/7526)
+* **selfhost:** start-up configuration check in the console and the runner (EDN-H2) ([#7472](https://github.com/alethialabs-io/alethialabs/issues/7472)) ([cf8544f](https://github.com/alethialabs-io/alethialabs/commit/cf8544ff29cd1e74c25cafae0f06da44ee19efb5))
+
 ## [0.11.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.10.1...runner-v0.11.0) (2026-11-22)
 
 
