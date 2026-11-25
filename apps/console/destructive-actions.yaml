@@ -111,6 +111,9 @@ allow:
   - mutation: destroyProject
     surface: apps/console/lib/ai/mcp/handlers.ts
     reason: the MCP `request_destroy` tool, not a control a person clicks. It queues a destroy only after a person approved that exact plan in the console, and destroyProject re-checks and consumes that approval once
+  - mutation: cancelPaddleSubscriptionAtPeriodEnd
+    surface: apps/console/lib/billing/paddle/provider.ts
+    reason: the Paddle adapter's `cancelAtPeriodEnd`, not a control a person clicks. It is reached only through `cancelSubscriptionPlan`, whose plan-card button carries the `billing.subscription.cancel` confirmation
   - mutation: cancelJob
     surface: apps/console/lib/ai/mcp/handlers.ts
     reason: the MCP `cancel_job` tool, not a control a person clicks. It runs as the person under the token's plan scope, and cancelJob applies the same authorization the job page's Cancel does
@@ -835,8 +838,9 @@ controls:
   - id: billing.subscription.cancel
     route: /[org]/~/settings/billing
     surface: apps/console/components/settings/billing/billing-panel.tsx
-    # `cancelPlan` is `cancelSubscription` through the mutation contract (#6127).
-    mutation: cancelPlan
+    # `cancelSubscriptionPlan` (Paddle L4) is the provider-neutral cancel: Stripe's `cancelSubscription`
+    # or the Paddle adapter's cancel at period end, through the mutation contract (#6127).
+    mutation: cancelSubscriptionPlan
     control: { role: button, name: "Cancel plan" }
     confirm: confirm-dialog
     confirm_action: "Confirm cancellation"
