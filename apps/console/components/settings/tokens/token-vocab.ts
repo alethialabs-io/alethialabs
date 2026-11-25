@@ -6,7 +6,7 @@
 // state two ways. Pure and client-safe.
 
 import type { ServiceTokenStatus } from "@/lib/agents/service-tokens";
-import type { AgentScope } from "@/lib/approvals/types";
+import type { AgentScope } from "@/lib/approvals/scopes";
 import type { StatusTier } from "@repo/ui/status-badge";
 
 /** Each scope's name and the sentence under its checkbox, in the order the sheet lists them. */

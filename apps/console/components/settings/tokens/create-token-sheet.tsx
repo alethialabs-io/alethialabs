@@ -15,7 +15,7 @@ import { type CreatedServiceToken, createConsoleServiceToken } from "@/app/serve
 import { FormRootError } from "@/components/forms/form-root-error";
 import { settingsControl, settingsControlSize, SettingsSelect } from "@/components/settings/settings-ui";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { AGENT_SCOPES } from "@/lib/approvals/types";
+import { AGENT_SCOPES } from "@/lib/approvals/scopes";
 import type { ServiceTokenEnvironmentRef } from "@/lib/queries/service-tokens";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
