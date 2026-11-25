@@ -14,8 +14,11 @@
  * Counted as shipped: anything under `packages/<name>/` except tests, test fixtures and the
  * package's own lint/type/test configuration (none of those reach npm). README.md counts: it is the
  * package's npm page.
- * Exempt: the "Version packages" PR itself (head branch `changeset-release/*`), which consumes the
- * changesets instead of adding one.
+ * Exempt (see {@link exemptHead}): the "Version packages" PR itself (head branch `changeset-release/*`),
+ * which consumes the changesets instead of adding one; and a promotion (head `release/<sha>`, opened by
+ * promote.yml into main), which carries dev's already-checked commits — each dev PR that touched a
+ * published package was held to this check when it was opened, so the promotion must not be again
+ * (it would fail every time: its diff is everything since the last promotion, changesets consumed).
  *
  * Usage:
  *   node scripts/release/check-changeset.mjs              # in CI: reads the PR from GITHUB_EVENT_PATH via gh
@@ -61,6 +64,13 @@ function prFiles() {
 	return out.split("\n").filter(Boolean);
 }
 
+/** Why a PR head is exempt from the check, or null when it is checked. */
+export function exemptHead(headRef) {
+	if (headRef.startsWith("changeset-release/")) return "the Version packages PR consumes changesets";
+	if (/^release\/[0-9a-f]{7,40}$/.test(headRef)) return "a promotion carries dev's already-checked commits";
+	return null;
+}
+
 /** Plants each case and asserts the verdict. */
 function selfTest() {
 	const pub = ["ui", "brand"];
@@ -74,6 +84,10 @@ function selfTest() {
 	for (const [files, want, msg] of cases) if (JSON.stringify(touchedPackages(files, pub)) !== JSON.stringify(want)) fails.push(msg);
 	if (!hasChangeset([".changeset/quiet-owls.md"])) fails.push("a changeset note was not seen");
 	if (hasChangeset([".changeset/README.md", ".changeset/config.json"])) fails.push("the README/config were taken for a changeset");
+	if (exemptHead("changeset-release/main") === null) fails.push("the Version packages PR was not exempt");
+	if (exemptHead("release/77b0f902dd79") === null) fails.push("a promotion head was not exempt");
+	if (exemptHead("feat/release/notes") !== null) fails.push("a feature branch was exempt");
+	if (exemptHead("release/not-a-sha") !== null) fails.push("a non-sha release/ branch was exempt");
 	if (fails.length) {
 		console.error(`check-changeset self-test FAILED:\n  - ${fails.join("\n  - ")}`);
 		process.exit(1);
@@ -86,8 +100,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 		selfTest();
 		process.exit(0);
 	}
-	if ((process.env.GITHUB_HEAD_REF ?? "").startsWith("changeset-release/")) {
-		console.log("check-changeset: the Version packages PR consumes changesets; nothing to check.");
+	const exempt = exemptHead(process.env.GITHUB_HEAD_REF ?? "");
+	if (exempt !== null) {
+		console.log(`check-changeset: ${exempt}; nothing to check.`);
 		process.exit(0);
 	}
 	const i = process.argv.indexOf("--files");
