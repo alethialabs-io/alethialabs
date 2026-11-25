@@ -174,15 +174,26 @@ const TOKEN_PREFIX = SEARCH_TOKEN.slice(0, 3);
 
 /** How a list's size was read. `empty` is the shared empty state with no rows beside it. */
 export interface ListCount {
-	source: "count-pill" | "rows" | "empty" | "none";
+	source: "count-pill" | "rows" | "options" | "empty" | "none";
 	value: number | null;
 }
 
 /**
- * The list's size: the count pill when the page has one, otherwise its table rows.
+ * The list's size: the count pill when the page has one, otherwise its table rows, otherwise the
+ * options of its first single-select rail (`role="listbox"`).
  *
  * The pill first, because it is the standard's own answer to "how many results" (F5); the rows are
  * the fallback for the pages F5 already fails, and the evidence says which one was read.
+ *
+ * The rail is read because the console lists dropped their count pills (#7481), and a master-detail
+ * list renders its rows as `role="option"` in a listbox, not as a table: the alerts hub's policies
+ * and channels (#7531). Without it the read fell through to the first `[data-slot="empty"]` in
+ * `main` — on the hub, the delivery ledger's, a different list from the one the facet narrows — and
+ * read 0. A listbox whose options carry a `count-figure` is a facet's own option list, not the
+ * result list, so it is skipped. The rail is read only after the table, so a page that measured
+ * before measures exactly as it did; only a page that read `empty` or `none` can read differently.
+ * On a hub with several lists the FIRST rail is read, and `discoverFacet` drives the FIRST facet:
+ * they name the same list only while each list's filter bar sits above its own rail, in page order.
  */
 export async function readListCount(page: Page): Promise<ListCount> {
 	return page.evaluate(() => {
@@ -199,6 +210,13 @@ export async function readListCount(page: Page): Promise<ListCount> {
 		if (table !== undefined) {
 			const rows = [...table.querySelectorAll("tbody tr")].filter((tr) => shown(tr) && tr.querySelectorAll("td").length > 1 && tr.querySelector('[data-slot="empty"]') === null);
 			return { source: "rows" as const, value: rows.length };
+		}
+		const rail = [...main.querySelectorAll('[role="listbox"]')].find(
+			(lb) => shown(lb) && lb.querySelector('[data-slot="count-figure"]') === null,
+		);
+		if (rail !== undefined) {
+			const options = [...rail.querySelectorAll('[role="option"]')].filter(shown);
+			return { source: "options" as const, value: options.length };
 		}
 		const empty = [...main.querySelectorAll('[data-slot="empty"]')].find(shown);
 		if (empty !== undefined) return { source: "empty" as const, value: 0 };
