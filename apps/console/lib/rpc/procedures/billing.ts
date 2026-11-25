@@ -12,7 +12,9 @@ import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { isBillingConfigured, isStripeConfigured } from "@/lib/billing/config";
 import { paidSalesOpen } from "@/lib/billing/eligibility";
-import { listOrgInvoices } from "@/lib/billing/invoices";
+import { type InvoiceListFilters, listOrgInvoices } from "@/lib/billing/invoices";
+import { providerDocumentsForOrg } from "@/lib/billing/provider/documents";
+import type { BillingDocument } from "@/lib/billing/provider/types";
 import { backupRankOf } from "@/lib/billing/payment-methods";
 import { getAllAiPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
 import { getOrgBilling } from "@/lib/billing/queries";
@@ -277,9 +279,10 @@ export async function listPaymentMethods(): Promise<PaymentMethodInfo[]> {
 // ── Invoices ──────────────────────────────────────────────────────────────────────────────────────
 
 /** An invoice row for the billing UI — sourced from our locally-mirrored `invoice` table
- *  (only invoices for which money moved), never a live Stripe API call. */
+ *  (only invoices for which money moved), never a live Stripe API call; for a Paddle customer,
+ *  also Paddle's own invoices (`documentToInvoiceInfo`). */
 export interface InvoiceInfo {
-	/** Our invoice id (used for the preview + PDF-download route). */
+	/** Our invoice id, or a Paddle transaction id (`txn_…`) — either way the preview + PDF-download route's key. */
 	id: string;
 	/** The фактура's number — null until `facturaIssued`, never Stripe's invoice number. */
 	number: string | null;
@@ -340,16 +343,55 @@ export type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 // empty list, not an error.
 
 /**
- * Lists the active org's mirrored invoices (newest paid first), from the local table — no
- * Stripe call, so it's fast and only ever shows real paid invoices. Filterable by period
- * range + status.
+ * Lists the active org's invoices (newest paid first): the mirrored ones from the local table — no
+ * Stripe call, so only real paid invoices — plus, for an org with a Paddle customer, Paddle's own
+ * invoices (lib/billing/provider/documents.ts; one Paddle read per page of history). Filterable by
+ * period range + status.
  */
 export async function listInvoices(
 	params: InvoiceListParams = {},
 ): Promise<InvoiceInfo[]> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
-	const rows = await listOrgInvoices(actor.orgId, invoiceReaderFilters(params));
-	return rows.map(toInvoiceInfo);
+	const filters = invoiceReaderFilters(params);
+	const limit = filters.limit ?? 200;
+	const [rows, docs] = await Promise.all([
+		listOrgInvoices(actor.orgId, filters),
+		providerDocumentsForOrg(actor.orgId, { limit }),
+	]);
+	const hosted = docs.map(documentToInvoiceInfo).filter((d) => matchesInvoiceFilters(d, filters));
+	if (hosted.length === 0) return rows.map(toInvoiceInfo);
+	return [...rows.map(toInvoiceInfo), ...hosted]
+		.sort((a, b) => b.paidAt.localeCompare(a.paidAt))
+		.slice(0, limit);
+}
+
+/**
+ * A provider-hosted document (Paddle's invoice — Paddle is the merchant of record) in the list's
+ * shape. Its id is the provider's (`txn_…`), which the PDF route recognises and answers with the
+ * provider's own PDF. It lists only billed/completed documents, so it reads as paid; with a number
+ * it is downloadable, as an issued фактура is.
+ */
+export function documentToInvoiceInfo(doc: BillingDocument): InvoiceInfo {
+	return {
+		id: doc.id,
+		number: doc.number,
+		total: doc.total.minor,
+		currency: doc.total.currency.toLowerCase(),
+		status: "paid",
+		paidAt: (doc.issuedAt ?? new Date(0)).toISOString(),
+		periodStart: doc.periodStart?.toISOString() ?? null,
+		periodEnd: doc.periodEnd?.toISOString() ?? null,
+		description: null,
+		facturaIssued: doc.number !== null,
+	};
+}
+
+/** Applies the list's status and paid-date filters to a row built outside the SQL query. */
+function matchesInvoiceFilters(row: InvoiceInfo, filters: InvoiceListFilters): boolean {
+	if (filters.status?.length && !filters.status.includes(row.status)) return false;
+	if (filters.paidFrom && row.paidAt < new Date(filters.paidFrom).toISOString()) return false;
+	if (filters.paidTo && row.paidAt > new Date(filters.paidTo).toISOString()) return false;
+	return true;
 }
 
 // ── Transactions (Stripe charges) ─────────────────────────────────────────────────────────────────

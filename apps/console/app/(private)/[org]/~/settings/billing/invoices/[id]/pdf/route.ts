@@ -13,6 +13,10 @@
 // operator), so it answers a page saying exactly that. A stored copy that cannot be read answers
 // "unavailable", which is a retryable read failure, not a reason to serve another document.
 //
+// A Paddle invoice (id `txn_…`, listed for a Paddle customer — Paddle is the merchant of record, so
+// ITS invoice is the customer's) is answered with a redirect to Paddle's short-lived PDF URL, after
+// `paddleInvoicePdfUrl` checks the transaction is this org's (lib/billing/paddle/documents.ts).
+//
 // Every failure answers an HTML page (`./error-page.ts`), never JSON: both readers of this route —
 // the preview iframe and a "Download PDF" navigation — render the body as it is (CON-L3, R6 F-08).
 
@@ -20,6 +24,7 @@ import { authorize } from "@/lib/authz/guard";
 import { ForbiddenError } from "@/lib/authz/types";
 import { errorDigest } from "@/lib/errors";
 import { getOrgInvoice } from "@/lib/billing/invoices";
+import { paddleInvoicePdfUrl } from "@/lib/billing/paddle/documents";
 import { storage } from "@/lib/storage";
 import { INVOICE_PDF_BUCKET } from "@/lib/storage/invoice-pdf";
 import { invoicePdfError } from "./error-page";
@@ -46,6 +51,21 @@ export async function GET(
 			return invoicePdfError("not-found");
 		}
 		return invoicePdfError("signed-out");
+	}
+
+	if (id.startsWith("txn_")) {
+		const download = new URL(req.url).searchParams.get("download") === "1";
+		let url: string | null;
+		try {
+			url = await paddleInvoicePdfUrl(orgId, id, download ? "attachment" : "inline");
+		} catch {
+			return invoicePdfError("unavailable");
+		}
+		if (!url) return invoicePdfError("not-found");
+		return new Response(null, {
+			status: 302,
+			headers: { Location: url, "Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer" },
+		});
 	}
 
 	let row: Awaited<ReturnType<typeof getOrgInvoice>>;
