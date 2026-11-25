@@ -53,9 +53,9 @@ import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
 
 const PAGE: TeamsPage = {
 	rows: [{ id: "t1", name: "Networking", memberCount: 0, members: [] }],
-	resultCount: 1,
-	total: 1,
+	nextCursor: null,
 	facets: { sizes: [] },
+	universeEmpty: false,
 };
 
 const ALL: TeamsGate = { canCreate: true, canRename: true, canDelete: true, canEditRoster: true };

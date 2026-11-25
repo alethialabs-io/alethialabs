@@ -50,7 +50,7 @@ import { AccessManager } from "@/components/settings/access/access-manager";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { useAccessFilters } from "@/lib/stores/use-settings-filters";
 
-const PAGE: AccessGrantsPage & { asOf: string } = {
+const PAGE: AccessGrantsPage = {
 	rows: [
 		{
 			id: "g1",
@@ -63,6 +63,7 @@ const PAGE: AccessGrantsPage & { asOf: string } = {
 			resourceType: "org",
 			resourceId: null,
 			createdAt: "2026-01-01T00:00:00.000Z",
+			asOf: "2026-01-02T00:00:00.000Z",
 		},
 		// A grant on a Project the option lists do not name (deleted, or not visible): R6 F-19.
 		{
@@ -76,12 +77,12 @@ const PAGE: AccessGrantsPage & { asOf: string } = {
 			resourceType: "project",
 			resourceId: "9f1c2d3e-0000-4000-8000-000000000000",
 			createdAt: "2026-01-01T00:00:00.000Z",
+			asOf: "2026-01-02T00:00:00.000Z",
 		},
 	],
-	resultCount: 2,
-	total: 2,
-	asOf: "2026-01-02T00:00:00.000Z",
+	nextCursor: null,
 	facets: { scopes: [], roles: [], effects: [] },
+	universeEmpty: false,
 };
 
 const OPTIONS: GrantOptions = {

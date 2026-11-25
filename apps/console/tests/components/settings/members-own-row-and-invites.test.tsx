@@ -90,8 +90,22 @@ vi.mock("@/lib/auth/client", () => ({
 	},
 }));
 vi.mock("@/app/server/actions/members", () => ({ setMemberSuspended: vi.fn() }));
+vi.mock("@/lib/query/use-keyset-list", async () => {
+	const { membersPageOf, settledKeysetList } = await import("../../helpers/keyset-list");
+	// One list per fixture object, so a render that did not "refetch" hands back the same rows.
+	const lists = new WeakMap<object, unknown>();
+	return {
+		useKeysetList: () => {
+			const cached = lists.get(pageData);
+			if (cached) return cached;
+			const page = membersPageOf(pageData);
+			const list = settledKeysetList(page.rows, { facets: page.facets, universeEmpty: page.universeEmpty });
+			lists.set(pageData, list);
+			return list;
+		},
+	};
+});
 vi.mock("@/lib/query/use-members-query", () => ({
-	useMembersPageQuery: () => ({ data: pageData, isPending: false, isPlaceholderData: false }),
 	useMembersGateQuery: () => ({
 		data: { canManage: true, canInvite: false, plan: "team", inviteBlockedReason: "x" },
 	}),

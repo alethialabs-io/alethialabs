@@ -2,42 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-// Settings · Access, step 5 of the console filter standard (./README.md → "Server-side
-// filters"): the normalized query IS the input (and so the key), the fetch is the SERVER's
-// filtered read, and previous rows are kept — and visibly dimmed by the caller — while the next
-// answer loads.
+// Settings · Access's grant builder read. The grants LIST pages through
+// `useKeysetList(orpc.members.grants, …)` in the manager (lib/query/README.md → "Paging"; LST-8
+// #7490), which is where the filter standard's list wiring lives; its search reaches a grant's
+// SCOPE by name (`queryAccessGrantsPage` joins projects, runners, cloud identities, teams, users).
 //
-// #6129 (ADR 0005 D1): the grants page and the builder's options are the `members.grants` and
-// `members.grantOptions` GET procedures; the org route prefetches both. Live: an `access` hint (a
-// grant or a role changed) invalidates them.
-//
-// The search axis reaches a grant's SCOPE by name: `queryAccessGrantsPage` joins `projects`,
-// `runners`, `cloud_identities`, `team` and `user`, so the free text matches the name the Scope
-// column displays, and the literal "organization" matches the org-wide scope.
+// #6129 (ADR 0005 D1): `members.grantOptions` is a GET procedure the org route prefetches. Live: an
+// `access` hint (a grant or a role changed) invalidates it.
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { retryUnlessRefused } from "@/components/settings/members/people-reads";
-import type { AccessGrantQuery } from "@/lib/queries/access-grants";
 import { orpc } from "@/lib/rpc/client";
-
-/**
- * The org's access grants for `query`, filtered SERVER-SIDE, with the scope, role and effect
- * facets counted over every grant in the same SCOPE. `query.projectId` is the universe selector
- * (the project-scoped surface), which is why it travels inside the same object.
- *
- * @param query the `normalizeAccessQuery()` output; `{}` is the pristine org-wide view
- * @param enabled false without the `customRoles` entitlement, where the upsell renders instead
- */
-export function useAccessGrantsPageQuery(query: AccessGrantQuery = {}, enabled = true) {
-	return useQuery(
-		orpc.members.grants.queryOptions({
-			input: query,
-			placeholderData: keepPreviousData,
-			enabled,
-			retry: retryUnlessRefused,
-		}),
-	);
-}
 
 /** The grant builder's principals, roles, permissions and scopes. */
 export function useGrantOptionsQuery(enabled = true) {

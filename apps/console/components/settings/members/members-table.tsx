@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Members — toolbar (count / invite) + filter bar + a bulk bar, over the shared
-// DataTable. A pending invitation says when it was sent and can be re-sent (R6 E-13); the viewer's
+// Settings · Members — toolbar (description / invite) + filter bar + a bulk bar, over the shared
+// DataTable in SERVER mode: the `members.page` read pages members and invitations together on the
+// keyset contract (`useKeysetList` + the table's `ListFooter`, LST-8 #7490), so the browser holds the
+// pages it asked for and never the whole org. No count pill: the console carries no list counts. A pending invitation says when it was sent and can be re-sent (R6 E-13); the viewer's
 // own row offers no suspend or remove (R6 E-10); and the selection is always a subset of the rows on
 // screen, so a bulk action acts on what the person can see (R6 E-11). Real members + pending invitations, filtered SERVER-SIDE by the `members.page` GET
 // procedure (rows + facets), prefetched by the route with the `members.gate` read that decides the
@@ -12,6 +14,7 @@
 // list is invalidated when the write settles.
 
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -31,13 +34,13 @@ import { DataTable } from "@/components/data-table";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { hrefWithParamPatch, PAGE_PARAM, pageFromUrl, pagePatch } from "@/lib/query/view-url-params";
 import { type ActionResult, describeActionError } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import {
-  useMembersGateQuery,
-  useMembersPageQuery,
-} from "@/lib/query/use-members-query";
+import { type KeysetList, useKeysetList } from "@/lib/query/use-keyset-list";
+import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
+import { useMembersGateQuery } from "@/lib/query/use-members-query";
+import type { MembersListRow } from "@/lib/queries/members";
 import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useMembersFilters } from "@/lib/stores/use-settings-filters";
@@ -56,6 +59,7 @@ import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
 import { PageToolbar } from "@repo/ui/page-toolbar";
+import { SectionHeading } from "@repo/ui/section-heading";
 import {
   Select,
   SelectContent,
@@ -75,7 +79,6 @@ import {
   MEMBER_STATUS_OPTIONS,
   type MemberRowView,
   normalizeMembersQuery,
-  SETTINGS_LIST_PAGE_SIZE,
 } from "./members-filters";
 import { viaAuth } from "./auth-action";
 import { PeopleListSkeleton } from "./people-skeleton";
@@ -658,6 +661,70 @@ async function runBulk(steps: BulkStep[]): Promise<BulkOutcome> {
   return { failedKeys: [], result: { ok: true, data: { done: steps.length } } };
 }
 
+/**
+ * One row of the `members.page` read as the table renders it — a member or a pending invitation.
+ * Every relative time is measured from the row's own `asOf` (the instant its page was read, #5377).
+ */
+function toRowView(r: MembersListRow): MemberRowView {
+  const asOf = new Date(r.asOf);
+  if (r.kind === "member") {
+    return {
+      id: `m:${r.id}`,
+      key: `m:${r.id}`,
+      kind: "member",
+      refId: r.id,
+      name: r.name?.trim() || r.email,
+      meta: r.email,
+      avatar: userInitials({ name: r.name, email: r.email }),
+      role: r.role,
+      teams: r.teams,
+      status: r.status === "suspended" ? "suspended" : "active",
+      activity: r.lastActiveAt ? formatRelative(r.lastActiveAt, asOf) : "—",
+      isYou: r.isYou,
+    };
+  }
+  return {
+    id: `i:${r.id}`,
+    key: `i:${r.id}`,
+    kind: "invite",
+    refId: r.id,
+    name: r.email,
+    // WHEN it was sent. It rides in the member cell's second line, which WRAPS, and not in "Last
+    // active", which is `whitespace-nowrap`: "invited less than a minute ago" there widened that
+    // column until the row's last column — the "Manage …" trigger — was pushed past the table's clip
+    // edge.
+    meta: `invited by ${r.inviterName} · ${formatRelative(r.createdAt, asOf)}`,
+    avatar: userInitials({ email: r.email }),
+    role: r.role,
+    teams: [],
+    status: "pending",
+    activity: "— invited",
+    isYou: false,
+    // When its link stops working (#6827, CON-PB2): Better Auth keeps an expired invitation
+    // `pending`, so this comparison is the only thing that tells the two apart.
+    expiry: invitationExpiry(r.expiresAt, r.asOf),
+  };
+}
+
+/**
+ * One row as a finished list — the linked row's own one-row table: everything shown, nothing further
+ * to page, nothing loading or failed (the caller renders those states before it has the row).
+ */
+function oneRowList(row: MemberRowView): KeysetList<MemberRowView> {
+  return {
+    rows: [row],
+    facets: null,
+    universeEmpty: null,
+    query: { isLoading: false, isError: false, data: [row], error: null, refetch: () => undefined },
+    isPending: false,
+    isPlaceholderData: false,
+    hasMore: false,
+    loadingMore: false,
+    loadMoreFailed: false,
+    loadMore: () => undefined,
+  };
+}
+
 /** Settings · Members: the filterable members + invitations table and its confirmations. */
 export function MembersTable() {
   // The gate is the SERVER's answer, prefetched with the rows (#6129, F017): whether this org may
@@ -672,21 +739,9 @@ export function MembersTable() {
   const filters = useMembersFilters((s) => s.filters);
   const set = useMembersFilters((s) => s.set);
   const reset = useMembersFilters((s) => s.reset);
-  // A filter change goes back to the first page (`resetParams`): page 3 of the old answer is not a
-  // place in the new one.
-  const urlRead = useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS, undefined, {
-    resetParams: [PAGE_PARAM],
-  });
-  // The page index is URL state (R6 E-23), written in place so paging is not a server navigation.
-  const searchParams = useSearchParams();
-  const pageIndex = pageFromUrl(searchParams) - 1;
-  const onPageIndexChange = useCallback((index: number) => {
-    window.history.replaceState(
-      null,
-      "",
-      hrefWithParamPatch(window.location.pathname, window.location.search, pagePatch(index + 1)),
-    );
-  }, []);
+  // A filter change is a new list key, so the walk restarts at its first page — the cursor is the
+  // infinite query's page param, never in the key and never in the URL (`?page=` is retired).
+  const urlRead = useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS);
   // Seeded from the URL, so a pasted `?search=…&statuses=…` asks first for the key the route
   // prefetched — not `{statuses}` alone, which it did not (#4999, as #4980 on `~/runners`).
   const search = useDebouncedValue(filters.search, 250, { urlRead });
@@ -715,12 +770,13 @@ export function MembersTable() {
     setPending(action);
   }, []);
 
-  // Filtered SERVER-SIDE: `members.page` narrows members AND pending invitations in SQL and returns
-  // the status/role/team facets counted over the org's UNFILTERED universe, so an option never
-  // disappears as you select it. The normalized query IS the input, and `keepPreviousData` (in the
-  // hook) keeps the table's rows across a filter change — `isPlaceholderData` is what marks them
-  // stale while the next answer loads.
-  const page = useMembersPageQuery(query);
+  // Filtered AND paged SERVER-SIDE: `members.page` narrows members AND pending invitations in SQL,
+  // a page at a time in one alphabetical keyset order, and its first page carries the status/role/
+  // team facets counted over the org's UNFILTERED universe, so an option never disappears as you
+  // select it. The normalized query IS the key, and `keepPreviousData` (in the hook) keeps the
+  // table's rows across a filter change — `isPlaceholderData` is what marks them stale while the
+  // next answer loads.
+  const list = useKeysetList(orpc.members.page, query);
   // The list is BUSY while what it shows may not answer the URL and the bar: before the link has
   // been read into the store, before the first answer, while the rows are the previous query's
   // placeholder, and while a typed search is still inside its debounce. Exposed as `aria-busy` on
@@ -728,18 +784,7 @@ export function MembersTable() {
   // answer (#4980) — can tell an answer from a stand-in (#4999). The dim below stays the
   // placeholder half only: dimming the first paint of every visit would flash a correct page.
   const busy =
-    !urlRead || page.isPending || page.isPlaceholderData || filters.search !== search;
-  // Memoized, not `data ?? []` inline: a fresh `[]` every render would re-key the batched
-  // classification query below on each paint while the fetch is still in flight.
-  const members = useMemo(() => page.data?.members ?? [], [page.data]);
-  const invites = useMemo(() => page.data?.invitations ?? [], [page.data]);
-  // WHO is viewing and WHEN the rows were read both come from the payload, never from this
-  // renderer: the route dehydrates the payload, so the server render and the hydrating client
-  // read the same two values and produce the same markup (#5377, React #418).
-  const viewerUserId = page.data?.viewerUserId;
-  const asOf = page.data?.asOf;
-  /** Every member + pending invitation in the org — what tells onboarding from an empty filter. */
-  const total = page.data?.total ?? 0;
+    !urlRead || list.isPending || list.isPlaceholderData || filters.search !== search;
 
   // ── Writes (ADR 0005 D4) ──────────────────────────────────────────────────────────────────
   // Every one invalidates every members read when it settles, and every one is pending while in
@@ -825,44 +870,36 @@ export function MembersTable() {
     bulk.variables,
   ]);
 
-  const rows = useMemo<MemberRowView[]>(() => {
-    const memberRows: MemberRowView[] = members.map((m) => ({
-      id: `m:${m.id}`,
-      key: `m:${m.id}`,
-      kind: "member",
-      refId: m.id,
-      name: m.name?.trim() || m.email,
-      meta: m.email,
-      avatar: userInitials({ name: m.name, email: m.email }),
-      role: m.role,
-      teams: m.teams,
-      status: m.status === "suspended" ? "suspended" : "active",
-      activity: m.lastActiveAt
-        ? formatRelative(m.lastActiveAt, asOf ? new Date(asOf) : undefined)
-        : "—",
-      isYou: m.userId === viewerUserId,
-    }));
-    const inviteRows: MemberRowView[] = invites.map((i) => ({
-      id: `i:${i.id}`,
-      key: `i:${i.id}`,
-      kind: "invite",
-      refId: i.id,
-      name: i.email,
-      // WHEN it was sent, against the payload's `asOf` like every other relative time here (#5377).
-      // It rides in the member cell's second line, which WRAPS, and not in "Last active", which is
-      // `whitespace-nowrap`: "invited less than a minute ago" there widened that column until the
-      // row's last column — the "Manage …" trigger — was pushed past the table's clip edge.
-      meta: `invited by ${i.inviterName} · ${formatRelative(i.createdAt, asOf ? new Date(asOf) : undefined)}`,
-      avatar: userInitials({ email: i.email }),
-      role: i.role,
-      teams: [],
-      status: "pending",
-      activity: "— invited",
-      isYou: false,
-      expiry: invitationExpiry(i.expiresAt, asOf),
-    }));
-    return [...memberRows, ...inviteRows];
-  }, [members, invites, viewerUserId, asOf]);
+  // Every loaded row, in the server's one keyset order (members and invitations interleaved). WHO
+  // is viewing (`isYou`) and WHEN each page was read (`asOf`) both come from the payload, never from
+  // this renderer: the route dehydrates the payload, so the server render and the hydrating client
+  // read the same values and produce the same markup (#5377, React #418).
+  const rows = useMemo(() => list.rows.map(toRowView), [list.rows]);
+  // The table renders the SAME list, its rows mapped for display: the footer, the busy state and
+  // the stale notice all still read the list's own paging state.
+  const tableList = useMemo<KeysetList<MemberRowView>>(() => ({ ...list, rows }), [list, rows]);
+
+  // A deep link (`?selected=<member or invitation id>`) opens that row AT ONCE, wherever it sits in
+  // the alphabet: when the loaded pages do not hold it, it is read BY ID through the same builder
+  // and scope as the list (`members.page` with `id`), so a link can open only what the list would
+  // show. It renders above the list, in its own one-row table with the same controls.
+  const searchParams = useSearchParams();
+  const selectedId = selectionFromUrl(searchParams);
+  const loadedSelected = selectedId === null ? undefined : list.rows.find((r) => r.id === selectedId);
+  const selectedRead = useQuery({
+    ...orpc.members.page.queryOptions({ input: { id: selectedId ?? undefined } }),
+    enabled: selectedId !== null && loadedSelected === undefined && !list.isPending,
+    retry: retryUnlessRefused,
+  });
+  const selectedRow = loadedSelected ?? selectedRead.data?.rows.find((r) => r.id === selectedId);
+  const linked = useMemo(() => (selectedRow ? oneRowList(toRowView(selectedRow)) : null), [selectedRow]);
+  const clearSelection = useCallback(() => {
+    window.history.replaceState(
+      null,
+      "",
+      hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(null)),
+    );
+  }, []);
 
   // One batched query hydrates every member row's classification chips (invites aren't
   // classifiable). Keyed on the member row id (member.id).
@@ -872,8 +909,9 @@ export function MembersTable() {
   );
 
   // The server already applied the query, so the rows ARE the result. The facet counts come
-  // from that read's second, unfiltered pass — never from these rows.
+  // from the first page's second, unfiltered pass — never from these rows.
   const filtered = rows;
+  const facets = list.facets;
   const counts = useMemo(() => {
     const tally = (options: { value: string; count: number }[]) => {
       const out: Record<string, number> = {};
@@ -881,11 +919,11 @@ export function MembersTable() {
       return out;
     };
     return {
-      statuses: tally(page.data?.facets.statuses ?? []),
-      roles: tally(page.data?.facets.roles ?? []),
-      teams: tally(page.data?.facets.teams ?? []),
+      statuses: tally(facets?.statuses ?? []),
+      roles: tally(facets?.roles ?? []),
+      teams: tally(facets?.teams ?? []),
     };
-  }, [page.data]);
+  }, [facets]);
   const activeFilters = countActiveFilters(filters, DEFAULT_MEMBERS_FILTERS);
 
   // THE SELECTION IS ALWAYS A SUBSET OF THE ROWS ON SCREEN (R6 E-11). `selected` keeps what was
@@ -997,19 +1035,23 @@ export function MembersTable() {
 
   // Pending is the route skeleton's shape, not a second, different one (B2). The route prefetches
   // the first answer, so this is reached only when the cache was evicted under the page.
-  if (page.isPending) {
+  if (list.isPending) {
     return <PeopleListSkeleton facets={2} columns={canManage ? 7 : 5} />;
   }
-  // A failed first load is an ERROR, never "No members yet" (B4).
-  if (page.isError && page.data === undefined) {
+  // A failed first load is an ERROR, never "No members yet" (B4). A failed REFRESH behind rows is
+  // the table's stale notice, and a failed later page is the footer's retry line.
+  if (list.query.isError && list.query.data === undefined) {
     return (
       <RegionError
         title="Couldn't load members"
         description="The member list didn't load. Nothing about your organization changed."
-        onRetry={() => void page.refetch()}
+        onRetry={() => void list.query.refetch()}
       />
     );
   }
+  // First-run empty is the universe's answer (`universeEmpty`, a boolean), never a count; an empty
+  // page over a non-empty universe is the FILTERED empty state.
+  const firstRun = list.universeEmpty === true;
 
   const inviteButton = (
     <Button size="sm">
@@ -1034,7 +1076,6 @@ export function MembersTable() {
       <PageToolbar
         className="mb-4"
         description="Organization members and pending invitations."
-        count={filtered.length}
         actions={inviteAction}
       />
       {/* The stat-card strip that used to sit here is gone (banned by CLAUDE.md §6). Every
@@ -1094,6 +1135,28 @@ export function MembersTable() {
         <FilterBarReset count={activeFilters} onReset={reset} />
       </FilterBar>
 
+      {linked && (
+        <section
+          aria-label={linked.rows[0]?.kind === "invite" ? "Linked invitation" : "Linked member"}
+          data-slot="members-linked"
+          className="mb-4 rounded-md border border-foreground"
+        >
+          <SectionHeading
+            className="px-3 pt-2"
+            level={2}
+            title={linked.rows[0]?.kind === "invite" ? "Linked invitation" : "Linked member"}
+            actions={
+              <Button variant="ghost" size="sm" onClick={clearSelection}>
+                Clear
+              </Button>
+            }
+          />
+          <MembersCellsContext.Provider value={cells}>
+            <DataTable columns={columns} keyset={linked} />
+          </MembersCellsContext.Provider>
+        </section>
+      )}
+
       {/* bulk bar */}
       {canManage && visibleSelected.size > 0 && (
         <div className="mb-3 flex items-center justify-between gap-4 rounded-md border border-foreground bg-muted py-[9px] pl-4 pr-[14px]">
@@ -1138,14 +1201,14 @@ export function MembersTable() {
         <EmptyState
           className="border border-border bg-surface-sunken"
           icon={<Users />}
-          title={total === 0 ? "No members yet" : "No matching members"}
+          title={firstRun ? "No members yet" : "No matching members"}
           description={
-            total === 0
+            firstRun
               ? "Invite a teammate to collaborate in this organization."
               : "No member or invitation matches these filters."
           }
           action={
-            total === 0 ? undefined : (
+            firstRun ? undefined : (
               <Button variant="outline" size="sm" onClick={reset}>
                 Clear filters
               </Button>
@@ -1154,16 +1217,10 @@ export function MembersTable() {
         />
       ) : (
         <div
-          className={page.isPlaceholderData ? "opacity-60 transition-opacity" : undefined}
+          className={list.isPlaceholderData ? "opacity-60 transition-opacity" : undefined}
         >
           <MembersCellsContext.Provider value={cells}>
-            <DataTable
-              columns={columns}
-              data={filtered}
-              pageSize={SETTINGS_LIST_PAGE_SIZE}
-              pageIndex={pageIndex}
-              onPageIndexChange={onPageIndexChange}
-            />
+            <DataTable columns={columns} keyset={tableList} />
           </MembersCellsContext.Provider>
         </div>
       )}

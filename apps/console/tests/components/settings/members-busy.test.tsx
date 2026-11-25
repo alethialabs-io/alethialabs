@@ -17,6 +17,7 @@ import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemberRow } from "@/app/server/actions/members";
 import type { MembersPage, MembersPageInvitation } from "@/lib/queries/members";
+import { membersPageOf } from "../../helpers/keyset-list";
 
 let currentSearch = "";
 
@@ -94,11 +95,9 @@ function invite(id: string): MembersPageInvitation {
 
 /** A members page answering with the given rows, over a six-row universe. */
 function pageOf(members: MemberRow[], invitations: MembersPageInvitation[]): MembersPage {
-	return {
+	return membersPageOf({
 		members,
 		invitations,
-		resultCount: members.length + invitations.length,
-		total: 6,
 		viewerUserId: "u-a",
 		asOf: "2026-01-02T00:00:00.000Z",
 		facets: {
@@ -110,22 +109,27 @@ function pageOf(members: MemberRow[], invitations: MembersPageInvitation[]): Mem
 			roles: [{ value: "viewer", label: "Viewer", count: 6 }],
 			teams: [],
 		},
-	};
+	});
 }
 
 const PRISTINE = pageOf(["a", "b", "c", "d", "e"].map(member), [invite("p")]);
 const PENDING = pageOf([], [invite("p")]);
 
-/** The browser's key for the `members.page` read of `input`. */
+/** The browser's key for the `members.page` walk of `input` — an infinite key since LST-8 (#7490). */
 function pageKey(input: unknown): readonly unknown[] {
-	return [["members", "page"], { input, type: "query" }];
+	return [["members", "page"], { input, type: "infinite" }];
+}
+
+/** A walk holding one first page — what the route's prefetch seeds. */
+function walkOf(page: MembersPage) {
+	return { pages: [page], pageParams: [null] };
 }
 
 /** A client seeded the way the route's prefetch seeds it: the pristine key, and optionally the link's key. */
 function seededClient(withFiltered: boolean): QueryClient {
 	const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 60_000, retry: false } } });
-	qc.setQueryData(pageKey({}), PRISTINE);
-	if (withFiltered) qc.setQueryData(pageKey({ statuses: ["pending"] }), PENDING);
+	qc.setQueryData(pageKey({}), walkOf(PRISTINE));
+	if (withFiltered) qc.setQueryData(pageKey({ statuses: ["pending"] }), walkOf(PENDING));
 	return qc;
 }
 

@@ -53,7 +53,7 @@ import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 const UPSELL = "Teams are an Enterprise feature";
 
 /** An org with no teams yet — the page where the upsell would stand in for the empty state. */
-const EMPTY: TeamsPage = { rows: [], resultCount: 0, total: 0, facets: { sizes: [] } };
+const EMPTY: TeamsPage = { rows: [], nextCursor: null, facets: { sizes: [] }, universeEmpty: true };
 
 /** One team, as the teams read returns it. */
 const TEAM = { id: "t-1", name: "Platform", memberCount: 0, members: [] };
@@ -133,7 +133,7 @@ describe("Settings · Teams takes its gate from the server, not the unloaded sto
 	});
 
 	it("an org that lost the plan still sees its teams, read-only, with the filter bar", async () => {
-		getTeamsPage.mockResolvedValue({ rows: [TEAM], resultCount: 1, total: 1, facets: { sizes: [] } });
+		getTeamsPage.mockResolvedValue({ rows: [TEAM], nextCursor: null, facets: { sizes: [] }, universeEmpty: false });
 		render(tree(false));
 		await waitFor(() => expect(screen.getByText("Platform")).toBeTruthy());
 		expect(screen.getByPlaceholderText("Search teams…")).toBeTruthy();
