@@ -1,0 +1,41 @@
+---
+title: See what an environment costs
+description: Read an environment's monthly cost, each resource's cost, and what a plan changes, from the last Infracost estimate.
+---
+
+See the monthly cost of an environment and of each resource. Every figure comes from the last plan:
+the runner prices each plan with Infracost. How the estimate is made is in
+[Cost estimation](/concepts/cost-estimation).
+
+## Before you begin
+
+- The environment has been planned at least once. Until then, nothing is priced, and Alethia shows
+  no figure rather than `$0.00`.
+
+## Steps
+
+1. Run a plan: select **Review plan** on the changes bar, then **Run plan**. The review view shows
+   **Cost after this plan** as a monthly total.
+2. For the environment's total from the last plan, open the **⋯** menu in the toolbar and read
+   **Cost, from the last plan**.
+3. For one resource, read the monthly cost on its card, or open it and read the **Cost** section of
+   its **Status** tab. It lists the cost per OpenTofu address, most expensive first. A resource
+   never priced says **Not priced yet**.
+
+## What the figure leaves out
+
+- It is as fresh as the last plan. After a design change, plan again.
+- Infracost prices what is in the OpenTofu plan. Usage-based resources (NoSQL tables, queues,
+  topics, bucket storage) and data transfer are not estimated.
+- A plan whose cost breakdown is missing or broken shows as not priced, never as a wrong number.
+
+## Check that it worked
+
+After a plan, the **⋯** menu shows **Cost, from the last plan**, and each priced card shows its
+monthly cost.
+
+## Related
+
+- [Cost estimation](/concepts/cost-estimation)
+- [Cost commands](/reference/cli/cost)
+- [Use the canvas](/guides/design-project/the-canvas)

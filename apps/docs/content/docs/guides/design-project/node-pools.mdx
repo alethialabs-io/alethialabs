@@ -1,0 +1,124 @@
+---
+title: Add node pools, labels and taints
+description: Label every node, add node pools beside the default pool, taint them, and run a workload on a chosen pool or on arm64.
+---
+
+Label your nodes, add node pools beside the default pool, and schedule workloads onto them. The
+same keys work on AWS, GCP, Azure and Hetzner, so the configuration survives a move to another
+cloud. Every field and rule is in the [node pools reference](/reference/node-pools).
+
+## Before you begin
+
+- You can edit the project from the CLI, with `alethia apply` or `alethia project component add`.
+  The canvas has no fields for these keys.
+- On GCP, the cluster is not an Autopilot cluster (`gke_enable_autopilot: true`). Autopilot makes its
+  own nodes, so it refuses all three keys.
+
+## Add the keys
+
+Three keys in the cluster's `provider_config` do the work:
+
+| Key | What it does |
+| --- | --- |
+| `node_labels` | Labels the nodes of every pool, the default pool included |
+| `node_taints` | Taints the nodes of the extra pools only. The default pool runs Alethia's add-ons, so it is never tainted. |
+| `extra_node_pools` | Adds node pools beside the default pool |
+
+1. Add the keys under the cluster in `alethia.yaml`. This example labels every node and adds a pool
+   of four arm64 nodes for batch jobs:
+
+   ```yaml
+   environments:
+     - name: prod
+       components:
+         cluster:
+           provider_config:
+             node_labels:
+               team: payments
+             node_taints:
+               - key: dedicated
+                 value: batch
+                 effect: NoSchedule
+             extra_node_pools:
+               - name: batch
+                 instance_type: m7g.large
+                 arch: arm64
+                 min_size: 4
+                 max_size: 4
+                 labels:
+                   workload: batch
+   ```
+
+2. Send it:
+
+   ```bash
+   alethia apply
+   ```
+
+   Or set one key from the CLI, as JSON:
+
+   ```bash
+   alethia project component add --project boutique --kind cluster \
+     --set 'provider_config={"node_labels":{"team":"payments"}}'
+   ```
+
+   [Setting template knobs](/reference/cli/project#setting-template-knobs) explains how a write
+   merges and how to remove a key.
+
+3. Plan and deploy the environment.
+
+The server checks only that each key exists in the cloud's template and has the right type. The
+rules for names, values and sizes run when the runner plans: a value that breaks one fails the plan,
+and the error names the rule.
+
+On Hetzner, a pool has a fixed number of servers: `desired_size`, or `min_size` if you leave it
+out. To resize it, change the number and apply again.
+
+## Run a workload on a pool
+
+Every node of an extra pool carries the label `alethia.io/pool: <name>`. Select the pool with it,
+and tolerate every taint on the pool. For the `batch` pool above:
+
+```yaml
+spec:
+  nodeSelector:
+    alethia.io/pool: batch
+    kubernetes.io/arch: arm64
+  tolerations:
+    - key: dedicated
+      value: batch
+      effect: NoSchedule
+    - key: alethia.io/arch
+      value: arm64
+      effect: NoSchedule
+    - key: kubernetes.io/arch
+      value: arm64
+      effect: NoSchedule
+```
+
+The last toleration is for GKE, which taints its own arm64 nodes. It does no harm on other clouds.
+
+## Run a workload on arm64
+
+Alethia taints every arm64 pool with `alethia.io/arch=arm64:NoSchedule`, so an amd64 image does not
+land there and fail with `exec format error`. The images Alethia builds are amd64 only. To run on
+arm64:
+
+1. Build a multi-arch image, or an arm64 image.
+2. Add a toleration for `alethia.io/arch` with value `arm64` and effect `NoSchedule`.
+3. Add the node selector `kubernetes.io/arch: arm64`.
+
+## Check that it worked
+
+```bash
+kubectl get nodes -L alethia.io/pool,team
+```
+
+The new pool's nodes show its name, and every node shows the `team` label. A pod with the selector
+and tolerations above runs on a `batch` node.
+
+## Related
+
+- [Node pools reference](/reference/node-pools): every field, rule and cloud difference.
+- [Configure the cluster](/guides/design-project/cluster)
+- [Troubleshoot design and GitOps](/troubleshooting/design-project#a-node-pool-key-is-not-a-variable-of-this-template)
