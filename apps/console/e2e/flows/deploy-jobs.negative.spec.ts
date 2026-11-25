@@ -103,10 +103,11 @@ test.describe("Deploy jobs — negative & empty states", () => {
 	}) => {
 		await visit(owner.page, `/${owner.orgSlug}/${singleEnvProject.slug}/environments`);
 		// No in-content page title since #6120 (F010): the breadcrumb names the page, and the page
-		// opens with its toolbar, whose count reads 1 here.
+		// opens with its toolbar. The toolbar carries no count since #7541, so the one environment
+		// is read off the list itself: DataTable marks each row `data-list-item`.
 		const toolbar = owner.page.locator('[data-slot="page-toolbar"]');
 		await expect(toolbar).toBeVisible({ timeout: 25_000 });
-		await expect(toolbar).toContainText("1");
+		await expect(owner.page.locator("[data-list-item]")).toHaveCount(1);
 		// Promote stays in the toolbar at every count (#6120, so the route skeleton can reserve the
 		// row exactly) but cannot be pressed with one environment — there is nothing to promote to.
 		await expect(owner.page.getByRole("button", { name: /^Promote$/i })).toBeDisabled();
