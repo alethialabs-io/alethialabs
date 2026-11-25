@@ -45,7 +45,16 @@ export default async function BillingPage() {
 			queryClient.prefetchQuery(rpc.usage.ai.queryOptions()),
 			admin ? queryClient.prefetchQuery(rpc.billing.planHistory.queryOptions()) : null,
 			customer ? queryClient.prefetchQuery(rpc.billing.paymentMethods.queryOptions()) : null,
-			customer ? queryClient.prefetchQuery(rpc.billing.transactions.queryOptions()) : null,
+			// The ledger's FIRST page, under the infinite key `useKeysetList` reads (#7493).
+			customer
+				? queryClient.prefetchInfiniteQuery(
+						rpc.billing.transactions.infiniteOptions({
+							input: (cursor: string | null) => (cursor === null ? {} : { cursor }),
+							initialPageParam: null,
+							getNextPageParam: (last) => last.nextCursor,
+						}),
+					)
+				: null,
 			customer
 				? queryClient.prefetchQuery(
 						rpc.billing.invoices.queryOptions({ input: RECENT_INVOICES_INPUT }),
