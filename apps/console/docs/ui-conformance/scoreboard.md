@@ -213,7 +213,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F2** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F3** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F4** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F5** | F | `check-filter-standard` | 14 | 5 | 23 | 0 | 0.74 | `not-a-list-page` 23 |
+| **F5** | F | `check-filter-standard` | 17 | 2 | 23 | 0 | 0.89 | `not-a-list-page` 23 |
 | **F6** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F7** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F8** | F | live — `interaction` | 16 | 0 | 24 | 2 | 1.00 | `not-a-list-page` 24 |
@@ -263,14 +263,13 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | route | S | T | H | F | R | B | overall |
 |---|---|---|---|---|---|---|---|
 | `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 4 withheld of 44 |
-| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 5 withheld of 44 |
-| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
 | `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 2 withheld of 44 |
 | `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | all withheld (5) | **0.97** · 5 withheld of 44 |
 | `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]` · | all N/A | 3/3 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/architecture` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 4 withheld of 44 |
+| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
+| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
@@ -279,6 +278,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
