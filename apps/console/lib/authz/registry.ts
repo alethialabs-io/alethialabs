@@ -85,6 +85,14 @@ export const ACTIONS = [
 	// not in, so an operator can deploy infrastructure and still not mint a credential that could
 	// keep deploying after they leave.
 	"manage_tokens",
+	// The org's agent policy (AGT-L2, maintainer ruling 2026-11-24): the kill switch, keeping agents
+	// off production, the approval TTL, the enterprise toggles, and which environments a service
+	// token may deploy to without a person (decision D2).
+	//
+	// ITS OWN ACTION, granted through roles like every other. The built-in OWNER role carries it
+	// (owner is "*"); admin does not, which keeps D2's "owner-only" true out of the box while a
+	// custom role can carry it too. Reading the policy needs only `org:view`.
+	"manage_agents",
 	// Short-lived kubeconfig mint (#5250 §2 "Who can mint", seams #5280): `POST
 	// /api/cli/clusters/:id/kubeconfig` issues a credential INTO the customer's cluster.
 	//
@@ -118,7 +126,7 @@ export interface PermissionDef {
 /** Which actions are valid on which resource (the matrix). Default-deny: a pair
  *  not listed here is not a permission and can never be granted. */
 const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
-	org: ["view", "edit", "manage_billing", "manage_tokens"],
+	org: ["view", "edit", "manage_billing", "manage_tokens", "manage_agents"],
 	project: ["view", "create", "edit", "plan", "deploy", "destroy", "audit"],
 	runner: ["view", "create", "edit", "destroy", "deploy"],
 	cloud_identity: ["view", "manage_identities", "test"],
@@ -175,7 +183,7 @@ export const BUILTIN_ROLE_IDS: Record<BuiltInRole, string> = {
  *  CLI roles route and the roles-manager UI). Seeded onto the built-in `role` rows. */
 export const BUILT_IN_ROLE_DESCRIPTIONS: Record<BuiltInRole, string> = {
 	owner: "Full control, including billing and member management.",
-	admin: "Everything except billing.",
+	admin: "Everything except billing and agent policy.",
 	operator: "Operate infrastructure (plan/deploy/destroy) and read alerts.",
 	viewer: "Read-only access.",
 };
@@ -217,8 +225,9 @@ export function roleDisplayName(name: string, builtin?: boolean): string {
 export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	// Full control, including billing + member management.
 	owner: "*",
-	// Everything except billing.
-	admin: ALL_KEYS.filter((k) => !k.startsWith("billing:")),
+	// Everything except billing and the org's agent policy (`org:manage_agents`, owner-only by
+	// default — see its entry in ACTIONS).
+	admin: ALL_KEYS.filter((k) => !k.startsWith("billing:") && k !== "org:manage_agents"),
 	// Operate infrastructure (plan/deploy/destroy + view); not identities/members/billing.
 	// Also read alert config (operators care about ops alerts) but not mutate it, and read +
 	// export the org's Activity log (#3932 — the actions are spelled `view_activity` /
