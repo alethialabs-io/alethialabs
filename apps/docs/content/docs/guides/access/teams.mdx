@@ -1,49 +1,43 @@
 ---
-title: Teams
-description: Group members so you can grant access to a whole team at once — group-based grants.
+title: Create teams
+description: Group members into a team and grant access to the team once, so access follows team membership.
 ---
 
-<Enterprise />
+Grant access to a group of members at once. Give a team one grant, and everyone on it has that
+access. Add or remove people, and their access follows. Sharing a project with five engineers is then
+one grant, not five.
 
-A **team** is a named group of organization members. Grant access to a team, and **everyone on it inherits the
-grant** — add or remove people from the team and their access follows automatically.
+## Before you begin
 
-## Why teams
+- The organization is on the Enterprise plan.
+- Your role can manage teams. Without it, the page says so.
 
-Without teams, sharing a project with five engineers means five grants — and five revokes when the work ends.
-With a team, it's **one grant to the team**, and membership is the only thing you manage afterward.
-
-Teams are the natural principal for durable, role-based access: "the platform team can deploy the
-production projects" is one grant on one team.
-
-## Managing teams
-
-In **Settings → Teams**:
+## Steps
 
 <Steps>
-<Step>**New team** — give it a name (e.g. `platform`).</Step>
-<Step>**Manage** — add or remove organization members.</Step>
-<Step>Grant access to the team in the [Access portal](/guides/access/access-portal) — pick the team as the principal.</Step>
+
+### Create the team
+Open **Settings → Teams**, select **Create team**, and name it, for example `platform`.
+
+### Add members
+Select **Manage members** on the team and add or remove organization members.
+
+### Grant access to the team
+In **Settings → Access**, add a grant and pick the team as the principal. See
+[Grant access](/guides/access/access-portal).
+
 </Steps>
 
-## How team grants resolve
+A team grant applies to a user for as long as they are on the team. Removing someone from the team
+removes that access at once. You can grant a team a [custom role](/guides/access/custom-roles), scope
+the grant to one project, and still deny one member something on top.
 
-A grant whose principal is a team applies to a user whenever they're a member of that team. This is resolved in
-**both** authorization engines:
+## Check that it worked
 
-- The Postgres engine matches team grants by joining your team memberships at decision time.
-- The OpenFGA engine models a team as a group (`team:… # member`), so a team grant reaches members through the
-  relationship graph.
+The team lists its members, and **Settings → Access** shows the grant with the team as principal. A
+member of the team can do what the grant allows.
 
-Either way, removing someone from a team **immediately** removes the access that came from it.
+## Related
 
-<Callout type="info">
-  Teams compose with everything else: grant a [custom role](/guides/access/custom-roles) to a team, scope it
-  to a [project](/guides/access/grants-and-scopes), and add per-member [deny](/guides/access/access-portal)
-  exceptions on top.
-</Callout>
-
-## Next
-
-- Assign team grants in the [**Access portal**](/guides/access/access-portal).
-- Bring people into the org first via [**members & invitations**](/guides/access/members-and-invitations).
+- [Grant access](/guides/access/access-portal)
+- [How grants and scopes work](/guides/access/grants-and-scopes)

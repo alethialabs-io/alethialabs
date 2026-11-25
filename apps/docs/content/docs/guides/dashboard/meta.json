@@ -1,7 +1,6 @@
 {
   "title": "Dashboard",
   "pages": [
-    "index",
-    "project-detail"
+    "index"
   ]
 }
