@@ -16,6 +16,8 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/server/actions/projects", () => ({ planProject: vi.fn(), provisionProject: vi.fn(), destroyProject: vi.fn() }));
 vi.mock("@/app/server/actions/jobs", () => ({ cancelJob: vi.fn() }));
+vi.mock("@/app/server/actions/scanner", () => ({ scanRepo: vi.fn() }));
+vi.mock("@/lib/ai/mcp/feedback", () => ({ sendAgentFeedback: vi.fn() }));
 vi.mock("@/lib/rpc/procedures/jobs", () => ({ readJobStatus: vi.fn() }));
 vi.mock("@/lib/ai/mcp/approval-store", () => ({
 	findOwnApproval: vi.fn(),
@@ -25,7 +27,8 @@ vi.mock("@/lib/ai/mcp/approval-store", () => ({
 }));
 vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
 
-import { createHandlers, type HandlerContext, type HandlerDeps } from "@/lib/ai/mcp/handlers";
+import { createHandlers, type HandlerDeps } from "@/lib/ai/mcp/handlers";
+import type { HandlerContext } from "@/lib/ai/mcp/served";
 import type { ApprovalView } from "@/lib/approvals/read";
 import { ApprovalError } from "@/lib/approvals/refusal";
 import type { Actor } from "@/lib/authz/types";
@@ -75,6 +78,8 @@ function deps(over: Partial<HandlerDeps> = {}): HandlerDeps {
 		jobStatus: unexpected("jobStatus"),
 		jobLogPage: unexpected("jobLogPage"),
 		cancelJob: unexpected("cancelJob"),
+		queueScan: unexpected("queueScan"),
+		sendFeedback: unexpected("sendFeedback"),
 		sleep: vi.fn(async () => {}),
 		now: () => 0,
 		...over,
@@ -364,5 +369,48 @@ describe("cancel_job", () => {
 		await expect(createHandlers(d).cancel_job.call({ job_id: "job-1" }, CTX)).rejects.toMatchObject({
 			code: "not-found",
 		});
+	});
+});
+
+describe("scan_repo", () => {
+	it("queues the scan under the caller's key, kept apart from the in-app agent's keys", async () => {
+		const queueScan = vi.fn(async () => ({ jobId: "job-scan" }));
+		const result = await createHandlers(deps({ queueScan })).scan_repo.call(
+			{ repo: "https://github.com/acme/api", idempotency_key: "scan-key-1" },
+			CTX,
+		);
+		expect(result).toEqual({ job_id: "job-scan" });
+		expect(queueScan).toHaveBeenCalledWith({ repo: "https://github.com/acme/api", key: "mcp:scan-key-1" });
+	});
+
+	it("refuses a key too short to be one, before anything is queued", async () => {
+		const queueScan = vi.fn(async () => ({ jobId: "job-scan" }));
+		await expect(
+			createHandlers(deps({ queueScan })).scan_repo.call({ repo: "https://github.com/acme/api", idempotency_key: "k" }, CTX),
+		).rejects.toThrow();
+		expect(queueScan).not.toHaveBeenCalled();
+	});
+});
+
+describe("send_feedback", () => {
+	it("hands the text and the missing capability to the sink, as the caller", async () => {
+		const sendFeedback = vi.fn(async () => true);
+		const result = await createHandlers(deps({ sendFeedback })).send_feedback.call(
+			{ text: "Cannot read cost per environment.", missing_capability: "per-environment cost" },
+			CTX,
+		);
+		expect(result).toEqual({ received: true });
+		expect(sendFeedback).toHaveBeenCalledWith(ACTOR, {
+			text: "Cannot read cost per environment.",
+			missingCapability: "per-environment cost",
+		});
+	});
+
+	it("reports received false where the deployment has no inbox", async () => {
+		const sendFeedback = vi.fn(async () => false);
+		expect(await createHandlers(deps({ sendFeedback })).send_feedback.call({ text: "hello" }, CTX)).toEqual({
+			received: false,
+		});
+		expect(sendFeedback).toHaveBeenCalledWith(ACTOR, { text: "hello", missingCapability: null });
 	});
 });

@@ -3,9 +3,9 @@ title: MCP server (external agents)
 description: Connect an external agent such as Claude Code, Claude, Cursor or Codex to Alethia over MCP, so it can read your infrastructure with the same tools Elench uses, plan, and ask you to approve an apply or a destroy.
 ---
 
-Elench's read tools are also served as an [MCP](https://modelcontextprotocol.io) server. An agent
-*outside* the console, such as Claude Code, Claude, Cursor or Codex, can then read your real
-infrastructure without you copying anything in by hand. It calls the **same permission-checked tools**
+Elench's tools are also served as an [MCP](https://modelcontextprotocol.io) server, so an agent
+*outside* the console, such as Claude Code, Claude, Cursor or Codex, can read your real
+infrastructure without you copying anything in. It calls the **same permission-checked tools**
 the console's assistant uses, so it sees only what you can see.
 
 An external agent can read your projects, clusters, jobs and drift, and start a plan. It can ask for
@@ -14,10 +14,9 @@ approves. [Alethia for agents](/agents) explains how the MCP server and the [CLI
 together.
 
 <Callout type="info">
-  The server needs AI to be on for your organization. On self-host it is always on. On hosted Alethia
-  every organization has at least the free AI tier, which is on, so the server is available by
-  default. It answers `403` only when AI is turned off for the organization. See
-  [Assistant](/guides/assistant).
+  The server needs AI to be on for your organization. It is always on for self-host, and on by
+  default on hosted Alethia, where every organization has at least the free AI tier. When AI is off,
+  the server answers `403`. See [Assistant](/guides/assistant).
 </Callout>
 
 ## Before you start
@@ -37,13 +36,12 @@ The server is strict about protocol versions, so check your client first:
 | Sign-in | OAuth 2.1. The client discovers the authorization server from the `401` answer, and you sign in to Alethia in the browser. |
 | Client registration | A Client ID Metadata Document (CIMD): the client's id is the HTTPS URL of a metadata document that the client publishes. The server does not accept anonymous dynamic client registration. |
 
-Alethia has not yet published a test record per client. The pages under
-[Pick a client](/agents#pick-a-client) show the setup for Claude Code, Claude, Cursor, VS Code and
-Codex.
+[Pick a client](/agents#pick-a-client) shows the setup for Claude Code, Claude, Cursor, VS Code and
+Codex. Alethia has not yet published a test record per client.
 
 ## Connect a client
 
-There is no key to paste. You sign in to Alethia and approve access.
+There is no key to paste: you sign in to Alethia and approve access.
 
 <Steps>
 
@@ -57,7 +55,7 @@ https://<your-console-origin>/api/mcp
 
 ### Sign in to Alethia
 
-The client sends you to the console's sign-in page. Sign in as you normally do.
+The client sends you to the console's sign-in page. Sign in as usual.
 
 ### Approve access
 
@@ -65,8 +63,8 @@ If the page asks for consent, approve it. The token belongs to **you**: the tool
 your role in the organization, with no access of their own. It carries the scopes the client asked
 for and you approved (`read`, `design`, `plan`, `apply`, `destroy`), and each scope only narrows what
 your role allows. The server refuses a token with no scope it reads, with a `403` that asks the
-client to sign in again. The token names this MCP endpoint as its audience, and the server refuses
-tokens issued for anything else.
+client to sign in again. The server also refuses a token issued for any audience other than this
+endpoint.
 
 <Callout type="warn">
 A connection you made before Alethia added agent scopes holds only sign-in scopes (`openid`,
@@ -77,8 +75,7 @@ the consent page asks for: `read`, `design`, `plan`, `apply`, `destroy`. Approve
 
 ### Use the tools
 
-The client now lists the tools your scopes allow. Ask the agent about your infrastructure and it
-calls them for you.
+The client now lists the tools your scopes allow, and the agent calls them when you ask.
 
 </Steps>
 
@@ -86,8 +83,8 @@ If the client cannot connect:
 
 - A `503` with "MCP is not configured on this deployment" comes from a self-hosted console whose
   `NEXT_PUBLIC_APP_URL` is not an absolute `https` URL. The server needs one to name itself in tokens.
-- An error during sign-in that names the client usually means the client cannot use a Client ID
-  Metadata Document. Update the client.
+- A sign-in error naming the client usually means it cannot use a Client ID Metadata Document.
+  Update the client.
 - A `403` after sign-in means AI is turned off for the organization, an owner turned agent access
   off, or the token carries no scope. The response says which.
 - Any other refusal of the client's first request after sign-in usually means the client speaks a
@@ -105,8 +102,8 @@ Add `?project=<project id>` to the server URL to hold every call to one project.
 
 ## What the agent can read
 
-The [tool reference](/agents/tools) lists the 20 read tools and the six operation tools with their
-arguments. The read tools, in short:
+The [tool reference](/agents/tools) lists all 19 tools with their arguments. What the reads cover, in
+short:
 
 | Area | What the agent can do |
 | --- | --- |
@@ -125,6 +122,8 @@ Results are trimmed and leave secrets out: never ArgoCD passwords, tokens or cre
 
 | Tool | What it does |
 | --- | --- |
+| `create_project`, `apply_design_patch` | Create a project from a design, or change a design. Nothing in the cloud changes. |
+| `scan_repo` | Starts a scan that infers what a repository needs. The repository is never run. |
 | `plan` | Starts a plan of one environment. It changes nothing in the cloud. |
 | `request_apply`, `request_destroy` | Ask you to approve an apply or a destroy, and start it once you have approved. |
 | `cancel_job` | Cancels a queued or running job. |
@@ -137,7 +136,7 @@ changes anything.
 ## What it cannot do
 
 - It cannot **approve** anything.
-- It cannot **start a repository scan or an audit**, or change a design. Start them from the
+- It cannot **start an audit** of existing infrastructure. Start one from the
   [assistant](/guides/assistant) instead.
 - It cannot open console pages, build dashboards, pin widgets, or read and write
   [artifacts](/guides/assistant/artifacts).
