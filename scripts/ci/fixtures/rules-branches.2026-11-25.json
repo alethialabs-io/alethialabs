@@ -1,0 +1,139 @@
+{
+  "_captured": "2026-11-25, verbatim: gh api repos/alethialabs-io/alethialabs/rules/branches/<branch> (#7654), after the maintainer set require_extra_approval_for_unattributed_changes=false on protect-dev and protect-main. Do not edit by hand; re-capture.",
+  "dev": [
+    {
+      "type": "deletion",
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18583159
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "required_reviewers": [],
+        "require_code_owner_review": false,
+        "dismissal_restriction": {
+          "enabled": false,
+          "allowed_actors": []
+        },
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": false,
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18583159
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "contribution-legal"
+          },
+          {
+            "context": "CI required"
+          }
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18583159
+    },
+    {
+      "type": "non_fast_forward",
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18583159
+    }
+  ],
+  "main": [
+    {
+      "type": "deletion",
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18465988
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "required_reviewers": [],
+        "require_code_owner_review": false,
+        "dismissal_restriction": {
+          "enabled": false,
+          "allowed_actors": []
+        },
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "require_extra_approval_for_unattributed_changes": false,
+        "allowed_merge_methods": [
+          "merge",
+          "squash",
+          "rebase"
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18465988
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "Release gate (console)"
+          },
+          {
+            "context": "Release gate (audit)"
+          },
+          {
+            "context": "Release gate (audit-interaction)"
+          },
+          {
+            "context": "branch-flow-guard"
+          },
+          {
+            "context": "contribution-legal"
+          },
+          {
+            "context": "Release gate (elench-ai)"
+          },
+          {
+            "context": "CI required"
+          },
+          {
+            "context": "Release gate (canvas)"
+          },
+          {
+            "context": "Release gate (hero)"
+          },
+          {
+            "context": "Release gate (qa)"
+          }
+        ]
+      },
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18465988
+    },
+    {
+      "type": "non_fast_forward",
+      "ruleset_source_type": "Repository",
+      "ruleset_source": "alethialabs-io/alethialabs",
+      "ruleset_id": 18465988
+    }
+  ]
+}

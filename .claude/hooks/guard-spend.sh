@@ -158,7 +158,7 @@ REAP_PLIST="$HOME/Library/LaunchAgents/io.alethialabs.sandbox-reap.plist"
 #   drill    C-DRILL
 wf_class() {
 	case "$1" in
-	ci.yml | release-gate.yml | codeql.yml | validate-runner.yml | workflow-health.yml | \
+	ci.yml | release-gate.yml | release-gate-label.yml | codeql.yml | validate-runner.yml | workflow-health.yml | \
 		merge-signal-health.yml | addon-render-determinism.yml | catalog-drift.yml | compat-drift.yml | \
 		posthog-error-issues.yml | gate-fixme-currency.yml | template-proof-currency.yml | programme.yml | \
 		go-floors-rerecord.yml | e2e-issuer-health.yml | e2e-orphan-reaper.yml | hcloud-zone-probe.yml | \
