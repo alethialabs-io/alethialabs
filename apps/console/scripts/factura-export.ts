@@ -5,29 +5,48 @@
 // PDFs, a SHA-256 manifest, and Stripe's balance transactions for the same month so payouts and fees
 // reconcile. The files and their format are described in lib/billing/factura/export.ts.
 //
+// It also writes `facturi-<month>.json`: the same documents as @repo/nra reads them (SalesFile,
+// lib/billing/nra/sales-documents.ts), so the VAT package can be rebuilt from the export alone with
+// `nra:build`.
+//
+// With `--nra=<nra-input.json>` it also writes `nra/`: the VAT return package of a company registered
+// under чл. 100, ал. 1 ЗДДС (DEKLAR.TXT, PRODAGBI.TXT, POKUPKI.TXT, VIES.TXT when due, the чл. 117
+// protocols and SUMMARY.md), built by @repo/nra. The input file (version 2) is described in
+// packages/nra/src/input.ts; it names the person who files, so keep it out of the repository.
+//
 // Usage (operator, against production):
-//   pnpm creds prod-env -- pnpm -C apps/console run factura:export -- --month=2026-12 [--out=<dir>]
+//   pnpm creds prod-env -- pnpm -C apps/console run factura:export -- --month=2026-12 [--out=<dir>] [--nra=<input.json>]
+//
+// Demo (no database, no Stripe, no network): a full sample month from fixtures, every file the real
+// run writes, so the package can be seen before the first real month:
+//   pnpm -C apps/console run factura:export -- --demo --out=<dir>
 //
 // It writes into `--out` (default `./factura-export-<month>`), which must not exist yet, so a past
 // export is never overwritten. It refuses, and writes nothing, when a document issued that month has
 // no PDF yet or its stored PDF does not match the SHA-256 recorded at issue; it lists them. Wait for
-// the фактура sweeper (it renders a missing PDF within the hour) and run it again.
+// the фактура sweeper (it renders a missing PDF within the hour) and run it again. With `--nra` it
+// also refuses when the VAT package cannot be built as specified (it lists why).
 //
 // Read-only: it reads the `factura` table, the invoice PDFs from object storage and Stripe's balance
 // transactions and payouts. Reads ALETHIA_DATABASE_URL (the service connection), the storage
 // variables and STRIPE_SECRET_KEY, the environment the console runs with. Exit codes: 0 — written;
 // 1 — refused or could not run.
 
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { and, asc, gte, lte } from "drizzle-orm";
 import type Stripe from "stripe";
-import { type BalanceRow, buildExport, monthWindow } from "@/lib/billing/factura/export";
+import { type BalanceRow, buildExport, type ExportFile, monthWindow, type MonthWindow, sha256Hex } from "@/lib/billing/factura/export";
+import { centsToDecimal, type NraInput, parseNraInput } from "@repo/nra";
+import { demoMonth } from "@/lib/billing/nra/demo";
+import { buildNraExport } from "@/lib/billing/nra/package";
+import { salesFileFromFacturi, salesFileJson } from "@/lib/billing/nra/sales-documents";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
-import { factura } from "@/lib/db/schema";
+import { type Factura, factura } from "@/lib/db/schema";
 import { storage } from "@/lib/storage";
 import { INVOICE_PDF_BUCKET } from "@/lib/storage/invoice-pdf";
+import { allowEsmOnlyPackages, userCwd } from "./lib/esm-only-packages";
 
 /** Payouts arriving this many days after the month may still pay out its transactions. */
 const PAYOUT_LOOKAHEAD_DAYS = 31;
@@ -93,20 +112,13 @@ async function exists(path: string): Promise<boolean> {
 	);
 }
 
-/** Runs the export for the arguments in `argv`; returns the exit code. */
-async function main(argv: readonly string[]): Promise<number> {
-	const month = arg(argv, "month");
-	if (!month) {
-		console.error("usage: factura:export -- --month=YYYY-MM [--out=<dir>]");
-		return 1;
-	}
-	const window = monthWindow(month);
-	const out = resolve(arg(argv, "out") ?? `factura-export-${month}`);
-	if (await exists(out)) {
-		console.error(`refused: ${out} already exists; choose another --out, a past export is never overwritten`);
-		return 1;
-	}
+/** True when `argv` carries the bare flag `--name`. */
+function flag(argv: readonly string[], name: string): boolean {
+	return argv.includes(`--${name}`);
+}
 
+/** The month's documents, their PDFs and Stripe balance, read from production. */
+async function readMonth(window: MonthWindow): Promise<{ documents: Factura[]; pdfs: Map<string, Uint8Array | null>; balance: BalanceRow[] }> {
 	const documents = await getServiceDb()
 		.select()
 		.from(factura)
@@ -117,10 +129,86 @@ async function main(argv: readonly string[]): Promise<number> {
 		pdfs.set(doc.number, doc.pdfKey ? await storage.get(INVOICE_PDF_BUCKET, doc.pdfKey) : null);
 	}
 	const balance = await balanceRows(getStripe(), window.startEpoch, window.endEpoch);
+	return { documents, pdfs, balance };
+}
 
-	const result = buildExport(window, documents, pdfs, balance);
+/** The fixture month of `--demo`, with each document's PDF rendered and attached as the issuer would. */
+async function readDemoMonth(): Promise<{ window: MonthWindow; documents: Factura[]; pdfs: Map<string, Uint8Array | null>; balance: BalanceRow[]; operator: NraInput }> {
+	await allowEsmOnlyPackages();
+	const { renderFacturaPdf } = await import("@/lib/billing/factura/document");
+	const demo = demoMonth();
+	const pdfs = new Map<string, Uint8Array | null>();
+	const documents: Factura[] = [];
+	for (const doc of demo.documents) {
+		const pdf = await renderFacturaPdf(doc.snapshot);
+		pdfs.set(doc.number, pdf);
+		documents.push({ ...doc, pdfKey: `demo/${doc.number}.pdf`, pdfSha256: sha256Hex(pdf) });
+	}
+	// Card sales go through Paddle (the merchant of record): the demo has no Stripe balance.
+	return { window: demo.window, documents, pdfs, balance: [], operator: demo.operator };
+}
+
+/** Runs the export for the arguments in `argv`; returns the exit code. */
+async function main(argv: readonly string[]): Promise<number> {
+	const demo = flag(argv, "demo");
+	const month = demo ? null : arg(argv, "month");
+	if (!demo && !month) {
+		console.error("usage: factura:export -- --month=YYYY-MM [--out=<dir>] [--nra=<input.json>]   |   factura:export -- --demo --out=<dir>");
+		return 1;
+	}
+	const outArg = arg(argv, "out");
+	if (demo && !outArg) {
+		console.error("refused: --demo needs --out=<dir>, a folder that does not exist yet");
+		return 1;
+	}
+
+	let operator: NraInput | null = null;
+	const nraPath = arg(argv, "nra");
+	if (nraPath && !demo) {
+		const parsed = parseNraInput(await readFile(resolve(userCwd(), nraPath), "utf8"));
+		if (!parsed.ok) {
+			console.error(`refused: ${nraPath} is not a valid NRA input file (version 2):`);
+			for (const p of parsed.problems) console.error(`  ${p}`);
+			return 1;
+		}
+		operator = parsed.value;
+	}
+
+	const data = demo ? await readDemoMonth() : { window: monthWindow(month ?? ""), ...(await readMonth(monthWindow(month ?? ""))) };
+	const window = data.window;
+	if (demo && "operator" in data) operator = data.operator;
+	const out = resolve(userCwd(), outArg ?? `factura-export-${window.month}`);
+	if (await exists(out)) {
+		console.error(`refused: ${out} already exists; choose another --out, a past export is never overwritten`);
+		return 1;
+	}
+
+	const sales = salesFileFromFacturi(window.month, data.documents);
+	if (!sales.ok) {
+		console.error(`refused: the documents of ${window.month} cannot be written as facturi-${window.month}.json:`);
+		for (const p of sales.problems) console.error(`  ${p}`);
+		return 1;
+	}
+	const extra: ExportFile[] = [{ name: `facturi-${window.month}.json`, data: salesFileJson(sales.value) }];
+	let vatLine = "";
+	if (operator) {
+		await allowEsmOnlyPackages();
+		const { renderProtocolPdf } = await import("@/lib/billing/nra/protocol-document");
+		const nra = await buildNraExport(sales.value, operator, renderProtocolPdf, { demo });
+		if (!nra.ok) {
+			console.error(`refused: the VAT package for ${window.month} cannot be built as specified:`);
+			for (const p of nra.problems) console.error(`  ${p}`);
+			return 1;
+		}
+		extra.push(...nra.files);
+		vatLine = nra.vatRefundableCents
+			? ` VAT package in nra/ (VAT refundable EUR ${centsToDecimal(nra.vatRefundableCents)}; read nra/SUMMARY.md).`
+			: ` VAT package in nra/ (VAT payable EUR ${centsToDecimal(nra.vatPayableCents)}; read nra/SUMMARY.md).`;
+	}
+
+	const result = buildExport(window, data.documents, data.pdfs, data.balance, extra);
 	if (!result.ok) {
-		console.error(`refused: ${result.problems.length} document(s) of ${month} cannot be exported as they stand:`);
+		console.error(`refused: ${result.problems.length} document(s) of ${window.month} cannot be exported as they stand:`);
 		for (const p of result.problems) console.error(`  ${p.number}: ${p.problem}`);
 		return 1;
 	}
@@ -129,14 +217,13 @@ async function main(argv: readonly string[]): Promise<number> {
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, file.data, { flag: "wx" });
 	}
-	const credits = documents.filter((d) => d.kind === "credit_note").length;
+	const credits = data.documents.filter((d) => d.kind === "credit_note").length;
 	console.log(
-		`wrote ${out}: ${documents.length - credits} фактура(и), ${credits} credit note(s), ` +
-			`${balance.length} Stripe balance transaction(s). Verify: cd ${out} && unzip -q facturi-${month}-pdfs.zip && shasum -a 256 -c MANIFEST.sha256`,
+		`wrote ${out}${demo ? " (DEMO, fixture data)" : ""}: ${data.documents.length - credits} фактура(и), ${credits} credit note(s), ` +
+			`${data.balance.length} Stripe balance transaction(s).${vatLine} Verify: cd ${out} && unzip -q facturi-${window.month}-pdfs.zip && shasum -a 256 -c MANIFEST.sha256`,
 	);
 	return 0;
 }
-
 main(process.argv.slice(2)).then(
 	(code) => process.exit(code),
 	(err: unknown) => {
