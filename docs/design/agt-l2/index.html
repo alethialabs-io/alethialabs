@@ -1,0 +1,1388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Approvals Design</title>
+<meta name="description" content="AGT-L2 design prototype: approval page, approvals list, agent policy, service token auto-approve, connected agents and consent." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet" />
+<style>
+/* ===================================================================================
+   Tokens. Values mirror packages/brand/src/tokens.css (the console's own file):
+   grayscale OKLCH ramp, the four named ink tiers, the --text-ui-* rungs, the --z-* rungs.
+   Dark is the signature theme and the default; light follows prefers-color-scheme
+   unless the viewer pins a theme.
+   =================================================================================== */
+:root {
+  --gray-0: oklch(1 0 0); --gray-50: oklch(0.985 0 0); --gray-100: oklch(0.967 0 0);
+  --gray-200: oklch(0.928 0 0); --gray-300: oklch(0.882 0 0); --gray-400: oklch(0.788 0 0);
+  --gray-500: oklch(0.664 0 0); --gray-550: oklch(0.610 0 0); --gray-600: oklch(0.556 0 0);
+  --gray-625: oklch(0.527 0 0); --gray-700: oklch(0.440 0 0); --gray-800: oklch(0.345 0 0);
+  --gray-900: oklch(0.268 0 0); --gray-950: oklch(0.205 0 0); --gray-1000: oklch(0.165 0 0);
+  --gray-1050: oklch(0.130 0 0); --gray-1100: oklch(0.108 0 0);
+
+  /* dark (default) */
+  --canvas: var(--gray-1100);
+  --surface: var(--gray-1000);
+  --surface-raised: var(--gray-950);
+  --surface-sunken: var(--gray-1100);
+  --surface-muted: var(--gray-950);
+  --text-primary: var(--gray-50);
+  --text-secondary: var(--gray-500);
+  --text-tertiary: var(--gray-550);
+  --text-disabled: var(--gray-700);
+  --border: oklch(1 0 0 / 0.10);
+  --border-strong: oklch(1 0 0 / 0.17);
+  --border-faint: oklch(1 0 0 / 0.05);
+  --ink: var(--gray-50);
+  --ink-hover: var(--gray-200);
+  --ink-foreground: var(--gray-1000);
+  --signal-strong: var(--text-primary);
+  --signal-mute: var(--text-tertiary);
+  --signal-faint: var(--gray-700);
+  --signal-critical: var(--gray-50);
+  --signal-critical-surface: var(--gray-1000);
+  --overlay: oklch(0 0 0 / 0.62);
+  --ring: oklch(1 0 0 / 0.28);
+  --skeleton: oklch(1 0 0 / 0.07);
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.30);
+  --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.45);
+  color-scheme: dark;
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-grotesk: "Space Grotesk", var(--font-sans);
+
+  --text-ui-3xs: 9px; --text-ui-2xs: 10px; --text-ui-xs: 11px; --text-ui-sm: 12px;
+  --text-ui-md: 13px; --text-ui-lg: 15px; --text-ui-xl: 17px;
+  --tracking-eyebrow: 0.16em;
+
+  --radius-sm: 2px; --radius-md: 3px; --radius-lg: 4px;
+  --z-sticky-head: 10; --z-raised: 20; --z-sticky-bar: 30; --z-header: 100;
+  --z-overlay: 200; --z-overlay-nested: 210; --z-toast: 300;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --canvas: var(--gray-50); --surface: var(--gray-0); --surface-raised: var(--gray-0);
+    --surface-sunken: var(--gray-100); --surface-muted: var(--gray-100);
+    --text-primary: var(--gray-1000); --text-secondary: var(--gray-700); --text-tertiary: var(--gray-625);
+    --text-disabled: var(--gray-400); --border: var(--gray-200); --border-strong: var(--gray-300);
+    --border-faint: var(--gray-100); --ink: var(--gray-950); --ink-hover: var(--gray-900);
+    --ink-foreground: var(--gray-50); --signal-faint: var(--gray-400); --signal-critical: var(--gray-1000);
+    --signal-critical-surface: var(--gray-100); --overlay: oklch(0 0 0 / 0.55); --ring: oklch(0 0 0 / 0.22);
+    --skeleton: oklch(0 0 0 / 0.07); --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.06);
+    --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.14); color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --canvas: var(--gray-50); --surface: var(--gray-0); --surface-raised: var(--gray-0);
+  --surface-sunken: var(--gray-100); --surface-muted: var(--gray-100);
+  --text-primary: var(--gray-1000); --text-secondary: var(--gray-700); --text-tertiary: var(--gray-625);
+  --text-disabled: var(--gray-400); --border: var(--gray-200); --border-strong: var(--gray-300);
+  --border-faint: var(--gray-100); --ink: var(--gray-950); --ink-hover: var(--gray-900);
+  --ink-foreground: var(--gray-50); --signal-faint: var(--gray-400); --signal-critical: var(--gray-1000);
+  --signal-critical-surface: var(--gray-100); --overlay: oklch(0 0 0 / 0.55); --ring: oklch(0 0 0 / 0.22);
+  --skeleton: oklch(0 0 0 / 0.07); --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.06);
+  --shadow-lg: 0 12px 32px oklch(0 0 0 / 0.14); color-scheme: light;
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--canvas); color: var(--text-primary);
+  font-family: var(--font-sans); font-size: var(--text-ui-md); line-height: 1.5;
+  -webkit-font-smoothing: antialiased; overflow-x: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.mono { font-family: var(--font-mono); }
+.eyebrow { font-family: var(--font-mono); font-size: var(--text-ui-2xs); font-weight: 500; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--text-tertiary); }
+.t1 { color: var(--text-primary); } .t2 { color: var(--text-secondary); } .t3 { color: var(--text-tertiary); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+svg.ic { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- Design board (prototype chrome, not product) ---------------- */
+.board { position: relative; z-index: 400; background: var(--surface); border-bottom: 1px solid var(--border); }
+.board-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; max-width: 1440px; margin: 0 auto; }
+.board-brand { display: flex; align-items: center; gap: 8px; font-family: var(--font-grotesk); font-weight: 600; font-size: var(--text-ui-lg); }
+.board-brand .tag { font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: var(--tracking-eyebrow); color: var(--text-tertiary); font-weight: 500; }
+.board-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.board-tab { border: 1px solid var(--border); background: transparent; padding: 4px 9px; font-size: var(--text-ui-sm); color: var(--text-secondary); cursor: pointer; border-radius: var(--radius-sm); }
+.board-tab[aria-pressed="true"] { background: var(--ink); color: var(--ink-foreground); border-color: var(--ink); }
+.board-tab .n { font-family: var(--font-mono); font-size: var(--text-ui-2xs); margin-right: 4px; }
+.board-ctl { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; align-items: center; }
+.board select, .board .tog { height: 28px; border: 1px solid var(--border-strong); background: var(--surface-sunken); padding: 0 8px; font-size: var(--text-ui-sm); border-radius: var(--radius-sm); cursor: pointer; max-width: 100%; }
+.board .tog[aria-pressed="true"] { background: var(--ink); color: var(--ink-foreground); }
+.board-states { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px 10px; max-width: 1440px; margin: 0 auto; }
+.chip-state { border: 1px dashed var(--border-strong); background: transparent; padding: 2px 8px; font-size: var(--text-ui-xs); font-family: var(--font-mono); color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-sm); }
+.chip-state[aria-pressed="true"] { border-style: solid; color: var(--text-primary); border-color: var(--ink); }
+.stage-wrap { padding: 16px; display: flex; justify-content: center; }
+.frame { width: 100%; max-width: 1360px; border: 1px solid var(--border); background: var(--surface); transform: translateZ(0); container-type: inline-size; container-name: app; overflow: hidden; height: max(560px, calc(100vh - var(--board-h, 140px) - 32px)); position: relative; }
+.frame.phone { max-width: 390px; height: min(844px, max(560px, calc(100vh - var(--board-h, 140px) - 32px))); }
+.frame-scroll { height: 100%; overflow-y: auto; overflow-x: hidden; }
+.board-note { padding: 0 16px 8px; max-width: 1440px; margin: 0 auto; font-size: var(--text-ui-xs); color: var(--text-tertiary); }
+
+/* annotations: data source + gaps */
+.annot [data-src], .annot [data-gap] { position: relative; outline: 1px dashed var(--border-strong); outline-offset: 2px; }
+.annot [data-src]::after, .annot [data-gap]::after { position: absolute; left: 0; top: -15px; z-index: 5; font-family: var(--font-mono); font-size: var(--text-ui-3xs); line-height: 13px; padding: 0 4px; white-space: nowrap; pointer-events: none; max-width: 320px; text-transform: none; letter-spacing: 0; font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+.annot [data-src]::after { content: attr(data-src); background: var(--surface-raised); color: var(--text-secondary); border: 1px solid var(--border); }
+.annot [data-gap]::after { content: "GAP · " attr(data-gap); background: var(--ink); color: var(--ink-foreground); }
+.annot [data-gap] { outline: 1px solid var(--ink); }
+
+/* ---------------- Console shell ---------------- */
+.console { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100%; }
+.sidebar { border-right: 1px solid var(--border); background: var(--surface-sunken); display: flex; flex-direction: column; position: sticky; top: 0; height: max(558px, calc(100vh - var(--board-h, 140px) - 34px)); }
+.sb-head { height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--border); font-family: var(--font-grotesk); font-weight: 600; font-size: var(--text-ui-lg); }
+.sb-org { margin: 10px; border: 1px solid var(--border); padding: 6px 8px; display: flex; align-items: center; gap: 8px; font-size: var(--text-ui-sm); }
+.sb-org .av { width: 18px; height: 18px; display: grid; place-items: center; background: var(--ink); color: var(--ink-foreground); font-size: var(--text-ui-2xs); font-weight: 600; }
+.sb-nav { padding: 4px 10px; display: flex; flex-direction: column; gap: 1px; }
+.sb-item { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; color: var(--text-secondary); text-decoration: none; font-size: var(--text-ui-md); border-radius: var(--radius-sm); }
+.sb-item[aria-current="page"] { background: var(--surface-raised); color: var(--text-primary); box-shadow: inset 2px 0 0 var(--ink); }
+.sb-item .count { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-ui-2xs); border: 1px solid var(--border-strong); padding: 0 5px; color: var(--text-primary); }
+.sb-foot { margin-top: auto; padding: 12px 14px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-size: var(--text-ui-sm); }
+.avatar { width: 24px; height: 24px; border-radius: 999px; display: grid; place-items: center; background: var(--surface-raised); border: 1px solid var(--border-strong); font-size: var(--text-ui-2xs); font-weight: 600; flex: none; }
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar { height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: var(--z-header); }
+.btn.menu-btn { display: none; }
+.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--text-ui-md); color: var(--text-tertiary); }
+.crumbs a { text-decoration: none; color: var(--text-tertiary); white-space: nowrap; }
+.crumbs .sep { color: var(--text-disabled); }
+.crumbs .cur { color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.content { padding: 20px; width: 100%; margin: 0 auto; }
+.content.w-detail { max-width: 1040px; }
+.content.w-list { max-width: 1200px; }
+.content.w-settings { max-width: 1200px; }
+
+/* agent-access banner (kill switch off) */
+.banner { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--ink); padding: 10px 12px; margin-bottom: 16px; font-size: var(--text-ui-md); }
+.banner.inverted { background: var(--ink); color: var(--ink-foreground); }
+.banner .grow { flex: 1; min-width: 0; }
+
+/* ---------------- Primitives ---------------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-primary); font-size: var(--text-ui-md); font-weight: 500; cursor: pointer; border-radius: var(--radius-sm); white-space: nowrap; text-decoration: none; transition: background 120ms var(--ease), border-color 120ms var(--ease); }
+.btn:hover { background: var(--surface-raised); }
+.btn:active { transform: translateY(0.5px); }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--ink-foreground); }
+.btn.primary:hover { background: var(--ink-hover); }
+.btn.ghost { border-color: transparent; }
+.btn.sm { height: 28px; padding: 0 10px; font-size: var(--text-ui-sm); }
+.btn.lg { height: 40px; }
+.btn.full { width: 100%; }
+.btn[disabled], .btn[aria-disabled="true"] { cursor: not-allowed; color: var(--text-disabled); background: transparent; border-color: var(--border); }
+.btn.primary[disabled] { background: var(--surface-raised); color: var(--text-disabled); border-color: var(--border); }
+.status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); white-space: nowrap; }
+.status .dot { width: 7px; height: 7px; border-radius: 999px; flex: none; position: relative; }
+.status.active { color: var(--text-primary); } .status.active .dot { background: var(--signal-strong); }
+.status.pending { color: var(--text-primary); } .status.pending .dot { background: var(--signal-mute); box-shadow: 0 0 0 3px var(--border-strong); }
+.status.idle .dot { border: 1.5px solid var(--signal-mute); }
+.status.failed { color: var(--text-primary); } .status.failed .dot { background: var(--signal-critical); } .status.failed .dot::after { content: ""; position: absolute; inset: 2px; background: var(--signal-critical-surface); border-radius: 1px; }
+.status.disabled { color: var(--text-tertiary); } .status.disabled .dot { background: var(--signal-faint); }
+.pill { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border: 1px solid var(--border-strong); font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); white-space: nowrap; border-radius: var(--radius-sm); }
+.pill.prod { background: var(--ink); color: var(--ink-foreground); border-color: var(--ink); font-weight: 500; }
+.pill.ee { border-style: dashed; }
+.op { font-weight: 500; }
+.op.destroy { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; background: var(--ink); color: var(--ink-foreground); font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: 0.08em; text-transform: uppercase; height: 18px; border-radius: var(--radius-sm); }
+.op.deploy { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border: 1px solid var(--border-strong); font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: 0.08em; text-transform: uppercase; border-radius: var(--radius-sm); }
+.card { border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow-sm); border-radius: var(--radius-lg); }
+.card + .card { margin-top: 16px; }
+.card-pad { padding: 16px; }
+.sh { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+.sh h2, .sh h3 { margin: 0; font-size: var(--text-ui-lg); font-weight: 500; letter-spacing: -0.01em; }
+.sh .desc { margin: 2px 0 0; color: var(--text-tertiary); font-size: var(--text-ui-md); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; margin-bottom: 16px; }
+.toolbar .lead { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.toolbar .desc { margin: 0; color: var(--text-tertiary); font-size: var(--text-ui-md); }
+.dl { display: grid; grid-template-columns: 148px minmax(0, 1fr); border-top: 1px solid var(--border); }
+.dl > dt, .dl > dd { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.dl > dt { color: var(--text-tertiary); font-size: var(--text-ui-sm); padding-top: 11px; }
+.dl > dd { min-width: 0; overflow-wrap: anywhere; }
+.dl > dd:last-of-type, .dl > dt:last-of-type { border-bottom: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.sub { color: var(--text-tertiary); font-size: var(--text-ui-sm); }
+.counts { font-family: var(--font-mono); font-size: var(--text-ui-sm); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.counts .z { color: var(--text-tertiary); }
+.counts .hot { background: var(--ink); color: var(--ink-foreground); padding: 0 4px; }
+.digest { display: inline-flex; align-items: center; gap: 10px; border: 1px solid var(--border-strong); padding: 6px 10px; background: var(--surface-sunken); }
+.digest .val { font-family: var(--font-mono); font-size: var(--text-ui-xl); letter-spacing: 0.12em; font-weight: 500; }
+.note { border: 1px dashed var(--border-strong); padding: 12px 14px; background: var(--surface-sunken); }
+.note blockquote { margin: 6px 0 0; font-family: var(--font-mono); font-size: var(--text-ui-sm); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.link { text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--border-strong); cursor: pointer; background: none; border: 0; padding: 0; color: var(--text-primary); font-size: inherit; display: inline-flex; align-items: center; gap: 4px; }
+.link:hover { text-decoration-color: var(--text-primary); }
+.inline-alert { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border-strong); padding: 10px 12px; background: var(--surface-sunken); font-size: var(--text-ui-md); }
+.inline-alert.strong { border-color: var(--ink); }
+.inline-alert .ic { margin-top: 3px; }
+.inline-alert p { margin: 2px 0 0; color: var(--text-secondary); }
+.inline-alert b { font-weight: 500; color: var(--text-primary); }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label, .label { font-size: var(--text-ui-sm); font-weight: 500; color: var(--text-primary); }
+.hint { font-size: var(--text-ui-sm); color: var(--text-tertiary); margin: 0; }
+.input, .textarea, .select { width: 100%; border: 1px solid var(--border-strong); background: var(--surface-sunken); padding: 7px 10px; font-size: var(--text-ui-md); border-radius: var(--radius-sm); }
+.textarea { min-height: 72px; resize: vertical; }
+.input.mono { font-family: var(--font-mono); }
+.input[aria-invalid="true"] { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.check { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.check:last-child { border-bottom: 0; }
+.check input { margin: 3px 0 0; accent-color: var(--ink); width: 14px; height: 14px; flex: none; }
+.check .ttl { font-weight: 500; }
+.check .why { color: var(--text-tertiary); font-size: var(--text-ui-sm); }
+.check.locked { cursor: not-allowed; }
+.check.locked .ttl { color: var(--text-tertiary); }
+.group { border: 1px solid var(--border); }
+.group-h { padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-sunken); display: flex; align-items: center; gap: 8px; }
+.switch { position: relative; width: 34px; height: 20px; flex: none; border: 1px solid var(--border-strong); background: var(--surface-sunken); border-radius: 999px; cursor: pointer; padding: 0; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--text-tertiary); transition: transform 140ms var(--ease); }
+.switch[aria-checked="true"] { background: var(--ink); border-color: var(--ink); }
+.switch[aria-checked="true"]::after { transform: translateX(14px); background: var(--ink-foreground); }
+.switch[disabled] { cursor: not-allowed; opacity: 1; border-style: dashed; }
+.switch[disabled]::after { background: var(--text-disabled); }
+.setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 24px; padding: 16px; border-top: 1px solid var(--border); }
+.setting:first-of-type { border-top: 0; }
+.setting .s-title { font-weight: 500; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.setting .s-body { color: var(--text-tertiary); font-size: var(--text-ui-md); margin: 4px 0 0; max-width: 62ch; }
+.consequence { grid-column: 1 / -1; border-left: 2px solid var(--ink); padding: 2px 0 2px 10px; font-size: var(--text-ui-sm); color: var(--text-secondary); }
+.consequence b { color: var(--text-primary); font-weight: 500; }
+.skel { background: var(--skeleton); border-radius: var(--radius-sm); animation: pulse 1.6s var(--ease) infinite; }
+@keyframes pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .skel { animation: none; } * { transition: none !important; } }
+.empty { text-align: center; padding: 48px 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; border: 1px dashed var(--border-strong); }
+.empty .media { width: 40px; height: 40px; border: 1px solid var(--border-strong); display: grid; place-items: center; margin-bottom: 4px; }
+.empty .media svg { width: 18px; height: 18px; }
+.empty .et { font-size: var(--text-ui-lg); font-weight: 500; }
+.empty .ed { color: var(--text-tertiary); max-width: 46ch; margin: 0; }
+.empty .ea { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
+.kbd-code { font-family: var(--font-mono); font-size: var(--text-ui-sm); border: 1px solid var(--border); background: var(--surface-sunken); padding: 2px 6px; }
+
+/* ---------------- Approval page ---------------- */
+.ap-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+.decision { position: sticky; top: 64px; }
+.decision.serious { border: 2px solid var(--ink); }
+.decision .band { background: var(--ink); color: var(--ink-foreground); padding: 8px 16px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; }
+.decision .band.outline { background: transparent; color: var(--text-primary); border-bottom: 1px solid var(--border); }
+.decision-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.decision-body p { margin: 0; }
+.decision .actions { display: flex; flex-direction: column; gap: 8px; }
+.conseq { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: var(--text-ui-sm); color: var(--text-secondary); }
+.conseq li { position: relative; padding-left: 12px; } .conseq li::before { content: "·"; position: absolute; left: 2px; color: var(--text-primary); font-weight: 600; }
+.countdown { font-family: var(--font-mono); font-size: var(--text-ui-sm); }
+.countdown.urgent { background: var(--ink); color: var(--ink-foreground); padding: 1px 6px; }
+.mobile-bar { display: none; }
+.dimmed .card { box-shadow: none; }
+.dimmed .facts dd { color: var(--text-secondary); }
+
+/* ---------------- Tables (DataTable look) ---------------- */
+.table-wrap { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--surface); }
+table.dt { width: 100%; border-collapse: collapse; font-size: var(--text-ui-md); }
+table.dt th { text-align: left; font-weight: 500; font-size: var(--text-ui-xs); color: var(--text-tertiary); padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-sunken); white-space: nowrap; }
+table.dt td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.dt tr:last-child td { border-bottom: 0; }
+table.dt tbody tr.clickable { cursor: pointer; }
+table.dt tbody tr.clickable:hover td { background: var(--surface-raised); }
+table.dt .cell-main { font-weight: 500; }
+.filterbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.search { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border-strong); background: var(--surface-sunken); padding: 0 8px; height: 28px; min-width: 220px; flex: 0 1 260px; border-radius: var(--radius-sm); }
+.search input { border: 0; background: transparent; outline: none; width: 100%; font-size: var(--text-ui-sm); }
+.facet { position: relative; }
+.facet > button { height: 28px; border: 1px dashed var(--border-strong); background: transparent; padding: 0 8px; font-size: var(--text-ui-sm); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; border-radius: var(--radius-sm); color: var(--text-secondary); }
+.facet > button.on { border-style: solid; color: var(--text-primary); }
+.facet > button .vals { font-family: var(--font-mono); font-size: var(--text-ui-2xs); background: var(--surface-raised); padding: 0 4px; border: 1px solid var(--border); }
+.pop { position: absolute; top: 32px; left: 0; z-index: var(--z-overlay); min-width: 220px; background: var(--surface-raised); border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg); padding: 4px; border-radius: var(--radius-lg); }
+.pop label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: var(--text-ui-sm); cursor: pointer; }
+.pop label:hover { background: var(--surface); }
+.pop label input { accent-color: var(--ink); }
+.pop .cnt { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-ui-2xs); color: var(--text-tertiary); }
+.m-list { display: none; }
+
+/* ---------------- Settings ---------------- */
+.settings { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 24px; align-items: start; }
+.s-nav { display: flex; flex-direction: column; gap: 1px; }
+.s-nav a { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; text-decoration: none; color: var(--text-secondary); font-size: var(--text-ui-md); border-radius: var(--radius-sm); }
+.s-nav a[aria-current="page"] { background: var(--surface-raised); color: var(--text-primary); }
+.s-nav a .new { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-ui-3xs); letter-spacing: 0.1em; color: var(--text-tertiary); border: 1px dashed var(--border-strong); padding: 0 4px; }
+.s-nav-select { display: none; }
+.s-panel > * + * { margin-top: 24px; }
+.s-panel section > .sh { margin-bottom: 12px; }
+.footnote { font-size: var(--text-ui-sm); color: var(--text-tertiary); }
+.ttl-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg { height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); background: transparent; font-size: var(--text-ui-sm); cursor: pointer; border-radius: var(--radius-sm); font-family: var(--font-mono); }
+.seg[aria-pressed="true"] { background: var(--ink); color: var(--ink-foreground); border-color: var(--ink); }
+.seg[disabled] { color: var(--text-disabled); cursor: not-allowed; border-style: dashed; }
+
+/* sheet + dialog */
+.scrim { position: fixed; inset: 0; background: var(--overlay); z-index: var(--z-overlay); display: flex; }
+.sheet { margin-left: auto; width: min(520px, 100%); height: 100%; background: var(--surface); border-left: 1px solid var(--border-strong); display: flex; flex-direction: column; box-shadow: var(--shadow-lg); }
+.sheet-h { padding: 16px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 12px; }
+.sheet-h h2 { margin: 0; font-size: var(--text-ui-lg); font-weight: 500; }
+.sheet-b { padding: 16px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 18px; }
+.sheet-f { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.dialog-wrap { position: fixed; inset: 0; z-index: var(--z-overlay); background: var(--overlay); display: grid; place-items: center; padding: 16px; }
+.dialog { width: min(460px, 100%); background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg); border-radius: var(--radius-lg); }
+.dialog.serious { border: 2px solid var(--ink); }
+.dialog-h { padding: 16px 16px 0; }
+.dialog-h h2 { margin: 0; font-size: var(--text-ui-lg); font-weight: 500; }
+.dialog-h p { margin: 6px 0 0; color: var(--text-secondary); }
+.dialog-b { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.dialog-f { padding: 12px 16px 16px; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.toast { position: fixed; right: 16px; bottom: 16px; z-index: var(--z-toast); background: var(--surface-raised); border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg); padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: var(--text-ui-md); max-width: calc(100% - 32px); border-radius: var(--radius-lg); }
+.secret { display: flex; align-items: center; gap: 8px; border: 1px solid var(--ink); padding: 8px 10px; background: var(--surface-sunken); }
+.secret code { font-family: var(--font-mono); font-size: var(--text-ui-sm); overflow-wrap: anywhere; flex: 1; min-width: 0; }
+
+/* ---------------- Auth shell (consent) ---------------- */
+.auth { min-height: 100%; display: flex; flex-direction: column; background: var(--canvas); position: relative; }
+.auth-head { display: flex; align-items: center; gap: 8px; padding: 20px 32px; font-family: var(--font-grotesk); font-weight: 600; font-size: var(--text-ui-lg); }
+.auth-main { flex: 1; display: flex; justify-content: center; padding: 24px 16px 48px; }
+.auth-col { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 24px; }
+.auth h1 { font-family: var(--font-grotesk); font-weight: 600; font-size: 28px; line-height: 1.05; letter-spacing: -0.03em; margin: 8px 0 0; }
+.auth .lede { color: var(--text-tertiary); font-size: var(--text-ui-lg); margin: 10px 0 0; }
+.auth-foot { padding: 16px 32px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: var(--text-ui-xs); color: var(--text-tertiary); }
+.client-id { display: flex; gap: 12px; align-items: center; border: 1px solid var(--border); padding: 12px; background: var(--surface); }
+.client-logo { width: 36px; height: 36px; border: 1px solid var(--border-strong); display: grid; place-items: center; font-family: var(--font-grotesk); font-weight: 600; background: var(--surface-raised); flex: none; }
+
+/* ---------------- v2: decision sheet, paging, agent cards, consent ---------------- */
+.sheet.wide { width: min(640px, 100%); }
+.sheet.serious { border-left: 2px solid var(--ink); }
+.sheet-band { background: var(--ink); color: var(--ink-foreground); padding: 8px 16px; display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--text-ui-2xs); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; flex: none; }
+.sheet-h h2 { overflow-wrap: anywhere; }
+.sheet-b section .dl { border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.sheet-b .dl > dt, .sheet-b .dl > dd { padding: 9px 12px; }
+.sheet-dec { flex: none; border-top: 1px solid var(--border-strong); padding: 14px 16px; background: var(--surface); display: flex; flex-direction: column; gap: 10px; }
+.dec-actions { display: flex; gap: 8px; } .dec-actions .btn { flex: 1; }
+.dialog-wrap.nested { z-index: var(--z-overlay-nested); }
+.dialog .sheet-band { border-radius: 0; }
+.loadmore { display: flex; justify-content: center; align-items: center; gap: 8px; padding-top: 12px; margin: 0; font-size: var(--text-ui-sm); color: var(--text-secondary); position: relative; }
+.sentinel { position: absolute; top: 0; left: 50%; width: 1px; height: 1px; }
+ul.m-list { list-style: none; margin: 0; padding: 0; }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.acard { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); padding: 16px; box-shadow: var(--shadow-sm); transition: border-color 120ms var(--ease); }
+.acard:hover { border-color: var(--border-strong); }
+.atile { width: 36px; height: 36px; flex: none; display: grid; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-muted); padding: 6px; color: var(--text-primary); }
+.atile svg.brand { width: 100%; height: 100%; display: block; }
+.atile .glyph svg { width: 18px; height: 18px; color: var(--text-secondary); }
+.aname { font-size: 14px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
+.adesc { margin: 2px 0 0; font-size: var(--text-ui-sm); color: var(--text-secondary); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.adot { width: 10px; height: 10px; border-radius: 999px; flex: none; margin-top: 4px; }
+.adot.on { background: var(--text-primary); box-shadow: 0 0 0 4px var(--surface-muted); }
+.adot.off { border: 1.5px solid var(--border-strong); }
+.ameta { margin-top: auto; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border-faint); padding-top: 12px; }
+.chipm { font-family: var(--font-mono); font-size: var(--text-ui-2xs); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 999px; padding: 1px 6px; max-width: 100%; overflow-wrap: anywhere; }
+.mono-unconnected .acard:not(.on) svg.brand { filter: grayscale(1); }
+.acct { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); padding: 10px 12px; background: var(--surface); flex-wrap: wrap; }
+.scroll-list { max-height: 220px; overflow-y: auto; }
+
+/* ---------------- Responsive: container queries so the phone preview and a real phone agree ---------------- */
+@container app (max-width: 760px) {
+  .console { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { display: none; }
+  .btn.menu-btn { display: inline-flex; }
+  .topbar { padding: 0 16px; }
+  .content { padding: 16px; }
+  .ap-grid { grid-template-columns: minmax(0, 1fr); }
+  .decision { position: static; }
+  .dl { grid-template-columns: minmax(0, 1fr); }
+  .dl > dt { border-bottom: 0; padding: 10px 16px 0; }
+  .dl > dd { padding-top: 2px; }
+  .dl > dt:last-of-type { border-bottom: 0; }
+  .mobile-bar { display: flex; gap: 8px; position: sticky; bottom: 0; z-index: var(--z-sticky-bar); background: var(--surface); border-top: 1px solid var(--border-strong); padding: 10px 16px; margin: 16px -16px -16px; }
+  .mobile-bar .btn { flex: 1; }
+  .decision .actions.desk { display: none; }
+  .table-wrap.desk { display: none; }
+  .m-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-lg); }
+  .m-item { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+  .m-item:last-child { border-bottom: 0; }
+  .settings { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .sheet, .sheet.wide { width: 100%; border-left: 0; }
+  .sheet-b .dl > dt { padding: 9px 12px 0; } .sheet-b .dl > dd { padding: 2px 12px 9px; }
+  .s-nav { display: none; }
+  .s-nav-select { display: block; }
+  .setting { grid-template-columns: minmax(0, 1fr) auto; padding: 14px; }
+  .search { flex: 1 1 100%; min-width: 0; }
+  .auth-head { padding: 16px; }
+  .auth-foot { padding: 14px 16px; }
+  .auth h1 { font-size: 24px; }
+  .digest .val { font-size: var(--text-ui-lg); }
+}
+@media (max-width: 560px) {
+  .board-ctl { margin-left: 0; }
+  .stage-wrap { padding: 8px 0; }
+  .frame { border-left: 0; border-right: 0; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+"use strict";
+/* ===================================================================================
+   Icons — Lucide geometry, 24 grid, currentColor.
+   =================================================================================== */
+const ICONS = {
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
+  bot: '<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4M8 16h.01M16 16h.01"/>',
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
+  sparkles: '<path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2z"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  plus: '<path d="M5 12h14M12 5v14"/>',
+  copy: '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  ext: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  chevR: '<path d="m9 18 6-6-6-6"/>',
+  chevD: '<path d="m6 9 6 6 6-6"/>',
+  grid: '<path d="M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  server: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  plug: '<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/>',
+  login: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>',
+  power: '<path d="M12 2v10M18.4 6.6a9 9 0 1 1-12.77.04"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>',
+};
+const ic = (n, cls = "") => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ""}</svg>`;
+const MARK = (s = 20) => `<svg width="${s}" height="${s}" viewBox="0 0 32 32" fill="none" aria-hidden="true" style="flex:none"><path d="M11 6 H6.5 V26 H11" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 6 H25.5 V26 H21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="16" cy="16" r="2.9" fill="currentColor"/></svg>`;
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ===================================================================================
+   Prototype state
+   =================================================================================== */
+const S = {
+  surface: "list", state: "waiting", monoUnconnected: false, keepScroll: false, phone: false, annot: false,
+  theme: null, // null = follow system
+  ui: {},      // per-surface transient UI (dialogs, forms, filters)
+};
+const LOAD = Date.now();
+const MIN = 60000;
+
+/* ===================================================================================
+   Mock data — every field maps to a real column; see SPEC.md for file:symbol.
+   =================================================================================== */
+const ME = { name: "Dana Petrova", email: "dana@acme.io", initials: "DP" };
+const IVAN = { name: "Ivan Georgiev", email: "ivan@acme.io", initials: "IG" };
+/* requester_credential → what a person reads. Never the enum value. */
+const VIA = {
+  agent_oauth: (client) => ({ icon: "plug", label: client, kind: "Connected agent" }),
+  agent_in_app: () => ({ icon: "sparkles", label: "Alethia assistant", kind: "In the console" }),
+  cli_session: () => ({ icon: "terminal", label: "Alethia CLI", kind: "Command line" }),
+  service_token: (name) => ({ icon: "key", label: name, kind: "Service token" }),
+  session: () => ({ icon: "grid", label: "Alethia console", kind: "Started by them, needs a second person" }),
+};
+const APPROVAL_TIER = { pending: ["pending", "Waiting"], approved: ["active", "Approved"], consumed: ["active", "Used"], rejected: ["failed", "Denied"], expired: ["disabled", "Expired"], superseded: ["disabled", "Replaced"] };
+
+function approvalFor(state) {
+  const base = {
+    id: "7f3c2a91-4d0e-4b8a-9c11-2b6e5d8f0a13", op: "deploy", project: "payments-api", env: "staging", stage: "staging",
+    requester: ME, via: VIA.agent_oauth("Claude Code"), clientDomain: "claude.ai", requestedMinAgo: 8,
+    planJob: "3e1f9a20", plannedAt: "13:38", counts: { create: 14, update: 2, delete: 0, replace: 0 },
+    costDelta: "+$61.20/mo", costTotal: "$412.80/mo",
+    verify: { verdict: "pass", pass: 11, warn: 1, fail: 0, ne: 0, signed: true },
+    digest: "9f3c1a7e", note: "Initial staging cluster for the payments rewrite.", status: "pending", expiresIn: 52,
+  };
+  if (state === "production") Object.assign(base, {
+    id: "4b81d0c2-…", project: "payments-api", env: "production", stage: "production", requester: IVAN, via: VIA.cli_session(), clientDomain: null,
+    requestedMinAgo: 3, planJob: "8a77c010", plannedAt: "13:44", counts: { create: 0, update: 3, delete: 1, replace: 1 },
+    costDelta: "+$8/mo", costTotal: "$1,904.12/mo", verify: { verdict: "warn", pass: 10, warn: 2, fail: 0, ne: 0, signed: true },
+    digest: "4b81d0c2", note: "Urgent hotfix, already reviewed by security. Approve quickly please.", expiresIn: 57,
+  });
+  if (state === "destroy" || state === "destroy-confirm") Object.assign(base, {
+    op: "destroy", project: "payments-api", env: "perf", stage: "staging", requester: IVAN, via: VIA.agent_oauth("Cursor"),
+    clientDomain: "cursor.com", requestedMinAgo: 20, planJob: "1a2b3c4d", plannedAt: "12 Nov, 09:12",
+    deployedAt: "12 Nov, 09:20", deployJob: "6e0f11b2", costTotal: "$238.10/mo", digest: "e07a9b3f",
+    note: "Load test finished. Tearing down the perf environment.", expiresIn: 40,
+  });
+  if (state === "expiring") base.expiresIn = 4;
+  if (state === "no-cost") { base.costDelta = null; base.verify = { verdict: "not_evaluable", pass: 0, warn: 0, fail: 0, ne: 12, signed: false }; base.note = null; }
+  const decided = { approved: "approved", used: "consumed", denied: "rejected", expired: "expired", superseded: "superseded" };
+  if (decided[state]) base.status = decided[state];
+  if (state === "self") base.selfBlocked = true;
+  if (state === "blocked-off") base.block = "off";
+  if (state === "blocked-client") base.block = "client";
+  if (state === "blocked-prod") Object.assign(base, { env: "production", stage: "production", digest: "d41e07b2", block: "prod", costDelta: "+$61.20/mo", costTotal: "$1,957.32/mo" });
+  if (state === "second-person") Object.assign(base, { env: "production", stage: "production", requester: IVAN, via: VIA.session(), clientDomain: null, digest: "4b81d0c2", note: null, counts: { create: 0, update: 3, delete: 0, replace: 0 }, costDelta: "+$8/mo", costTotal: "$1,904.12/mo" });
+  if (state === "reauth") base.reauth = true;
+  return base;
+}
+
+/* ===================================================================================
+   Small components (HTML strings) — each names the @repo/ui primitive it stands for.
+   =================================================================================== */
+const src = (p) => ` data-src="${esc(p)}"`;
+const gap = (p) => ` data-gap="${esc(p)}"`;
+const status = (tier, label, attrs = "") => `<span class="status ${tier}"${attrs}><span class="dot" aria-hidden="true"></span>${esc(label)}</span>`;
+const approvalStatus = (st) => { const [t, l] = APPROVAL_TIER[st]; return status(t, l, src("apply_approvals.status · read.ts:viewOf (effective)")); };
+const stagePill = (stage) => stage === "production"
+  ? `<span class="pill prod"${src("project_environments.stage")}>Production</span>`
+  : `<span class="pill"${src("project_environments.stage")}>${stage === "staging" ? "Staging" : "Development"}</span>`;
+const opTag = (op) => op === "destroy" ? `<span class="op destroy">${ic("trash")}Destroy</span>` : `<span class="op deploy">Deploy</span>`;
+const btn = (label, o = {}) => `<button type="button" class="btn ${o.v || ""} ${o.sm ? "sm" : ""} ${o.lg ? "lg" : ""} ${o.full ? "full" : ""}" ${o.act ? `data-act="${o.act}"` : ""} ${o.disabled ? "disabled" : ""} ${o.attrs || ""}>${o.icon ? ic(o.icon) : ""}${esc(label)}</button>`;
+const sectionHeading = (title, desc, actions = "", level = 2, attrs = "") => `<div class="sh"${attrs}><div style="min-width:0"><h${level}>${esc(title)}</h${level}>${desc ? `<p class="desc">${desc}</p>` : ""}</div>${actions ? `<div class="row">${actions}</div>` : ""}</div>`;
+const pageToolbar = (o) => `<div class="toolbar" data-slot="page-toolbar"><div class="lead">${o.lead || ""}${o.desc ? `<p class="desc">${o.desc}</p>` : ""}</div>${o.actions ? `<div class="row">${o.actions}</div>` : ""}</div>`;
+const emptyState = (icon, title, desc, actions = "") => `<div class="empty" role="status"><div class="media">${ic(icon)}</div><div class="et">${esc(title)}</div><p class="ed">${desc}</p>${actions ? `<div class="ea">${actions}</div>` : ""}</div>`;
+const errorState = (title, desc) => `<div class="empty" role="alert" style="border-style:solid"><div class="media">${ic("alert")}</div><div class="et">${esc(title)}</div><p class="ed">${desc}</p><div class="ea">${btn("Try again", { icon: "refresh", act: "noop" })}</div></div>`;
+const skel = (w, h = 12, extra = "") => `<div class="skel" style="width:${w};height:${h}px;${extra}"></div>`;
+const inlineAlert = (icon, title, body, strong = false, attrs = "") => `<div class="inline-alert ${strong ? "strong" : ""}" role="status"${attrs}>${ic(icon)}<div><b>${title}</b>${body ? `<p>${body}</p>` : ""}</div></div>`;
+const person = (p, sub) => `<span class="row" style="gap:8px;flex-wrap:nowrap"><span class="avatar" aria-hidden="true">${p.initials}</span><span style="min-width:0"><span class="t1">${esc(p.name)}</span>${sub ? `<br><span class="sub">${sub}</span>` : ""}</span></span>`;
+const viaLine = (v) => `<span class="row" style="gap:6px"${src("apply_approvals.requester_credential + requester_credential_ref → oauth_client.name | cli_service_tokens.name")}>${ic(v.icon)}<span class="t1">${esc(v.label)}</span><span class="sub">· ${esc(v.kind)}</span></span>`;
+
+function countdown(minutes, prefix = "Expires in") {
+  const t = LOAD + minutes * MIN;
+  return `<span class="countdown ${minutes <= 5 ? "urgent" : ""}" data-expires="${t}" data-prefix="${prefix}"${src("apply_approvals.expires_at · formatDuration")}>${prefix} ${fmtLeft(t)}</span>`;
+}
+function fmtLeft(t) {
+  const ms = Math.max(0, t - Date.now());
+  const m = Math.floor(ms / MIN), s = Math.floor((ms % MIN) / 1000);
+  if (ms === 0) return "0 min";
+  if (m >= 60) return `${Math.floor(m / 60)}h ${m % 60}m`;
+  if (m >= 5) return `${m} min`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function clockAt(minutesFromLoad) { const d = new Date(LOAD + minutesFromLoad * MIN); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
+
+/* ===================================================================================
+   Console shell
+   =================================================================================== */
+const NAV = [["grid", "Overview", "overview"], ["folder", "Projects", "projects"], ["list", "Jobs", "jobs"], ["shield", "Approvals", "approvals"], ["server", "Runners", "runners"], ["sliders", "Settings", "settings"]];
+function shell({ crumbs, active, width = "w-detail", body, banner = "" }) {
+  return `<div class="console">
+    <aside class="sidebar" aria-label="Main">
+      <div class="sb-head">${MARK(20)}Alethia</div>
+      <div class="sb-org"><span class="av">A</span><span>acme</span><span style="margin-left:auto" class="t3">${ic("chevD")}</span></div>
+      <nav class="sb-nav">${NAV.map(([i, l, k]) => `<a href="#" class="sb-item" ${k === active ? 'aria-current="page"' : ""} data-act="${k === "approvals" ? "go:list" : k === "settings" ? "go:policy" : "noop"}">${ic(i)}${l}</a>`).join("")}</nav>
+      <div class="sb-foot"><span class="avatar">${ME.initials}</span><span>${ME.name}</span></div>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <button class="btn ghost sm menu-btn" aria-label="Open navigation">${ic("menu")}</button>
+        <nav class="crumbs" aria-label="Breadcrumb">${crumbs.map((c, i) => i === crumbs.length - 1 ? `<span class="cur" aria-current="page">${c}</span>` : `<a href="#" data-act="${c === "Approvals" ? "go:list" : "noop"}">${c}</a><span class="sep">/</span>`).join("")}</nav>
+      </header>
+      <main class="content ${width}" id="main">${banner}${body}</main>
+    </div>
+  </div>`;
+}
+
+/* ===================================================================================
+   SURFACES 1 + 2 — Approvals list (home) and the decision SHEET over it.
+   Route: /[org]/~/approvals            — the list
+          /[org]/~/approvals?approval=<id> — the list with the sheet open (the link agents print)
+   =================================================================================== */
+const APPROVAL_ID = "7f3c2a91-4d0e-4b8a-9c11-2b6e5d8f0a13";
+
+/** The decision sheet. Same facts, same states as v1's page, in a right-hand sheet. */
+function approvalSheet(state) {
+  const a = S.ui.after === "destroy" ? Object.assign(approvalFor("destroy"), { status: "approved" }) : approvalFor(state);
+  const close = btn("", { v: "ghost", sm: true, icon: "x", act: "sheet-close", attrs: 'aria-label="Close"' });
+  const wrap = (inner, extra = "") => `<div class="scrim" data-act="sheet-close-bg"><div class="sheet wide ${extra}" role="dialog" aria-modal="true" aria-labelledby="ap-t" data-stop${src("URL: ?approval=<id> on /[org]/~/approvals")}>${inner}</div></div>`;
+  if (state === "loading") return wrap(`<div class="sheet-h"><div style="flex:1">${skel("120px", 12)}${skel("60%", 16, "margin-top:8px")}</div>${close}</div><div class="sheet-b" aria-busy="true">${Array.from({ length: 7 }, () => `<div style="display:flex;gap:16px">${skel("110px")}${skel("50%")}</div>`).join("")}</div><div class="sheet-dec">${skel("100%", 40)}</div>`);
+  if (state === "error") return wrap(`<div class="sheet-h"><h2 id="ap-t" style="flex:1">Approval</h2>${close}</div><div class="sheet-b">${errorState("Couldn't load this approval", "Something went wrong on our side. Nothing was decided. Try again in a moment.")}</div>`);
+  if (state === "not-found") return wrap(`<div class="sheet-h"><h2 id="ap-t" style="flex:1">Approval</h2>${close}</div><div class="sheet-b">
+      <div class="empty" role="status" style="border-style:solid"${src("ApprovalError not_found — same answer for 'no project access' and 'no such approval'")}><div class="media">${ic("lock")}</div><div class="et">This approval isn't available to you</div>
+      <p class="ed">You may not have access to its project, or the link may be wrong. Ask the person who sent it.</p><div class="ea">${btn("Close", { act: "sheet-close" })}</div></div></div>`);
+
+  const isDestroy = a.op === "destroy";
+  const prod = a.stage === "production";
+  const decided = a.status !== "pending";
+  let band = "";
+  if (!decided && isDestroy) band = `<div class="sheet-band">${ic("alert")}Destroy · can't be undone</div>`;
+  else if (!decided && prod) band = `<div class="sheet-band">${ic("alert")}Production environment</div>`;
+  const title = `${isDestroy ? "Destroy" : "Deploy"} · ${a.project} / ${a.env}`;
+  const head = `${band}<div class="sheet-h"><div style="flex:1;min-width:0">
+      <div class="row">${approvalStatus(a.status)}${a.status === "pending" ? countdown(a.expiresIn) + `<span class="sub">· until ${clockAt(a.expiresIn)}</span>` : ""}</div>
+      <h2 id="ap-t" style="margin-top:6px">${esc(title)}</h2>
+      <p class="hint" style="margin-top:2px">Requested ${a.requestedMinAgo} min ago through ${esc(a.via.label)}.</p></div>
+      <div class="row" style="flex-wrap:nowrap">${btn("", { v: "ghost", sm: true, icon: "link", act: "toast:Link copied. Anyone with " + (isDestroy ? "destroy" : "deploy") + " access to " + a.project + " can decide.", attrs: 'aria-label="Copy link"' })}${close}</div></div>`;
+  const body = `<div class="sheet-b ${decided ? "dimmed" : ""}">${requestSection(a)}${planSection(a)}${a.note ? noteSection(a) : ""}</div>`;
+  const foot = decided ? outcomeFoot(a, state) : decisionFoot(a);
+  return wrap(head + body + foot, isDestroy && !decided ? "serious" : prod && !decided ? "serious" : "") + (S.ui.dialog === "destroy" || state === "destroy-confirm" ? destroyDialog(a) : "");
+}
+
+function requestSection(a) {
+  return `<section aria-labelledby="h-req">${sectionHeading("Request", "", "", 3).replace("<h3>", '<h3 id="h-req">')}
+    <dl class="dl facts" style="margin-top:8px">
+      <dt>Operation</dt><dd${src("apply_approvals.operation")}>${opTag(a.op)}</dd>
+      <dt>Project</dt><dd${src("apply_approvals.project_id → projects.name")}><a class="link" href="#">${esc(a.project)}</a></dd>
+      <dt>Environment</dt><dd><span class="row"><span class="mono t1"${src("apply_approvals.environment_id → project_environments.name")}>${esc(a.env)}</span>${stagePill(a.stage)}</span>${a.stage === "production" ? `<div class="sub" style="margin-top:4px">This environment serves your customers.</div>` : ""}</dd>
+      <dt>Requested for</dt><dd${src("apply_approvals.requester_user_id → user")}>${person(a.requester, esc(a.requester.email))}</dd>
+      <dt>Requested through</dt><dd>${viaLine(a.via)}${a.clientDomain ? `<div class="sub" style="margin-top:2px">App identity: <span class="mono">${a.clientDomain}</span></div>` : ""}</dd>
+      <dt>Requested</dt><dd${src("apply_approvals.created_at")}>${clockAt(-a.requestedMinAgo)} <span class="sub">· ${a.requestedMinAgo} min ago</span></dd>
+      <dt>Expires</dt><dd>${a.status === "pending" ? `${clockAt(a.expiresIn)} <span class="sub">·</span> ${countdown(a.expiresIn, "in")}` : `<span class="t2">${clockAt(a.expiresIn)}</span>`}</dd>
+    </dl></section>`;
+}
+
+function planSection(a) {
+  const c = a.counts;
+  const verifyLabel = { pass: ["active", "Passed"], warn: ["pending", "Passed with warnings"], not_evaluable: ["idle", "Not checked"] }[a.verify.verdict];
+  const rows = a.op === "destroy" ? `
+      <dt>Removes</dt><dd${gap("exact teardown list: no destroy-mode plan is queued yet (binding.ts) — shows what the last deploy applied")}><span class="t1">Everything this environment runs</span><div class="sub" style="margin-top:2px">As deployed on ${a.deployedAt} by job <a class="link mono" href="#">${a.deployJob}</a>, from plan <span class="mono">${a.planJob}</span>.</div></dd>
+      <dt>Cost</dt><dd${src("environment_cost total · formatMonthlyDelta (negative = saving)")}><span class="mono t1">−${a.costTotal.replace("/mo", "")}/mo</span> <span class="sub">est. saving</span></dd>` : `
+      <dt>Changes</dt><dd${src("jobs.execution_metadata.plan_result → parse-plan.ts:PlanSummary.counts")}><div class="counts"><span class="${c.create ? "t1" : "z"}">${c.create} to add</span><span class="${c.update ? "t1" : "z"}">${c.update} to change</span>${c.replace ? `<span class="t1">${c.replace} to replace</span>` : ""}<span class="${c.delete ? "hot" : "z"}">${c.delete} to destroy</span></div>${c.delete ? `<div class="sub" style="margin-top:4px">This deploy removes ${c.delete} existing resource${c.delete > 1 ? "s" : ""}.</div>` : ""}</dd>
+      <dt>Cost</dt><dd${src("execution_metadata.cost_breakdown → InfracostBreakdownTotals.diffTotalMonthlyCost / totalMonthlyCost")}>${a.costDelta ? `<span class="mono t1">${a.costDelta}</span> <span class="sub">est. · ${a.costTotal} after this deploy</span>` : `<span class="t2">No estimate for this plan</span>`}</dd>
+      <dt>Verification</dt><dd${src("execution_metadata.verify_receipt.receipt.verdict + report.summary")}><span class="row">${status(verifyLabel[0], verifyLabel[1])}<span class="sub">${a.verify.verdict === "not_evaluable" ? `${a.verify.ne} controls could not be evaluated` : `${a.verify.pass} passed${a.verify.warn ? ` · ${a.verify.warn} warning${a.verify.warn > 1 ? "s" : ""}` : ""}`}</span><a class="link" href="#">View receipt</a></span>${a.verify.signed ? "" : `<div class="sub" style="margin-top:4px">This receipt is not signed.</div>`}</dd>`;
+  return `<section aria-labelledby="h-plan">${sectionHeading(a.op === "destroy" ? "What gets destroyed" : "Reviewed plan", a.op === "destroy" ? "Read from the environment's last deploy, not from the request." : "Read from the plan job, not from the request.", `<a class="btn sm" href="#">${ic("ext")}Open plan</a>`, 3).replace("<h3>", '<h3 id="h-plan">')}
+    <dl class="dl facts" style="margin-top:8px">${rows}
+      <dt>Plan digest</dt><dd${src("apply_approvals.plan_sha256 → read.ts:digestPrefix (8 chars)")}><span class="digest"><span class="val">${a.digest}</span></span><p class="hint" style="margin-top:6px">${esc(a.via.label)} showed the requester these same 8 characters. If they don't match, deny.</p></dd>
+      <dt>Plan job</dt><dd${src("apply_approvals.plan_job_id")}><a class="link mono" href="#">${a.planJob}</a> <span class="sub">· planned ${a.plannedAt}</span></dd>
+    </dl></section>`;
+}
+
+function noteSection(a) {
+  return `<section aria-labelledby="h-note"><div class="note"${src("apply_approvals.reason (UNTRUSTED, ≤500 chars, request.ts:MAX_REASON_LENGTH)")}>
+      <div class="row" style="justify-content:space-between"><h3 id="h-note" class="eyebrow" style="margin:0">Note from the requester</h3><span class="sub">Not checked by Alethia</span></div>
+      <blockquote>${esc(a.note)}</blockquote></div>
+    <p class="hint" style="margin-top:8px">Decide on the plan above. The note is written by ${esc(a.via.label)} and can say anything.</p></section>`;
+}
+
+/** Why Approve is unavailable right now, re-checked at decision time (maintainer ruling 2). */
+function approveBlock(a) {
+  if (a.reauth) return { kind: "reauth" };
+  if (a.block === "off") return { kind: "policy", icon: "power", title: "Agent access is off in acme", body: `While it's off, ${esc(a.via.label)} can't deploy even with an approval. You can deny the request, or someone who manages agents can turn access back on in Settings → Agents.`, srcs: "org_agent_policy.agent_access_enabled = false, re-checked at decide time" };
+  if (a.block === "prod") return { kind: "policy", icon: "lock", title: "acme keeps agents off production", body: `Only a person in the console can deploy production, so this request can only be denied.`, srcs: "org_agent_policy.agents_may_not_apply_to_production, re-checked at decide time" };
+  if (a.block === "client") return { kind: "policy", icon: "lock", title: `${esc(a.via.label)} isn't an allowed agent app in acme`, body: `acme only lets approved apps act as agents. Deny this, or ask someone who manages agents to allow ${esc(a.via.label)} in Settings → Agents.`, srcs: "org_agent_policy.allowed_oauth_client_ids (Enterprise, AGT-L14 enterprise-policy.ts:oauthClientRefusal)" };
+  if (a.selfBlocked) return { kind: "policy", icon: "info", title: "Someone else needs to approve this", body: `acme requires a different person to approve requests made for you. You can still deny it, or send the link to a teammate with ${a.op} access.`, srcs: "org_agent_policy.require_different_approver → enterprise-policy.ts:approverRefusal" };
+  return null;
+}
+
+function decisionFoot(a) {
+  const isDestroy = a.op === "destroy";
+  const block = approveBlock(a);
+  if (block && block.kind === "reauth") {
+    return `<div class="sheet-dec">${inlineAlert("login", "Sign in again to decide", "Approvals need a sign-in from the last 24 hours. You last signed in 2 days ago. You'll come straight back to this request.", true, src("decide.ts:DECIDER_SESSION_MAX_AGE_MS → reauthentication_required"))}
+      <div class="dec-actions">${btn("Sign in again", { v: "primary", lg: true, icon: "login", act: "noop" })}</div></div>`;
+  }
+  if (S.ui.denying) {
+    return `<div class="sheet-dec"><form class="field" data-form="deny" onsubmit="return false"${src("apply_approvals.decision_reason (new column, ruled in) · untrusted, ≤500")}>
+        <label for="deny-reason">Reason for denying <span class="t3" style="font-weight:400">(optional)</span></label>
+        <textarea id="deny-reason" class="textarea" maxlength="500" placeholder="For example: wrong environment, plan again from main.">${esc(S.ui.reason || "")}</textarea>
+        <p class="hint">Shown to ${esc(a.requester.name.split(" ")[0])} and to ${esc(a.via.label)}.</p>
+        <div class="dec-actions">${btn("Back", { v: "ghost", act: "deny-cancel" })}${btn("Deny request", { v: "primary", act: "deny-confirm" })}</div></form></div>`;
+  }
+  const lede = isDestroy
+    ? `Approving lets <b class="t1">${esc(a.via.label)}</b> destroy <span class="mono t1">${esc(a.env)}</span> once, before ${clockAt(a.expiresIn)}.`
+    : `Approving lets <b class="t1">${esc(a.via.label)}</b> deploy this exact plan to <span class="mono t1">${esc(a.env)}</span> once, before ${clockAt(a.expiresIn)}. If the plan changes first, the approval stops working.`;
+  return `<div class="sheet-dec" aria-labelledby="h-dec">
+    <h3 id="h-dec" class="sr-only">${isDestroy ? "Approve this destroy?" : "Approve this deploy?"}</h3>
+    ${block ? inlineAlert(block.icon, block.title, block.body, true, src(block.srcs)) : ""}
+    ${a.expiresIn <= 5 && !block ? inlineAlert("clock", `Expires in ${a.expiresIn} min`, `After ${clockAt(a.expiresIn)} it can't be approved and ${esc(a.via.label)} has to ask again.`, true) : ""}
+    ${!block ? `<p class="t2" style="margin:0">${lede}</p>` : ""}
+    ${isDestroy && !block ? `<ul class="conseq"><li>Every resource in <span class="mono t1">${esc(a.env)}</span> is removed from your cloud.</li><li>Data in its databases and volumes is deleted unless you back it up first.</li><li>You'll type the environment name to confirm.</li></ul>` : ""}
+    <div class="dec-actions">${btn("Deny", { lg: true, act: "deny" })}${btn(isDestroy ? "Approve destroy…" : "Approve deploy", { v: "primary", lg: true, icon: isDestroy ? "" : "check", act: isDestroy ? "open-destroy" : "approve", disabled: !!block })}</div>
+    ${a.selfBlocked ? btn("Copy link for a teammate", { v: "ghost", full: true, icon: "link", act: "toast:Link copied." }) : ""}
+    <p class="footnote" style="margin:0">Anyone with ${isDestroy ? "destroy" : "deploy"} access to ${esc(a.project)} can decide. Decisions are recorded in Activity.</p>
+  </div>`;
+}
+
+function outcomeFoot(a, state) {
+  const reason = S.ui.byMe ? S.ui.reason : "Wrong environment. Plan again from main.";
+  const map = {
+    approved: { body: `You approved this at ${clockAt(-1)}. ${esc(a.via.label)} can ${a.op === "destroy" ? "destroy " + esc(a.env) : "deploy this plan"} once, before ${clockAt(a.expiresIn)}.`, sub: `If it doesn't start by ${clockAt(a.expiresIn)}, the approval expires.` },
+    used: { body: `Approved by ${ME.name} at ${clockAt(-6)}. The ${a.op} started at ${clockAt(-5)}.`, sub: "Each approval runs one job once.", act: `<a class="btn full" href="#">${ic("ext")}Open deploy job 5c7d2e81</a>` },
+    denied: { body: `${S.ui.byMe ? "You" : IVAN.name} denied this at ${clockAt(-2)}.`, sub: "", act: S.ui.noReason ? "" : `<div class="note"${src("apply_approvals.decision_reason (UNTRUSTED)")}><div class="eyebrow">Reason from ${S.ui.byMe ? "you" : IVAN.name}</div><blockquote>${esc(reason)}</blockquote></div>` },
+    expired: { body: `Nobody decided before ${clockAt(-1)}, so this request can't be approved any more.`, sub: `Ask ${esc(a.via.label)} to request a new approval. acme gives requests 1 hour.` },
+    superseded: { body: `A newer plan of ${esc(a.project)} / ${esc(a.env)} succeeded after this one, so this request no longer describes what would run.`, sub: `<span${gap("why it was superseded is not stored: read.ts recomputes bindingStaleReason live")}>Decide the newer request instead.</span>`, act: btn("Open the newer request", { full: true, act: "sheet:pending" }) },
+  }[state];
+  return `<div class="sheet-dec" aria-live="polite">${map.body ? `<p class="t1" style="margin:0">${map.body}</p>` : ""}${map.sub ? `<p class="sub" style="margin:0">${map.sub}</p>` : ""}${map.act || ""}</div>`;
+}
+
+function destroyDialog(a) {
+  const typed = S.ui.typed || "";
+  const ok = typed.trim() === a.env;
+  return `<div class="dialog-wrap nested" data-act="close-dialog-bg">
+    <div class="dialog serious" role="alertdialog" aria-modal="true" aria-labelledby="dlg-t" aria-describedby="dlg-d" data-stop>
+      <div class="sheet-band">${ic("alert")}Destroy · can't be undone</div>
+      <div class="dialog-h"><h2 id="dlg-t">Approve destroying ${esc(a.env)}?</h2><p id="dlg-d">${esc(a.via.label)} will be able to destroy ${esc(a.project)} / ${esc(a.env)} once, before ${clockAt(a.expiresIn)}.</p></div>
+      <div class="dialog-b">
+        <ul class="conseq"><li>Removes every resource this environment runs.</li><li>Deletes data in its databases and volumes.</li><li>Stops about ${a.costTotal} of estimated spend.</li></ul>
+        <div class="field"${src("DecisionInput.confirmEnvironmentName — checked again on the server (decide.ts confirmation_mismatch)")}>
+          <label for="confirm-env">Type <span class="mono">${esc(a.env)}</span> to confirm</label>
+          <input id="confirm-env" class="input mono" autocomplete="off" spellcheck="false" value="${esc(typed)}" data-input="typed" />
+        </div>
+      </div>
+      <div class="dialog-f">${btn("Cancel", { v: "ghost", act: "close-dialog" })}${btn("Approve destroy", { v: "primary", act: "approve-destroy", disabled: !ok })}</div>
+    </div></div>`;
+}
+
+/* ---------------- the list ---------------- */
+const ROWS = [
+  { id: 1, st: "pending", open: "pending", op: "deploy", project: "payments-api", env: "staging", stage: "staging", who: ME, via: VIA.agent_oauth("Claude Code"), plan: "+14 ~2 −0", cost: "+$61/mo", dig: "9f3c1a7e", when: "8 min ago", tail: ["Expires in", 52] },
+  { id: 2, st: "pending", open: "production", op: "deploy", project: "payments-api", env: "production", stage: "production", who: IVAN, via: VIA.cli_session(), plan: "+0 ~3 −1", cost: "+$8/mo", dig: "4b81d0c2", when: "3 min ago", tail: ["Expires in", 57] },
+  { id: 3, st: "pending", open: "destroy", op: "destroy", project: "payments-api", env: "perf", stage: "staging", who: IVAN, via: VIA.agent_oauth("Cursor"), plan: "everything", cost: "−$238/mo", dig: "e07a9b3f", when: "20 min ago", tail: ["Expires in", 40] },
+  { id: 4, st: "approved", open: "approved", op: "deploy", project: "web", env: "staging", stage: "staging", who: IVAN, via: VIA.service_token("ci-deploy"), plan: "+2 ~1 −0", cost: "+$3/mo", dig: "11ce42aa", when: "1 h ago", tail: ["Approved by", "Dana Petrova"] },
+  { id: 5, st: "consumed", open: "used", op: "deploy", project: "web", env: "dev", stage: "development", who: ME, via: VIA.agent_in_app(), plan: "+5 ~0 −0", cost: "+$12/mo", dig: "7d2290fe", when: "2 h ago", tail: ["Used by job", "5c7d2e81"] },
+  { id: 6, st: "superseded", open: "superseded", op: "deploy", project: "payments-api", env: "staging", stage: "staging", who: ME, via: VIA.agent_oauth("Claude Code"), plan: "+13 ~2 −0", cost: "+$58/mo", dig: "a4410b9c", when: "2 h ago", tail: ["Replaced by", "a newer plan"] },
+  { id: 7, st: "rejected", open: "denied", op: "deploy", project: "data-lake", env: "production", stage: "production", who: IVAN, via: VIA.agent_oauth("Claude Code"), plan: "+40 ~0 −2", cost: "+$740/mo", dig: "c9a1e553", when: "Yesterday", tail: ["Denied by", "Dana Petrova"] },
+  { id: 8, st: "expired", open: "expired", op: "deploy", project: "search", env: "staging", stage: "staging", who: ME, via: VIA.cli_session(), plan: "+1 ~0 −0", cost: "+$2/mo", dig: "0be7f3d1", when: "3 days ago", tail: ["Expired", "without a decision"] },
+];
+const MORE_ROWS = [
+  { id: 9, st: "consumed", open: "used", op: "deploy", project: "web", env: "staging", stage: "staging", who: IVAN, via: VIA.service_token("ci-deploy"), plan: "+1 ~2 −0", cost: "+$0/mo", dig: "5e19aa07", when: "4 days ago", tail: ["Used by job", "a1c00f93"] },
+  { id: 10, st: "rejected", open: "denied", op: "destroy", project: "search", env: "dev", stage: "development", who: ME, via: VIA.agent_oauth("Claude Code"), plan: "everything", cost: "−$31/mo", dig: "bb03c6e2", when: "5 days ago", tail: ["Denied by", "Ivan Georgiev"] },
+  { id: 11, st: "expired", open: "expired", op: "deploy", project: "payments-api", env: "staging", stage: "staging", who: IVAN, via: VIA.agent_oauth("Cursor"), plan: "+3 ~0 −0", cost: "+$9/mo", dig: "47f2d9c1", when: "6 days ago", tail: ["Expired", "without a decision"] },
+];
+const FACETS = {
+  status: { label: "Status", opts: [["pending", "Waiting"], ["approved", "Approved"], ["consumed", "Used"], ["rejected", "Denied"], ["expired", "Expired"], ["superseded", "Replaced"]], key: (r) => r.st },
+  op: { label: "Operation", opts: [["deploy", "Deploy"], ["destroy", "Destroy"]], key: (r) => r.op },
+  via: { label: "Requested through", opts: [["Connected agent", "Connected agent"], ["Alethia CLI", "Alethia CLI"], ["Service token", "Service token"], ["In the console", "Alethia assistant"]], key: (r) => r.via.kind === "Command line" ? "Alethia CLI" : r.via.kind },
+  stage: { label: "Environment", opts: [["production", "Production"], ["staging", "Staging"], ["development", "Development"]], key: (r) => r.stage },
+};
+function listFilters() { if (!S.ui.filters) S.ui.filters = { status: ["pending"], op: [], via: [], stage: [] }; return S.ui.filters; }
+
+function listPage(state, sheetState) {
+  const crumbs = ["acme", "Approvals"];
+  const desc = "Requests from the Alethia CLI, connected agents and service tokens to deploy or destroy. Each one needs a person.";
+  const sheet = sheetState ? approvalSheet(sheetState) : "";
+  if (state === "loading") return shell({ active: "approvals", width: "w-list", crumbs, body: `<div aria-busy="true">${pageToolbar({ desc })}<div class="filterbar">${skel("260px", 28)}${skel("90px", 28)}${skel("100px", 28)}${skel("140px", 28)}</div><div class="table-wrap">${Array.from({ length: 6 }, () => `<div style="display:flex;gap:24px;padding:14px 12px;border-bottom:1px solid var(--border)">${skel("70px")}${skel("30%")}${skel("20%")}${skel("12%")}</div>`).join("")}</div></div>` });
+  if (state === "error") return shell({ active: "approvals", width: "w-list", crumbs, body: `${pageToolbar({ desc })}${errorState("Couldn't load approvals", "Something went wrong on our side. Requests are safe and nothing was decided.")}` });
+  if (state === "empty") return shell({ active: "approvals", width: "w-list", crumbs, body: `${pageToolbar({ desc })}${emptyState("shield", "No approval requests yet", "When an agent, the Alethia CLI or a service token asks to deploy or destroy, the request waits here for a person.", `${btn("Connect an agent", { v: "primary", act: "go:connected" })}<span class="kbd-code">alethia agent setup</span>`)}` });
+
+  const f = listFilters();
+  if (["all", "loading-more", "more-error", "end"].includes(state) && !S.ui.allApplied) { f.status = []; S.ui.allApplied = true; }
+  if (state === "filtered-empty" && !S.ui.feApplied) { f.status = ["pending"]; f.stage = ["development"]; f.op = ["destroy"]; S.ui.feApplied = true; }
+  const loaded = state === "end" || S.ui.loadedMore ? ROWS.concat(MORE_ROWS) : ROWS;
+  const hasMore = !(state === "end" || S.ui.loadedMore) && ["all", "loading-more", "more-error"].includes(state);
+  const q = (S.ui.q || "").toLowerCase();
+  const match = (r, skip) => Object.keys(FACETS).every((k) => k === skip || !f[k].length || f[k].includes(FACETS[k].key(r))) && (!q || `${r.project} ${r.env} ${r.who.name} ${r.via.label}`.toLowerCase().includes(q));
+  const rows = loaded.filter((r) => match(r));
+  const universe = ROWS.concat(MORE_ROWS);
+  const facetBtn = (k) => {
+    const F = FACETS[k], sel = f[k];
+    const open = S.ui.openFacet === k;
+    const label = sel.length ? `<span class="vals">${sel.length === 1 ? F.opts.find((o) => o[0] === sel[0])[1] : sel.length + " selected"}</span>` : "";
+    return `<div class="facet"><button type="button" class="${sel.length ? "on" : ""}" aria-expanded="${open}" data-act="facet:${k}">${ic(sel.length ? "check" : "plus")}${F.label}${label}</button>${open ? `<div class="pop" role="group" aria-label="${F.label}"${src("lib/queries/facets.ts — facet counts over the unfiltered universe (server)")}>${F.opts.map(([v, l]) => `<label><input type="checkbox" data-facet="${k}" value="${v}" ${sel.includes(v) ? "checked" : ""}/>${l}<span class="cnt">${universe.filter((r) => match(r, k) && FACETS[k].key(r) === v).length}</span></label>`).join("")}</div>` : ""}</div>`;
+  };
+  const anyFilter = Object.values(f).some((v) => v.length) || q;
+  const tailCell = (r) => r.st === "pending" ? countdown(r.tail[1]) : `<span class="sub">${r.tail[0]}</span><br><span class="t2">${esc(r.tail[1])}</span>`;
+  const pager = hasMore ? (state === "more-error"
+      ? `<p class="loadmore" role="status">Couldn't load more requests. ${btn("Try again", { sm: true, act: "load-more" })}</p>`
+      : `<div class="loadmore"${src("useInfiniteScrollSentinel (lib/query/use-infinite-scroll.ts) + Load more — as Activity and support cases")}><div class="sentinel" data-sentinel aria-hidden="true"></div>${btn(state === "loading-more" || S.ui.loadingMore ? "Loading…" : "Load more", { sm: true, act: "load-more", disabled: state === "loading-more" || S.ui.loadingMore, icon: state === "loading-more" || S.ui.loadingMore ? "refresh" : "" })}</div>`) : "";
+  const table = rows.length ? `
+    <div class="table-wrap desk"${gap("list read: no approvals list query exists — needs orpc.approvals.list (keyset cursor) + queryApprovalsPage")}>
+      <table class="dt"><caption class="sr-only">Approval requests</caption>
+        <thead><tr><th scope="col">Status</th><th scope="col">Request</th><th scope="col">Requested for</th><th scope="col">Plan</th><th scope="col">Digest</th><th scope="col">Requested</th><th scope="col"></th></tr></thead>
+        <tbody>${rows.map((r) => `<tr class="clickable" data-act="sheet:${r.open}" tabindex="0" aria-label="Open ${r.op} ${esc(r.project)} / ${esc(r.env)}">
+          <td>${approvalStatus(r.st)}</td>
+          <td><div class="row">${opTag(r.op)}<span class="cell-main">${esc(r.project)} / <span class="mono">${esc(r.env)}</span></span>${r.stage === "production" ? stagePill("production") : ""}</div></td>
+          <td>${esc(r.who.name)}<br><span class="sub">${ic(r.via.icon)} ${esc(r.via.label)}</span></td>
+          <td><span class="mono">${r.plan}</span><br><span class="sub mono">${r.cost}</span></td>
+          <td class="mono">${r.dig}</td>
+          <td class="t2">${r.when}</td>
+          <td>${tailCell(r)}</td></tr>`).join("")}</tbody>
+      </table>
+    </div>
+    <ul class="m-list" aria-label="Approval requests">${rows.map((r) => `<li class="m-item" data-act="sheet:${r.open}" tabindex="0" role="link">
+        <div class="row" style="justify-content:space-between">${approvalStatus(r.st)}${r.st === "pending" ? countdown(r.tail[1]) : `<span class="sub">${r.when}</span>`}</div>
+        <div class="row">${opTag(r.op)}<span class="cell-main">${esc(r.project)} / <span class="mono">${esc(r.env)}</span></span>${r.stage === "production" ? stagePill("production") : ""}</div>
+        <div class="sub">${esc(r.who.name)} · ${esc(r.via.label)} · <span class="mono">${r.plan}</span> · <span class="mono">${r.dig}</span></div></li>`).join("")}</ul>${pager}`
+    : emptyState("search", "No requests match these filters", "Try a different status or environment, or clear the filters.", btn("Clear filters", { act: "clear-filters" }));
+  const body = `${pageToolbar({ desc })}
+    <div class="filterbar" role="search">
+      <label class="search">${ic("search")}<span class="sr-only">Search</span><input type="search" placeholder="Search project, environment or person" value="${esc(S.ui.q || "")}" data-input="q" /></label>
+      ${Object.keys(FACETS).map(facetBtn).join("")}
+      ${anyFilter ? btn("Clear", { v: "ghost", sm: true, act: "clear-filters" }) : ""}
+    </div>${table}${sheet}`;
+  return shell({ active: "approvals", width: "w-list", crumbs, body });
+}
+
+/* ===================================================================================
+   Settings frame
+   =================================================================================== */
+const SNAV = [["General", "general"], ["Billing", "billing"], ["Members", "members"], ["Teams", "teams"], ["Roles", "roles"], ["Access", "access"], ["Agents", "agents", true], ["Service tokens", "tokens", true], ["Connected agents", "connected", true], ["Single Sign-On", "sso"], ["Classification", "classification"], ["Activity", "activity"]];
+function settingsFrame(activeSub, label, panel, banner = "") {
+  const go = { agents: "go:policy", tokens: "go:tokens", connected: "go:connected" };
+  return shell({ active: "settings", width: "w-settings", crumbs: ["acme", "Settings", label], banner, body: `<div class="settings">
+    <nav class="s-nav" aria-label="Settings">${SNAV.map(([l, k, n]) => `<a href="#" ${k === activeSub ? 'aria-current="page"' : ""} data-act="${go[k] || "noop"}">${l}${n ? `<span class="new" title="New in AGT-L2">NEW</span>` : ""}</a>`).join("")}</nav>
+    <div class="s-nav-select"><label class="sr-only" for="snav">Settings section</label><select id="snav" class="select" data-input="snav">${SNAV.map(([l, k]) => `<option value="${k}" ${k === activeSub ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+    <div class="s-panel">${panel}</div></div>` });
+}
+
+/* ===================================================================================
+   SURFACE 3 — Agent policy  /[org]/~/settings/agents
+   =================================================================================== */
+function policyState() { if (!S.ui.policy) S.ui.policy = { access: true, noProd: false, diff: false, ttl: 60, custom: false }; return S.ui.policy; }
+function policyPage(state) {
+  if (state === "loading") return settingsFrame("agents", "Agents", `<div aria-busy="true">${pageToolbar({ desc: "" })}${[1, 2, 3].map(() => `<div class="card card-pad" style="margin-top:16px">${skel("160px", 14)}${skel("70%", 12, "margin-top:10px")}${skel("50%", 12, "margin-top:6px")}</div>`).join("")}</div>`);
+  if (state === "error") return settingsFrame("agents", "Agents", errorState("Couldn't load agent settings", "Your current settings still apply. Try again in a moment."));
+  const p = policyState();
+  if (state === "off" && !S.ui.offApplied) { p.access = false; S.ui.offApplied = true; }
+  const readOnly = state === "no-permission";
+  const community = state === "community";
+  const eeLocked = community;
+  const dis = (x) => (readOnly || x ? "disabled" : "");
+  const sw = (key, on, label, extra = "") => `<button type="button" role="switch" class="switch" aria-checked="${on}" aria-label="${label}" data-act="sw:${key}" ${extra}></button>`;
+  const banner = !p.access ? `<div class="banner inverted" role="status">${ic("power")}<div class="grow"><b>Agent access is off.</b> Connected agents and the Alethia assistant can't read, plan, deploy or destroy anything in acme. Waiting agent requests can only be denied.</div>${readOnly ? "" : btn("Turn back on", { sm: true, act: "sw:access" }).replace('class="btn', 'style="background:var(--ink-foreground);color:var(--ink);border-color:var(--ink-foreground)" class="btn')}</div>` : "";
+  const ttlOpts = [[15, "15 min"], [30, "30 min"], [60, "1 hour"], [240, "4 hours"], [1440, "24 hours"]];
+  const panel = `
+    ${pageToolbar({ desc: "Decide what agents may do in acme, and how approvals work for everything that isn't a person in the console." })}
+    ${readOnly ? inlineAlert("lock", "You can't change agent settings", "Changing them needs the Manage agents permission, which your role in acme doesn't include. You can see how acme is set up; ask someone who manages roles if you need it.", false, gap("new PDP verb org:manage_agents (registry.ts) — granted through roles; view needs org:view")) : ""}
+    <section aria-labelledby="h-access">
+      ${sectionHeading("Agent access", "Connected agents (Claude Code, Cursor and other MCP apps) and the Alethia assistant.", "", 2).replace("<h2>", '<h2 id="h-access">')}
+      <div class="card">
+        <div class="setting"${src("org_agent_policy.agent_access_enabled (default true)")}>
+          <div><div class="s-title">Let agents work in acme</div><p class="s-body">When this is on, agents act for the person who connected them, within that person's access and the permissions they granted.</p></div>
+          ${sw("access", p.access, "Let agents work in acme", dis())}
+          <div class="consequence">${p.access ? "<b>On.</b> Agents can read and plan. Every deploy and destroy still waits for a person's approval." : "<b>Off.</b> Every agent request is refused, including reads. Requests already waiting can't be approved or used. The Alethia CLI and service tokens keep working."}</div>
+        </div>
+        <div class="setting"${src("org_agent_policy.agents_may_not_apply_to_production (default false)")}>
+          <div><div class="s-title">Keep agents off production</div><p class="s-body">Agents can still plan production environments, but only a person in the console can deploy or destroy them.</p></div>
+          ${sw("noProd", p.noProd, "Keep agents off production", dis(!p.access))}
+          <div class="consequence">${p.noProd ? "<b>On.</b> An agent asking to deploy or destroy production is refused straight away, before anyone is asked. The Alethia CLI and service tokens still request approval as usual." : "<b>Off.</b> Agents may ask to deploy or destroy production. A person approves each request."}</div>
+        </div>
+      </div>
+    </section>
+    <section aria-labelledby="h-appr">
+      ${sectionHeading("Approvals", "Applies to every request from the Alethia CLI, connected agents, the Alethia assistant and service tokens.", "", 2).replace("<h2>", '<h2 id="h-appr">')}
+      <div class="card">
+        <div class="setting"${src("org_agent_policy.approval_ttl_minutes (1–1440, default 60) · context.ts clamps")}>
+          <div style="grid-column:1/-1"><div class="s-title">How long a request stays open</div><p class="s-body">A request has to be approved <b class="t1">and used</b> within this time. Shorter is safer; longer suits teams across time zones.</p>
+            <div class="ttl-opts" role="group" aria-label="Request lifetime" style="margin-top:10px">${ttlOpts.map(([v, l]) => `<button type="button" class="seg" aria-pressed="${p.ttl === v}" data-act="ttl:${v}" ${dis()}>${l}${v === 60 ? " · default" : ""}</button>`).join("")}</div>
+            <p class="hint" style="margin-top:8px">Applies to new requests. Requests already waiting keep their time.</p></div>
+        </div>
+        <div class="setting"${src("org_agent_policy.require_different_approver (default false, D6) · enterprise (AGT-L14)")}>
+          <div><div class="s-title">Require a different person to approve <span class="pill ee">Enterprise</span></div><p class="s-body">The person a request was made for can't approve it. Someone else with deploy access has to.</p></div>
+          ${sw("diff", p.diff, "Require a different person to approve", dis(eeLocked))}
+          <div class="consequence">${eeLocked ? "<b>Available on Enterprise.</b> On Community and Pro, the person a request was made for can approve it themselves." : p.diff ? "<b>On.</b> Make sure at least two people have deploy access to each project, or requests there can only be denied." : "<b>Off.</b> You can approve requests made by your own agents and CLI."}</div>
+        </div>
+      </div>
+    </section>
+    <section aria-labelledby="h-apps">
+      ${sectionHeading("Allowed agent apps", "Which MCP apps people in acme may connect.", `<span class="pill ee">Enterprise</span>`, 2).replace("<h2>", '<h2 id="h-apps">')}
+      <div class="card card-pad"${src("org_agent_policy.allowed_oauth_client_ids (NULL = any app)")}>
+        <div class="row" style="justify-content:space-between"><div><div class="s-title" style="font-weight:500">Any app</div><p class="s-body" style="margin:2px 0 0;color:var(--text-tertiary)">People can connect any MCP app. Each still asks them for permission.</p></div>${btn("Limit to chosen apps", { sm: true, act: "noop", disabled: readOnly || eeLocked })}</div>
+      </div>
+    </section>
+    <p class="footnote"${src("org_agent_policy.updated_by + updated_at")}>Last changed by ${ME.name} · 2 days ago. Every change is recorded in Activity.</p>
+    ${S.ui.dialog === "kill" ? killDialog() : ""}`;
+  return settingsFrame("agents", "Agents", panel, banner);
+}
+function killDialog() {
+  return `<div class="dialog-wrap" data-act="close-dialog-bg"><div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="k-t" data-stop>
+    <div class="dialog-h"><h2 id="k-t">Turn off agent access for acme?</h2><p>Takes effect immediately for everyone in the organization.</p></div>
+    <div class="dialog-b"><ul class="conseq"><li>Connected agents and the Alethia assistant are refused every request.</li><li>Requests already waiting for approval can't be used.</li><li>Connections are kept. Turning access back on restores them.</li></ul></div>
+    <div class="dialog-f">${btn("Cancel", { v: "ghost", act: "close-dialog" })}${btn("Turn off agent access", { v: "primary", act: "kill-confirm" })}</div></div></div>`;
+}
+
+/* ===================================================================================
+   SURFACE 4 — Service tokens  /[org]/~/settings/tokens  (auto-approve picker)
+   =================================================================================== */
+const PROJECTS = [
+  { name: "payments-api", envs: [["dev", "development"], ["staging", "staging"], ["perf", "staging"], ["production", "production"]] },
+  { name: "web", envs: [["dev", "development"], ["staging", "staging"], ["production", "production"]] },
+  { name: "data-lake", envs: [["production", "production"]] },
+];
+const TOKENS = [
+  { name: "ci-deploy", prefix: "alethia_sat_3f9aK2xQ", scopes: ["read", "plan", "apply"], projects: "web", auto: ["web / staging", "web / dev"], used: "12 min ago", expires: "In 81 days", st: ["active", "Active"] },
+  { name: "nightly-drift", prefix: "alethia_sat_Zc81mP0t", scopes: ["read", "plan"], projects: "All projects", auto: [], used: "6 h ago", expires: "Never", st: ["active", "Active"] },
+  { name: "old-jenkins", prefix: "alethia_sat_q0Lw77Yh", scopes: ["read", "design", "plan", "apply", "destroy"], projects: "All projects", auto: [], used: "4 months ago", expires: "Never", st: ["disabled", "Revoked"] },
+];
+const SCOPE_TEXT = {
+  read: ["Read", "See projects, environments, jobs and logs."],
+  design: ["Design", "Change infrastructure designs. Nothing is created in your cloud."],
+  plan: ["Plan", "Run plans and repository scans."],
+  apply: ["Deploy", "Ask to deploy. A person approves, unless you choose environments below."],
+  destroy: ["Destroy", "Ask to destroy. A person always approves."],
+};
+const scopeWords = (s) => s.map((x) => SCOPE_TEXT[x][0]).join(", ");
+function tokenForm() { if (!S.ui.tok) S.ui.tok = { scopes: ["read", "plan", "apply"], projMode: "some", projects: ["web"], auto: ["web/staging"] }; return S.ui.tok; }
+
+function tokensPage(state) {
+  if (state === "loading") return settingsFrame("tokens", "Service tokens", `<div aria-busy="true">${pageToolbar({ desc: "" })}<div class="table-wrap">${Array.from({ length: 3 }, () => `<div style="display:flex;gap:24px;padding:14px 12px;border-bottom:1px solid var(--border)">${skel("100px")}${skel("140px")}${skel("20%")}</div>`).join("")}</div></div>`);
+  const owner = state !== "no-permission";
+  const desc = "Tokens let pipelines and scripts use Alethia without a person signed in. Each one is limited to what you choose.";
+  const actions = btn("Create token", { v: "primary", sm: true, icon: "plus", act: "tok-new" });
+  let list;
+  if (state === "empty") list = emptyState("key", "No service tokens", "Create one for your CI pipeline. Use it as <span class=\"mono\">ALETHIA_TOKEN</span> with the Alethia CLI.", btn("Create token", { v: "primary", icon: "plus", act: "tok-new" }));
+  else list = `<div class="table-wrap desk"${gap("no console list exists today: GET /api/cli/tokens is bearer-only and omits auto_approve_environment_ids")}><table class="dt"><caption class="sr-only">Service tokens</caption>
+      <thead><tr><th scope="col">Name</th><th scope="col">Token</th><th scope="col">Can</th><th scope="col">Projects</th><th scope="col">Deploys without approval</th><th scope="col">Last used</th><th scope="col">Status</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>${TOKENS.map((t) => `<tr><td class="cell-main">${t.name}</td><td class="mono sub">${t.prefix}…</td><td>${scopeWords(t.scopes)}</td><td>${t.projects}</td><td${src("cli_service_tokens.auto_approve_environment_ids")}>${t.auto.length ? t.auto.map((e) => `<span class="mono">${e}</span>`).join("<br>") : `<span class="t3">None</span>`}</td><td class="t2">${t.used}</td><td>${status(t.st[0], t.st[1])}</td><td>${t.st[1] === "Active" ? `<div class="row" style="flex-wrap:nowrap">${btn("Edit", { sm: true, v: "ghost", act: "tok-edit" })}${btn("Revoke", { sm: true, v: "ghost", act: "noop" })}</div>` : ""}</td></tr>`).join("")}</tbody></table></div>
+    <div class="m-list">${TOKENS.map((t) => `<div class="m-item"><div class="row" style="justify-content:space-between"><span class="cell-main">${t.name}</span>${status(t.st[0], t.st[1])}</div><div class="sub mono">${t.prefix}…</div><div class="sub">${scopeWords(t.scopes)} · ${t.projects}</div><div class="sub">Deploys without approval: ${t.auto.length ? t.auto.join(", ") : "none"}</div>${t.st[1] === "Active" ? `<div>${btn("Edit", { sm: true, act: "tok-edit" })}</div>` : ""}</div>`).join("")}</div>`;
+  let overlay = "";
+  if (state === "create" || state === "no-apply" || state === "no-permission" || S.ui.sheet === "tok") overlay = tokenSheet(state, owner, false);
+  if (state === "edit" || S.ui.sheet === "tok-edit") overlay = tokenSheet(state, owner, true);
+  if (state === "created") overlay = tokenCreated();
+  return settingsFrame("tokens", "Service tokens", `${pageToolbar({ desc, actions })}${list}${overlay}`);
+}
+
+function tokenSheet(state, owner, editing) {
+  const f = tokenForm();
+  if (state === "no-apply" && !S.ui.naApplied) { f.scopes = ["read", "plan"]; S.ui.naApplied = true; }
+  const hasApply = f.scopes.includes("apply");
+  const projs = f.projMode === "all" ? PROJECTS : PROJECTS.filter((p) => f.projects.includes(p.name));
+  const lockedAll = !hasApply || !owner;
+  const envRows = projs.map((p) => `<div class="group" style="margin-top:8px"><div class="group-h"><span class="cell-main">${p.name}</span></div>${p.envs.map(([e, stage]) => {
+    const prod = stage === "production";
+    const id = `${p.name}/${e}`;
+    const on = !prod && f.auto.includes(id);
+    const locked = prod || lockedAll;
+    return `<label class="check ${locked ? "locked" : ""}"><input type="checkbox" ${on ? "checked" : ""} ${locked ? "disabled" : ""} data-auto="${id}" aria-describedby="why-${id.replace("/", "-")}"/><span style="min-width:0"><span class="row"><span class="ttl mono">${e}</span>${stagePill(stage)}</span><span class="why" id="why-${id.replace("/", "-")}">${prod ? `${ic("lock")} Production always needs a person.` : on ? "Deploys go ahead without asking anyone." : "Each deploy waits for a person."}</span></span></label>`;
+  }).join("")}</div>`).join("");
+  const title = editing ? "Edit ci-deploy" : "Create a service token";
+  return `<div class="scrim" data-act="close-sheet-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-t" data-stop>
+    <div class="sheet-h"><div style="flex:1;min-width:0"><h2 id="sh-t">${title}</h2><p class="hint" style="margin-top:4px">${editing ? "The token itself doesn't change. Pipelines using it keep working." : "You'll see the token once, right after you create it."}</p></div>${btn("", { v: "ghost", sm: true, icon: "x", act: "close-sheet", attrs: 'aria-label="Close"' })}</div>
+    <div class="sheet-b">
+      ${editing ? "" : `<div class="field"${src("cli_service_tokens.name")}><label for="tk-name">Name</label><input id="tk-name" class="input" value="ci-deploy" /><p class="hint">Say what uses it, so a list of tokens reads as a list of purposes.</p></div>
+      <div class="field"${src("cli_service_tokens.expires_at (createTokenSchema.expires_in_days)")}><label for="tk-exp">Expires</label><select id="tk-exp" class="select"><option>In 30 days</option><option selected>In 90 days</option><option>In 1 year</option><option>Never</option></select></div>`}
+      <fieldset class="field" style="border:0;padding:0;margin:0"${src("cli_service_tokens.scopes (agent_scope[])")}><legend class="label" style="margin-bottom:6px">What it can do</legend>
+        <div class="group">${Object.keys(SCOPE_TEXT).map((k) => `<label class="check"><input type="checkbox" data-scope="${k}" ${f.scopes.includes(k) ? "checked" : ""} ${editing ? "disabled" : ""}/><span><span class="ttl">${SCOPE_TEXT[k][0]}</span><br><span class="why">${SCOPE_TEXT[k][1]}</span></span></label>`).join("")}</div>
+        ${editing ? `<p class="hint"${gap("no PATCH for scopes/projects: app/api/cli/tokens/[id] has DELETE only")}>To change what it can do, create a new token.</p>` : ""}</fieldset>
+      <fieldset class="field" style="border:0;padding:0;margin:0"${src("cli_service_tokens.project_ids (NULL = all, present and future)")}><legend class="label" style="margin-bottom:6px">Projects</legend>
+        <div class="group">
+          <label class="check"><input type="radio" name="pm" data-projmode="all" ${f.projMode === "all" ? "checked" : ""} ${editing ? "disabled" : ""}/><span><span class="ttl">All projects</span><br><span class="why">Including projects created later.</span></span></label>
+          <label class="check"><input type="radio" name="pm" data-projmode="some" ${f.projMode === "some" ? "checked" : ""} ${editing ? "disabled" : ""}/><span style="flex:1"><span class="ttl">Only these projects</span>${f.projMode === "some" ? `<span class="row" style="margin-top:6px">${PROJECTS.map((p) => `<label class="pill" style="cursor:pointer;height:22px;text-transform:none;letter-spacing:0"><input type="checkbox" data-proj="${p.name}" ${f.projects.includes(p.name) ? "checked" : ""} ${editing ? "disabled" : ""} style="accent-color:var(--ink);margin:0"/>${p.name}</label>`).join("")}</span>` : ""}</span></label>
+        </div></fieldset>
+      <fieldset class="field" style="border:0;padding:0;margin:0"${gap("auto_approve_environment_ids has no write path: mintServiceToken/createTokenSchema don't accept it; no PATCH; no audit event")}>
+        <legend class="label" style="margin-bottom:4px">Deploy without approval</legend>
+        <p class="hint">Choose environments where this token's deploys go ahead without a person approving each one. For CI pipelines that deploy to staging on every merge.</p>
+        ${!owner ? inlineAlert("lock", "You can't choose these environments", "Choosing them needs the Manage agents permission, which your role doesn't include. You can create the token now; someone with that permission can add environments later.", false, src("PDP verb org:manage_agents (new) — D2's owner-only, granted to the owner role by default")) : ""}
+        ${owner && !hasApply ? inlineAlert("info", "Needs the Deploy permission", "Turn on Deploy above to choose environments.", false) : ""}
+        <div ${lockedAll ? 'aria-disabled="true"' : ""}>${envRows || `<p class="hint">Choose at least one project first.</p>`}</div>
+        <ul class="conseq" style="margin-top:10px"><li>Production environments always need a person.</li><li>Destroys always need a person, everywhere.</li><li>Every automatic deploy is recorded in Activity with this token's name.</li></ul>
+      </fieldset>
+    </div>
+    <div class="sheet-f">${btn("Cancel", { v: "ghost", act: "close-sheet" })}${btn(editing ? "Save changes" : "Create token", { v: "primary", act: editing ? "tok-save" : "tok-create" })}</div>
+  </div></div>`;
+}
+function tokenCreated() {
+  return `<div class="dialog-wrap"><div class="dialog" role="dialog" aria-modal="true" aria-labelledby="tc-t">
+    <div class="dialog-h"><h2 id="tc-t">Copy your new token</h2><p>This is the only time it's shown. Alethia stores a fingerprint, never the token.</p></div>
+    <div class="dialog-b">
+      <div class="secret"><code>alethia_sat_3f9aK2xQ••••••••••••••••••••••••••••••••••</code>${btn("Copy", { sm: true, icon: "copy", act: "toast:Token copied." })}</div>
+      <div class="field"><span class="label">Use it in your pipeline</span><code class="kbd-code" style="display:block;padding:8px">ALETHIA_TOKEN=… alethia deploy --project web --env staging</code></div>
+      <ul class="conseq"><li>Deploys to <span class="mono">web / staging</span> go ahead without approval.</li><li>Everything else this token asks to deploy waits for a person in Approvals.</li></ul>
+    </div>
+    <div class="dialog-f">${btn("I've copied it", { v: "primary", act: "go:tokens" })}</div></div></div>`;
+}
+
+/* ===================================================================================
+   Brand marks for agent apps. SOURCE: simple-icons path data + brand hex — the same source the
+   console already uses for third-party marks drawn inline (components/alerts/channel-icon.tsx).
+   OpenAI's mark is NOT in simple-icons (removed at the owner's request), so Codex uses a
+   stand-in copied from @lobehub/icons-static-svg; production must carry OpenAI's own file under
+   packages/assets/static/icons/openai/ (the connector-mark path, ConnectorIcon). Marks whose brand
+   colour is black or near-black are drawn in the foreground ink, the way GitHub's black/white pair
+   is (connector-icon.tsx DARK_VARIANTS).
+   =================================================================================== */
+const BRAND = {"claudecode": {"d": "M21 10.5h3v3h-3v3h-1.5v3H18v-3h-1.5v3H15v-3H9v3H7.5v-3H6v3H4.5v-3H3v-3H0v-3h3v-6h18Zm-15 0h1.5v-3H6Zm10.5 0H18v-3h-1.5z", "hex": "D97757", "src": "simple-icons@16.38.1"}, "claude": {"d": "m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z", "hex": "D97757", "src": "simple-icons@16.38.1"}, "cursor": {"d": "M11.503.131 1.891 5.678a.84.84 0 0 0-.42.726v11.188c0 .3.162.575.42.724l9.609 5.55a1 1 0 0 0 .998 0l9.61-5.55a.84.84 0 0 0 .42-.724V6.404a.84.84 0 0 0-.42-.726L12.497.131a1.01 1.01 0 0 0-.996 0M2.657 6.338h18.55c.263 0 .43.287.297.515L12.23 22.918c-.062.107-.229.064-.229-.06V12.335a.59.59 0 0 0-.295-.51l-9.11-5.257c-.109-.063-.064-.23.061-.23", "hex": "000000", "src": "simple-icons@16.38.1"}, "githubcopilot": {"d": "M23.922 16.997C23.061 18.492 18.063 22.02 12 22.02 5.937 22.02.939 18.492.078 16.997A.641.641 0 0 1 0 16.741v-2.869a.883.883 0 0 1 .053-.22c.372-.935 1.347-2.292 2.605-2.656.167-.429.414-1.055.644-1.517a10.098 10.098 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368.397-.406.89-.717 1.474-.952C7.255 2.937 9.248 1.98 11.978 1.98c2.731 0 4.767.957 6.166 2.093.584.235 1.077.546 1.474.952.85.869 1.132 2.037 1.132 3.368 0 .368-.014.733-.052 1.086.23.462.477 1.088.644 1.517 1.258.364 2.233 1.721 2.605 2.656a.841.841 0 0 1 .053.22v2.869a.641.641 0 0 1-.078.256Zm-11.75-5.992h-.344a4.359 4.359 0 0 1-.355.508c-.77.947-1.918 1.492-3.508 1.492-1.725 0-2.989-.359-3.782-1.259a2.137 2.137 0 0 1-.085-.104L4 11.746v6.585c1.435.779 4.514 2.179 8 2.179 3.486 0 6.565-1.4 8-2.179v-6.585l-.098-.104s-.033.045-.085.104c-.793.9-2.057 1.259-3.782 1.259-1.59 0-2.738-.545-3.508-1.492a4.359 4.359 0 0 1-.355-.508Zm2.328 3.25c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1-.549 0-1-.451-1-1v-2c0-.549.451-1 1-1Zm-5 0c.549 0 1 .451 1 1v2c0 .549-.451 1-1 1-.549 0-1-.451-1-1v-2c0-.549.451-1 1-1Zm3.313-6.185c.136 1.057.403 1.913.878 2.497.442.544 1.134.938 2.344.938 1.573 0 2.292-.337 2.657-.751.384-.435.558-1.15.558-2.361 0-1.14-.243-1.847-.705-2.319-.477-.488-1.319-.862-2.824-1.025-1.487-.161-2.192.138-2.533.529-.269.307-.437.808-.438 1.578v.021c0 .265.021.562.063.893Zm-1.626 0c.042-.331.063-.628.063-.894v-.02c-.001-.77-.169-1.271-.438-1.578-.341-.391-1.046-.69-2.533-.529-1.505.163-2.347.537-2.824 1.025-.462.472-.705 1.179-.705 2.319 0 1.211.175 1.926.558 2.361.365.414 1.084.751 2.657.751 1.21 0 1.902-.394 2.344-.938.475-.584.742-1.44.878-2.497Z", "hex": "000000", "src": "simple-icons@16.38.1"}, "googlegemini": {"d": "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81", "hex": "8E75B2", "src": "simple-icons@16.38.1"}, "windsurf": {"d": "M23.55 5.067c-1.2038-.002-2.1806.973-2.1806 2.1765v4.8676c0 .972-.8035 1.7594-1.7597 1.7594-.568 0-1.1352-.286-1.4718-.7659l-4.9713-7.1003c-.4125-.5896-1.0837-.941-1.8103-.941-1.1334 0-2.1533.9635-2.1533 2.153v4.8957c0 .972-.7969 1.7594-1.7596 1.7594-.57 0-1.1363-.286-1.4728-.7658L.4076 5.1598C.2822 4.9798 0 5.0688 0 5.2882v4.2452c0 .2147.0656.4228.1884.599l5.4748 7.8183c.3234.462.8006.8052 1.3509.9298 1.3771.313 2.6446-.747 2.6446-2.0977v-4.893c0-.972.7875-1.7593 1.7596-1.7593h.003a1.798 1.798 0 0 1 1.4718.7658l4.9723 7.0994c.4135.5905 1.05.941 1.8093.941 1.1587 0 2.1515-.9645 2.1515-2.153v-4.8948c0-.972.7875-1.7594 1.7596-1.7594h.194a.22.22 0 0 0 .2204-.2202v-4.622a.22.22 0 0 0-.2203-.2203Z", "hex": "0B100F", "src": "simple-icons@16.38.1"}, "zedindustries": {"d": "M2.25 1.5a.75.75 0 0 0-.75.75v16.5H0V2.25A2.25 2.25 0 0 1 2.25 0h20.095c1.002 0 1.504 1.212.795 1.92L10.764 14.298h3.486V12.75h1.5v1.922a1.125 1.125 0 0 1-1.125 1.125H9.264l-2.578 2.578h11.689V9h1.5v9.375a1.5 1.5 0 0 1-1.5 1.5H5.185L2.562 22.5H21.75a.75.75 0 0 0 .75-.75V5.25H24v16.5A2.25 2.25 0 0 1 21.75 24H1.655C.653 24 .151 22.788.86 22.08L13.19 9.75H9.75v1.5h-1.5V9.375A1.125 1.125 0 0 1 9.375 8.25h5.314l2.625-2.625H5.625V15h-1.5V5.625a1.5 1.5 0 0 1 1.5-1.5h13.19L21.438 1.5z", "hex": "084CCF", "src": "simple-icons@16.38.1"}, "cline": {"d": "m23.365 13.556-1.442-2.895V8.994c0-2.764-2.218-5.002-4.954-5.002h-2.464c.178-.367.276-.779.276-1.213A2.77 2.77 0 0 0 12.018 0a2.77 2.77 0 0 0-2.763 2.779c0 .434.098.846.276 1.213H7.067c-2.736 0-4.954 2.238-4.954 5.002v1.667L.64 13.549c-.149.29-.149.636 0 .927l1.472 2.855v1.667C2.113 21.762 4.33 24 7.067 24h9.902c2.736 0 4.954-2.238 4.954-5.002V17.33l1.44-2.865c.143-.286.143-.622.002-.91m-12.854 2.36a2.27 2.27 0 0 1-2.261 2.273 2.27 2.27 0 0 1-2.261-2.273v-4.042A2.27 2.27 0 0 1 8.249 9.6a2.267 2.267 0 0 1 2.262 2.274zm7.285 0a2.27 2.27 0 0 1-2.26 2.273 2.27 2.27 0 0 1-2.262-2.273v-4.042A2.267 2.267 0 0 1 15.535 9.6a2.267 2.267 0 0 1 2.261 2.274z", "hex": "18181B", "src": "simple-icons@16.38.1"}, "codex": {"svg": "<path d=\"M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z\" fill=\"#fff\"></path><path d=\"M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z\" fill=\"url(#lobe-icons-codex-_R_0_)\"></path><defs><linearGradient gradientUnits=\"userSpaceOnUse\" id=\"lobe-icons-codex-_R_0_\" x1=\"12\" x2=\"12\" y1=\"3\" y2=\"21\"><stop stop-color=\"#B1A7FF\"></stop><stop offset=\".5\" stop-color=\"#7A9DFF\"></stop><stop offset=\"1\" stop-color=\"#3941FF\"></stop></linearGradient></defs>", "src": "@lobehub/icons-static-svg@1.106.0 (stand-in: OpenAI mark not in simple-icons)"}};
+const NEAR_BLACK = new Set(["000000", "0B100F", "18181B", "191919"]);
+function brandMark(slug, size = 24) {
+  const b = BRAND[slug];
+  if (!b) return `<span class="glyph" aria-hidden="true">${ic("bot")}</span>`;
+  const title = AGENT_CATALOG.find((c) => c.slug === slug)?.name || slug;
+  if (b.svg) return `<svg class="brand" width="${size}" height="${size}" viewBox="0 0 24 24" role="img" aria-label="${esc(title)}">${b.svg}</svg>`;
+  const fill = NEAR_BLACK.has(b.hex) ? "currentColor" : `#${b.hex}`;
+  return `<svg class="brand" width="${size}" height="${size}" viewBox="0 0 24 24" role="img" aria-label="${esc(title)}"><path fill="${fill}" d="${b.d}"/></svg>`;
+}
+
+const AGENT_CATALOG = [
+  { slug: "claudecode", name: "Claude Code", domain: "claude.ai", desc: "Anthropic's coding agent, in your terminal and IDE." },
+  { slug: "claude", name: "Claude", domain: "claude.ai", desc: "Claude on the web and desktop, through a custom connector." },
+  { slug: "cursor", name: "Cursor", domain: "cursor.com", desc: "The AI code editor." },
+  { slug: "codex", name: "OpenAI Codex", domain: "openai.com", desc: "OpenAI's coding agent, in the terminal and IDE." },
+  { slug: "githubcopilot", name: "GitHub Copilot", domain: "github.com", desc: "Agent mode in Visual Studio Code." },
+  { slug: "googlegemini", name: "Gemini CLI", domain: "geminicli.com", desc: "Google's open-source agent for the terminal." },
+  { slug: "windsurf", name: "Windsurf", domain: "windsurf.com", desc: "The agentic IDE." },
+  { slug: "zedindustries", name: "Zed", domain: "zed.dev", desc: "The collaborative code editor." },
+  { slug: "cline", name: "Cline", domain: "cline.bot", desc: "An open-source coding agent for VS Code." },
+];
+const GRANTS = {
+  claudecode: { scopes: ["read", "design", "plan", "apply"], projects: null, since: "3 Nov", used: "8 min ago" },
+  cursor: { scopes: ["read", "plan", "apply", "destroy"], projects: ["payments-api", "web"], since: "19 Nov", used: "20 min ago" },
+  googlegemini: { scopes: ["read"], projects: ["data-lake"], since: "2 Oct", used: "Not used in 30 days" },
+};
+const CUSTOM_APP = { slug: null, name: "Release bot", domain: "tools.acme.io", desc: "Registered by its own metadata document at tools.acme.io.", grant: { scopes: ["read", "plan"], projects: ["web"], since: "21 Nov", used: "2 h ago" } };
+
+/* ===================================================================================
+   SURFACE 5 — Connected agents  /[org]/~/settings/connected
+   Same visual language as the connectors board (components/connectors/connector-card.tsx):
+   logo tile, name + two-line description, fill/outline status dot, mono meta row, one action.
+   =================================================================================== */
+function agentCard(app, grant, agentsOff) {
+  const on = !!grant;
+  const projects = grant ? (grant.projects ? (grant.projects.length === 1 ? grant.projects[0] : `${grant.projects.length} projects`) : "All projects") : "";
+  const stateLabel = !on ? "Not connected" : agentsOff ? "Paused · agent access off" : `Used ${grant.used.replace("Not used in", "not in")}`.replace("Used not in 30 days", "Not used in 30 days");
+  return `<div class="acard ${on ? "on" : ""}"${src(on ? "agent_oauth_grants (user_id = me, org_id, revoked_at IS NULL) ⋈ oauth_client" : "known-agent catalog (new, see SPEC) — not connected")}>
+    <div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:12px">
+      <div class="atile">${brandMark(app.slug)}</div>
+      <div style="min-width:0;flex:1"><div class="aname">${esc(app.name)}</div><p class="adesc">${esc(app.desc)}</p></div>
+      <span class="adot ${on ? "on" : "off"}" aria-hidden="true"></span>
+    </div>
+    <div class="ameta">
+      <div class="row" style="gap:6px;min-width:0">${on ? `<span class="chipm"${src("agent_oauth_grants.project_ids")}>${esc(projects)}</span>` : ""}<span class="mono" style="font-size:var(--text-ui-2xs);color:var(--text-secondary)">${esc(stateLabel)}</span></div>
+      ${on ? btn("Manage", { sm: true, act: "agent-manage:" + (app.slug || "custom"), attrs: `aria-label="Manage ${esc(app.name)}"` }) : `<a class="btn sm" href="#" aria-label="Set up ${esc(app.name)}">Set up</a>`}
+    </div>
+  </div>`;
+}
+
+function connectedPage(state) {
+  if (state === "loading") return settingsFrame("connected", "Connected agents", `<div aria-busy="true">${pageToolbar({ desc: "" })}<div class="agent-grid">${Array.from({ length: 6 }, () => `<div class="acard">${skel("36px", 36)}${skel("60%")}${skel("90%")}</div>`).join("")}</div></div>`);
+  const agentsOff = state === "agents-off";
+  const none = state === "none";
+  const desc = "Apps you've let act for you in acme. They can only do what you can, limited to what you granted.";
+  const banner = agentsOff ? `<div class="banner" role="status">${ic("power")}<div class="grow"><b>Agent access is off in acme.</b> Your connections are kept but can't do anything until someone who manages agents turns access back on.</div>${btn("Agent settings", { sm: true, act: "go:policy" })}</div>` : "";
+  const f = S.ui.cf || (S.ui.cf = { status: [] });
+  const q = (S.ui.cq || "").toLowerCase();
+  let apps = AGENT_CATALOG.map((a) => ({ app: a, grant: none ? null : GRANTS[a.slug] || null }));
+  if (!none) apps.splice(3, 0, { app: CUSTOM_APP, grant: CUSTOM_APP.grant });
+  apps.sort((x, y) => (y.grant ? 1 : 0) - (x.grant ? 1 : 0));
+  const shown = apps.filter(({ app, grant }) => (!f.status.length || f.status.includes(grant ? "connected" : "not")) && (!q || app.name.toLowerCase().includes(q)));
+  const open = S.ui.openFacet === "cstatus";
+  const filterbar = `<div class="filterbar" role="search"${src("same shape as connectors-filter-bar.tsx")}>
+      <label class="search">${ic("search")}<span class="sr-only">Search</span><input type="search" placeholder="Search agents" value="${esc(S.ui.cq || "")}" data-input="cq" /></label>
+      <div class="facet"><button type="button" class="${f.status.length ? "on" : ""}" aria-expanded="${open}" data-act="facet:cstatus">${ic(f.status.length ? "check" : "plus")}Status${f.status.length === 1 ? `<span class="vals">${f.status[0] === "connected" ? "Connected" : "Not connected"}</span>` : ""}</button>
+      ${open ? `<div class="pop" role="group" aria-label="Status">${[["connected", "Connected"], ["not", "Not connected"]].map(([v, l]) => `<label><input type="checkbox" data-cfacet="${v}" ${f.status.includes(v) ? "checked" : ""}/>${l}<span class="cnt">${apps.filter((x) => (x.grant ? "connected" : "not") === v).length}</span></label>`).join("")}</div>` : ""}</div></div>`;
+  const grid = shown.length ? `<div class="agent-grid">${shown.map(({ app, grant }) => agentCard(app, grant, agentsOff)).join("")}</div>` : emptyState("search", "No agents match", "Try another name, or clear the filter.", btn("Clear filters", { act: "cf-clear" }));
+  const noneNote = none ? `<p class="footnote" style="margin:0 0 12px">You haven't connected an agent to acme yet. Pick an app below for its setup steps, or run <span class="kbd-code">alethia agent setup</span>.</p>` : "";
+  const manage = S.ui.manage || (state === "manage" ? "claudecode" : null);
+  return settingsFrame("connected", "Connected agents", `${pageToolbar({ desc })}${noneNote}${filterbar}${grid}<p class="footnote" style="margin-top:12px"${gap("open decision O7: owners seeing other people's connections")}>Only you can see and disconnect your connections.</p>${manage ? manageSheet(manage) : ""}${S.ui.revoke || state === "disconnect" ? disconnectDialog(S.ui.revoke || "Claude Code") : ""}`, banner);
+}
+
+function manageSheet(slug) {
+  const app = slug === "custom" ? CUSTOM_APP : AGENT_CATALOG.find((a) => a.slug === slug);
+  const g = slug === "custom" ? CUSTOM_APP.grant : GRANTS[slug];
+  return `<div class="scrim" data-act="sheet-close-bg"><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mg-t" data-stop>
+    <div class="sheet-h"><div class="atile">${brandMark(app.slug)}</div><div style="flex:1;min-width:0"><h2 id="mg-t">${esc(app.name)}</h2><p class="hint mono" style="margin-top:2px">${esc(app.domain)}</p></div>${btn("", { v: "ghost", sm: true, icon: "x", act: "sheet-close", attrs: 'aria-label="Close"' })}</div>
+    <div class="sheet-b">
+      <dl class="dl" style="border:1px solid var(--border)">
+        <dt>Status</dt><dd>${status("active", "Connected")}</dd>
+        <dt>Can</dt><dd${src("agent_oauth_grants.scopes")}>${g.scopes.map((s) => `<div><span class="t1">${CONSENT_SCOPE_WORDS[s][0]}</span> <span class="sub">· ${CONSENT_SCOPE_WORDS[s][1]}</span></div>`).join("")}</dd>
+        <dt>Projects</dt><dd${src("agent_oauth_grants.project_ids (NULL = all)")}>${g.projects ? g.projects.map((p) => `<div class="mono">${p}</div>`).join("") : "All projects, including new ones"}</dd>
+        <dt>Connected</dt><dd${src("agent_oauth_grants.created_at")}>${g.since}</dd>
+        <dt>Last used</dt><dd${gap("derived from agent_tool_calls (max created_at by client_id + user_id)")}>${g.used}</dd>
+        <dt>App identity</dt><dd class="mono"${src("oauth_client.clientId (CIMD URL) / clientDiscoveryId")}>https://${esc(app.domain)}/…/client.json</dd>
+      </dl>
+      <p class="hint">To change what ${esc(app.name)} can do, connect it again from the app. You'll see what changes before you allow it.</p>
+    </div>
+    <div class="sheet-f">${btn("Close", { v: "ghost", act: "sheet-close" })}${btn("Disconnect", { act: "revoke:" + app.name })}</div></div></div>`;
+}
+function disconnectDialog(name) {
+  return `<div class="dialog-wrap nested" data-act="close-dialog-bg"><div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="rv-t" data-stop>
+    <div class="dialog-h"><h2 id="rv-t">Disconnect ${esc(name)}?</h2><p>${esc(name)} loses access to acme right away.</p></div>
+    <div class="dialog-b"><ul class="conseq"><li>Its requests waiting for approval can't be used.</li><li>Jobs it already started keep running.</li><li>To use it again, connect it again from the app.</li></ul></div>
+    <div class="dialog-f">${btn("Cancel", { v: "ghost", act: "close-dialog" })}${btn("Disconnect", { v: "primary", act: "revoke-confirm" })}</div></div></div>`;
+}
+
+/* ===================================================================================
+   SURFACE 6 — Consent  /auth/oauth/consent  (AuthShell). Every edge case is a state.
+   =================================================================================== */
+const ORGS = [
+  { slug: "acme", role: "Admin", plan: "Enterprise", agentsOn: true, noProd: false, allow: null, projects: ["payments-api", "web", "data-lake"] },
+  { slug: "globex", role: "Viewer", plan: "Pro", agentsOn: true, noProd: false, allow: null, projects: ["billing", "portal"] },
+];
+const MANY_ORGS = ["acme", "globex", "initech", "umbrella-labs", "hooli", "stark-industries", "wayne-ent", "tyrell", "cyberdyne", "soylent", "aperture", "black-mesa"];
+const CONSENT_SCOPE_WORDS = { read: ["See your projects", "Environments, jobs, plans, costs and logs.", "view"], design: ["Change designs", "Edit infrastructure designs. Nothing is created in your cloud.", "edit"], plan: ["Run plans", "Plans and repository scans, which use your runners.", "plan"], apply: ["Ask to deploy", "Every deploy waits for a person to approve it in Alethia.", "deploy"], destroy: ["Ask to destroy", "Every destroy waits for a person, who types the environment name.", "destroy"] };
+const VIEWER_CAN = ["read"];
+
+function consentState(state) {
+  if (!S.ui.cons) {
+    const app = state === "c-not-allowed" ? "windsurf" : state === "c-unverified" ? null : "claudecode";
+    S.ui.cons = { app, org: state === "c-role" ? "globex" : "acme", scopes: ["read", "design", "plan", "apply"], projMode: state === "c-projects-many" ? "some" : "all", projects: state === "c-projects-many" ? ["checkout-api", "web"] : [], pq: "", oq: "" };
+  }
+  return S.ui.cons;
+}
+function consentPage(state) {
+  const account = `<div class="acct"${src("Better Auth session user")}><span class="avatar">${ME.initials}</span><div style="flex:1;min-width:0"><div class="t1">${ME.name}</div><div class="sub">${ME.email}</div></div><a class="link" href="#" data-act="cstate:c-switch">Not you? Switch account</a></div>`;
+  const authShell = (inner, showAcct = true) => `<div class="auth"><div class="auth-head">${MARK(20)}Alethia</div><div class="auth-main"><div class="auth-col">${inner.replace("<!--acct-->", showAcct ? account : "")}</div></div><div class="auth-foot"><span>Alethia · Connect an app</span><span style="margin-left:auto">Privacy · Terms</span></div></div>`;
+  const msg = (eyebrow, h, p, actions = "") => authShell(`<div><p class="eyebrow">${eyebrow}</p><h1>${h}</h1><p class="lede">${p}</p></div>${actions}`, false);
+  if (state === "c-none") return msg("Connect an app", "Nothing to connect", "This page opens when an app such as Claude Code or Cursor asks to connect to Alethia. Start from that app to continue.");
+  if (state === "c-expired") return msg("Connect an app", "This request has expired", "Connection requests are valid for a few minutes. Go back to the app and connect again.", btn("Close this page", { act: "noop" }));
+  if (state === "c-used") return msg("Connect an app", "This request was already answered", "Someone already allowed or denied this request, maybe in another tab. Go back to the app; if it isn't connected, connect again from there.", btn("Close this page", { act: "noop" }));
+  if (state === "c-denied") return msg("Connect an app", "You denied Claude Code", "Claude Code was told no and has no access to Alethia. You can close this page.", btn("Close this page", { act: "noop" }));
+  if (state === "c-allowed") return msg("Connected", "Returning to Claude Code…", "Claude Code can now work in acme with the permissions you chose. If nothing happens in a few seconds, go back to Claude Code yourself.", `<div class="row">${btn("Return to Claude Code", { v: "primary", act: "noop" })}${btn("Manage connections", { act: "go:connected" })}</div>`);
+  if (state === "c-switch") return msg("Connect an app", "Sign in with another account", "You'll come straight back here to finish connecting Claude Code. Nothing has been granted yet.", `<div class="row">${btn("Sign in with another account", { v: "primary", icon: "login", act: "noop" })}${btn("Back", { act: "cstate:c-default" })}</div>`);
+  if (state === "c-loading") return authShell(`<div aria-busy="true">${skel("100px", 10)}${skel("80%", 28, "margin-top:12px")}${skel("100%", 64, "margin-top:20px")}${skel("100%", 180, "margin-top:16px")}</div>`, false);
+  if (state === "c-no-scopes") return msg("Connect an app", "Claude Code didn't ask for any Alethia permissions", "It only asked to know who you are, which isn't enough to work in Alethia. Deny this, and check the app's setup guide.", `<div class="row">${btn("Deny", { v: "primary", act: "cstate:c-denied" })}<a class="btn" href="#">Setup guide</a></div>`);
+
+  const c = consentState(state);
+  const app = c.app ? AGENT_CATALOG.find((a) => a.slug === c.app) : null;
+  const appName = app ? app.name : "Release helper";
+  const orgs = state === "c-personal" ? [{ slug: "personal", label: "Personal workspace", role: "Owner", agentsOn: true, noProd: false, allow: null, projects: [] }] : ORGS;
+  const org = orgs.find((o) => o.slug === c.org) || orgs[0];
+  const agentsOff = state === "c-off";
+  const noProd = state === "c-noprod";
+  const notAllowed = state === "c-not-allowed" && org.slug === "acme";
+  const blocked = agentsOff || notAllowed;
+  const isViewer = org.role === "Viewer";
+  const reconsent = state === "c-reconsent";
+  const existing = reconsent ? ["read", "design", "plan", "apply"] : null;
+  const requested = reconsent ? ["read", "design", "plan", "apply", "destroy"] : state === "c-unknown-scope" ? ["read", "plan"] : ["read", "design", "plan", "apply", "destroy"];
+  if (reconsent && !S.ui.rcApplied) { c.scopes = ["read", "plan", "apply", "destroy"]; S.ui.rcApplied = true; }
+  if (state === "c-unknown-scope" && !S.ui.usApplied) { c.scopes = ["read", "plan"]; S.ui.usApplied = true; }
+
+  /* identity */
+  const identity = app
+    ? `<div class="client-id"${src("oauth_client.name · icon · clientId (CIMD URL host) · clientDiscoveryId")}><div class="atile" style="width:44px;height:44px">${brandMark(app.slug, 28)}</div><div style="min-width:0"><div class="cell-main">${esc(app.name)}</div><div class="sub">Verified by <span class="mono">${esc(app.domain)}</span>, which publishes this app's identity.</div></div></div>`
+    : `<div class="client-id" style="border-color:var(--ink)"${src("oauth_client without clientDiscoveryId (no CIMD): name and redirect are self-asserted")}><div class="atile" style="width:44px;height:44px">${brandMark(null)}</div><div style="min-width:0"><div class="cell-main">“Release helper” <span class="sub" style="font-weight:400">· name given by the app</span></div><div class="sub">Alethia couldn't confirm who publishes this app. After you allow, you'll be sent to <span class="mono t1">localhost:5173</span>.</div></div></div>`;
+
+  /* organization */
+  let orgField;
+  if (state === "c-personal") {
+    orgField = `<div class="field"><span class="label">Where it works</span><div class="group"><div class="check" style="cursor:default"><span><span class="ttl">Your personal workspace</span><br><span class="why">You aren't in an organization. ${esc(appName)} works in your personal workspace.</span></span></div></div></div>`;
+  } else if (state === "c-many-orgs") {
+    const oq = (c.oq || "").toLowerCase();
+    const list = MANY_ORGS.filter((o) => !oq || o.includes(oq));
+    orgField = `<fieldset class="field" style="border:0;margin:0;padding:0"${src("the person's memberships → agent_oauth_grants.org_id")}><legend class="label" style="margin-bottom:6px">Organization</legend>
+      <label class="search" style="flex:none;width:100%">${ic("search")}<span class="sr-only">Search organizations</span><input type="search" placeholder="Search your 12 organizations" value="${esc(c.oq || "")}" data-input="coq" /></label>
+      <div class="group scroll-list" role="radiogroup" aria-label="Organization">${list.map((o, i) => `<label class="check"><input type="radio" name="corg" data-corg="${o}" ${c.org === o ? "checked" : ""}/><span><span class="ttl mono">${o}</span><br><span class="why">${i % 3 === 1 ? "Viewer" : i % 3 === 2 ? "Member" : "Admin"}</span></span></label>`).join("") || `<p class="hint" style="padding:10px 12px">No organization matches.</p>`}</div>
+      <p class="hint">${esc(appName)} can only see the one you choose. Connect again to use another.</p></fieldset>`;
+  } else {
+    orgField = `<fieldset class="field" style="border:0;margin:0;padding:0"${src("the person's memberships → agent_oauth_grants.org_id")}><legend class="label" style="margin-bottom:6px">Organization</legend>
+      <div class="group" role="radiogroup">${orgs.map((o) => `<label class="check"><input type="radio" name="corg" data-corg="${o.slug}" ${org.slug === o.slug ? "checked" : ""}/><span style="flex:1"><span class="ttl mono">${o.slug}</span><br><span class="why">Your role: ${o.role}</span></span>${notAllowedFor(state, o) ? `<span class="pill">Not allowed</span>` : ""}</label>`).join("")}</div>
+      <p class="hint">${esc(appName)} can only see the one you choose. Connect again to use another.</p></fieldset>`;
+  }
+
+  /* blocking or informing alerts */
+  let alerts = "";
+  if (agentsOff) alerts += inlineAlert("power", "Agents are turned off in acme", "Someone who manages agents in acme has turned agent access off. Choose another organization, or ask them.", true, src("org_agent_policy.agent_access_enabled = false"));
+  if (notAllowed) alerts += inlineAlert("lock", "acme doesn't allow Windsurf", "acme only lets approved apps act as agents. Choose another organization, or ask someone who manages agents in acme to add Windsurf.", true, src("org_agent_policy.allowed_oauth_client_ids (Enterprise, AGT-L14 oauthClientRefusal)"));
+  if (noProd) alerts += inlineAlert("info", "acme keeps agents off production", `${esc(appName)} can plan production environments, but only a person can deploy or destroy them.`, false, src("org_agent_policy.agents_may_not_apply_to_production"));
+  if (reconsent) alerts += inlineAlert("refresh", `You connected ${esc(appName)} to acme on 3 Nov`, "Allowing replaces that connection with the choices below. Changes are marked.", false, src("existing agent_oauth_grants row for (user, client, org)"));
+  if (!app) alerts += inlineAlert("alert", "Only allow apps you set up yourself", "If you didn't just start connecting an app, deny this request.", true);
+
+  /* scopes */
+  const scopeRows = requested.map((k) => {
+    const w = CONSENT_SCOPE_WORDS[k];
+    const roleCant = isViewer && !VIEWER_CAN.includes(k);
+    const dis = blocked || roleCant;
+    const checked = !roleCant && c.scopes.includes(k);
+    let tag = "";
+    if (reconsent) { const had = existing.includes(k); tag = checked && !had ? `<span class="pill">New</span>` : !checked && had ? `<span class="pill">Removing</span>` : ""; }
+    return `<label class="check ${dis ? "locked" : ""}"><input type="checkbox" data-cscope="${k}" ${checked ? "checked" : ""} ${dis ? "disabled" : ""} aria-describedby="cs-${k}"/><span style="flex:1"><span class="ttl">${w[0]}</span><br><span class="why" id="cs-${k}">${roleCant ? `Your role in ${org.slug} (${org.role}) can't ${w[2]}, so this isn't offered.` : w[1]}</span></span>${tag}</label>`;
+  }).join("");
+  const unknown = state === "c-unknown-scope" ? `<div class="inline-alert" role="status"${gap("consent must drop scopes outside MCP_PROVIDER_SCOPES; today agentScopesFromClaims refuses a token that carries one")}>${ic("info")}<div><b>Not offered by Alethia</b><p>${esc(appName)} also asked for <span class="mono t1">billing:write</span> and <span class="mono t1">admin</span>. Alethia has no such permissions, so they won't be granted.</p></div></div>` : "";
+  const noneTicked = !blocked && requested.every((k) => !(c.scopes.includes(k) && !(isViewer && !VIEWER_CAN.includes(k))));
+
+  /* projects */
+  const projList = state === "c-projects-many" ? ["auth-service", "billing-worker", "checkout-api", "data-lake", "edge-proxy", "email-sender", "feature-flags", "infra-core", "ml-pipeline", "notifications", "payments-api", "search", "web", "web-admin"] : org.projects;
+  let projField;
+  if (state === "c-projects-none" || projList.length === 0) {
+    projField = `<div class="field"><span class="label">Projects</span><div class="group"><div class="check" style="cursor:default"><span><span class="ttl">All projects</span><br><span class="why">${esc(org.slug === "personal" ? "Your workspace" : org.slug)} has no projects yet. ${esc(appName)} will see the ones you create.</span></span></div></div></div>`;
+  } else {
+    const pq = (c.pq || "").toLowerCase();
+    const filtered = projList.filter((p) => !pq || p.includes(pq));
+    const many = projList.length > 6;
+    projField = `<fieldset class="field" style="border:0;margin:0;padding:0"${src("agent_oauth_grants.project_ids (NULL = all, present and future)")}><legend class="label" style="margin-bottom:6px">Projects</legend>
+      <div class="group">
+        <label class="check"><input type="radio" name="cpm" data-cprojmode="all" ${c.projMode === "all" ? "checked" : ""} ${blocked ? "disabled" : ""}/><span><span class="ttl">All projects</span><br><span class="why">Including projects created later.${reconsent ? "" : ""}</span></span></label>
+        <label class="check"><input type="radio" name="cpm" data-cprojmode="some" ${c.projMode === "some" ? "checked" : ""} ${blocked ? "disabled" : ""}/><span style="flex:1"><span class="ttl">Only these projects</span>${c.projMode === "some" ? `<span style="display:block;margin-top:8px">${many ? `<label class="search" style="flex:none;width:100%;margin-bottom:6px">${ic("search")}<span class="sr-only">Search projects</span><input type="search" placeholder="Search ${projList.length} projects" value="${esc(c.pq || "")}" data-input="cpq" /></label>` : ""}<span class="${many ? "scroll-list group" : "row"}" style="${many ? "display:block" : ""}">${filtered.map((p) => many ? `<label class="check" style="padding:6px 10px"><input type="checkbox" data-cproj="${p}" ${c.projects.includes(p) ? "checked" : ""}/><span class="mono">${p}</span></label>` : `<label class="pill" style="cursor:pointer;height:22px;text-transform:none;letter-spacing:0"><input type="checkbox" data-cproj="${p}" ${c.projects.includes(p) ? "checked" : ""} style="accent-color:var(--ink);margin:0"/>${p}</label>`).join("")}</span>${many ? `<span class="hint" style="display:block;margin-top:6px">${c.projects.length ? `${c.projects.length} chosen: ${c.projects.join(", ")}` : "None chosen yet."}</span>` : ""}</span>` : ""}</span></label>
+      </div>${reconsent ? `<p class="hint">Currently: all projects. No change.</p>` : ""}</fieldset>`;
+  }
+  const someEmpty = c.projMode === "some" && c.projects.length === 0 && projList.length > 0 && state !== "c-projects-none";
+
+  const changes = reconsent ? `<div class="group"${src("diff: requested choices vs the existing grant")}><div class="group-h"><span class="label">What changes</span></div><div style="padding:10px 12px"><ul class="conseq"><li><b class="t1">Adds</b> Ask to destroy</li><li><b class="t1">Removes</b> Change designs</li><li>Projects stay: all projects</li></ul></div></div>` : "";
+  const submitting = state === "c-submitting";
+  const netErr = state === "c-network" || S.ui.netErr;
+  const allowLabel = submitting ? "Allowing…" : !app ? "Allow unverified app" : reconsent ? "Update connection" : "Allow";
+  const inner = `
+    <div><p class="eyebrow">Connect an app</p><h1>Let ${esc(appName)} work in Alethia?</h1>
+      <p class="lede">It will act as you and never do more than you can.</p></div>
+    <!--acct-->
+    ${identity}
+    ${orgField}
+    ${alerts}
+    <fieldset class="field" style="border:0;margin:0;padding:0"${src("agent_oauth_grants.scopes ⊆ requested ∩ AGENT_SCOPES; a scope only narrows the role (PDP)")}><legend class="label" style="margin-bottom:6px">${esc(appName)} asked to</legend>
+      <div class="group">${scopeRows}</div>
+      ${noneTicked ? `<p class="hint t1" role="alert">Choose at least one, or deny.</p>` : blocked ? "" : `<p class="hint">Untick anything you don't want to allow.</p>`}</fieldset>
+    ${unknown}
+    ${projField}
+    ${someEmpty ? `<p class="hint t1" role="alert">Choose at least one project, or allow all.</p>` : ""}
+    ${changes}
+    <p class="hint">${esc(appName)} also gets your name and email, and stays connected until you disconnect it in <b class="t1">Settings → Connected agents</b>.</p>
+    ${netErr ? `<div class="inline-alert strong" role="alert">${ic("alert")}<div><b>Couldn't reach Alethia</b><p>Nothing was granted. Check your connection and try again.</p></div></div>` : ""}
+    <div class="row" style="flex-wrap:nowrap">${btn("Deny", { lg: true, full: true, act: "cstate:c-denied", disabled: submitting })}${btn(allowLabel, { v: "primary", lg: true, full: true, disabled: blocked || noneTicked || someEmpty || submitting, act: "consent-allow", icon: submitting ? "refresh" : "" })}</div>`;
+  return authShell(`<div${gap("consent writes no agent_oauth_grants row today; POST /api/auth/oauth2/consent takes {accept, consent_code} only")}></div>` + inner);
+}
+function notAllowedFor(state, o) { return state === "c-not-allowed" && o.slug === "acme"; }
+
+/* ===================================================================================
+   Registry + board
+   =================================================================================== */
+const SHEET_STATES = [["pending", "Waiting · deploy"], ["production", "Waiting · production"], ["destroy", "Waiting · destroy"], ["destroy-confirm", "Destroy · type name"], ["expiring", "Expiring soon"], ["no-cost", "No estimate · not checked"], ["deny-open", "Deny · with reason"], ["blocked-off", "Blocked · agent access off"], ["blocked-prod", "Blocked · agents off production"], ["blocked-client", "Blocked · app not allowed (Ent.)"], ["second-person", "Second person (Ent.)"], ["self", "Self-approval refused (Ent.)"], ["reauth", "Fresh sign-in needed"], ["approved", "Approved (by you)"], ["used", "Used"], ["denied", "Denied · reason shown"], ["expired", "Expired"], ["superseded", "Replaced"], ["not-found", "Not available"], ["loading", "Loading"], ["error", "Error"]];
+const SURFACES = {
+  list: { n: 1, label: "Approvals", route: () => "/acme/~/approvals", render: (st) => listPage(st), states: [["waiting", "Waiting (default filter)"], ["all", "All · auto-loads more"], ["loading-more", "Loading more"], ["more-error", "Couldn't load more"], ["end", "All loaded"], ["filtered-empty", "No matches"], ["empty", "Empty org"], ["loading", "Loading"], ["error", "Error"]] },
+  sheet: { n: 2, label: "Decision sheet", route: () => `/acme/~/approvals?approval=${APPROVAL_ID}`, render: (st) => listPage("waiting", st), states: SHEET_STATES },
+  policy: { n: 3, label: "Agent policy", route: () => "/acme/~/settings/agents", render: policyPage, states: [["default", "Can manage agents"], ["off", "Agent access off"], ["no-permission", "No org:manage_agents"], ["community", "Community edition"], ["loading", "Loading"], ["error", "Error"]] },
+  tokens: { n: 4, label: "Service tokens", route: () => "/acme/~/settings/tokens", render: tokensPage, states: [["list", "List"], ["create", "Create · auto-approve"], ["no-apply", "No Deploy permission"], ["no-permission", "No org:manage_agents"], ["edit", "Edit environments"], ["created", "Created · shown once"], ["empty", "Empty"], ["loading", "Loading"]] },
+  connected: { n: 5, label: "Connected agents", route: () => "/acme/~/settings/connected", render: connectedPage, states: [["list", "Connected + available"], ["manage", "Manage sheet"], ["disconnect", "Disconnect"], ["agents-off", "Agent access off"], ["none", "None connected"], ["loading", "Loading"]] },
+  consent: { n: 6, label: "Consent screen", route: () => "/auth/oauth/consent?consent_code=…&client_id=…&scope=…", render: consentPage, states: [["c-default", "Default · two orgs"], ["c-many-orgs", "Many orgs"], ["c-personal", "No org (personal)"], ["c-unverified", "Unverified app"], ["c-not-allowed", "App not on allow-list (Ent.)"], ["c-off", "Agents off in org"], ["c-noprod", "Org keeps agents off prod"], ["c-role", "Role can't use a scope"], ["c-projects-none", "Zero projects"], ["c-projects-many", "Many projects"], ["c-reconsent", "Re-consent · changes"], ["c-unknown-scope", "Unknown scopes requested"], ["c-no-scopes", "No Alethia scopes"], ["c-switch", "Wrong account"], ["c-submitting", "Submitting"], ["c-network", "Network error"], ["c-denied", "Denied"], ["c-allowed", "Allowed"], ["c-expired", "Expired code"], ["c-used", "Code already used"], ["c-none", "Opened directly"], ["c-loading", "Loading"]] },
+};
+
+function board() {
+  const sf = SURFACES[S.surface];
+  return `<div class="board" role="region" aria-label="Prototype controls">
+    <div class="board-row">
+      <div class="board-brand">${MARK(18)}AGT-L2 <span class="tag">DESIGN v2 · FOR SIGN-OFF</span></div>
+      <div class="board-tabs" role="group" aria-label="Surface">${Object.entries(SURFACES).map(([k, v]) => `<button class="board-tab" aria-pressed="${k === S.surface}" data-act="surface:${k}"><span class="n">${v.n}</span>${v.label}</button>`).join("")}</div>
+      <div class="board-ctl">
+        <button class="tog" aria-pressed="${S.phone}" data-act="phone">Phone 390</button>
+        <button class="tog" aria-pressed="${S.annot}" data-act="annot">Data sources</button>
+        ${S.surface === "connected" ? `<button class="tog" aria-pressed="${S.monoUnconnected}" data-act="monoun" title="Third-party marks keep owner colours per ruling #3907; this previews the alternative">Grayscale unconnected</button>` : ""}
+        <button class="tog" data-act="theme">Theme: ${S.theme || "system"}</button>
+      </div>
+    </div>
+    <div class="board-states" role="group" aria-label="State">${sf.states.map(([k, l]) => `<button class="chip-state" aria-pressed="${k === S.state}" data-act="state:${k}">${l}</button>`).join("")}</div>
+    <div class="board-note mono">${sf.route()}${S.annot ? " · dashed = data-model field (file:symbol) · solid = gap in the data model" : ""}</div>
+  </div>`;
+}
+
+let observer = null;
+function render() {
+  const keepFocus = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.input;
+  const caret = keepFocus ? document.activeElement.selectionStart : null;
+  const prevScroll = document.querySelector(".frame-scroll")?.scrollTop || 0;
+  const sf = SURFACES[S.surface];
+  document.getElementById("root").innerHTML = `${board()}<div class="stage-wrap"><div class="frame ${S.phone ? "phone" : ""} ${S.annot ? "annot" : ""} ${S.monoUnconnected ? "mono-unconnected" : ""}"><div class="frame-scroll">${sf.render(S.state)}</div>${S.ui.toast ? `<div class="toast" role="status">${ic("check")}${esc(S.ui.toast)}</div>` : ""}</div></div>`;
+  document.documentElement.style.setProperty("--board-h", document.querySelector(".board").offsetHeight + "px");
+  const frame = document.querySelector(".frame");
+  const scroller = frame.querySelector(".frame-scroll");
+  if (S.keepScroll) scroller.scrollTop = prevScroll;
+  S.keepScroll = false;
+  /* overlays cover the visible frame, not the scrolled page inside it */
+  frame.querySelectorAll(".frame-scroll .dialog-wrap, .frame-scroll .scrim").forEach((o) => frame.appendChild(o));
+  if (keepFocus) { const el = document.querySelector(`[data-input="${keepFocus}"]`); if (el) { el.focus(); try { el.setSelectionRange(caret, caret); } catch (e) {} } }
+  if (S.ui.focus) { const el = document.querySelector(S.ui.focus); if (el) el.focus(); S.ui.focus = null; }
+  /* useInfiniteScrollSentinel: auto-load when the tail sentinel scrolls into view */
+  if (observer) observer.disconnect();
+  const sentinel = frame.querySelector("[data-sentinel]");
+  if (sentinel && typeof IntersectionObserver !== "undefined" && S.state === "all" && !S.ui.loadingMore) {
+    observer = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore(); }, { root: scroller, rootMargin: "0px 0px 200px 0px" });
+    observer.observe(sentinel);
+  }
+}
+function setState(st) { S.state = st; S.ui = {}; if (st === "deny-open") S.ui.denying = true; render(); }
+let toastTimer;
+function toast(msg) { S.ui.toast = msg; S.keepScroll = true; render(); clearTimeout(toastTimer); toastTimer = setTimeout(() => { S.ui.toast = null; S.keepScroll = true; render(); }, 2600); }
+function loadMore() {
+  if (S.ui.loadingMore || S.ui.loadedMore) return;
+  if (S.state === "more-error") { S.state = "all"; }
+  S.ui.loadingMore = true; S.keepScroll = true; render();
+  setTimeout(() => { S.ui.loadingMore = false; S.ui.loadedMore = true; S.keepScroll = true; render(); }, 900);
+}
+function go(surface, state) { S.surface = surface; S.state = state; S.ui = {}; render(); }
+
+/* ===================================================================================
+   Interactions
+   =================================================================================== */
+document.addEventListener("click", (e) => {
+  const stop = e.target.closest("[data-stop]");
+  const el = e.target.closest("[data-act]");
+  if (!el) { if (S.ui.openFacet && !e.target.closest(".facet")) { S.ui.openFacet = null; S.keepScroll = true; render(); } return; }
+  const act = el.dataset.act;
+  if (/-bg$/.test(act) && stop) return;
+  if (el.tagName === "A" || el.tagName === "BUTTON" || el.tagName === "TR" || el.classList.contains("m-item")) e.preventDefault();
+  const [k, v] = act.split(/:(.*)/s);
+  switch (k) {
+    case "surface": go(v, SURFACES[v].states[0][0]); break;
+    case "state": setState(v); break;
+    case "phone": S.phone = !S.phone; render(); break;
+    case "annot": S.annot = !S.annot; render(); break;
+    case "monoun": S.monoUnconnected = !S.monoUnconnected; render(); break;
+    case "theme": S.theme = S.theme === null ? "light" : S.theme === "light" ? "dark" : null; if (S.theme) document.documentElement.dataset.theme = S.theme; else delete document.documentElement.dataset.theme; render(); break;
+    case "go": { const m = { list: ["list", "waiting"], policy: ["policy", "default"], tokens: ["tokens", "list"], connected: ["connected", "list"] }[v]; go(m[0], m[1]); break; }
+    case "sheet": S.surface = "sheet"; setState(v); break;
+    case "sheet-close": case "sheet-close-bg":
+      if (S.surface === "sheet") go("list", "waiting");
+      else { S.ui.manage = null; if (["manage", "disconnect"].includes(S.state)) S.state = "list"; S.keepScroll = true; render(); }
+      break;
+    case "toast": toast(v); break;
+    case "approve": S.state = "approved"; S.ui = {}; render(); toast("Approved. The requester can now deploy this plan once."); break;
+    case "deny": S.ui.denying = true; S.ui.focus = "#deny-reason"; render(); break;
+    case "deny-cancel": S.ui.denying = false; render(); break;
+    case "deny-confirm": { const r = (document.getElementById("deny-reason") || {}).value || ""; S.state = "denied"; S.ui = { byMe: true, reason: r.trim(), noReason: !r.trim() }; render(); toast("Denied. The requester has been told."); break; }
+    case "open-destroy": S.ui.dialog = "destroy"; S.ui.focus = "#confirm-env"; render(); break;
+    case "close-dialog": case "close-dialog-bg": S.ui.dialog = null; S.ui.revoke = null; S.ui.typed = ""; if (S.state === "destroy-confirm") S.state = "destroy"; if (S.state === "disconnect") S.state = "list"; S.keepScroll = true; render(); break;
+    case "approve-destroy": S.state = "approved"; S.ui = {}; S.ui.after = "destroy"; render(); toast("Destroy approved. Cursor can run it once."); break;
+    case "facet": S.ui.openFacet = S.ui.openFacet === v ? null : v; S.keepScroll = true; render(); break;
+    case "clear-filters": S.ui.filters = { status: [], op: [], via: [], stage: [] }; S.ui.q = ""; render(); break;
+    case "load-more": loadMore(); break;
+    case "sw":
+      { const p = policyState();
+        if (v === "access" && p.access) { S.ui.dialog = "kill"; render(); break; }
+        if (v === "access") { p.access = true; render(); toast("Agent access is on."); break; }
+        p[v] = !p[v]; render(); toast("Saved."); break; }
+    case "kill-confirm": policyState().access = false; S.ui.dialog = null; render(); toast("Agent access is off."); break;
+    case "ttl": policyState().ttl = Number(v); render(); toast("Saved. New requests stay open for the new time."); break;
+    case "tok-new": S.ui.sheet = "tok"; render(); break;
+    case "tok-edit": S.ui.sheet = "tok-edit"; render(); break;
+    case "close-sheet": case "close-sheet-bg": S.ui.sheet = null; if (["create", "no-apply", "no-permission", "edit"].includes(S.state)) S.state = "list"; render(); break;
+    case "tok-create": S.state = "created"; S.ui.sheet = null; render(); break;
+    case "tok-save": S.ui.sheet = null; S.state = "list"; render(); toast("Saved. Recorded in Activity."); break;
+    case "agent-manage": S.ui.manage = v; S.keepScroll = true; render(); break;
+    case "revoke": S.ui.revoke = v; S.keepScroll = true; render(); break;
+    case "revoke-confirm": { const n = S.ui.revoke || "Claude Code"; S.ui = {}; S.state = "list"; render(); toast(`${n} disconnected.`); break; }
+    case "cf-clear": S.ui.cf = { status: [] }; S.ui.cq = ""; render(); break;
+    case "cstate": setState(v); break;
+    case "consent-allow": {
+      const fail = S.state === "c-network" && !S.ui.retried;
+      const keep = S.ui.cons; S.ui = { cons: keep, rcApplied: true, usApplied: true };
+      const from = S.state; S.state = "c-submitting"; render();
+      setTimeout(() => { if (fail) { S.state = from; S.ui = { cons: keep, netErr: true, retried: true, rcApplied: true, usApplied: true }; render(); } else { S.state = "c-allowed"; S.ui = {}; render(); } }, 900);
+      break; }
+    default: break;
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (S.ui.dialog || S.ui.revoke) { S.ui.dialog = null; S.ui.revoke = null; if (S.state === "destroy-confirm") S.state = "destroy"; if (S.state === "disconnect") S.state = "list"; render(); return; }
+    if (S.ui.openFacet) { S.ui.openFacet = null; render(); return; }
+    if (S.ui.sheet) { S.ui.sheet = null; if (["create", "no-apply", "no-permission", "edit"].includes(S.state)) S.state = "list"; render(); return; }
+    if (S.ui.manage || S.state === "manage") { S.ui.manage = null; S.state = "list"; render(); return; }
+    if (S.surface === "sheet") { go("list", "waiting"); return; }
+  }
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches("tr[data-act], .m-item[data-act]")) { e.preventDefault(); e.target.click(); }
+});
+document.addEventListener("input", (e) => {
+  const t = e.target, k = t.dataset.input;
+  if (k === "typed") { S.ui.typed = t.value; render(); }
+  if (k === "q") { S.ui.q = t.value; render(); }
+  if (k === "cq") { S.ui.cq = t.value; render(); }
+  if (k === "coq") { S.ui.cons.oq = t.value; render(); }
+  if (k === "cpq") { S.ui.cons.pq = t.value; render(); }
+  if (t.id === "deny-reason") S.ui.reason = t.value;
+});
+document.addEventListener("change", (e) => {
+  const t = e.target;
+  const keep = () => { S.keepScroll = true; render(); };
+  if (t.dataset.facet) { const f = listFilters()[t.dataset.facet]; const i = f.indexOf(t.value); if (t.checked && i < 0) f.push(t.value); if (!t.checked && i >= 0) f.splice(i, 1); keep(); }
+  if (t.dataset.cfacet) { const f = S.ui.cf.status; const v = t.dataset.cfacet; S.ui.cf.status = t.checked ? [...f, v] : f.filter((x) => x !== v); keep(); }
+  if (t.dataset.scope) { const f = tokenForm(); const s = t.dataset.scope; f.scopes = t.checked ? [...f.scopes, s] : f.scopes.filter((x) => x !== s); keep(); }
+  if (t.dataset.projmode) { tokenForm().projMode = t.dataset.projmode; keep(); }
+  if (t.dataset.proj) { const f = tokenForm(); const p = t.dataset.proj; f.projects = t.checked ? [...f.projects, p] : f.projects.filter((x) => x !== p); f.auto = f.auto.filter((a) => f.projects.includes(a.split("/")[0])); keep(); }
+  if (t.dataset.auto) { const f = tokenForm(); const a = t.dataset.auto; f.auto = t.checked ? [...f.auto, a] : f.auto.filter((x) => x !== a); keep(); }
+  if (t.dataset.cscope) { const c = S.ui.cons; const s = t.dataset.cscope; c.scopes = t.checked ? [...c.scopes, s] : c.scopes.filter((x) => x !== s); keep(); }
+  if (t.dataset.cprojmode) { S.ui.cons.projMode = t.dataset.cprojmode; keep(); }
+  if (t.dataset.cproj) { const c = S.ui.cons; const p = t.dataset.cproj; c.projects = t.checked ? [...c.projects, p] : c.projects.filter((x) => x !== p); keep(); }
+  if (t.dataset.corg) { S.ui.cons.org = t.dataset.corg; keep(); }
+  if (t.dataset.input === "snav") { const m = { agents: ["policy", "default"], tokens: ["tokens", "list"], connected: ["connected", "list"] }[t.value]; if (m) go(m[0], m[1]); }
+});
+
+/* Live countdown: text updates every second; screen readers hear only threshold changes. */
+setInterval(() => {
+  document.querySelectorAll("[data-expires]").forEach((el) => {
+    const t = Number(el.dataset.expires);
+    el.textContent = `${el.dataset.prefix} ${fmtLeft(t)}`;
+    el.classList.toggle("urgent", t - Date.now() <= 5 * MIN);
+  });
+}, 1000);
+
+/* Deep link: #surface/state[/phone|/annot] */
+(function boot() {
+  const [s, st, ph] = location.hash.replace("#", "").split("/");
+  if (ph === "phone") S.phone = true;
+  if (ph === "annot") S.annot = true;
+  if (SURFACES[s]) { S.surface = s; S.state = SURFACES[s].states.some((x) => x[0] === st) ? st : SURFACES[s].states[0][0]; }
+  else { S.surface = "list"; S.state = "waiting"; }
+  if (S.state === "deny-open") S.ui.denying = true;
+  render();
+})();
+</script>
+</body>
+</html>
