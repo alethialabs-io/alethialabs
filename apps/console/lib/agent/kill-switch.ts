@@ -24,6 +24,9 @@
 //     already running finishes. A job such a call would queue is still gated by the queue gate
 //     (lib/approvals/gate.ts), which reads the switch again and refuses even an approved request.
 //
+// The support route's threadless path (no stored thread, tools run as the person) is bound too, through
+// `guardThreadlessSupportTools` below: same surface, same exemption, today's actor for the tools.
+//
 // A connected agent (MCP, `agent_oauth`) never reaches this file: the MCP route refuses its whole
 // request while the switch is off (lib/ai/mcp/actor.ts), and every MCP call is its own request.
 
@@ -128,4 +131,21 @@ export async function guardAgentTools(
 		};
 	}
 	return { tools: guarded, disabledAtStart };
+}
+
+/**
+ * The tools of a support turn that names no thread (`/api/support/ask`'s threadless path, what the
+ * console's Ask AI page sends). They keep running as the person, exactly as before: authorisation is
+ * unchanged, so with agent access on nothing differs. But the model is the one calling them, so the
+ * org's switch binds them as it binds the in-product agent on the support surface: off, the exempt
+ * tools (lib/agent/support-surface.ts) run and every other tool, every account read, is refused.
+ * The in-app credential below only asks the switch (which reads the actor's org and user, never its
+ * credential); it is not bound around the tools, which read the person's actor from `currentActor()`.
+ */
+export function guardThreadlessSupportTools(
+	tools: ToolSet,
+	actor: Actor,
+	deps: KillSwitchDeps = defaultKillSwitchDeps,
+): Promise<GuardedTools> {
+	return guardAgentTools(tools, { ...actor, credential: "agent_in_app" }, "support", deps);
 }

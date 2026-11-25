@@ -133,6 +133,8 @@ interface World {
 	agentAccessEnabled: boolean;
 	/** The queries the support route's documentation search ran. */
 	docSearches: string[];
+	/** The org of every kill-switch read (org_agent_policy), in order. */
+	policyReads: string[];
 }
 
 const world = vi.hoisted(
@@ -167,6 +169,7 @@ const world = vi.hoisted(
 		holdThrows: false,
 		agentAccessEnabled: true,
 		docSearches: [],
+		policyReads: [],
 	}),
 );
 
@@ -285,7 +288,10 @@ vi.mock("@/lib/billing/ai-quota", async (importOriginal) => ({
 // parameters the route actually bound (thread + owner; project + org), not a guess.
 vi.mock("@/lib/approvals/context", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/approvals/context")>()),
-	readAgentPolicy: async () => ({ agentAccessEnabled: world.agentAccessEnabled }),
+	readAgentPolicy: async (_tx: unknown, orgId: string) => {
+		world.policyReads.push(orgId);
+		return { agentAccessEnabled: world.agentAccessEnabled };
+	},
 }));
 vi.mock("@/lib/db", async () => {
 	const schema = await import("@/lib/db/schema");
@@ -989,6 +995,7 @@ beforeEach(() => {
 	world.holdThrows = false;
 	world.agentAccessEnabled = true;
 	world.docSearches = [];
+	world.policyReads = [];
 	model.scripts = [];
 	model.prompts = [];
 	model.options = [];
@@ -1566,6 +1573,49 @@ describe("the org's kill switch on the support route (#7646)", () => {
 		expect(world.toolActors).toEqual([]);
 		expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-output-available", toolCallId: "r1", output: AGENT_ACCESS_REFUSED_OUTPUT }));
 		expect(promptText(0)).toContain(AGENT_ACCESS_DISABLED_SYSTEM);
+		expect(promptText(0)).not.toContain(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM);
+	});
+
+	/** The model calls of a turn that searches the docs and reads the account in one step, then proposes a case. */
+	function docsReadThenCase(): void {
+		model.scripts.push(
+			[
+				{ type: "stream-start", warnings: [] },
+				{ type: "tool-call", toolCallId: "d1", toolName: "search_docs", input: JSON.stringify({ query: "connect aws" }) },
+				{ type: "tool-call", toolCallId: "r1", toolName: "list_projects", input: "{}" },
+				{ type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage: USAGE },
+			],
+			callParts("create_support_case", "c1", { subject: "Provision fails" }),
+		);
+	}
+
+	it("threadless (the console's Ask AI page), agent access off: the docs search runs, the read is refused, the case proposal reaches the client, the prompt carries the support notice", async () => {
+		world.agentAccessEnabled = false;
+		docsReadThenCase();
+		const res = await postSupport(JSON.stringify({ messages: [userMsg("u1", "how do I connect aws?")] }));
+		expect(res.status).toBe(200);
+		const chunks = await chunksOf(res);
+		expect(world.docSearches).toEqual(["connect aws"]);
+		expect(world.toolActors).toEqual([]);
+		expect(chunks.filter((c) => c.type === "tool-output-available")).toEqual([
+			expect.objectContaining({ toolCallId: "d1", output: { results: [] } }),
+			expect.objectContaining({ toolCallId: "r1", output: AGENT_ACCESS_REFUSED_OUTPUT }),
+		]);
+		expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-input-available", toolCallId: "c1", toolName: "create_support_case" }));
+		expect(offeredTools(0)).toEqual(["create_support_case", "list_projects", "search_docs"]);
+		expect(promptText(0)).toContain(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM);
+		expect(promptText(0)).not.toContain(AGENT_ACCESS_DISABLED_MESSAGE);
+		// The switch was read for the SESSION's org: at the start and before the refused read.
+		expect(world.policyReads).toEqual([ORG_B, ORG_B]);
+	});
+
+	it("threadless, agent access on: the read runs as before, as the person (no actor bound around it), and the prompt carries no notice", async () => {
+		docsReadThenCase();
+		const chunks = await chunksOf(await postSupport(JSON.stringify({ messages: [userMsg("u1", "my projects?")] })));
+		expect(world.docSearches).toEqual(["connect aws"]);
+		expect(world.toolActors).toEqual(["none"]);
+		expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-output-available", toolCallId: "r1", output: { projects: [] } }));
+		expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-input-available", toolCallId: "c1", toolName: "create_support_case" }));
 		expect(promptText(0)).not.toContain(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM);
 	});
 });

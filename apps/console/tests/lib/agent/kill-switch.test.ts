@@ -47,6 +47,7 @@ import {
 	agentAccessRefused,
 	defaultKillSwitchDeps,
 	guardAgentTools,
+	guardThreadlessSupportTools,
 	type KillSwitchDeps,
 } from "@/lib/agent/kill-switch";
 import { AGENT_ACCESS_DISABLED_MESSAGE } from "@/lib/approvals/policy";
@@ -288,3 +289,27 @@ describe("the support surface's exemption", () => {
 		expect(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM).not.toMatch(/every tool/i);
 	});
 });
+
+// The support route's threadless path: its tools run as the PERSON (a session), and the switch still
+// binds them on the support surface.
+describe("the threadless support turn", () => {
+	it("agent access off: a session's support tools keep the exemption and refuse every read", async () => {
+		const tools: ToolSet = buildSupportTools();
+		const guarded = await guardThreadlessSupportTools(tools, actorOf("session"), switchOf(false));
+		expect(guarded.disabledAtStart).toBe(true);
+		expect(guarded.tools.search_docs).toBe(tools.search_docs);
+		expect(guarded.tools.create_support_case).toBe(tools.create_support_case);
+		expect(await call(guarded.tools, "list_projects")).toEqual(AGENT_ACCESS_REFUSED_OUTPUT);
+	});
+
+	it("agent access on: every tool runs, reading the switch for the person's own org", async () => {
+		const { tools, ran } = spiedTools();
+		const deps = switchOf(true);
+		const guarded = await guardThreadlessSupportTools(tools, actorOf("session"), deps);
+		expect(guarded.disabledAtStart).toBe(false);
+		expect(await call(guarded.tools, "list_projects")).toEqual({ ran: "list_projects" });
+		expect(ran).toEqual(["list_projects"]);
+		expect(deps.reads).toBe(2);
+	});
+});
+
