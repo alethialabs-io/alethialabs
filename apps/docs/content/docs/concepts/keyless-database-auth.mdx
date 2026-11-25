@@ -1,0 +1,85 @@
+---
+title: Keyless database auth
+description: How a service reaches a PostgreSQL or MySQL database with its cloud identity and a short-lived token on AWS, GCP and Azure, and what database role it gets.
+---
+
+Keyless database auth lets a workload log in to its database with its own cloud identity and a
+token that expires, instead of a stored password. It works for PostgreSQL and MySQL on AWS, GCP and
+Azure; to turn it on, see [Use keyless database auth](/guides/design-project/keyless-database-auth).
+
+```text
+  app ──► 127.0.0.1:<port> ──► proxy sidecar ──TLS + token──► database
+                                  │
+                                  └─ token from the pod's cloud identity
+```
+
+## How it works
+
+### The proxy
+
+The application connects to a proxy sidecar on `127.0.0.1`, with no password. The sidecar gets a
+token from the pod's identity and connects to the real database over TLS. The application never
+sees the token.
+
+- **GCP** uses the Cloud SQL Auth Proxy with `--auto-iam-authn`.
+- **AWS and Azure** have no such proxy, so the pod runs `alethia db-authproxy`, a subcommand of the
+  runner image. For each new connection it gets a token, connects over TLS with the token as the
+  password, then copies bytes both ways. It does no pooling, routing or query parsing.
+
+The token lives only in the sidecar's memory and is reused while it is valid. There is no token
+file and nothing to rotate. Both engines check the token only when a connection opens, so an
+expiring token never breaks an open session.
+
+| Cloud | Database | Token from | Alethia creates |
+| --- | --- | --- | --- |
+| AWS | RDS and Aurora, IAM database authentication | The pod's IAM role for its service account (`rds-db:connect`, tokens of about 15 minutes) | An IAM role for the app's Kubernetes service account. `rds-db:connect` is scoped to one database user on one cluster. |
+| GCP | Cloud SQL, IAM database authentication | The pod's Workload Identity | A service account with only `cloudsql.client` and `cloudsql.instanceUser`, bound to the app's Kubernetes service account and registered as a database user |
+| Azure | PostgreSQL or MySQL Flexible Server, Microsoft Entra authentication | The pod's federated Workload Identity | A managed identity federated to the app's Kubernetes service account. It is not a database administrator. |
+
+On GCP, the login name depends on the engine. PostgreSQL uses the service account's email without
+`.gserviceaccount.com`. MySQL uses the lowercase part before the `@`, at most 32 characters. A
+service account name that is too long stops the apply rather than create a user with the wrong name.
+
+On Azure, PostgreSQL ties the login to the identity's object ID, and MySQL to its client ID.
+
+### The database role
+
+The app's login maps to a least-privilege role, never a superuser:
+
+- **PostgreSQL**: `CONNECT` on its own database, and `USAGE` and `CREATE` on the `public` schema.
+- **MySQL**: `SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES` on its own
+  database. Never `*.*`, `GRANT OPTION` or `SUPER`.
+
+A one-time setup Job creates the role. Alethia adds it to your GitOps repository as an ArgoCD
+PreSync hook, so it finishes before the app deploys. It connects as the administrator, grants the
+role, and deletes itself when it succeeds.
+
+| Cloud | PostgreSQL | MySQL |
+| --- | --- | --- |
+| AWS | A role in the `rds_iam` group | A user `IDENTIFIED WITH AWSAuthenticationPlugin`. The IAM policy's user name is the link. |
+| GCP | OpenTofu creates the IAM user; the Job only grants | The same, for the shortened MySQL login |
+| Azure | A login role with a `pgaadauth` security label holding the object ID | `CREATE AADUSER` with the client ID |
+
+The Job's own administrator credential:
+
+- **Azure**: a separate admin managed identity gets an Entra token. No password exists, and the app
+  identity has no admin rights.
+- **AWS and GCP**: the External Secrets Operator fetches the existing administrator credential for
+  the Job only. It reaches the Job as a Secret reference, and the client reads it from the
+  environment, so it never shows in a manifest or the process list.
+
+If the Job's credential cannot be resolved, Alethia skips the Job and reports it rather than block
+the sync.
+
+## What it does not do
+
+- It does not fall back to a password. A database marked for IAM authentication on a cloud that
+  cannot do it, for example after a move to Hetzner, fails the deploy with the reason.
+- It does not pool connections.
+- It does not give the app administrator rights.
+
+## Related
+
+- [Use keyless database auth](/guides/design-project/keyless-database-auth)
+- [Security](/concepts/security)
+- [Add a database](/guides/design-project/databases)
