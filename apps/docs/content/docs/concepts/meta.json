@@ -27,6 +27,7 @@
 		"authentication",
 		"cluster-access",
 		"connectors",
+		"connection-health",
 		"access-control",
 		"elench"
 	]

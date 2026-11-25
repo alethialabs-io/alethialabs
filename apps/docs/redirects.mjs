@@ -92,12 +92,12 @@ export const movedPages = [
 	{ source: "/console/connectors/cross-account-secret-managers", destination: "/guides/connectors/cross-account-secret-managers", permanent: true },
 	{ source: "/console/connectors/gcp", destination: "/guides/connectors/gcp", permanent: true },
 	{ source: "/console/connectors/git-providers", destination: "/guides/connectors/git-providers", permanent: true },
-	{ source: "/console/connectors/health-and-inventory", destination: "/guides/connectors/health-and-inventory", permanent: true },
+	{ source: "/console/connectors/health-and-inventory", destination: "/concepts/connection-health", permanent: true },
 	{ source: "/console/connectors/hetzner", destination: "/guides/connectors/hetzner", permanent: true },
 	{ source: "/console/connectors/managing-connections", destination: "/guides/connectors/managing-connections", permanent: true },
 	{ source: "/console/connectors/pluggable", destination: "/guides/connectors/pluggable", permanent: true },
 	{ source: "/console/dashboard", destination: "/guides/dashboard", permanent: true },
-	{ source: "/console/dashboard/project-detail", destination: "/guides/dashboard/project-detail", permanent: true },
+	{ source: "/console/dashboard/project-detail", destination: "/guides/dashboard", permanent: true },
 	{ source: "/console/design-project", destination: "/guides/design-project", permanent: true },
 	{ source: "/console/design-project/bring-your-own-charts", destination: "/guides/design-project/bring-your-own-charts", permanent: true },
 	{ source: "/console/design-project/bring-your-own-iac", destination: "/guides/design-project/bring-your-own-iac", permanent: true },
@@ -207,6 +207,9 @@ export const movedPages = [
 	{ source: "/guides/self-hosting/terraform/gcp", destination: "/self-host/terraform/gcp", permanent: true },
 	{ source: "/guides/self-hosting/terraform/hetzner", destination: "/self-host/terraform/hetzner", permanent: true },
 	{ source: "/guides/self-hosting/upgrading", destination: "/self-host/upgrading", permanent: true },
+	// Docs rework, guides lane: pages split or merged.
+	{ source: "/guides/connectors/health-and-inventory", destination: "/concepts/connection-health", permanent: true },
+	{ source: "/guides/dashboard/project-detail", destination: "/guides/dashboard", permanent: true },
 	// A cloud the product hides (`availability: hidden` in packages/core/catalog/catalog.json). Its
 	// pages stay in content/ with `availability: hidden` frontmatter, so lib/source.ts drops them, and
 	// these send their URLs to the section index; the two older entries for the same pages, under
