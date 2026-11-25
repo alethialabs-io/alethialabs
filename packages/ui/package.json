@@ -1,6 +1,7 @@
 {
   "name": "@repo/ui",
   "version": "0.1.0",
+  "description": "The Alethia design system: React components built on shadcn/ui and Radix, styled with the Alethia tokens.",
   "private": true,
   "exports": {
     "./utils": "./src/utils.ts",

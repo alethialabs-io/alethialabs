@@ -1,6 +1,7 @@
 {
   "name": "@repo/email",
   "version": "0.1.0",
+  "description": "Transactional email for the Alethia web apps: templates and the send helper.",
   "private": true,
   "exports": {
     "./send": "./src/send.ts",

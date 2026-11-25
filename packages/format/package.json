@@ -1,6 +1,7 @@
 {
   "name": "@repo/format",
   "version": "0.1.0",
+  "description": "Formatting for numbers people read in Alethia: amounts in minor units, durations, dates, sizes and quotas.",
   "private": true,
   "exports": {
     ".": "./src/index.ts",
