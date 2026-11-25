@@ -61,6 +61,12 @@ name: Release gate
 #     such a PR runs here directly; ADDING the label runs this file through
 #     .github/workflows/release-gate-label.yml (`workflow_call`), never as a `labeled` run of its own.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.
+#   · workflow_call from ci.yml's `e2e-qa-leg` job (#7647): the `qa` leg ALONE, on a dev PR whose
+#     diff touches the console UI, its e2e specs or the packages it renders. That run is part of
+#     ci.yml's run, reports as `E2E qa leg (…) / Release gate (qa)` (never the bare promotion
+#     context), and is a `needs:` of `CI required`, so a qa regression fails the PR that caused it
+#     instead of the next promotion (#7554, #7608). ci.yml owns the trigger rule; this file owns
+#     the leg.
 # Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
 # nothing and wedges every PR — ci.yml's `build-console` job comment has the incident).
 #
@@ -145,17 +151,42 @@ on:
   pull_request:
     branches: [main, staging, dev]
     types: [opened, synchronize, reopened, ready_for_review]
-  # Called by .github/workflows/release-gate-label.yml when a `release-gate:run` or `release-gate:all`
-  # label is added to a non-draft dev PR. The caller's `labeled` event payload IS this run's
-  # `github.event`, so the job-level `if:` clauses and the picker below read it exactly as they read
-  # a direct `labeled` run before #7654 — which is why those `labeled` clauses are still here.
-  workflow_call:
   workflow_dispatch:
     inputs:
       legs:
         description: "Comma-separated legs to run (hero, elench-ai, console, canvas, qa, audit, audit-interaction). Empty runs every leg."
         required: false
         default: ""
+  # ONE `workflow_call:` with TWO callers (a second key is a YAML duplicate GitHub rejects):
+  #
+  # · release-gate-label.yml (#7654), when a `release-gate:run` or `release-gate:all` label is added to
+  #   a non-draft dev PR. It passes NO `ci_legs`, so the input is '' and the label path below runs as it
+  #   always has: the caller's `labeled` event payload IS this run's `github.event`, so the job-level
+  #   `if:` clauses and the picker read it exactly as they read a direct `labeled` run before #7654 —
+  #   which is why those `labeled` clauses are still here.
+  #
+  # · ci.yml's `e2e-qa-leg` job calls this file for the `qa` leg on a dev PR whose diff touches
+  # what that leg measures (#7647). Same `legs` picker, same `gate` job, same ratchet and baseline:
+  # the leg is DEFINED once, here, and ci.yml only decides WHEN. Inside a called run
+  # `github.event_name` is the CALLER's (`pull_request`) and the base is `dev`, so every clause
+  # below that would skip an unlabelled dev PR also asks `inputs.ci_legs` first. On every other
+  # event `inputs.ci_legs` is null, which `format('{0}', ...)` renders as '' — the clauses read
+  # exactly as they did before this trigger existed.
+  #
+  # `run` comes back out so ci.yml's `CI required` can refuse a VACUOUS green: a called workflow
+  # whose `legs` job skipped (a mis-evaluated `if:`) reports success with no leg run at all, and
+  # the aggregator reads this output to tell that apart from a leg that ran and passed.
+  workflow_call:
+    inputs:
+      ci_legs:
+        description: "Comma-separated legs ci.yml wants run on this PR (today only `qa`). Empty: the label path."
+        required: false
+        default: ""
+        type: string
+    outputs:
+      run:
+        description: "`yes` when the legs job decided the gate runs."
+        value: ${{ jobs.legs.outputs.run }}
 
 # A LABEL MUST NEVER CANCEL A GATE, DISPLACE A QUEUED ONE, OR SUPERSEDE A DECIDED ONE.
 #
@@ -186,7 +217,7 @@ on:
 # caller), so the called run lands in `release-gate-pull_request-<n>`. It queues behind an in-flight
 # gate and is cancelled by a later push, as a direct `labeled` run was.
 concurrency:
-  group: release-gate-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ (github.event.action == 'labeled' && !contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name)) && format('-unrelated-label-{0}', github.run_id) || '' }}
+  group: release-gate-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ format('{0}', inputs.ci_legs) != '' && '-ci-call' || '' }}${{ (github.event.action == 'labeled' && !contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name)) && format('-unrelated-label-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'labeled' }}
 
 permissions:
@@ -241,6 +272,7 @@ jobs:
     # for the same reason (see `RUN_LABELS` below), so the two halves cannot disagree about a PR.
     if: >-
       github.event_name == 'workflow_dispatch'
+      || format('{0}', inputs.ci_legs) != ''
       || (github.event.pull_request.draft == false
           && (github.base_ref == 'main'
               || github.base_ref == 'staging'
@@ -269,7 +301,7 @@ jobs:
       # not read is not an empty diff.
       - id: changed
         name: List the PR's changed files (unreadable or empty selects every leg)
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' && format('{0}', inputs.ci_legs) == '' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -415,6 +447,7 @@ jobs:
         name: Pick the legs for this event
         env:
           LEGS: ${{ inputs.legs }}
+          CI_LEGS: ${{ inputs.ci_legs }}
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
@@ -557,6 +590,13 @@ jobs:
 
           /** Decide which legs run, and the one sentence that says why. Rows are per-path detail. */
           function decide() {
+            const ciWant = (env.CI_LEGS || "").split(",").map((s) => s.trim()).filter(Boolean);
+            if (ciWant.length > 0) {
+              for (const w of ciWant) {
+                if (!ALL.includes(w)) { console.error(`::error::ci.yml asked for unknown leg "${w}" (known: ${ALL.join(", ")})`); process.exit(1); }
+              }
+              return { legs: ciWant, rule: `called from ci.yml for \`${ciWant.join(", ")}\` — its affected-only filter matched this PR's diff (#7647)` };
+            }
             if (env.EVENT_NAME === "workflow_dispatch") {
               const want = (env.LEGS || "").split(",").map((s) => s.trim()).filter(Boolean);
               for (const w of want) {
@@ -627,7 +667,7 @@ jobs:
           // that slipped past it says so and spends nothing, rather than running every leg.
           const promotion = env.BASE_REF === "main" || env.BASE_REF === "staging";
           const asked = RUN_LABELS.some((l) => prLabels.includes(l));
-          const gateRuns = env.EVENT_NAME === "workflow_dispatch" || promotion || asked;
+          const gateRuns = env.EVENT_NAME === "workflow_dispatch" || promotion || asked || Boolean(env.CI_LEGS);
           const chosen = labelled;
           const rule = gateRuns ? decision.rule : "not a dispatch, a promotion PR or a labelled dev PR, so the gate does not run (the job-level `if:` should have skipped this job)";
           emit("include", JSON.stringify(chosen));
