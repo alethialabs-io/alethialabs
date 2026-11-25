@@ -11,11 +11,6 @@ import {
 	getCollaborationAccess,
 	getOrgUsage,
 } from "@/app/server/actions/billing";
-import {
-	type ProjectListResult,
-	getProjects,
-	queryProjects,
-} from "@/app/server/actions/projects";
 import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
@@ -23,10 +18,12 @@ import type { Actor } from "@/lib/authz/types";
 import { isBillingConfigured } from "@/lib/billing/config";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { offeredClouds } from "@/lib/cloud-providers/availability";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, withActorScope } from "@/lib/db";
 import { alertDeliveries, member } from "@/lib/db/schema";
 import type { BillingPlan } from "@/lib/db/schema/enums";
 import { toDeliveryDTO } from "@/lib/queries/alerts-lists";
+import { KEYSET_DEFAULT_LIMIT, KEYSET_MAX_LIMIT, type KeysetPosition, keysetPageInput } from "@/lib/queries/keyset";
+import { type ProjectsPage, countProjects, queryProjectsPage } from "@/lib/queries/projects";
 import { query } from "@/lib/rpc/base";
 import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
 
@@ -160,34 +157,52 @@ export async function readOverviewAlerts(): Promise<OverviewAlerts> {
 }
 
 /**
- * The grid's search, filter and sort, as the address carries them. Every field is always present,
- * so the page's prefetch and the browser's read build one key from one address.
+ * The grid's search, filter and sort, as the address carries them — the list's KEY. Every address
+ * field is always present, so the page's prefetch and the browser's read build one key from one
+ * address. `ids` is the grid's starred-projects lookup (the favourites live in the browser), bounded
+ * by the page size it is read with.
  */
-const projectsInput = z.object({
+const projectsQuery = z.object({
 	q: z.string().max(200),
 	clouds: z.array(z.string().min(1).max(64)).max(32),
 	repos: z.array(z.string().min(1).max(2048)).max(64),
 	sort: z.enum(["activity", "name"]),
+	ids: z.array(z.uuid()).max(KEYSET_MAX_LIMIT).optional(),
 });
 
-/** {@link readOverviewProjects}'s input. */
-type OverviewProjectsInput = z.infer<typeof projectsInput>;
+/** One keyset page of the grid: the query plus the opaque cursor and the page size. */
+const projectsPageInput = projectsQuery.extend(keysetPageInput());
+
+/** What the grid is asked, without the paging fields — the normalized query, and the key. */
+type OverviewProjectsQuery = z.infer<typeof projectsQuery>;
 
 /**
- * Everything the overview's project grid shows, in one read: the projects domain's list as it
- * answers it — the matching rows, and every cloud and repository in the org with its count over the
- * UNFILTERED list — plus what the grid needs about the viewer and the deployment.
+ * One keyset page of the overview grid (LST-4 #7486): `queryProjectsPage` inside the actor's
+ * scoped transaction, so the org wall is the RLS policy on `projects`. It authorizes `view` on
+ * projects first, so a viewer without it is refused (`FORBIDDEN` on the wire) and the grid renders
+ * that as its own state. The facets ride on the first page only; nothing here counts the list.
  */
-export interface OverviewProjects extends ProjectListResult {
+export async function readOverviewProjectsPage(
+	input: OverviewProjectsQuery & { cursor?: KeysetPosition; limit?: number },
+): Promise<ProjectsPage> {
+	const actor = await authorize("view", { type: "project" });
+	const { cursor, limit = KEYSET_DEFAULT_LIMIT, ...query } = input;
+	return withActorScope(actor, (tx) => queryProjectsPage(tx, query, { cursor, limit }));
+}
+
+/**
+ * What the grid needs about the organization, the viewer and the deployment to render each project
+ * truthfully — none of it a property of one page, so none of it rides on the pages.
+ */
+export interface OverviewProjectsSummary {
 	/**
-	 * How many projects the organization has, whatever the search and filters, or `null` when a
-	 * filtered read could not count them. The Usage card prints it; it does not decide what the
-	 * grid renders.
+	 * How many projects the organization has. The Usage card prints it (a usage figure, the CONTENT
+	 * of that card); the grid never does — it carries no list count (lib/query/README.md → "Counts").
 	 */
-	total: number | null;
+	projectCount: number;
 	/**
 	 * The cloud slugs with a connected account, or `null` when that could not be read. It decides a
-	 * logo's colour and the empty state's first step, so its failure must not fail the grid.
+	 * logo's colour and the empty state's first step, so its failure must not fail the read.
 	 */
 	connectedProviders: string[] | null;
 	/** The cloud slugs this deployment offers, in catalog order. */
@@ -197,35 +212,20 @@ export interface OverviewProjects extends ProjectListResult {
 }
 
 /**
- * The overview grid's read: the projects as searched, filtered and sorted, the facet universe, and
- * what the grid needs about the viewer and the deployment to render each project truthfully.
- *
- * `queryProjects` is the projects domain's reader, called IN-PROCESS as the other overview reads
- * call theirs; it authorizes `view` on projects, so a viewer without it is refused (`FORBIDDEN` on
- * the wire) and the grid renders that as its own state. The create decision is asked with `can()`,
- * which records nothing: this read is refetched on every live hint.
- *
- * Two parts are allowed to fail without failing the grid, because neither is the grid: the
- * connected clouds, and the organization's total under a filter (unfiltered, the rows ARE the
- * total and nothing more is read).
+ * The grid's summary read. Authorizes `view` on projects like the page, so the two refuse together.
+ * The create decision is asked with `can()`, which records nothing: this read is refetched on every
+ * live hint, because it sits under the `overview.projects` key prefix the `projects`, `connectors`
+ * and deploy topics already invalidate (`lib/query/topics.ts`).
  */
-export async function readOverviewProjects(actor: Actor, input: OverviewProjectsInput): Promise<OverviewProjects> {
-	const filtered = input.q.trim() !== "" || input.clouds.length > 0 || input.repos.length > 0;
-	const [list, everyProject, connectedProviders, create] = await Promise.all([
-		queryProjects(input),
-		filtered
-			? getProjects()
-					.then((rows) => rows.length)
-					.catch(() => null)
-			: null,
+export async function readOverviewProjectsSummary(actor: Actor): Promise<OverviewProjectsSummary> {
+	const viewer = await authorize("view", { type: "project" });
+	const [projectCount, connectedProviders, create] = await Promise.all([
+		withActorScope(viewer, countProjects),
 		readConnectedCloudProviders().catch(() => null),
 		getPdp().can(actor, "create", { type: "project" }),
 	]);
-	// The list is passed through whole. This read computes no facet of its own: the facet pass is
-	// `queryProjects`'s, and that is the name the filter standard's ledger carries it under.
 	return {
-		...list,
-		total: filtered ? everyProject : list.projects.length,
+		projectCount,
 		connectedProviders,
 		offeredClouds: [...offeredClouds()],
 		canCreate: create.allowed,
@@ -241,7 +241,12 @@ export async function readOverviewProjects(actor: Actor, input: OverviewProjects
 export const overviewRouter = {
 	usage: query.handler(({ context }) => readOverviewUsage(context.actor)),
 	alerts: query.handler(() => readOverviewAlerts()),
-	projects: query
-		.input(projectsInput)
-		.handler(({ context, input }) => readOverviewProjects(context.actor, input)),
+	/**
+	 * The project grid. Nested so `orpc.overview.projects.key()` — the prefix every live topic names —
+	 * reaches both the pages and the summary beside them.
+	 */
+	projects: {
+		page: query.input(projectsPageInput).handler(({ input }) => readOverviewProjectsPage(input)),
+		summary: query.handler(({ context }) => readOverviewProjectsSummary(context.actor)),
+	},
 };

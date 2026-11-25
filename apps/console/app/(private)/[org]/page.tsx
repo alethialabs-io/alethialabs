@@ -37,6 +37,28 @@ function joinRecentJobs(queryClient: QueryClient, rpc: ReturnType<typeof serverO
 }
 
 /**
+ * The grid's first keyset page for `input`, under EXACTLY the infinite key
+ * `useKeysetList(orpc.overview.projects.page, input)` asks for: oRPC builds that key from
+ * `input(initialPageParam)`, and the initial page param is null on both sides, so the key is the
+ * address's query alone. A failure is swallowed (`prefetchInfiniteQuery`) and not dehydrated: the
+ * grid then renders its own refusal or error in the browser.
+ */
+function prefetchFirstProjectsPage(
+	queryClient: QueryClient,
+	rpc: ReturnType<typeof serverOrpc>,
+	input: ReturnType<typeof overviewProjectsInput>,
+): Promise<void> {
+	return queryClient.prefetchInfiniteQuery(
+		rpc.overview.projects.page.infiniteOptions({
+			input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+			initialPageParam: null,
+			getNextPageParam: (last) => last.nextCursor,
+			retry: false,
+		}),
+	);
+}
+
+/**
  * Org root overview. Reads the grid's search, filter, sort and view from the address and prefetches
  * every read the page makes for it; the client reads the same keys.
  *
@@ -48,8 +70,12 @@ function joinRecentJobs(queryClient: QueryClient, rpc: ReturnType<typeof serverO
  *
  * The reads, all in-process through the read router and with exactly the keys the regions ask for:
  *
- * - `overview.projects` — the grid, for this address's search, filters and sort
- *   (`overviewProjectsInput`: the browser builds its key from the same function);
+ * - `overview.projects.page` — the grid's FIRST keyset page for this address's search, filters and
+ *   sort, under exactly the infinite key `useOverviewProjects` asks for (`overviewProjectsInput`: the
+ *   browser builds its key from the same function, and the cursor is never part of it). Only the
+ *   first page: the rest are read in the browser as the reader scrolls or presses "Load more";
+ * - `overview.projects.summary` — the grid's create permission and clouds, and the Usage card's
+ *   project count;
  * - `overview.usage` and `overview.alerts` — the cards (#6118, ADR 0005 D1).
  *
  * They are hydrated by this page's own boundary, filtered to those reads (`isOverviewPageRead`):
@@ -80,9 +106,8 @@ export default async function OrgOverviewRoute({
 	await Promise.all([
 		// `retry: false`: the console's default `retry: 1` would hold the first byte ~1 s on a refusal
 		// or a transient failure, and each region retries in the browser anyway. Not part of the key.
-		queryClient.prefetchQuery(
-			rpc.overview.projects.queryOptions({ input: overviewProjectsInput(state), retry: false }),
-		),
+		prefetchFirstProjectsPage(queryClient, rpc, overviewProjectsInput(state)),
+		queryClient.prefetchQuery(rpc.overview.projects.summary.queryOptions({ retry: false })),
 		queryClient.prefetchQuery(rpc.overview.usage.queryOptions({ retry: false })),
 		queryClient.prefetchQuery(rpc.overview.alerts.queryOptions({ retry: false })),
 		joinRecentJobs(queryClient, rpc),
