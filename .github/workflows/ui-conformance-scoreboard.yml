@@ -1,0 +1,190 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Regenerate the console UI conformance scoreboard ON DEV, and keep dev's copy fresh (#7594).
+#
+# apps/console/docs/ui-conformance/scoreboard.md and apps/console/ui-conformance-baseline.json are
+# DERIVED by apps/console/scripts/audit-report.mjs, and both carry aggregate totals. Until #7594
+# every PR had to commit them regenerated against its own tree, and git merges N such
+# regenerations cleanly and WRONGLY (the totals of N independent runs are not the totals of the
+# merged tree). Every queue batch holding two of them failed, every landing made every other list
+# PR stale, and the list-standard epic went through one PR at a time. So (maintainer decision,
+# option 1 of #7594):
+#
+#   · a PR no longer commits them. ci.yml's "this PR's effect" step regenerates against the PR's
+#     merge ref, PRINTS the diff and passes. It fails only on a refusal (exit 1), never on staleness.
+#   · this workflow regenerates on every push to dev and opens or updates ONE bot PR,
+#     `chore(console): regenerate the UI conformance scoreboard`, on the stable branch
+#     chore/ui-conformance-scoreboard. When dev is already in sync (someone committed the files by
+#     hand, which is still allowed) it closes that PR instead.
+#   · FRESHNESS IS STILL ENFORCED, AND THE BOUND IS 24 HOURS. The last step goes red when dev is
+#     stale and no bot PR exists (the PR could not be opened), or when the bot PR has been open
+#     longer than MAX_AGE_HOURS. A red run is what workflow-health.yml reports on. The 6-hourly
+#     schedule exists so the age is re-checked even when nothing lands on dev for a day.
+#
+# The cost of this design, stated: dev's scoreboard lags the tree by at most one bot PR.
+#
+# ⚠️ `schedule:` FIRES THE DEFAULT BRANCH'S COPY, and the default branch is `main`. Until this file
+# is promoted, the push:dev trigger works (a push event runs the pushed branch's copy) but the
+# 6-hourly re-check does not. Every non-PR job checks out `dev` explicitly, so a scheduled run
+# measures dev's tree, never main's.
+#
+# IT OPENS A PR; IT NEVER PUSHES TO DEV. Mergify lands the PR like any other. The PR is authored by
+# the alethia-labs-ci App (same custody as programme.yml / restore-drill.yml / release-please.yml),
+# because a github-actions[bot] PR's runs wait on a manual approval (programme.yml, "THE PR MUST NOT
+# BE AUTHORED BY GITHUB_TOKEN"). Both identities are trusted by cla.yml's contribution-legal gate,
+# and the two files it touches already carry their SPDX headers.
+#
+# COST: zero. Plain Node, no install, no cloud: the generator reads only committed files (~6s).
+
+name: UI conformance scoreboard (regenerate on dev)
+
+on:
+  push:
+    branches: [dev]
+  schedule:
+    # Every 6 hours at :17 (off-minute per the repo's cron convention): the freshness re-check.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+  # A PR touching this file runs the regeneration as a dry run: no token, no PR, no freshness.
+  pull_request:
+    paths:
+      - ".github/workflows/ui-conformance-scoreboard.yml"
+
+# One regeneration at a time on dev, and the newest wins: an older run's diff is superseded by the
+# newer tree's anyway.
+concurrency:
+  group: ui-conformance-scoreboard-${{ github.event_name == 'pull_request' && github.ref || 'dev' }}
+  cancel-in-progress: true
+
+# `contents: write` + `pull-requests: write` are the FALLBACK path's (GITHUB_TOKEN when the App mint
+# fails) and closing an obsolete bot PR; on the normal path the App token does both.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  regenerate:
+    name: Regenerate the scoreboard on dev, and hold it fresh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BOT_BRANCH: chore/ui-conformance-scoreboard
+      MAX_AGE_HOURS: "24"
+    steps:
+      # push: the commit that was pushed. schedule / dispatch: dev's tip, whichever branch the
+      # workflow file was read from. pull_request: the default merge ref (dry run).
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'dev' || '' }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      # Exit 1 here is a REFUSAL (the tree could not be fully read) and fails the run: a scoreboard
+      # over a tree the generator could not read would say pages are fine that it never looked at.
+      - name: Regenerate the two derived files
+        id: regen
+        run: |
+          files=(apps/console/docs/ui-conformance/scoreboard.md apps/console/ui-conformance-baseline.json)
+          node apps/console/scripts/audit-report.mjs --write
+          if git diff --quiet -- "${files[@]}"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "dev's scoreboard is in sync with its tree." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### dev's UI conformance scoreboard is stale"
+              echo
+              echo '```'
+              git diff --stat -- "${files[@]}"
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Mint the bot-PR token (GitHub App)
+        id: app_token
+        if: github.event_name != 'pull_request'
+        # Non-fatal, with GITHUB_TOKEN as the fallback: a PR that needs an approval click is better
+        # than no PR, and the freshness step below reds if there is none.
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+
+      - name: Open or update the bot PR
+        if: github.event_name != 'pull_request' && steps.regen.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ steps.app_token.outputs.token || github.token }}
+          base: dev
+          branch: ${{ env.BOT_BRANCH }}
+          add-paths: |
+            apps/console/docs/ui-conformance/scoreboard.md
+            apps/console/ui-conformance-baseline.json
+          title: "chore(console): regenerate the UI conformance scoreboard"
+          commit-message: |
+            chore(console): regenerate the UI conformance scoreboard
+
+            Auto-generated by .github/workflows/ui-conformance-scoreboard.yml
+            (`node apps/console/scripts/audit-report.mjs --write` against dev).
+          body: |
+            Auto-generated by `.github/workflows/ui-conformance-scoreboard.yml` (#7594).
+
+            `apps/console/docs/ui-conformance/scoreboard.md` and `apps/console/ui-conformance-baseline.json`
+            are derived from the tree and are no longer committed by feature PRs, because their
+            aggregate totals merge cleanly and wrongly. This PR regenerates both against `dev` with
+            `node apps/console/scripts/audit-report.mjs --write`. It is updated in place on every push
+            to `dev`, and closed if `dev` comes back in sync on its own.
+
+            **Freshness bound: 24 hours.** The workflow goes red if this PR stays open longer than that.
+
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          labels: |
+            wave:hygiene
+            class:backend
+          delete-branch: false
+
+      # dev came back in sync without the bot (a PR committed the files by hand, or the bot PR just
+      # merged): an open bot PR is now obsolete and would only re-apply an older regeneration.
+      - name: Close an obsolete bot PR
+        if: github.event_name != 'pull_request' && steps.regen.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: |
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --base dev --head "$BOT_BRANCH" --state open --json number --jq '.[].number' | head -n 1)"
+          if [ -z "$pr" ]; then exit 0; fi
+          gh pr close "$pr" --repo "$GITHUB_REPOSITORY" \
+            --comment "dev's scoreboard is in sync with its tree as of $(git rev-parse --short HEAD); nothing left to regenerate."
+          echo "Closed obsolete bot PR #$pr."
+
+      # THE FRESHNESS GATE. Red when dev is stale and there is no bot PR, or when the bot PR has been
+      # open for longer than MAX_AGE_HOURS. Age is measured from the PR's CREATION, not its last
+      # update: it is updated on every push to dev, so an update-time age would never grow.
+      - name: Freshness — dev's scoreboard is stale for at most 24 hours
+        if: ${{ !cancelled() && github.event_name != 'pull_request' && steps.regen.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGED: ${{ steps.regen.outputs.changed }}
+        run: |
+          if [ "$CHANGED" != "true" ]; then
+            echo "Fresh: dev's scoreboard matches its tree."
+            exit 0
+          fi
+          row="$(gh pr list --repo "$GITHUB_REPOSITORY" --base dev --head "$BOT_BRANCH" --state open \
+                   --json number,createdAt --jq '.[] | "\(.number) \(.createdAt)"' | head -n 1)"
+          if [ -z "$row" ]; then
+            echo "::error title=UI conformance scoreboard::dev's scoreboard is stale and no bot PR from ${BOT_BRANCH} is open — the step above could not open one."
+            exit 1
+          fi
+          read -r pr created <<<"$row"
+          age_h=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 3600 ))
+          if [ "$age_h" -ge "$MAX_AGE_HOURS" ]; then
+            echo "::error title=UI conformance scoreboard::bot PR #${pr} has been open ${age_h}h (bound ${MAX_AGE_HOURS}h): dev's scoreboard is stale past its bound. Land it, or find what holds it out of the queue."
+            exit 1
+          fi
+          echo "Within bound: bot PR #${pr} open ${age_h}h of ${MAX_AGE_HOURS}h."

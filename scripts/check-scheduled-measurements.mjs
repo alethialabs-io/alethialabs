@@ -200,6 +200,15 @@ export const NOT_A_MEASUREMENT = {
 			"drill-launcher role trusts only main) and is never pinned to dev.",
 		issue: "#7245",
 	},
+	"ui-conformance-scoreboard.yml": {
+		why:
+			"Its output is a bot pull request regenerating two committed, derived files (the UI conformance " +
+			"scoreboard and its JSON twin), not an artifact. A stale instrument shows up as its own red: the " +
+			"workflow's freshness step fails when dev stays stale, or the bot PR stays open, past 24 hours. " +
+			"Scheduled and dispatched runs check out ref: dev explicitly, so the generator that runs is dev's " +
+			"even on the default branch's timer.",
+		issue: "#7594",
+	},
 	"news-changelog-draft.yml": {
 		why:
 			"Its output is a draft pull request carrying a draft changelog entry, not an artifact, and nothing " +
