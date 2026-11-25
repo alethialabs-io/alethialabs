@@ -225,7 +225,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F2** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F3** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F4** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F5** | F | `check-filter-standard` | 19 | 2 | 23 | 0 | 0.90 | `not-a-list-page` 23 |
+| **F5** | F | `check-filter-standard` | 20 | 1 | 23 | 0 | 0.95 | `not-a-list-page` 23 |
 | **F6** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F7** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
 | **F8** | F | live — `interaction` | 16 | 0 | 24 | 4 | 1.00 | `not-a-list-page` 24 |
