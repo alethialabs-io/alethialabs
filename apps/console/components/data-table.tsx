@@ -304,11 +304,26 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 				}),
 		},
 		...(onPageIndexChange && {
+			// A CONTROLLED page index is the caller's URL state, and only a person paging may write it.
+			//
+			// TanStack resets the page index to 0 on its own whenever `data` changes
+			// (`autoResetPageIndex`), and it reports that reset through this callback. On a filtered
+			// list the data changes BECAUSE a facet was applied — in the same commit in which
+			// `useFilterUrlSync` has just called `router.replace(?facet=…)`. The caller turned the
+			// reset into a page-URL write built from the search params it rendered with, which do not
+			// carry the new facet yet, so that write landed last and dropped the facet from the URL:
+			// the list narrowed and the link did not (F8 `applied: false` on `~/clusters` and
+			// `~/settings/members`, #7673). Resetting the page on a filter change is already the
+			// filter sync's job (`resetParams`), so the table's own reset is off, and an "update" to
+			// the index the URL already holds is dropped rather than written.
+			autoResetPageIndex: false,
 			onPaginationChange: (updater: Updater<PaginationState>) => {
+				const current = externalPageIndex ?? 0;
 				const next =
 					typeof updater === "function"
-						? updater({ pageIndex: externalPageIndex ?? 0, pageSize })
+						? updater({ pageIndex: current, pageSize })
 						: updater;
+				if (next.pageIndex === current) return;
 				onPageIndexChange(next.pageIndex);
 			},
 		}),
