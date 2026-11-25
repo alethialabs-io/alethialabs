@@ -82,9 +82,11 @@ queueing. It splits across both places:
 The template is CPU-only. A GPU node pool is the costliest thing to provision by accident, so you
 add one yourself: see the repository's `gpu/` directory.
 
-On Hetzner, the cluster the template was last tested on (three `cpx32` servers in `nbg1`) cost
-EUR 0.1707 an hour for servers only. That excludes public IPv4 addresses and volumes, and it is the
-whole cluster, which ran all three templates. The figure and its source are in the
+On Hetzner, the cluster the template was last tested on (3 × cpx32 in nbg1, EUR 0.0569 an hour
+each) cost EUR 0.1707 an hour for servers only, measured on 2026-10-01 in run
+[36916156426](https://github.com/alethialabs-io/alethialabs/actions/runs/36916156426). That excludes
+public IPv4 addresses and volumes, and it is the whole cluster, which ran all three templates. The
+figure and its source are in the
 [proof bundle](https://github.com/alethialabs-io/alethialabs/tree/main/demos/proofs/templates/ai/20261001T200301Z).
 
 ## Check that it worked
