@@ -1,0 +1,26 @@
+{
+	"name": "@repo/nra",
+	"version": "0.0.0",
+	"private": true,
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"lint": "eslint . --max-warnings 0",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@repo/format": "workspace:*",
+		"@repo/legal": "workspace:*",
+		"zod": "^4.6.7"
+	},
+	"devDependencies": {
+		"@repo/eslint-config": "workspace:*",
+		"@repo/typescript-config": "workspace:*",
+		"@types/node": "^20.19.43",
+		"eslint": "^9.39.5",
+		"typescript": "5.9.3",
+		"vitest": "^4.1.12"
+	}
+}
