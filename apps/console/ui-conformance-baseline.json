@@ -430,15 +430,15 @@
 			"family": "F",
 			"instrument": "check-filter-standard",
 			"owner": null,
-			"pass": 6,
-			"fail": 14,
+			"pass": 7,
+			"fail": 13,
 			"na": 22,
 			"notMeasured": 0,
 			"naReasons": {
 				"not-a-list-page": 22
 			},
 			"notMeasuredReasons": {},
-			"score": 0.3
+			"score": 0.35
 		},
 		"F6": {
 			"family": "F",
@@ -1858,11 +1858,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1884,11 +1884,11 @@
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 1,
+				"pass": 37,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 4,
-				"score": 0.973
+				"score": 1
 			}
 		},
 		{
@@ -7287,8 +7287,7 @@
 		{
 			"route": "/[org]/~/evidence",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useEvidenceFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/evidence",

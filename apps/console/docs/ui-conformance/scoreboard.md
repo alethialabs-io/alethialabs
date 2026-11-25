@@ -213,7 +213,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F2** | F | `check-filter-standard` | 20 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F3** | F | `check-filter-standard` | 20 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F4** | F | `check-filter-standard` | 20 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
-| **F5** | F | `check-filter-standard` | 6 | 14 | 22 | 0 | 0.30 | `not-a-list-page` 22 |
+| **F5** | F | `check-filter-standard` | 7 | 13 | 22 | 0 | 0.35 | `not-a-list-page` 22 |
 | **F6** | F | `check-filter-standard` | 20 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F7** | F | `check-filter-standard` | 20 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F8** | F | live — `interaction` | 16 | 0 | 24 | 2 | 1.00 | `not-a-list-page` 24 |
@@ -267,7 +267,6 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 5 withheld of 44 |
 | `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | all withheld (5) | **0.97** · 5 withheld of 44 |
-| `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 4 withheld of 44 |
 | `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 4 withheld of 44 |
 | `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 2 withheld of 44 |
 | `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | all withheld (5) | **0.97** · 5 withheld of 44 |
@@ -288,6 +287,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/~/approvals` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
 | `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
