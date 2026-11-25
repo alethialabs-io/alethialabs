@@ -4,7 +4,6 @@
 import "server-only";
 import {
 	and,
-	asc,
 	eq,
 	exists,
 	ilike,
@@ -40,6 +39,17 @@ import {
 	searchTerm,
 	tally,
 } from "./facets";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetTextPageRequest,
+	keysetFetchLimit,
+	keysetListPage,
+	keysetTextAfter,
+	keysetTextOrderBy,
+	keysetTextPageInMemory,
+	keysetTextSortKey,
+} from "./keyset";
 
 // The Settings › Members list, filtered in SQL (the console filter standard's server half).
 // Service path with an explicit `organization_id` filter — the service role bypasses RLS,
@@ -49,6 +59,23 @@ import {
 // rows, which the client renders as one list with a `status` of active/suspended/pending.
 // So the status facet spans both tables and one read returns both — filtering them in two
 // independent round-trips would let a "pending"-only selection still pay for the member query.
+//
+// PAGING (lib/query/README.md → "Paging"; LST-8 #7490). The list is ALPHABETICAL, by what each row
+// displays — a member's name, or their email when they have none; an invitation's email — through
+// the codec's TEXT mode: `lower(display) COLLATE "C"`, then the id. Members and invitations share
+// that one order, so they interleave as one list (an invitation keeps its "Pending" status and its
+// expiry line, so it stays distinguishable). Each kind is read with its own strictly-after-the-cursor
+// predicate and `limit + 1` rows, and the two are merged in that order and cut to `limit`
+// (`keysetTextPageInMemory`). That is a correct k-way merge, not an approximation: any row among the
+// next `limit + 1` of the union is among the next `limit + 1` of its own table. Both ids are random
+// uuids, so the id tiebreak is total across the two tables as well as within each.
+//
+// WHY ONE INTERLEAVED WALK, NOT "MEMBERS, THEN INVITATIONS". The two-phase walk needs the cursor to
+// say which phase it is in, and a phase switch mid-page (the last members and the first invitations
+// on one page) — a second cursor shape and a second boundary to get wrong. One order over both kinds
+// is the same codec, the same merge, one boundary; and a person looking for "grace@…" finds her in
+// the same place whether she has accepted yet or not. It used to read every member and every
+// invitation and let the browser page them 20 at a time.
 //
 // `MemberRow`/`InvitationRow` stay defined in the action module (components import them
 // from there); the import above is type-only, so it is erased and no runtime cycle exists.
@@ -91,33 +118,6 @@ function storedRoleFilter(roles: string[]): string[] {
 	return [...own];
 }
 
-/**
- * The member rows' order — TOTAL, so the client's 20-row pages are stable across re-reads.
- *
- * Without an ORDER BY Postgres returns rows in whatever order the plan produced, and the table
- * pages members-then-invitations by OFFSET on the client (`DataTable pageSize`), so a re-read (a
- * filter change, a live invalidation) could move a row onto another page or off every page.
- * Sorted by what the row DISPLAYS — the name, or the email when there is none — case-folded, then
- * the email (unique per user, and a user is in an org once), then `member.id`, the primary key, so
- * the order is total by construction rather than by the uniqueness of a business column.
- */
-const MEMBER_ROW_ORDER = [
-	asc(sql`lower(coalesce(${user.name}, ${user.email}))`),
-	asc(user.email),
-	asc(member.id),
-] as const;
-
-/**
- * The pending-invitation rows' order: the invited email case-folded (what the row displays), then
- * the oldest invitation first when one address was invited more than once, then `invitation.id`,
- * the primary key, as the final tie-breaker that makes the order total.
- */
-const INVITATION_ROW_ORDER = [
-	asc(sql`lower(${invitation.email})`),
-	asc(invitation.createdAt),
-	asc(invitation.id),
-] as const;
-
 /** The Members list's normalized filter query (the `normalizeMembersQuery()` output). */
 export interface MembersQuery {
 	/** Contains-match over what the row DISPLAYS: name + email, or an invite's email +
@@ -129,47 +129,60 @@ export interface MembersQuery {
 	roles?: string[];
 	/** Restrict to members of these teams, BY NAME (a member matches if any team does). */
 	teams?: string[];
+	/**
+	 * Read ONE row by its id (a member's or an invitation's) — the `?selected=` deep link. A
+	 * selector, not a filter: it narrows within the same org scope the list reads, so a link can
+	 * only ever open what the list itself would show.
+	 */
+	id?: string;
 }
 
-/** Rows + the facet options behind the Members filter bar. */
-export interface MembersPage {
-	/** Member rows matching the query. */
-	members: MemberRow[];
-	/** Pending invitations matching the query (empty when the query excludes them). */
-	invitations: MembersPageInvitation[];
-	/** members + invitations returned. */
-	resultCount: number;
-	/** Every member + pending invitation in the org — the count pill's denominator. */
-	total: number;
-	/**
-	 * The user this page was read FOR — the row the table marks "You".
-	 *
-	 * Carried in the payload rather than read from `authClient.useSession()` on the client, because
-	 * the payload is what the route prefetches and dehydrates: the server render and the hydrating
-	 * client both read THIS value, so they agree by construction. The session hook does not give
-	 * that guarantee — better-auth's `useStore` passes the client's live `get` as
-	 * `getServerSnapshot`, so a session fetch that lands before the table hydrates renders a "You"
-	 * badge the server's HTML never had: an extra element, React #418 "HTML" (#5377).
-	 */
-	viewerUserId: string;
-	/**
-	 * When this page was read (ISO 8601) — the baseline every "Last active … ago" is measured from.
-	 *
-	 * `lastActiveAt` is itself a reading taken at this instant, so its age is stated as of the same
-	 * instant. Measuring it against each renderer's own wall clock made the server and the
-	 * hydrating client disagree whenever the two clocks straddled a `formatDistance` boundary
-	 * (React #418 "text", #5377). One instant from the payload gives both renders the same string.
-	 */
-	asOf: string;
-	facets: {
-		/** All three statuses, always, over the UNFILTERED universe. */
-		statuses: FacetOption[];
-		/** Roles present in the org (members + pending invitations). */
-		roles: FacetOption[];
-		/** Team names; a member in several teams counts once per team. */
-		teams: FacetOption[];
-	};
+/** The status/role/team facets behind the Members filter bar, over the org's UNFILTERED universe. */
+export interface MembersFacets {
+	/** All three statuses, always. */
+	statuses: FacetOption[];
+	/** Roles present in the org (members + pending invitations). */
+	roles: FacetOption[];
+	/** Team names; a member in several teams counts once per team. */
+	teams: FacetOption[];
 }
+
+/**
+ * One member row of the list. `isYou` and `asOf` are decided by the SERVER and carried in the
+ * payload, because the payload is what the route prefetches and dehydrates: the server render and
+ * the hydrating client then read the same two values and produce the same markup (#5377, React
+ * #418). The session hook gives no such guarantee — better-auth's `useStore` passes the client's
+ * live `get` as `getServerSnapshot`, so a "You" badge could appear that the server HTML never had.
+ */
+export interface MembersListMember extends MemberRow {
+	kind: "member";
+	/** This is the viewer's own row (the table marks it "You" and offers it no bulk action). */
+	isYou: boolean;
+	/** When the page holding this row was read (ISO) — what "Last active … ago" is measured from. */
+	asOf: string;
+}
+
+/** One pending invitation of the list; `asOf` as on {@link MembersListMember}. */
+export interface MembersListInvite extends MembersPageInvitation {
+	kind: "invite";
+	/** When the page holding this row was read (ISO) — what "invited … ago" and the expiry read against. */
+	asOf: string;
+}
+
+/** A row of the Members list: a member or a pending invitation, in the one keyset order. */
+export type MembersListRow = MembersListMember | MembersListInvite;
+
+/** One page of the Members list (`KeysetListPage`): rows, the next cursor, and first-page facets. */
+export type MembersPage = KeysetListPage<MembersListRow, MembersFacets>;
+
+/**
+ * A member's sort text: what the row DISPLAYS — the name, trimmed, or the email when the name is
+ * blank (the table's `name?.trim() || email`) — folded by the codec's text mode.
+ */
+const MEMBER_SORT: SQL = keysetTextSortKey(sql`coalesce(nullif(btrim(${user.name}), ''), ${user.email})`);
+
+/** An invitation's sort text: the invited email, folded the same way. */
+const INVITATION_SORT: SQL = keysetTextSortKey(invitation.email);
 
 /**
  * The status bucket a `member.status` falls in — the SQL mirror of the client's
@@ -190,23 +203,28 @@ function memberStatusPredicate(statuses: MemberRowStatus[]): SQL | undefined {
 }
 
 /**
- * The org's members + pending invitations for `query` — rows filtered in SQL, plus facet
- * counts over the org's UNFILTERED universe (the facet pass below is given the org
- * predicate and nothing else, so no option can vanish as you select it).
+ * One page of the org's members + pending invitations for `query`, alphabetical by what each row
+ * displays — rows filtered in SQL, plus (on the first page only) facet counts over the org's UNFILTERED universe: the facet
+ * passes below are given the org predicate and nothing else, so no option can vanish as you select
+ * it. A later page carries `facets: null`; it walks the same universe and would count the same.
  *
- * `viewerUserId` is the caller, used only for the personal-workspace fallback: an org with
- * no `member` rows IS the caller's personal org, and the page must show the sole owner
- * (truthful) rather than an empty table (locked). That single row is synthesized, not
+ * `viewerUserId` is the caller: it marks the "You" row, and drives the personal-workspace fallback
+ * — an org with no `member` rows IS the caller's personal org, and the first page must show the
+ * sole owner (truthful) rather than an empty table (locked). That single row is synthesized, not
  * fetched, so the query is applied to it in memory — one row, not a narrowed universe.
  */
 export async function queryMembersPage(
 	orgId: string,
 	viewerUserId: string,
 	query: MembersQuery = {},
+	request: KeysetTextPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<MembersPage> {
 	const db = getServiceDb();
-	// One instant for the whole read: the page's `asOf`, and the personal owner's "active now".
+	// One instant for the whole read: every row's `asOf`, and the personal owner's "active now".
 	const readAt = new Date();
+	const asOf = readAt.toISOString();
+	const firstPage = request.cursor === undefined;
+	const fetchLimit = keysetFetchLimit(request.limit);
 	const search = searchTerm(query.search);
 	const like = search ? likeTerm(search) : undefined;
 	const statuses = narrowTo(MEMBER_ROW_STATUSES, query.statuses);
@@ -242,6 +260,8 @@ export async function queryMembersPage(
 						),
 				)
 			: undefined,
+		query.id ? eq(member.id, query.id) : undefined,
+		keysetTextAfter(MEMBER_SORT, member.id, request.cursor),
 	];
 
 	const inviteConditions = [
@@ -255,11 +275,13 @@ export async function queryMembersPage(
 				)
 			: undefined,
 		like ? or(ilike(invitation.email, like), ilike(user.name, like)) : undefined,
+		query.id ? eq(invitation.id, query.id) : undefined,
+		keysetTextAfter(INVITATION_SORT, invitation.id, request.cursor),
 	];
 
 	const [memberRows, inviteRows, facetMembers, facetInvites, facetTeams] =
 		await Promise.all([
-			// ROWS (members): org scope + the query's predicates.
+			// ROWS (members): org scope + the query's predicates + the cursor, `limit + 1` of them.
 			wantsMembers
 				? db
 						.select({
@@ -272,14 +294,16 @@ export async function queryMembersPage(
 							role: member.role,
 							status: member.status,
 							joinedAt: member.createdAt,
+							sortText: sql<string>`${MEMBER_SORT}`,
 						})
 						.from(member)
 						.innerJoin(user, eq(member.userId, user.id))
 						.where(and(...memberConditions.filter((c) => c !== undefined)))
-						.orderBy(...MEMBER_ROW_ORDER)
+						.orderBy(...keysetTextOrderBy(MEMBER_SORT, member.id))
+						.limit(fetchLimit)
 				: [],
-			// ROWS (pending invitations): org scope + the query's predicates. Personal scope
-			// (orgId === the user's own id) has no invitations at all.
+			// ROWS (pending invitations): the same, in the same order. Personal scope (orgId ===
+			// the user's own id) has no invitations at all.
 			wantsInvitations && orgId !== viewerUserId
 				? db
 						.select({
@@ -290,50 +314,72 @@ export async function queryMembersPage(
 							inviterEmail: user.email,
 							createdAt: invitation.createdAt,
 							expiresAt: invitation.expiresAt,
+							sortText: sql<string>`${INVITATION_SORT}`,
 						})
 						.from(invitation)
 						.leftJoin(user, eq(invitation.inviterId, user.id))
 						.where(and(...inviteConditions.filter((c) => c !== undefined)))
-						.orderBy(...INVITATION_ROW_ORDER)
+						.orderBy(...keysetTextOrderBy(INVITATION_SORT, invitation.id))
+						.limit(fetchLimit)
 				: [],
-			// FACETS: the org predicate ONLY. Three light passes over the whole universe —
-			// none of them sees `search`, `statuses`, `roles` or `teams`. That is the invariant.
-			db
-				.select({ role: member.role, status: member.status })
-				.from(member)
-				.where(eq(member.organizationId, orgId)),
-			db
-				.select({ role: invitation.role })
-				.from(invitation)
-				.where(
-					and(
-						eq(invitation.organizationId, orgId),
-						eq(invitation.status, "pending"),
-					),
-				),
+			// FACETS (first page only): the org predicate ONLY. Three light passes over the whole
+			// universe — none of them sees `search`, `statuses`, `roles`, `teams` or the cursor.
+			// That is the invariant.
+			firstPage
+				? db
+						.select({ role: member.role, status: member.status })
+						.from(member)
+						.where(eq(member.organizationId, orgId))
+				: [],
+			firstPage
+				? db
+						.select({ role: invitation.role })
+						.from(invitation)
+						.where(
+							and(
+								eq(invitation.organizationId, orgId),
+								eq(invitation.status, "pending"),
+							),
+						)
+				: [],
 			// Team memberships of the org's MEMBERS (the same population the rows come from),
 			// so a facet count and a row count can never disagree about who is in a team.
-			db
-				.select({ name: team.name })
-				.from(teamMember)
-				.innerJoin(team, eq(teamMember.teamId, team.id))
-				.innerJoin(
-					member,
-					and(
-						eq(member.userId, teamMember.userId),
-						eq(member.organizationId, orgId),
-					),
-				)
-				.where(eq(team.organizationId, orgId)),
+			firstPage
+				? db
+						.select({ name: team.name })
+						.from(teamMember)
+						.innerJoin(team, eq(teamMember.teamId, team.id))
+						.innerJoin(
+							member,
+							and(
+								eq(member.userId, teamMember.userId),
+								eq(member.organizationId, orgId),
+							),
+						)
+						.where(eq(team.organizationId, orgId))
+				: [],
 		]);
 
-	// Personal workspace: no member rows anywhere in the org → you are the sole owner.
-	const personal = facetMembers.length === 0;
+	// The merge: both kinds in the one alphabetical order, cut to `limit`, with the exact next
+	// cursor — keyed on the sort text the DATABASE folded, so the merge and the SQL agree.
+	type Fetched =
+		| { kind: "member"; id: string; text: string; row: (typeof memberRows)[number] }
+		| { kind: "invite"; id: string; text: string; row: (typeof inviteRows)[number] };
+	const fetched: Fetched[] = [
+		...memberRows.map((row): Fetched => ({ kind: "member", id: row.id, text: row.sortText, row })),
+		...inviteRows.map((row): Fetched => ({ kind: "invite", id: row.id, text: row.sortText, row })),
+	];
+	const cut = keysetTextPageInMemory(fetched, request, (f) => ({ text: f.text, id: f.id }));
+
+	// Personal workspace: no member rows anywhere in the org → you are the sole owner. Decided on
+	// the first page, which is the only page a one-row list has.
+	const personal = firstPage && facetMembers.length === 0;
 	const syntheticOwner = personal
 		? await synthesizeOwner(viewerUserId, readAt)
 		: null;
 
-	const userIds = memberRows.map((r) => r.userId);
+	// Teams and last-active for the members ON THIS PAGE only — never the whole org.
+	const userIds = cut.rows.flatMap((f) => (f.kind === "member" ? [f.row.userId] : []));
 	const [teamRows, lastRows] = await Promise.all([
 		userIds.length
 			? db
@@ -370,28 +416,43 @@ export async function queryMembersPage(
 		if (r.last) lastByUser.set(r.userId, new Date(r.last).toISOString());
 	}
 
-	const members: MemberRow[] = syntheticOwner
+	const rows: MembersListRow[] = syntheticOwner
 		? matchesSyntheticOwner(syntheticOwner, query, statuses)
-			? [syntheticOwner]
+			? [{ ...syntheticOwner, kind: "member", isYou: syntheticOwner.userId === viewerUserId, asOf }]
 			: []
-		: memberRows.map((r) => ({
-				...r,
-				// The role the row GRANTS, not the string better-auth happened to store: the
-				// table's role <select> offers our four, and a raw `member` renders as no option.
-				role: toDisplayRole(r.role),
-				joinedAt: r.joinedAt.toISOString(),
-				teams: teamsByUser.get(r.userId) ?? [],
-				lastActiveAt: lastByUser.get(r.userId) ?? null,
-			}));
-
-	const invitations: MembersPageInvitation[] = inviteRows.map((r) => ({
-		id: r.id,
-		email: r.email,
-		role: toDisplayRole(r.role ?? DEFAULT_INVITE_ROLE),
-		inviterName: r.inviterName ?? r.inviterEmail ?? "—",
-		createdAt: r.createdAt.toISOString(),
-		expiresAt: r.expiresAt.toISOString(),
-	}));
+		: cut.rows.map((f): MembersListRow =>
+				f.kind === "member"
+					? {
+							id: f.row.id,
+							userId: f.row.userId,
+							name: f.row.name,
+							username: f.row.username,
+							email: f.row.email,
+							image: f.row.image,
+							status: f.row.status,
+							kind: "member",
+							// The role the row GRANTS, not the string better-auth happened to store: the
+							// table's role <select> offers our four, and a raw `member` renders as no option.
+							role: toDisplayRole(f.row.role),
+							joinedAt: f.row.joinedAt.toISOString(),
+							teams: teamsByUser.get(f.row.userId) ?? [],
+							lastActiveAt: lastByUser.get(f.row.userId) ?? null,
+							isYou: f.row.userId === viewerUserId,
+							asOf,
+						}
+					: {
+							kind: "invite",
+							id: f.row.id,
+							email: f.row.email,
+							role: toDisplayRole(f.row.role ?? DEFAULT_INVITE_ROLE),
+							inviterName: f.row.inviterName ?? f.row.inviterEmail ?? "—",
+							createdAt: f.row.createdAt.toISOString(),
+							expiresAt: f.row.expiresAt.toISOString(),
+							asOf,
+						},
+			);
+	const page = { rows, nextCursor: syntheticOwner ? null : cut.nextCursor };
+	if (!firstPage) return keysetListPage(page, null);
 
 	// The facet universe: every member row (or the synthetic owner) + every pending invite.
 	const universeMembers = syntheticOwner
@@ -415,19 +476,14 @@ export async function queryMembersPage(
 	);
 	const teamCounts = tally(facetTeams, (t) => t.name);
 
-	return {
-		members,
-		invitations,
-		resultCount: members.length + invitations.length,
-		total: universeMembers.length + facetInvites.length,
-		viewerUserId,
-		asOf: readAt.toISOString(),
+	return keysetListPage(page, {
 		facets: {
 			statuses: orderedOptions(statusCounts, MEMBER_ROW_STATUSES),
 			roles: asOptions(roleCounts),
 			teams: asOptions(teamCounts, (name) => name),
 		},
-	};
+		universeEmpty: universeMembers.length + facetInvites.length === 0,
+	});
 }
 
 /**
@@ -469,6 +525,7 @@ function matchesSyntheticOwner(
 	query: MembersQuery,
 	statuses: MemberRowStatus[] | undefined,
 ): boolean {
+	if (query.id && query.id !== owner.id) return false;
 	if (statuses && !statuses.includes("active")) return false;
 	if (query.roles?.length && !query.roles.includes(owner.role)) return false;
 	if (query.teams?.length) return false; // the personal owner is in no team

@@ -2,9 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Access — an inheritance info-note, a toolbar (count · Add grant), the filter bar
+// Settings · Access — an inheritance info-note, a toolbar (description · Add grant), the filter bar
 // (search · scope · roles · effect), an inline grant builder with a live preview, and the grants
-// table on the shared DataTable (sortable + paginated). The reads are the `members.grants` and `members.grantOptions` GET
+// table on the shared DataTable in SERVER mode: `members.grants` pages on the keyset contract
+// (`useKeysetList` + the table's `ListFooter`, LST-8 #7490), and there is no count pill — the console
+// carries no list counts (it used to read 0 while the first page loaded). The reads are the `members.grants` and `members.grantOptions` GET
 // procedures, prefetched by the org route (#6129); the writes are `assignGrant` / `revokeGrant`
 // through `useActionMutation`, and an `access` hint refreshes the list when someone else changes a
 // grant. The page header lives in the settings shell; without the Enterprise `customRoles`
@@ -17,7 +19,6 @@ import { useCallback, useId, useMemo, useState } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import {
-  type AccessGrantRow,
   assignGrant,
   type GrantOptions,
   revokeGrant,
@@ -30,10 +31,9 @@ import { isForbiddenRead } from "@/components/settings/members/people-reads";
 import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { roleDisplayName } from "@/lib/authz/registry";
-import {
-  useAccessGrantsPageQuery,
-  useGrantOptionsQuery,
-} from "@/lib/query/use-access-grants-query";
+import { useGrantOptionsQuery } from "@/lib/query/use-access-grants-query";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
+import type { AccessGrantListRow } from "@/lib/queries/access-grants";
 import { orpc } from "@/lib/rpc/client";
 import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
@@ -85,7 +85,6 @@ import {
 } from "./access-filters";
 import { AccessNoAccess } from "./access-no-access";
 import { Combobox } from "./combobox";
-import { SETTINGS_LIST_PAGE_SIZE } from "@/components/settings/members/members-filters";
 
 /** Every read a grant write shows in: the grants list, the role catalog's grant counts. */
 const GRANT_READS = [orpc.members.key()];
@@ -150,11 +149,11 @@ export function AccessManager({
   );
 
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState<AccessGrantRow | null>(null);
+  const [deleting, setDeleting] = useState<AccessGrantListRow | null>(null);
   // What the revoke confirmation is RENDERING, which outlives `deleting` by one close.
   const [revokingCopy, setRevokingCopy] = useState({ what: "this grant", who: "this member" });
   /** Opens the revoke confirmation for `g`, naming the grant and who holds it. */
-  const askRevoke = useCallback((g: AccessGrantRow) => {
+  const askRevoke = useCallback((g: AccessGrantListRow) => {
     setRevokingCopy({
       what: g.roleName ? roleDisplayName(g.roleName) : (g.permissionKey ?? "this grant"),
       who: g.principalLabel,
@@ -166,10 +165,13 @@ export function AccessManager({
   // both reads stay disabled; a route that already learned the viewer may not read them (forbidden)
   // does not ask again.
   //
-  // Filtered SERVER-SIDE (#4890): the whole normalized query is the input, `members.grants`
-  // narrows in SQL, and the scope/role/effect facets come back counted over the UNFILTERED
-  // grants of the same scope — so an option never disappears the moment it is selected.
-  const grantsQuery = useAccessGrantsPageQuery(query, entitled && !forbiddenAtRender);
+  // Filtered AND paged SERVER-SIDE (#4890, LST-8 #7490): the whole normalized query is the key,
+  // `members.grants` narrows in SQL a page at a time, newest first, and the first page carries the
+  // scope/role/effect facets counted over the UNFILTERED grants of the same scope — so an option
+  // never disappears the moment it is selected.
+  const grantsList = useKeysetList(orpc.members.grants, query, {
+    enabled: entitled && !forbiddenAtRender,
+  });
   // The list is BUSY while what it shows may not answer the URL and the bar: before the link has
   // been read into the store, before the first answer, while the rows are the previous query's
   // placeholder, and while a typed search is still inside its debounce — the jobs, runners,
@@ -177,14 +179,14 @@ export function AccessManager({
   // tech, and the audit's F8–F9 `settle()`, that the skeleton is loading rather than empty.
   const busy =
     !urlRead ||
-    grantsQuery.isPending ||
-    grantsQuery.isPlaceholderData ||
+    grantsList.isPending ||
+    grantsList.isPlaceholderData ||
     filters.search !== search;
   const optionsQuery = useGrantOptionsQuery(entitled && !forbiddenAtRender);
   const options: GrantOptions | null = optionsQuery.data ?? null;
   // Forbidden is its own render (B4): the route's prefetch said so, or a live refetch did (a
   // viewer whose `member:view` went away while the page was open).
-  const forbidden = forbiddenAtRender || isForbiddenRead(grantsQuery.error);
+  const forbidden = forbiddenAtRender || isForbiddenRead(grantsList.query.error);
 
   // Resolve a scoped resource id → a friendly label via the option lists.
   const resourceLabel = useMemo(() => {
@@ -207,26 +209,21 @@ export function AccessManager({
   /** The grant a revoke is in flight for: its row menu is closed until it settles. */
   const revokingId = revocation.isPending ? revocation.variables?.id : undefined;
 
-  const filtered = useMemo(
-    () => grantsQuery.data?.rows ?? [],
-    [grantsQuery.data],
-  );
-  // WHEN the rows were read comes from the payload, never from this renderer, so the server render
-  // and the hydrating client print the same "… ago" (React #418, the members page's #5377 rule).
-  const asOf = grantsQuery.data?.asOf;
-  /** Every grant in this scope — what "no grants yet" means, as opposed to "none match". */
-  const total = grantsQuery.data?.total ?? 0;
+  const filtered = grantsList.rows;
+  /** The scope holds no grant at all — "no grants yet", as opposed to "none match"; a boolean. */
+  const firstRun = grantsList.universeEmpty === true;
+  const facets = grantsList.facets;
   const counts = useMemo(
     () => ({
-      scopes: facetCounts(grantsQuery.data?.facets.scopes ?? []),
-      roles: facetCounts(grantsQuery.data?.facets.roles ?? []),
-      effects: facetCounts(grantsQuery.data?.facets.effects ?? []),
+      scopes: facetCounts(facets?.scopes ?? []),
+      roles: facetCounts(facets?.roles ?? []),
+      effects: facetCounts(facets?.effects ?? []),
     }),
-    [grantsQuery.data],
+    [facets],
   );
   const activeFilters = countActiveFilters(filters, DEFAULT_ACCESS_FILTERS);
 
-  const columns = useMemo<ColumnDef<AccessGrantRow>[]>(
+  const columns = useMemo<ColumnDef<AccessGrantListRow>[]>(
     () => [
       {
         id: "principal",
@@ -315,7 +312,9 @@ export function AccessManager({
         header: "Granted",
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-            {formatRelative(row.original.createdAt, asOf ? new Date(asOf) : undefined)}
+            {/* WHEN the row was read comes from the payload, never from this renderer, so the
+                server render and the hydrating client print the same "… ago" (React #418). */}
+            {formatRelative(row.original.createdAt, new Date(row.original.asOf))}
           </span>
         ),
       },
@@ -355,7 +354,7 @@ export function AccessManager({
         ),
       },
     ],
-    [resourceLabel, revokingId, asOf, writeReason, askRevoke],
+    [resourceLabel, revokingId, writeReason, askRevoke],
   );
 
   return (
@@ -389,20 +388,19 @@ export function AccessManager({
         <FeatureUpsell feature="access" />
       ) : forbidden ? (
         <AccessNoAccess />
-      ) : grantsQuery.isPending ? (
+      ) : grantsList.isPending ? (
         <PeopleListSkeleton facets={projectId ? 2 : 3} columns={6} />
-      ) : grantsQuery.isError && grantsQuery.data === undefined ? (
+      ) : grantsList.query.isError && grantsList.query.data === undefined ? (
         <RegionError
           title="Couldn't load access grants"
           description="The grant list didn't load. No access was changed."
-          onRetry={() => void grantsQuery.refetch()}
+          onRetry={() => void grantsList.query.refetch()}
         />
       ) : (
         <div aria-busy={busy}>
           <PageToolbar
             className="mb-4"
             description="Who is granted what, and where it applies."
-            count={grantsQuery.data?.resultCount ?? 0}
             actions={
               <DisabledReason reason={writeReason}>
                 <Button size="sm" onClick={() => setCreating(true)}>
@@ -508,14 +506,14 @@ export function AccessManager({
             <EmptyState
               className="border border-border bg-surface-sunken"
               icon={<Shield />}
-              title={total === 0 ? "No grants yet" : "No matching grants"}
+              title={firstRun ? "No grants yet" : "No matching grants"}
               description={
-                total === 0
+                firstRun
                   ? "Add a grant to bind a member or team to a role."
                   : "No grant matches these filters."
               }
               action={
-                total > 0 ? (
+                !firstRun ? (
                   <Button variant="outline" size="sm" onClick={reset}>
                     Clear filters
                   </Button>
@@ -533,10 +531,10 @@ export function AccessManager({
                so they are not read as the current one. */
             <div
               className={cn(
-                grantsQuery.isPlaceholderData && "opacity-60 transition-opacity",
+                grantsList.isPlaceholderData && "opacity-60 transition-opacity",
               )}
             >
-              <DataTable columns={columns} data={filtered} pageSize={SETTINGS_LIST_PAGE_SIZE} />
+              <DataTable columns={columns} keyset={grantsList} />
             </div>
           )}
         </div>

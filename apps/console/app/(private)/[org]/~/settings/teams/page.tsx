@@ -4,7 +4,7 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { and, eq } from "drizzle-orm";
 import { isPeopleRead } from "@/components/settings/members/people-reads";
-import { teamsQueryFromUrl } from "@/components/settings/teams/teams-filters";
+import { type NormalizedTeamsQuery, teamsQueryFromUrl } from "@/components/settings/teams/teams-filters";
 import { type TeamsGate, teamsGateForRole } from "@/components/settings/teams/teams-gate";
 import { TeamsList } from "@/components/settings/teams/teams-list";
 import { getEntitlements } from "@/lib/authz/entitlements";
@@ -39,9 +39,10 @@ async function readTeamsGate(actor: Actor): Promise<TeamsGate> {
 }
 
 /**
- * Settings · Teams route (#6129, the jobs slice's shape). Prefetches the `members.teams` read for
- * the pristine view and for the link's filters, in-process through the read router, so the first
- * paint is the list and the browser fetches nothing on mount.
+ * Settings · Teams route (#6129, the jobs slice's shape). Prefetches the FIRST PAGE of the
+ * `members.teams` walk for the pristine view and for the link's filters, under the infinite key
+ * `useKeysetList` builds (LST-8 #7490), in-process through the read router, so the first paint is
+ * the list and the browser fetches nothing on mount.
  *
  * The `teams` entitlement is resolved HERE, from the same actor, and handed down: the workspace
  * store's copy is `null` until it loads after hydration, so a client-side gate showed every org
@@ -60,11 +61,16 @@ export default async function TeamsPage({
 	const { teams } = getEntitlements(actor);
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
-	const [gate] = await Promise.all([
-		readTeamsGate(actor),
-		queryClient.prefetchQuery(rpc.members.teams.queryOptions({ input: {} })),
-		queryClient.prefetchQuery(rpc.members.teams.queryOptions({ input: filtered })),
-	]);
+	/** The first page of one filter's walk, under the infinite key `useKeysetList` reads. */
+	const firstPage = (filter: NormalizedTeamsQuery) =>
+		queryClient.prefetchInfiniteQuery(
+			rpc.members.teams.infiniteOptions({
+				input: (cursor: string | null) => (cursor === null ? filter : { ...filter, cursor }),
+				initialPageParam: null,
+				getNextPageParam: (last) => last.nextCursor,
+			}),
+		);
+	const [gate] = await Promise.all([readTeamsGate(actor), firstPage({}), firstPage(filtered)]);
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isPeopleRead })}>

@@ -30,8 +30,10 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
-import { ilike, or } from "drizzle-orm";
+import { ilike, or, SQL, sql } from "drizzle-orm";
 import { queryTeamsPage, TEAM_SIZE_BUCKETS, teamSizeBucket } from "@/lib/queries/teams";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { decodeKeysetTextCursor } from "@/lib/queries/keyset";
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -84,9 +86,9 @@ describe("queryTeamsPage", () => {
 				members: [{ userId: "u1", name: "Ada Lovelace", initials: "AD" }],
 			},
 		]);
-		expect(page.resultCount).toBe(1);
-		expect(page.total).toBe(4);
-		expect(page.facets.sizes).toEqual([
+		expect(page.nextCursor).toBeNull();
+		expect(page.universeEmpty).toBe(false);
+		expect(page.facets?.sizes).toEqual([
 			{ value: "empty", label: null, count: 2 },
 			{ value: "small", label: null, count: 1 },
 			{ value: "large", label: null, count: 1 },
@@ -96,7 +98,7 @@ describe("queryTeamsPage", () => {
 	it("keeps a zero bucket in the facet — a bucket nobody is in is still a fact", async () => {
 		seed([], [{ teamId: "t1", memberCount: 2 }]);
 		const page = await queryTeamsPage("org-1");
-		expect(page.facets.sizes.map((o) => [o.value, o.count])).toEqual([
+		expect(page.facets?.sizes.map((o) => [o.value, o.count])).toEqual([
 			["empty", 0],
 			["small", 1],
 			["large", 0],
@@ -175,5 +177,68 @@ describe("queryTeamsPage", () => {
 		);
 		const page = await queryTeamsPage("org-1");
 		expect(page.rows[1].members).toEqual([]);
+	});
+
+	// ── the keyset walk (LST-8 #7490) ─────────────────────────────────────────────────────
+	describe("pages alphabetically on the keyset contract's text mode", () => {
+		const dialect = new PgDialect({ casing: "snake_case" });
+		/** A recorded call's SQL fragments, rendered as the service db renders them. */
+		const render = (args: unknown[] | undefined) =>
+			dialect.sqlToQuery(sql.join((args ?? []).filter((a): a is SQL => a instanceof SQL), sql`, `));
+		/** Seeds result sets in await order: rows, then (first page) facets, then hydration. */
+		const seedSets = (...sets: unknown[][]) => {
+			const { db, chains } = mockChainDb(sets);
+			getServiceDb.mockReturnValue(db);
+			return chains;
+		};
+		const team = (id: string, sortText: string) => ({ id, name: sortText, sortText, memberCount: 1 });
+
+		it("orders by lower(name) COLLATE \"C\", then id, ascending, and reads limit + 1", async () => {
+			const chains = seedSets([], []);
+			await queryTeamsPage("org-1", {}, { limit: 2 });
+			expect(render(chains[0]?.argsOf("orderBy")).sql).toBe(
+				'lower("team"."name") collate "C" asc, "team"."id" asc',
+			);
+			expect(chains[0]?.argsOf("limit")).toEqual([3]);
+		});
+
+		it("cuts at the limit and carries the LAST kept row's name and id — ties broken by id", async () => {
+			seedSets([team("aaaa", "core"), team("bbbb", "core"), team("cccc", "ops")], []);
+			const page = await queryTeamsPage("org-1", {}, { limit: 2 });
+			expect(page.rows.map((r) => r.id)).toEqual(["aaaa", "bbbb"]);
+			expect(decodeKeysetTextCursor(page.nextCursor ?? "", "text")).toEqual({ text: "core", id: "bbbb" });
+		});
+
+		it("says null at the end exactly — a full last page costs no empty read", async () => {
+			seedSets([team("aaaa", "a"), team("bbbb", "b")], []);
+			const page = await queryTeamsPage("org-1", {}, { limit: 2 });
+			expect(page.nextCursor).toBeNull();
+		});
+
+		it("applies the text cursor as a row-value predicate and skips the facet pass on a later page", async () => {
+			const chains = seedSets([]);
+			const cursor = { text: "core", id: "00000000-0000-4000-8000-0000000000bb" };
+			const page = await queryTeamsPage("org-1", {}, { limit: 50, cursor });
+			const where = render(chains[0]?.argsOf("where"));
+			expect(where.sql).toContain('(lower("team"."name") collate "C", "team"."id") > ($');
+			expect(where.params).toContain("core");
+			expect(chains.filter((c) => c.awaited)).toHaveLength(1);
+			expect(page.facets).toBeNull();
+			expect(page.universeEmpty).toBeNull();
+		});
+
+		it("reads one team by id — the deep link — inside the org scope", async () => {
+			const id = "00000000-0000-4000-8000-0000000000cc";
+			const chains = seedSets([team(id, "far down the alphabet")], []);
+			const page = await queryTeamsPage("org-1", { id });
+			expect(page.rows.map((r) => r.id)).toEqual([id]);
+			expect(render(chains[0]?.argsOf("where")).params).toEqual(expect.arrayContaining(["org-1", id]));
+		});
+
+		it("says the universe is empty on a first page over nothing — a boolean, never a count", async () => {
+			seedSets([], []);
+			const page = await queryTeamsPage("org-1");
+			expect(page.universeEmpty).toBe(true);
+		});
 	});
 });
