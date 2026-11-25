@@ -23,7 +23,13 @@ export const OPERATOR_ALERT_EVENT = "system.platform.payment_needs_support";
  * threshold rather than a customer so it is never collapsed with that customer's other alerts.
  */
 interface OperatorAlertSubject {
-	type: "stripe_subscription" | "stripe_customer" | "user" | "tax_threshold";
+	type:
+		| "stripe_subscription"
+		| "stripe_customer"
+		| "paddle_subscription"
+		| "paddle_transaction"
+		| "user"
+		| "tax_threshold";
 	id: string;
 }
 
