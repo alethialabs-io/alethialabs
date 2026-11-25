@@ -17,6 +17,12 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import {
+	AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM,
+	AGENT_ACCESS_DISABLED_SYSTEM,
+	AGENT_ACCESS_REFUSED_OUTPUT,
+} from "@/lib/agent/kill-switch";
+import { AGENT_ACCESS_DISABLED_MESSAGE } from "@/lib/approvals/policy";
 
 vi.mock("server-only", () => ({}));
 /** A tool part of a UI message, static or dynamic. */
@@ -123,6 +129,10 @@ interface World {
 	modelPicks: (string | undefined)[];
 	/** `holdRequest` throws: a throw inside the stream's execute AFTER the attempt finalized. */
 	holdThrows: boolean;
+	/** The org's kill switch (org_agent_policy.agent_access_enabled), as the guard reads it. */
+	agentAccessEnabled: boolean;
+	/** The queries the support route's documentation search ran. */
+	docSearches: string[];
 }
 
 const world = vi.hoisted(
@@ -155,6 +165,8 @@ const world = vi.hoisted(
 		agents: new Map(),
 		modelPicks: [],
 		holdThrows: false,
+		agentAccessEnabled: true,
+		docSearches: [],
 	}),
 );
 
@@ -224,8 +236,11 @@ vi.mock("@/lib/ai/tools", async () => {
 });
 vi.mock("@/lib/ai/tools/support", async () => {
 	const { getInjectedActor } = await import("@/lib/authz/actor-context");
+	// The real mark (lib/agent/support-surface.ts), applied as the real builder applies it: the
+	// documentation search and the case proposal are marked, the account read is not.
+	const { markSupportSurfaceTools } = await import("@/lib/agent/support-surface");
 	return {
-		/** The test tool set of the support route: one server read tool and its one client tool. */
+		/** The test tool set of the support route: one server read tool, the docs search and its one client tool. */
 		buildSupportTools: () => ({
 			list_projects: tool({
 				inputSchema: z.object({}),
@@ -234,7 +249,16 @@ vi.mock("@/lib/ai/tools/support", async () => {
 					return { projects: [] };
 				},
 			}),
-			create_support_case: tool({ inputSchema: z.object({ subject: z.string() }) }),
+			...markSupportSurfaceTools({
+				search_docs: tool({
+					inputSchema: z.object({ query: z.string() }),
+					execute: async ({ query }) => {
+						world.docSearches.push(query);
+						return { results: [] };
+					},
+				}),
+				create_support_case: tool({ inputSchema: z.object({ subject: z.string() }) }),
+			}),
 		}),
 	};
 });
@@ -261,7 +285,7 @@ vi.mock("@/lib/billing/ai-quota", async (importOriginal) => ({
 // parameters the route actually bound (thread + owner; project + org), not a guess.
 vi.mock("@/lib/approvals/context", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/approvals/context")>()),
-	readAgentPolicy: async () => ({ agentAccessEnabled: true }),
+	readAgentPolicy: async () => ({ agentAccessEnabled: world.agentAccessEnabled }),
 }));
 vi.mock("@/lib/db", async () => {
 	const schema = await import("@/lib/db/schema");
@@ -285,7 +309,7 @@ vi.mock("@/lib/db", async () => {
 	};
 	return {
 		withScope: async (_scope: unknown, fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
-		// The kill switch's read (lib/agent/kill-switch.ts); readAgentPolicy is faked below as on.
+		// The kill switch's read (lib/agent/kill-switch.ts); readAgentPolicy above answers world.agentAccessEnabled.
 		withActorScope: async (_actor: unknown, fn: (t: object) => Promise<unknown>) => fn({}),
 		getServiceDb: () => ({
 			select: () => ({
@@ -963,6 +987,8 @@ beforeEach(() => {
 	]);
 	world.modelPicks = [];
 	world.holdThrows = false;
+	world.agentAccessEnabled = true;
+	world.docSearches = [];
 	model.scripts = [];
 	model.prompts = [];
 	model.options = [];
@@ -1211,7 +1237,7 @@ describe("the support route, for a request with no threadId: today's path, uncha
 		expect(threads().size).toBe(0);
 		expect(holdList()).toHaveLength(0);
 		expect(promptText(0)).toContain("SUPPORT PERSONA");
-		expect(offeredTools(0)).toEqual(["create_support_case", "list_projects"]);
+		expect(offeredTools(0)).toEqual(["create_support_case", "list_projects", "search_docs"]);
 	});
 
 	it("a null threadId is threadless too, and a budget refusal there is 402 with the budget body", async () => {
@@ -1492,5 +1518,54 @@ describe("the shared route body's remaining arms, through the slice 8 routes", (
 		expect(model.options).toHaveLength(3);
 		expect(model.options[1]?.providerOptions?.anthropic).toBeDefined();
 		expect(model.options[2]?.providerOptions?.anthropic).toBeDefined();
+	});
+});
+
+describe("the org's kill switch on the support route (#7646)", () => {
+	it("agent access off: the docs search runs and the case proposal is offered, the account read is refused, and the prompt does not say support is off", async () => {
+		world.agentAccessEnabled = false;
+		seedSupportThread([]);
+		model.scripts.push(
+			[
+				{ type: "stream-start", warnings: [] },
+				{ type: "tool-call", toolCallId: "d1", toolName: "search_docs", input: JSON.stringify({ query: "connect aws" }) },
+				{ type: "tool-call", toolCallId: "r1", toolName: "list_projects", input: "{}" },
+				{ type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage: USAGE },
+			],
+			callParts("create_support_case", "c1", { subject: "Provision fails" }),
+		);
+		const res = await postSupport(body([userMsg("u1", "how do I connect aws?")], { turnId: "u1", baseRevision: 1 }));
+		expect(res.status).toBe(200);
+		const chunks = await chunksOf(res);
+		expect(world.docSearches).toEqual(["connect aws"]);
+		expect(world.toolActors).toEqual([]);
+		expect(offeredTools(0)).toEqual(["create_support_case", "list_projects", "search_docs"]);
+		const outputs = chunks.filter((c) => c.type === "tool-output-available");
+		expect(outputs).toEqual([
+			expect.objectContaining({ toolCallId: "d1", output: { results: [] } }),
+			expect.objectContaining({ toolCallId: "r1", output: AGENT_ACCESS_REFUSED_OUTPUT }),
+		]);
+		// The proposal reached the client as a card awaiting the person.
+		expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-input-available", toolCallId: "c1", toolName: "create_support_case" }));
+		expect(promptText(0)).toContain(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM);
+		expect(promptText(0)).not.toContain(AGENT_ACCESS_DISABLED_MESSAGE);
+	});
+
+	it("agent access on: the support prompt carries no notice", async () => {
+		seedSupportThread([]);
+		model.scripts.push(speakParts("ok"));
+		await chunksOf(await postSupport(body([userMsg("u1", "hi")], { turnId: "u1", baseRevision: 1 })));
+		expect(promptText(0)).not.toContain(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM);
+	});
+
+	it("agent access off on an agent identity's route: its read is refused and the prompt says agent access is off", async () => {
+		world.agentAccessEnabled = false;
+		model.scripts.push(callParts("list_projects", "r1", {}), speakParts("off"));
+		const res = await postAgent(body([userMsg("u1", "costs?")], { turnId: "u1", baseRevision: 1 }, { mode: "act" }));
+		const chunks = await chunksOf(res);
+		expect(world.toolActors).toEqual([]);
+		expect(chunks).toContainEqual(expect.objectContaining({ type: "tool-output-available", toolCallId: "r1", output: AGENT_ACCESS_REFUSED_OUTPUT }));
+		expect(promptText(0)).toContain(AGENT_ACCESS_DISABLED_SYSTEM);
+		expect(promptText(0)).not.toContain(AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM);
 	});
 });

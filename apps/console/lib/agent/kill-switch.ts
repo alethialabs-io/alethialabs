@@ -10,6 +10,12 @@
 // model starts pass through it, so one wrapper covers them all and no tool can be added that skips it.
 // The decision itself is policy.ts's `agentAccessRefusal`, the same one table 4.2 answers with.
 //
+// ONE EXEMPTION (#7646): on the support surface, the tools marked in lib/agent/support-surface.ts
+// (the documentation search and the support-case proposal) run while agent access is off, because
+// they cannot touch infrastructure. The caller names the surface; the exemption needs the support
+// surface AND the marked tool object, so the same tool on the org agent is refused, and an unmarked
+// tool on a support turn (its account reads) is refused.
+//
 // When it is read:
 //   - At the start of the turn. Off: the client tools (no `execute`: a proposal the browser renders)
 //     are not offered at all, and the system prompt says agent access is off, so the model answers
@@ -26,6 +32,7 @@ import { readAgentPolicy } from "@/lib/approvals/context";
 import { AGENT_ACCESS_DISABLED_MESSAGE, agentAccessRefusal, isAgentCredential } from "@/lib/approvals/policy";
 import type { Actor } from "@/lib/authz/types";
 import { withActorScope } from "@/lib/db";
+import { type AgentSurface, exemptFromAgentAccessSwitch } from "./support-surface";
 
 /** What a refused tool call returns to the model: one sentence it relays to the person. */
 export interface AgentAccessRefusedOutput {
@@ -41,8 +48,22 @@ export const AGENT_ACCESS_REFUSED_OUTPUT: AgentAccessRefusedOutput = {
 	reason: AGENT_ACCESS_DISABLED_MESSAGE,
 };
 
-/** The sentence added to the system prompt of a turn that starts with agent access off. */
+/** The sentence added to the system prompt of an agent turn that starts with agent access off. */
 export const AGENT_ACCESS_DISABLED_SYSTEM = `${AGENT_ACCESS_DISABLED_MESSAGE} Every tool is refused for this organization. Tell the user this in one sentence and do not call tools.`;
+
+/**
+ * The sentence added instead on the support surface: the support chat keeps working, so it must not
+ * tell the person that it is turned off. Only its account reads are refused.
+ */
+export const AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM =
+	"In this organization the tools that read the user's account are unavailable, by an owner's setting. " +
+	"You can still search the documentation and propose a support case. Do not call the other tools: " +
+	"answer from the documentation, and propose a support case when the problem needs someone to look at the account.";
+
+/** The sentence a turn on `surface` that starts with agent access off adds to its system prompt. */
+export function agentAccessDisabledSystem(surface: AgentSurface): string {
+	return surface === "support" ? AGENT_ACCESS_DISABLED_SUPPORT_SYSTEM : AGENT_ACCESS_DISABLED_SYSTEM;
+}
 
 /** How the guard reads the switch. A seam for tests; production reads org_agent_policy. */
 export interface KillSwitchDeps {
@@ -70,20 +91,26 @@ export interface GuardedTools {
 }
 
 /**
- * `tools` as `actor` may run them under the kill switch. For a credential the switch does not bind
- * (a person's session), `tools` unchanged. For an agent: off at the start drops every client tool;
- * every server tool is wrapped so it reads the switch before it runs and returns
+ * `tools` as `actor` may run them on `surface` under the kill switch. For a credential the switch does
+ * not bind (a person's session), `tools` unchanged. For an agent: a tool exempt on `surface`
+ * (lib/agent/support-surface.ts) is passed through unchanged; otherwise off at the start drops every
+ * client tool, and every server tool is wrapped so it reads the switch before it runs and returns
  * {@link AGENT_ACCESS_REFUSED_OUTPUT} instead while it is off.
  */
 export async function guardAgentTools(
 	tools: ToolSet,
 	actor: Actor,
+	surface: AgentSurface,
 	deps: KillSwitchDeps = defaultKillSwitchDeps,
 ): Promise<GuardedTools> {
 	if (!isAgentCredential(actor.credential)) return { tools, disabledAtStart: false };
 	const disabledAtStart = await agentAccessRefused(actor, deps);
 	const guarded: ToolSet = {};
 	for (const [name, def] of Object.entries(tools)) {
+		if (exemptFromAgentAccessSwitch(def, surface)) {
+			guarded[name] = def;
+			continue;
+		}
 		const run = def.execute;
 		if (!run) {
 			// A client tool: its output comes from the browser, so there is no call here to refuse. Off
