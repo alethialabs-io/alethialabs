@@ -55,9 +55,14 @@ jobs:
       - name: Open or update the Version packages PR
         uses: changesets/action@v2
         with:
-          version: pnpm changeset version
-          title: "chore(release): version the @alethialabs packages"
-          commit: "chore(release): version the @alethialabs packages"
-          createGithubReleases: false
+          # v2 renamed every input (version -> version-script, title -> pr-title, ...) and reads the
+          # token from `github-token`, not from GITHUB_TOKEN. The app token is what makes the PR
+          # trigger CI; the default GITHUB_TOKEN would open a PR no workflow runs on.
+          version-script: pnpm changeset version
+          pr-title: "chore(release): version the @alethialabs packages"
+          commit-message: "chore(release): version the @alethialabs packages"
+          create-github-releases: false
+          push-git-tags: false
+          github-token: ${{ steps.app_token.outputs.token }}
         env:
           GITHUB_TOKEN: ${{ steps.app_token.outputs.token }}
