@@ -25,6 +25,7 @@
 		"---Security & access---",
 		"security",
 		"authentication",
+		"cluster-access",
 		"connectors",
 		"access-control",
 		"elench"
