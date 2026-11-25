@@ -70,7 +70,15 @@
 #     (CHANGELOG.md by default) and each package's `extra-files`. A release PR carrying anything
 #     else — code, a workflow, the config itself, a rename — is refused. The list is read from
 #     `gh pr view --json files,changedFiles`, and a list shorter than changedFiles (gh reads at most
-#     100) is refused rather than judged on the part it saw.
+#     100) is refused rather than judged on the part it saw;
+#   · dev holds NO commit touching that component's package that main lacks. release-please cuts
+#     a component's commits at its release commit by POSITION in a date-ordered walk, not by
+#     ancestry, so a dev commit committed before the release PR merges but promoted after it is
+#     never seen — it is in no release PR, and when it is the only change, none opens
+#     (scripts/release-cursor.sh, docs/releases/README.md "A release can miss a commit"). Read
+#     from the API: the newest dev commits for the package path, each asked `compare/main...<sha>`
+#     until one is on main. Waiting costs nothing: the next promotion adds those commits to this
+#     same release PR.
 #
 # Fail-closed matters here. The failure modes for resolving a PR are "offline", "not a PR
 # number" and "wrong repo", and in every one the safe answer is to refuse: an irreversible
@@ -283,6 +291,8 @@ main() {
 	if [ "$kind" = release ]; then
 		# @mut release-rule
 		require_release_pr
+		# @mut release-cursor-rule
+		require_release_cursor
 	fi
 	# @mut merge-green
 	require_green
@@ -387,6 +397,47 @@ require_release_pr() {
 	fi
 }
 
+# require_release_cursor — a component's release PR merges only while every dev commit touching
+# that component is already on main (reads main's locals). See the header for why.
+RELEASE_CURSOR_DEPTH=30
+require_release_cursor() {
+	local comp pkg base_path shas sha status n=0 pending=""
+	comp="${head##*--components--}"
+	pkg="$(jq -r --arg c "$comp" '.packages // {} | to_entries[]
+		| select(.key != "." and (.value.component // (.key | split("/") | last)) == $c) | .key' \
+		"${CLAUDE_PROJECT_DIR:-.}/release-please-config.json" 2>/dev/null)"
+	if [ -z "$pkg" ] || [ "$(printf '%s\n' "$pkg" | wc -l | tr -d ' ')" != 1 ]; then
+		# @mut release-cursor-pkg
+		deny "release PR #$pr: no single package in release-please-config.json has component \`$comp\`, so the commits it would release cannot be checked."
+	fi
+	base_path='repos/{owner}/{repo}'
+	[ -z "$repo" ] || base_path="repos/$repo"
+	if ! shas="$(gh api "$base_path/commits?sha=dev&path=$pkg&per_page=$RELEASE_CURSOR_DEPTH" --jq '.[].sha' 2>/dev/null)"; then
+		# @mut release-cursor-list
+		deny "release PR #$pr: could not list dev's commits under $pkg (offline, or gh failed)."
+	fi
+	for sha in $shas; do
+		n=$((n + 1))
+		status="$(gh api "$base_path/compare/main...$sha" --jq .status 2>/dev/null)"
+		case "$status" in
+		identical | behind) break ;;
+		ahead | diverged) pending="$pending ${sha:0:9}" ;;
+		*)
+			# @mut release-cursor-compare
+			deny "release PR #$pr: could not tell whether dev commit ${sha:0:9} is on main (compare says \`${status:-unreadable}\`)."
+			;;
+		esac
+		if [ "$n" -ge "$RELEASE_CURSOR_DEPTH" ]; then
+			# @mut release-cursor-depth
+			deny "release PR #$pr: the newest $RELEASE_CURSOR_DEPTH dev commits under $pkg are all missing from main, so how many more there are cannot be seen."
+		fi
+	done
+	if [ -n "$pending" ]; then
+		# @mut release-cursor-pending
+		deny "release PR #$pr: dev holds commits under $pkg that main does not (${pending# }). Merging now would hide them from release-please for good — it cuts at this release commit by date, and they would be promoted after it. Merge the next promotion first; release-please adds them to this PR. (scripts/release-cursor.sh pending origin/main origin/dev)"
+	fi
+}
+
 # require_green — every check passed and every release-gate leg passed for the PR's head (reads
 # main's locals). The one copy, for a promotion and a release PR alike.
 require_green() {
@@ -449,7 +500,10 @@ YML
 { "packages": {
     "apps/cli": { "release-type": "simple", "component": "cli", "changelog-path": "CHANGELOG.md" },
     "apps/runner": { "component": "runner",
-      "extra-files": [ "internal/version.txt", { "type": "generic", "path": "/deploy/runner-version.yaml" } ] } } }
+      "extra-files": [ "internal/version.txt", { "type": "generic", "path": "/deploy/runner-version.yaml" } ] },
+    "apps/edge": { "component": "edge" }, "apps/nolist": { "component": "nolist" },
+    "apps/nocmp": { "component": "nocmp" }, "apps/deep": { "component": "deep" },
+    "apps/fresh": {}, "apps/dup1": { "component": "dup" }, "apps/dup2": { "component": "dup" } } }
 JSON
 	local G Q C S
 	G='{"name":"Release gate (hero)","bucket":"pass","workflow":"Release gate"}'
@@ -489,6 +543,12 @@ JSON
 1813	[$C,$G,$Q]
 1814	[$C,$G,$Q]
 1815	[$C,$G]
+1816	[$C,$G,$Q]
+1817	[$C,$G,$Q]
+1818	[$C,$G,$Q]
+1819	[$C,$G,$Q]
+1820	[$C,$G,$Q]
+1821	[$C,$G,$Q]
 1900	[$C,$S,$G,$Q]
 1901	[$C,$G,$Q]
 1902	[$C,$G,$Q]
@@ -523,6 +583,12 @@ EOF
 1812	{$A,"changedFiles":2,"files":[$M,{"path":"apps/cli/sub/CHANGELOG.md","changeType":"MODIFIED"}]}
 1814	{$A,"changedFiles":2,"files":[$M,{"path":"release-please-config.json","changeType":"MODIFIED"}]}
 1815	{$A,"changedFiles":2,"files":[$M,$L]}
+1816	{$A,"changedFiles":2,"files":[$M,{"path":"apps/edge/CHANGELOG.md","changeType":"MODIFIED"}]}
+1817	{$A,"changedFiles":2,"files":[$M,{"path":"apps/nolist/CHANGELOG.md","changeType":"MODIFIED"}]}
+1818	{$A,"changedFiles":2,"files":[$M,{"path":"apps/nocmp/CHANGELOG.md","changeType":"MODIFIED"}]}
+1819	{$A,"changedFiles":2,"files":[$M,{"path":"apps/deep/CHANGELOG.md","changeType":"MODIFIED"}]}
+1820	{$A,"changedFiles":2,"files":[$M,{"path":"apps/fresh/CHANGELOG.md","changeType":"MODIFIED"}]}
+1821	{$A,"changedFiles":2,"files":[$M,{"path":"apps/dup1/CHANGELOG.md","changeType":"MODIFIED"}]}
 1900	{$A,"changedFiles":2,"files":[$M,$L]}
 1901	{"author":{"is_bot":false,"login":"alethia-labs-ci"},"changedFiles":2,"files":[$M,$L]}
 1902	{$A,"changedFiles":2,"files":[$M,$L]}
@@ -577,6 +643,18 @@ aaa1624	behind
 aaa1700	behind
 aaa1911	behind
 EOF
+	# Release cursor: `gh api …/commits?sha=dev&path=<pkg>…` prints that package's newest dev commits
+	# (apps/nolist: the lookup fails), and `gh api …/compare/main...<sha> --jq .status` says whether
+	# each is on main (x1: the lookup fails). apps/edge holds two unpromoted commits; apps/deep holds
+	# more than the guard reads; apps/fresh has none at all.
+	{
+		printf 'apps/cli\tc1 c2\napps/runner\tr1\napps/edge\te1 e2 e3\napps/nocmp\tx1\napps/fresh\t\n'
+		printf 'apps/deep\t'; for i in $(seq 1 31); do printf 'd%s ' "$i"; done; printf '\n'
+	} >"$stub/devlog.tsv"
+	{
+		printf 'c1\tbehind\nc2\tbehind\nr1\tidentical\ne1\tdiverged\ne2\tahead\ne3\tbehind\n'
+		for i in $(seq 1 31); do printf 'd%s\tdiverged\n' "$i"; done
+	} >"$stub/onmain.tsv"
 	# `gh pr view N --json …` prints "<base> <head> <sha>"; `gh pr checks N --json …` prints that
 	# PR's checks (1616: the lookup fails). PR 1700 exists ONLY in o/other, so it is found only
 	# when the repository flag reaches the lookup.
@@ -584,6 +662,17 @@ EOF
 #!/usr/bin/env bash
 if [ "\$1" = api ]; then
 	case "\$2" in
+	'repos/{owner}/{repo}/commits?sha=dev&path='*'&per_page='*)
+		p="\${2#*path=}"
+		line="\$(grep "^\${p%%&*}	" "$stub/devlog.tsv")" || exit 1
+		for c in \${line#*	}; do echo "\$c"; done
+		exit 0
+		;;
+	'repos/{owner}/{repo}/compare/main...'*)
+		line="\$(grep "^\${2##*...}	" "$stub/onmain.tsv")" || exit 1
+		printf '%s\n' "\${line#*	}"
+		exit 0
+		;;
 	'repos/{owner}/{repo}/compare/dev...'* | repos/o/other/compare/dev...*) ;;
 	*) exit 1 ;;
 	esac
@@ -610,6 +699,12 @@ if [ "\$2" = view ]; then
 	1804) echo "main release-please--branches--staging--components--cli aaa1804" ;;
 	1810) echo "staging \${R}cli aaa1810" ;;
 	1811) echo "main \${R}runner aaa1811" ;;
+	1816) echo "main \${R}edge aaa1816" ;;
+	1817) echo "main \${R}nolist aaa1817" ;;
+	1818) echo "main \${R}nocmp aaa1818" ;;
+	1819) echo "main \${R}deep aaa1819" ;;
+	1820) echo "main \${R}fresh aaa1820" ;;
+	1821) echo "main \${R}dup aaa1821" ;;
 	1535) echo "dev feat/x 1535aaa" ;;
 	1600) echo "staging feat/x 1600aaa" ;;
 	1601) echo "main feat/x 1601aaa" ;;
@@ -743,6 +838,18 @@ STUB
 	t block 'gh pr merge 1800 --merge --admin --match-head-commit aaa1800'
 	t block 'gh pr merge 1800 --merge --delete-branch --match-head-commit aaa1800'
 	t block 'gh pr merge 1800 --merge --match-head-commit aaa1800 && gh pr merge 1811 --merge --match-head-commit aaa1811'
+	# the release cursor: dev must hold nothing under the package that main lacks
+	t block 'gh pr merge 1816 --merge --match-head-commit aaa1816'   # dev holds two unpromoted edge commits
+	says 'dev holds commits under apps/edge that main does not (e1 e2)' 'the unpromoted commits are named'
+	t block 'gh pr merge 1817 --merge --match-head-commit aaa1817'   # the dev commit list failed → fail closed
+	says 'could not list dev' 'a failed commit listing is its own refusal'
+	t block 'gh pr merge 1818 --merge --match-head-commit aaa1818'   # a compare failed → fail closed
+	says 'could not tell whether dev commit x1' 'a failed compare is named'
+	t block 'gh pr merge 1819 --merge --match-head-commit aaa1819'   # more unpromoted commits than the guard reads
+	says 'are all missing from main' 'a listing with no end in sight is refused for that reason'
+	t allow 'gh pr merge 1820 --merge --match-head-commit aaa1820'   # no dev commit under the package at all; component from the path
+	t block 'gh pr merge 1821 --merge --match-head-commit aaa1821'   # two packages claim the component
+	says 'no single package' 'an ambiguous component is refused'
 
 	# ── pinned release/<sha> → main promotions (maintainer decision 2026-11-22) ──
 	t allow 'gh pr merge 1900 --merge --match-head-commit aaa1900'   # green, the app's PR, head on dev (behind)
