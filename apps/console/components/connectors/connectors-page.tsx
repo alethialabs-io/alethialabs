@@ -230,7 +230,8 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 		() => listedConnectors(catalog, offeredClouds),
 		[catalog, offeredClouds],
 	);
-	// The rows, the facet counts and the total. They are the server's while every catalog row is
+	// The rows, the facet counts and the catalog's size (which only tells the two empty states
+	// apart — it is never drawn). They are the server's while every catalog row is
 	// listed. When one was left out they are rebuilt from the listed rows for the SAME query, by
 	// the same pure builder the server ran — so a count never includes a connector that is not on
 	// the board, and the facets still come from the unfiltered (listed) universe.
@@ -429,11 +430,11 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 		<>
 			<div className="space-y-6">
 				{/* No title — the sidebar entry you clicked and the breadcrumb both say
-				    "Connectors". What is left is the count and the line that says what a
-				    connector IS, neither of which the breadcrumb carries. */}
+				    "Connectors". What is left is the line that says what a connector IS, which the
+				    breadcrumb does not carry. No count: the catalog is a bounded list
+				    (list-standard/connectors.json) and the standard draws no list-size pill. */}
 				<PageToolbar
 					description={`Credentials Alethia acts through — ${CLOUD_ACCOUNT.many}, git providers, registries, chart repos, secret stores, observability sinks and DNS.`}
-					count={rows.length}
 				/>
 
 				{/* Said once for the page: every Connect below is drawn disabled for this viewer, and a
@@ -523,7 +524,7 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 									<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
 										<Icon className="size-3.5" aria-hidden />
 									</span>
-									<SectionHeading level={2} title={group.label} count={items.length} />
+									<SectionHeading level={2} title={group.label} />
 									<a
 										href={group.docsHref}
 										target="_blank"
@@ -614,7 +615,7 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 							className="border"
 							icon={<SearchX />}
 							title="No connectors match"
-							description={`None of the ${total} connectors in the catalog match these filters.`}
+							description="None of the connectors in the catalog match these filters."
 							action={
 								<Button variant="outline" onClick={resetFilters}>
 									Reset filters
