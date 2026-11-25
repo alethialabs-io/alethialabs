@@ -84,22 +84,59 @@ export function isBillingActive(status: BillingStatus): boolean {
 	return status === "active" || status === "trialing";
 }
 
+/** The billing-row columns naming the ORG-PLAN subscription, one per payment provider. */
+export interface PlanSubscriptionIds {
+	stripeSubscriptionId: string | null;
+	paddleSubscriptionId: string | null;
+}
+
+/** The billing-row columns naming the standalone AI subscription, one per payment provider. */
+export interface AiSubscriptionIds {
+	aiStripeSubscriptionId: string | null;
+	aiPaddleSubscriptionId: string | null;
+}
+
 /**
- * True when a manual / off-Stripe grant has lapsed — the off-Stripe analogue of a
+ * Whether the org-plan slot is backed by a provider subscription (Stripe or Paddle) — a provider's
+ * webhook maintains its status and renewal date, so nothing local may lapse it.
+ */
+export function hasPlanSubscription(row: PlanSubscriptionIds): boolean {
+	return row.stripeSubscriptionId != null || row.paddleSubscriptionId != null;
+}
+
+/** Whether the standalone AI slot is backed by a provider subscription (Stripe or Paddle). */
+export function hasAiSubscription(row: AiSubscriptionIds): boolean {
+	return row.aiStripeSubscriptionId != null || row.aiPaddleSubscriptionId != null;
+}
+
+/**
+ * Whether the row holds ANY provider subscription — any of the four subscription id columns (plan or
+ * AI, Stripe or Paddle). A grant decision about ONE slot must ask that slot's helper instead
+ * (`hasPlanSubscription` / `hasAiSubscription`): an AI subscription does not maintain the plan's
+ * `currentPeriodEnd`, so reading it as "the plan is provider-backed" would let an off-provider plan
+ * grant on the same row run forever.
+ */
+export function hasProviderSubscription(row: PlanSubscriptionIds & AiSubscriptionIds): boolean {
+	return hasPlanSubscription(row) || hasAiSubscription(row);
+}
+
+/**
+ * True when a manual / off-provider grant has lapsed — the off-provider analogue of a
  * non-renewed subscription. Enterprise is invoiced off-Stripe and marked paid directly
  * (scripts/set-org-plan.mjs / the platform operator plane), writing `currentPeriodEnd`
  * to the contract's term end. Nothing else reads that column, so without this check such
- * a grant would stay paid forever. Scoped to grants with NO Stripe subscription so a real
- * Stripe customer — whose renewal date the webhook maintains — is never affected (a late
- * renewal webhook must never flicker a paying customer down to community mid-cycle). An
- * open-ended grant (`currentPeriodEnd` null) never lapses.
+ * a grant would stay paid forever. Scoped to grants with NO plan subscription at any provider
+ * (`hasPlanSubscription`: Stripe or Paddle) so a real paying customer — whose renewal date the
+ * provider's webhook maintains — is never affected (a late renewal webhook must never flicker a
+ * paying customer down to community mid-cycle). An open-ended grant (`currentPeriodEnd` null)
+ * never lapses.
  */
 export function isManualGrantExpired(
-	billing: { stripeSubscriptionId: string | null; currentPeriodEnd: Date | null },
+	billing: PlanSubscriptionIds & { currentPeriodEnd: Date | null },
 	now: Date = new Date(),
 ): boolean {
 	return (
-		billing.stripeSubscriptionId == null &&
+		!hasPlanSubscription(billing) &&
 		billing.currentPeriodEnd != null &&
 		billing.currentPeriodEnd.getTime() < now.getTime()
 	);
