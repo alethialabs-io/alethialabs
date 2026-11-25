@@ -76,6 +76,6 @@ describe("set-org-plan.mjs", () => {
 	it("states in its usage text what it clears and keeps", async () => {
 		expect(await runScript([])).toBe(1);
 		const printed = vi.mocked(console.error).mock.calls.flat().join("\n");
-		expect(printed).toMatch(/Clears stripe_subscription_id.*stripe_customer_id is kept/);
+		expect(printed).toMatch(/Clears stripe_subscription_id and paddle_subscription_id.*the customer ids are kept/);
 	});
 });

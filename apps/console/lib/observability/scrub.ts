@@ -72,6 +72,23 @@ const SECRET_KEY_SUBSTRINGS = [
 const REDACTED = "[REDACTED]";
 
 /**
+ * Secret VALUE shapes redacted wherever they appear, even when the value is in no env var of THIS
+ * process (a key echoed back in a provider's error, a key pasted into a support note that reaches a
+ * log). Only shapes that are unambiguous by prefix belong here — a pattern that also matches ordinary
+ * text over-redacts every event it touches. The env-name denylist above already covers the variables
+ * themselves (`PADDLE_API_KEY` → `api_key`, `PADDLE_WEBHOOK_SECRET` → `secret`).
+ *
+ *  - Paddle API keys: `pdl_sdbx_apikey_…` (sandbox) and `pdl_live_apikey_…` (live).
+ *  - Paddle notification-destination secret keys: `pdl_ntfset_…`.
+ *
+ * The Paddle client-side token (`test_…` / `live_…`) is public by design and deliberately absent.
+ */
+const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
+	/pdl_(?:sdbx|live)_apikey_[A-Za-z0-9_]+/g,
+	/pdl_ntfset_[A-Za-z0-9_]+/g,
+];
+
+/**
  * Reports whether a key name looks like it holds a credential (case-insensitive substring match).
  * Hyphens are normalized to underscores so a header like `x-api-key` / `x-auth-token` matches the
  * underscore-shaped denylist entries (`api_key`, `token`, …) — HTTP header names use hyphens.
@@ -100,13 +117,17 @@ function secretEnvValues(): string[] {
 }
 
 /**
- * Replaces every known secret env value found in `s` with [REDACTED]. `secrets` is the list
- * `secretEnvValues` returns; a walk passes the one it read for the whole scrub.
+ * Replaces every known secret env value found in `s` with [REDACTED], then every
+ * `SECRET_VALUE_PATTERNS` match. `secrets` is the list `secretEnvValues` returns; a walk passes the
+ * one it read for the whole scrub.
  */
 export function scrubString(s: string, secrets: readonly string[] = secretEnvValues()): string {
 	let out = s;
 	for (const secret of secrets) {
 		if (secret) out = out.split(secret).join(REDACTED);
+	}
+	for (const pattern of SECRET_VALUE_PATTERNS) {
+		out = out.replace(pattern, REDACTED);
 	}
 	return out;
 }
