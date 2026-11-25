@@ -381,7 +381,11 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 					</TableRow>
 				))}
 			</TableHeader>
-			<TableBody aria-busy={bodyState === "pending" || undefined}>
+			{/* Busy while pending AND while a keyset list shows the previous filter's rows as
+			    placeholder data (`keepPreviousData`): those rows are not this filter's answer yet,
+			    and the body says so rather than letting them read as one — to assistive tech, and to
+			    the filter audit's settle (e2e/audit/filters.ts, #7673). */}
+			<TableBody aria-busy={bodyState === "pending" || keyset?.isPlaceholderData || undefined}>
 				{bodyState === "error" ? (
 					<TableRow className="hover:bg-transparent">
 						<TableCell colSpan={leafColumnCount} className="whitespace-normal p-0">
@@ -394,6 +398,11 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 					table.getRowModel().rows.map((row) => (
 						<TableRow
 							key={row.id}
+							// THE list-item marker (#7673): every list primitive puts it on each item it
+							// renders, so a list's size is countable without a count pill — which the
+							// console no longer shows (epic #7481). Only real rows carry it: never the
+							// skeleton, the empty row or the error row.
+							data-list-item=""
 							data-state={
 								(selectedRowId && row.original.id === selectedRowId) || row.getIsSelected()
 									? "selected"

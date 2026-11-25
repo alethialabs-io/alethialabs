@@ -195,9 +195,13 @@ export function CaseList({
 				// A real list (`ul`/`li`): it is one, and it is how the page says its bottom edge is
 				// open-ended — a skeleton cannot know how many cases there are (#6354, B2).
 				<>
-					<ul className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")}>
+					{/* `aria-busy` while the rows are the PREVIOUS filter's placeholder (the keyset
+					    list's `keepPreviousData`): dimmed for the eye, declared for assistive tech and
+					    for the filter audit's settle (#7673). */}
+					<ul className={cn(CASE_ROWS, isPlaceholderData && "opacity-60")} aria-busy={isPlaceholderData || undefined}>
 						{rows.map((item) => (
-							<li key={item.id}>
+							// The list-item marker (#7673, components/data-table.tsx).
+							<li key={item.id} data-list-item="">
 								<CaseListItem item={item} orgSlug={orgSlug} />
 							</li>
 						))}
