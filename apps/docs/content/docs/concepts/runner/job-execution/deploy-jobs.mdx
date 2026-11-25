@@ -10,7 +10,7 @@ control is failing.
 <Callout type="info">
   **Brownfield attach.** A DEPLOY doesn't only create new infrastructure — it can attach to what you
   **already have**. When the environment config marks a component "existing" (e.g. an existing
-  VPC/VNet — see [Reuse existing resources](/guides/design-project/network#reuse-existing-resources)),
+  VPC/VNet — see [Use an existing network](/guides/design-project/network#use-an-existing-network)),
   the runner passes the resource's id into the tofu template instead of creating it, and the template
   `data`-sources the existing resource (and, for networks, resolves its subnets) so the rest of the
   graph wires into it. The provision-vs-existing seam is a `count = var.provision_X ? 1 : 0` guard on

@@ -1,37 +1,59 @@
 ---
-title: Observability
-description: Ship cluster metrics, logs, and traces to Datadog or Grafana Cloud.
+title: Turn on observability
+description: Send an environment's cluster metrics, logs and traces to Datadog or Grafana Cloud.
 ---
 
-The observability section ships cluster metrics, logs, and traces to an external monitoring platform. Unlike DNS or secrets, observability has **no cloud-native default** — it is a connector-only component, so enabling it means choosing a provider and connecting its credential.
+Send the cluster's metrics, logs and traces to Datadog or Grafana Cloud. Observability has no
+cloud default: you always pick a provider and connect its credential.
 
-## Fields
+## Before you begin
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Enabled** | Toggle | Master switch for observability |
-| **Provider** | Select | Datadog or Grafana Cloud |
-| **Provider options** | Varies | Provider-specific configuration (see below) |
+- Connect [Datadog or Grafana Cloud](/guides/connectors/pluggable). Datadog needs an API key and an
+  application key. Grafana Cloud needs an instance ID and an API token. Alethia encrypts the
+  credential and passes it to the runner at deploy; it is never stored in the project.
+- Install the [CLI](/get-started/install-the-cli). The canvas has no observability card yet, so you
+  turn it on from the CLI.
 
-## Providers
+## Steps
 
-<Tabs items={["Datadog", "Grafana Cloud"]}>
-  <Tab value="Datadog">
-    Installs the **Datadog agent** via Helm. Requires a connected [Datadog connector](/guides/connectors/pluggable) (API key + application key). Choose the **site** (e.g. `datadoghq.com`, `datadoghq.eu`).
-  </Tab>
-  <Tab value="Grafana Cloud">
-    Installs the **Grafana Agent** remote-writing metrics to Grafana Cloud. Requires a connected [Grafana Cloud connector](/guides/connectors/pluggable) (instance ID + API token) and the **remote-write URL**.
-  </Tab>
-</Tabs>
+1. Add the observability component with your provider. For Datadog, set the site (`datadoghq.com`
+   by default, or `datadoghq.eu`, `us3.datadoghq.com`, `us5.datadoghq.com`, `ap1.datadoghq.com`):
 
-<Callout type="info">
-Want a self-hosted metrics stack instead of an external platform? Add the **kube-prometheus-stack** [add-on](/reference/cli/addons) — it installs Prometheus, Grafana, and Alertmanager in-cluster. Prometheus is an add-on (an in-cluster workload), not an observability connector (a credential to an external system).
-</Callout>
+   ```bash
+   alethia project component add --project my-project --kind observability \
+     --set enabled=true --set provider=datadog \
+     --set 'provider_config={"site":"datadoghq.eu"}'
+   ```
 
-## Credentials
+   For Grafana Cloud, the remote-write URL is required:
 
-Provider credentials are connected on the [Connectors](/guides/connectors/pluggable) page and encrypted at rest. They are decrypted and injected into the runner's OpenTofu variables at provision time — never stored in the Project snapshot.
+   ```bash
+   alethia project component add --project my-project --kind observability \
+     --set enabled=true --set provider=grafana \
+     --set 'provider_config={"remote_write_url":"https://prometheus-prod-01.grafana.net/api/prom/push"}'
+   ```
 
-<Callout type="info">
-Observability is a **target-state** component — the connector backends and modules exist; the Project-designer selector is rolling out. Track the [Connectors Architecture](/concepts/connectors) page for the current contract.
-</Callout>
+2. Plan and deploy the environment.
+
+| Provider | Alethia installs |
+| --- | --- |
+| Datadog | The Datadog agent, with Helm |
+| Grafana Cloud | The Grafana Agent, writing metrics to your remote-write URL |
+
+For a metrics stack inside the cluster instead, add the **kube-prometheus-stack**
+[add-on](/reference/cli/addons). It installs Prometheus, Grafana and Alertmanager.
+
+## Check that it worked
+
+```bash
+alethia project component list --project my-project --kind observability
+```
+
+The component shows as enabled. A few minutes after the deploy, the cluster's metrics appear in
+Datadog or Grafana Cloud.
+
+## Related
+
+- [Pluggable connectors](/guides/connectors/pluggable)
+- [Project commands](/reference/cli/project)
+- [Connectors](/concepts/connectors)
