@@ -1,31 +1,36 @@
 ---
 title: One-click deploy
-description: Launch the Alethia bundle on AWS or Azure with a single button — no OpenTofu, no shell.
+description: Launch the self-hosted Alethia bundle on AWS or Azure from a template button, with no local tooling.
 ---
 
-The fastest way to stand up a control plane on a public cloud: a button that opens the cloud's own
-console with a prefilled template. Each template provisions **one x86 VM**, opens 22/80/443, and runs
-the [installer](/self-host) via cloud-init — the same bundle as everywhere else.
+Create a VM on AWS or Azure from a template. The VM runs the [installer](/self-host/install) on
+first boot, so you get the same bundle as every other path.
 
-> **x86 only.** The published app-bundle images are `linux/amd64`, so both templates default to x86
-> instances (AWS `t3`, Azure `Dsv5`).
+## Before you begin
 
-> **Domain afterwards.** Leave the domain blank to come up on HTTP at the public IP first, then point
-> DNS at it and redeploy with the domain set for automatic HTTPS. Or pre-create the DNS record so the
-> first boot can obtain TLS.
+- An AWS account that can create EC2 instances, security groups and Elastic IPs, or an Azure
+  subscription where you can create a resource group.
+- An SSH key: an EC2 key pair name on AWS, or a public key on Azure.
+- Optional: a domain. Create its DNS record after the deploy, pointing at the public IP the template
+  outputs.
 
-## AWS — Launch Stack (CloudFormation)
+Both templates create an x86 VM (AWS `t3.medium`, Azure `Standard_D2s_v5`) running Ubuntu 24.04, with
+ports 22, 80 and 443 open.
+
+## Deploy on AWS
 
 <a href="https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?templateURL=https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/oneclick/aws-cloudformation.yaml&stackName=alethia"><img src="/docs/img/aws-launch-stack.png" alt="Launch Stack" /></a>
 
-Template: [`deploy/oneclick/aws-cloudformation.yaml`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/aws-cloudformation.yaml)
+1. Select **Launch Stack**.
+2. Fill in the parameters: `KeyName` is required. `Domain`, `AcmeEmail`, `InstanceType`,
+   `AllowedSshCidr` and `VolumeSize` are optional. `AllowedSshCidr` defaults to `0.0.0.0/0`, so
+   narrow it to your own address range.
+3. Create the stack, and read `PublicIp` from its **Outputs**.
 
-Creates an EC2 `t3.medium` (Ubuntu 24.04 amd64, gp3 root), a security group (22/80/443), and an
-Elastic IP. Parameters: `Domain`, `AcmeEmail`, `InstanceType`, `KeyName` (an existing key pair),
-`AllowedSshCidr`, `VolumeSize`. The AMI resolves from Canonical's public SSM parameter, so it's
-current in every region. Read `PublicIp` from the stack **Outputs**.
+The template is
+[`deploy/oneclick/aws-cloudformation.yaml`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/aws-cloudformation.yaml).
+From the AWS CLI:
 
-You can also launch it from the CLI:
 ```bash
 aws cloudformation deploy --stack-name alethia \
   --template-file deploy/oneclick/aws-cloudformation.yaml \
@@ -33,17 +38,19 @@ aws cloudformation deploy --stack-name alethia \
   --capabilities CAPABILITY_IAM
 ```
 
-## Azure — Deploy to Azure (ARM template)
+## Deploy on Azure
 
 <a href="https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Falethialabs-io%2Falethialabs%2Fmain%2Fdeploy%2Foneclick%2Fazure-arm.json"><img src="/docs/img/deploy-to-azure.svg" alt="Deploy to Azure" /></a>
 
-Template: [`deploy/oneclick/azure-arm.json`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/azure-arm.json)
+1. Select **Deploy to Azure**.
+2. Fill in `sshPublicKey`, and optionally `domain`, `acmeEmail`, `adminUsername`, `vmSize` and
+   `location`.
+3. Create the deployment, and read `publicIp` from its **Outputs**.
 
-Creates a `Standard_D2s_v5` (x86, Ubuntu 24.04 amd64) VM with a static public IP, VNet,
-and an NSG (22/80/443). Parameters: `domain`, `acmeEmail`, `adminUsername`, `sshPublicKey`,
-`vmSize`, `location`. Read `publicIp` from the deployment **Outputs**.
+The template is
+[`deploy/oneclick/azure-arm.json`](https://github.com/alethialabs-io/alethialabs/blob/main/deploy/oneclick/azure-arm.json).
+From the Azure CLI:
 
-From the CLI:
 ```bash
 az deployment group create --resource-group alethia-cp \
   --template-file deploy/oneclick/azure-arm.json \
@@ -51,12 +58,18 @@ az deployment group create --resource-group alethia-cp \
                sshPublicKey="$(cat ~/.ssh/id_ed25519.pub)"
 ```
 
-## When to use what
+## Add a domain later
 
-| | One-click | [Terraform](/self-host/terraform) | [Helm](/self-host/helm) |
-|---|---|---|---|
-| Best for | a quick managed VM, no tooling | repeatable IaC + CI (plan/apply) | existing Kubernetes |
-| State | the cloud's stack/deployment | your S3 state bucket | the cluster |
-| DNS | manual / pre-created | Cloudflare, automated | your ingress + DNS |
+With the domain left empty, the console serves plain HTTP at the public IP. To add HTTPS, point the
+domain's DNS record at the IP, SSH to the VM, set `ALETHIA_DOMAIN`, `NEXT_PUBLIC_APP_URL` and
+`BETTER_AUTH_URL` in `/opt/alethia/.env`, and run `sh /opt/alethia/deploy/install.sh` again.
 
-All three land on the same bundle — switch later without reinstalling.
+## Check that it worked
+
+Open `http://<public IP>` or your domain. The sign-in page loads. First boot takes a few minutes
+while Docker installs and the images pull. Then follow [Sign in](/self-host/install#sign-in).
+
+## Related
+
+- [Install on a VM](/self-host/install): what the installer does.
+- [Configuration](/self-host/configuration) and [Email](/self-host/email).

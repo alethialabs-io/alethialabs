@@ -1,4 +1,4 @@
 {
-  "title": "Terraform (per-cloud)",
+  "title": "OpenTofu per cloud",
   "pages": ["index", "hetzner", "aws", "gcp", "azure"]
 }

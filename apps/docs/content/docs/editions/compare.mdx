@@ -1,0 +1,68 @@
+---
+title: How Alethia compares
+description: The plain differences between Alethia and Porter, Qovery and Spacelift, including where each of them is the better choice.
+---
+
+Alethia is a control plane you can host yourself. It designs Kubernetes clusters and the services
+around them, provisions them with OpenTofu into your cloud account, and delivers applications with
+ArgoCD. This page states how that differs from three tools people compare it with, and where each
+of them is the better choice. Product details of other vendors change: check their own
+documentation before you decide.
+
+## At a glance
+
+| | Alethia | Porter | Qovery | Spacelift |
+|---|---|---|---|---|
+| What it is | Control plane that provisions clusters and services and delivers apps with GitOps | Platform that builds and deploys apps onto a cluster in your cloud | Platform that provisions Kubernetes in your cloud and deploys apps onto it | Orchestrator that runs the infrastructure code you write |
+| Who runs the control plane | You (open source), or Alethia Labs | Porter | Qovery | Spacelift, or you on its self-hosted offering |
+| Who writes the infrastructure code | Alethia's templates, or your own (bring-your-own IaC) | The platform | The platform | You |
+| App delivery | ArgoCD, from your Git repository | The platform's own pipeline | The platform's own pipeline | Not an app platform |
+| Source code | AGPL-3.0, except `ee/` | Proprietary | Proprietary | Proprietary |
+
+## How Alethia signs in to your cloud
+
+On AWS, GCP and Azure, Alethia stores no cloud key: your account trusts the instance's OIDC issuer,
+and each job gets a short-lived credential. On Hetzner, DigitalOcean and Civo, which have no such
+federation, Alethia stores your API token encrypted. See [Security](/concepts/security).
+
+## Porter
+
+Choose Porter when you want to push a repository and get a running app with logs, metrics,
+autoscaling and preview environments, and a hosted control plane suits you. Its app experience and
+day-2 operations are more mature than Alethia's.
+
+Choose Alethia when the control plane must run on your own infrastructure, when you want standard
+ArgoCD rather than a platform pipeline, or when you need databases, caches, queues and DNS designed
+with the cluster. If you stop using Alethia, the cluster, the OpenTofu code and the GitOps setup keep
+working.
+
+## Qovery
+
+Qovery is the closest in shape: it also provisions Kubernetes in your account and deploys onto it.
+Choose Qovery for its mature app platform and its range of clouds and bring-your-own clusters.
+
+Choose Alethia when you must host the control plane yourself under an open-source licence, when you
+want ArgoCD as the delivery layer, or when you want the managed data services in the same design as
+the cluster.
+
+## Spacelift
+
+Spacelift runs plan and apply for infrastructure code you already have, across many tools
+(Terraform, OpenTofu, Pulumi, CloudFormation, Ansible and more), with policy as code and drift
+detection. Choose it for a large, existing infrastructure-as-code estate.
+
+Choose Alethia when you want a working cluster and its services without writing the code first, and
+GitOps delivery on top. Alethia also runs your own OpenTofu modules (see
+[bring-your-own IaC](/concepts/bring-your-own-iac)) and detects drift (see [Drift](/concepts/drift)),
+but it is not a general orchestrator for every infrastructure tool.
+
+## Where Alethia is behind
+
+- It is a young product, with a smaller community and fewer integrations than all three.
+- Day-2 application operations (logs, metrics, rollbacks) are thinner than Porter's and Qovery's.
+- Its own templates cover AWS, GCP, Azure and Hetzner.
+
+## Related
+
+- [Editions](/editions)
+- [Bring-your-own IaC](/concepts/bring-your-own-iac)
