@@ -69,7 +69,13 @@ vi.mock("@/lib/authz/guard", () => ({
 }));
 vi.mock("@/lib/authz", () => ({ getPdp: () => ({ can: async () => ({ allowed: true }) }) }));
 // The thread's pin (none) and the project check (the project is in the org).
+vi.mock("@/lib/approvals/context", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/context")>()),
+	readAgentPolicy: async () => ({ agentAccessEnabled: true }),
+}));
 vi.mock("@/lib/db", () => ({
+	// The kill switch's read (lib/agent/kill-switch.ts); readAgentPolicy is faked below as on.
+	withActorScope: async (_actor: unknown, fn: (t: object) => Promise<unknown>) => fn({}),
 	getServiceDb: () => ({
 		select: () => ({ from: () => ({ where: async () => [{ billingOrgId: null, id: "p" }] }) }),
 	}),
