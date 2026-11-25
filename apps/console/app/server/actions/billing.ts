@@ -16,6 +16,7 @@ import {
 	aiPriceIdForTier,
 	deploymentMode,
 	getStripeConfig,
+	isBillingConfigured,
 	isStripeConfigured,
 	isStripeTaxEnabled,
 	meterPriceIdForPlan,
@@ -65,6 +66,8 @@ import {
 } from "@repo/plan-catalog";
 import { currencyFromRequest } from "@/lib/billing/currency";
 import { personTrialAvailable, releaseTrial, reserveTrial, trialSalesOpen } from "@/lib/billing/trial";
+import { startLocalTrial } from "@/lib/billing/trial/local";
+import { providerForOrg } from "@/lib/billing/provider/select";
 import { hasPlanSubscription, isManualGrantExpired, resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling, upsertOrgBilling } from "@/lib/billing/queries";
 import { getOrgInvoice, listOrgInvoices } from "@/lib/billing/invoices";
@@ -1821,7 +1824,10 @@ export async function startProTrial(opts?: {
 	const actor = opts?.orgId
 		? await authorizeInOrg("manage_billing", { type: "billing" }, opts.orgId)
 		: await authorize("manage_billing", { type: "billing" });
-	requireHostedBilling();
+	// Either rail may take a trial: Stripe's card-less subscription, or a LOCAL grant for an org whose
+	// sales go through Paddle (no provider object; lib/billing/trial/local.ts). Which one is decided on
+	// the org's row below; here, only that some billing is wired at all.
+	if (!isStripeConfigured() && !isBillingConfigured()) requireHostedBilling();
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before starting a trial.");
 	}
@@ -1857,6 +1863,13 @@ export async function startProTrial(opts?: {
 
 	// The ceilings (one per organization, per person, per network), spent all together or not at all.
 	const reservation = await reserveTrial({ orgId: actor.orgId, email: u?.email });
+	// A merchant-of-record org (Paddle): the trial is a local grant with no provider object, so there is
+	// no mint to lease. Every check above has run exactly as for a Stripe trial.
+	if (providerForOrg(row) === "paddle") {
+		await startLocalTrial({ orgId: actor.orgId, userId: actor.userId, reservation });
+		return;
+	}
+	requireHostedBilling();
 	// Given back only while Stripe has created nothing: once the trial exists it stays counted.
 	const minted = { done: false };
 	// The org-plan lease alone (ADR 0004 D3): the trial never took the advisory key, so it has none to keep.
@@ -1957,7 +1970,8 @@ export interface ProOffer {
  * reaches for Pro, but only ever once.
  */
 export async function getProOffer(): Promise<ProOffer> {
-	if (!isStripeConfigured()) return { kind: "none" };
+	// Offered on either rail: a Stripe trial, or a Paddle org's local grant (`startProTrial`).
+	if (!isStripeConfigured() && !isBillingConfigured()) return { kind: "none" };
 	// Decision M12 (#6907): no trial is offered where no purchase could be made — the launch state's
 	// trial is the paid state, so while every market is closed the CTA is not shown.
 	if (!trialSalesOpen()) return { kind: "none" };

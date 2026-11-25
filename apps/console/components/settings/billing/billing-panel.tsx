@@ -27,7 +27,11 @@ import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useState } from "react";
 import { formatDate, formatMoney, scaleMoney } from "@repo/format";
-import { cancelPlan, resumePlan } from "@/app/server/actions/billing";
+import {
+	cancelSubscriptionPlan,
+	openBillingPortal,
+	resumeSubscriptionPlan,
+} from "@/app/server/actions/checkout";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { manageReason } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
@@ -188,12 +192,12 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 		orpc.billing.planHistory.key(),
 		orpc.usage.org.key(),
 	];
-	const resume = useActionMutation(resumePlan, {
+	const resume = useActionMutation(resumeSubscriptionPlan, {
 		invalidates: planChanged,
 		successMessage: "Subscription resumed.",
 		onSuccess: () => void fetchWorkspace(),
 	});
-	const cancel = useActionMutation(cancelPlan, {
+	const cancel = useActionMutation(cancelSubscriptionPlan, {
 		invalidates: planChanged,
 		successMessage: "Subscription will cancel at the period end.",
 		onSuccess: () => void fetchWorkspace(),
@@ -348,7 +352,11 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 			{state === "past_due" && (
 				<PastDueNotice
 					planName={meta.name}
-					canUpdate={summary.canManageBilling && summary.canManage}
+					// A Paddle org's card lives in Paddle's customer portal, not in the in-page card list.
+					portal={summary.provider === "paddle"}
+					canUpdate={
+						summary.canManageBilling && (summary.provider === "paddle" || summary.canManage)
+					}
 				/>
 			)}
 
@@ -410,7 +418,21 @@ function BillingView({ summary }: { summary: BillingSummary }) {
  * (`lib/billing/org-plan-row.ts`), which is why the copy says the paid features are paused. A viewer
  * who can update the card gets the link to it; anyone else is told who can.
  */
-function PastDueNotice({ planName, canUpdate }: { planName: string; canUpdate: boolean }) {
+function PastDueNotice({
+	planName,
+	canUpdate,
+	portal,
+}: {
+	planName: string;
+	canUpdate: boolean;
+	/** The payment method is managed in the provider's portal (Paddle), not in the card list below. */
+	portal: boolean;
+}) {
+	const openPortal = useActionMutation(openBillingPortal, {
+		// Leaving for the provider's portal changes nothing this page has cached.
+		invalidates: [],
+		onSuccess: (data) => window.location.assign(data.url),
+	});
 	return (
 		<Alert variant="destructive" className="mb-[18px]" data-testid="billing-past-due">
 			<AlertTriangle />
@@ -420,7 +442,16 @@ function PastDueNotice({ planName, canUpdate }: { planName: string; canUpdate: b
 					The last payment for {planName} didn&apos;t go through, so this organization&apos;s
 					paid features are paused until a payment succeeds.
 				</p>
-				{canUpdate ? (
+				{canUpdate && portal ? (
+					<button
+						type="button"
+						disabled={openPortal.isPending}
+						onClick={() => openPortal.mutate({})}
+						className="font-medium text-text-primary underline underline-offset-4"
+					>
+						Update the payment method
+					</button>
+				) : canUpdate ? (
 					<a
 						href={`#${PAYMENT_METHODS_ANCHOR}`}
 						className="font-medium text-text-primary underline underline-offset-4"

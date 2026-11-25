@@ -25,7 +25,7 @@
 // customer: no EU VAT number for a non-BG EU customer while the seller is unregistered, none at all for
 // an organization that declared "no VAT number", and an `eu_vat` value only in its country's format.
 
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type Stripe from "stripe";
 import { z } from "zod";
 import {
@@ -39,7 +39,8 @@ import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { BILLING_FIELD_CAPS, tooLongMessage } from "@/lib/billing/billing-field-caps";
 import { isVatTaxIdType, normaliseEuVatNumber, type TaxIdType } from "@/lib/billing/tax-ids";
 import { getServiceDb } from "@/lib/db";
-import { commerceOrder, organizationBilling } from "@/lib/db/schema";
+import { commerceOrder, organization, organizationBilling } from "@/lib/db/schema";
+import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 import type { CommerceBillingAddress, CommerceDocumentVersions } from "@/types/jsonb.types";
 
 /** A trimmed string no longer than `max`. */
@@ -51,7 +52,7 @@ function capped(max: number) {
  * The billing address a purchase sheet collects with the declaration, before the intent. The same
  * fields and caps as the checkout form (`lib/billing/billing-field-caps.ts`).
  */
-const orderBillingAddressSchema = z.object({
+export const orderBillingAddressSchema = z.object({
 	name: capped(BILLING_FIELD_CAPS.name).min(1, "Enter the name to bill."),
 	line1: capped(BILLING_FIELD_CAPS.line1).min(1, "Enter the address."),
 	line2: capped(BILLING_FIELD_CAPS.line2).optional(),
@@ -292,6 +293,106 @@ export async function preparePaidOrder(input: {
 	};
 }
 
+/**
+ * Prepares a paid order for a sale through a MERCHANT OF RECORD (Paddle), BEFORE its checkout opens.
+ * The same declared facts and the same refusals as {@link preparePaidOrder}, but nothing is written to
+ * a payment provider here: the MoR adapter pre-fills its own customer records from the result.
+ *
+ * The address is the one the sheet collected; omitted (a credit pack, a team created first), the
+ * org's most recent order address is used when it is in the declared country, else a country-only
+ * snapshot — Paddle, the seller, collects and invoices the full address itself.
+ */
+export async function prepareMorOrder(input: {
+	readonly orgId: string;
+	readonly userId: string;
+	readonly billingAddress?: OrderBillingAddressInput | null;
+}): Promise<PreparedOrder> {
+	const facts = await readPayerFacts(input.orgId);
+	const capacity = narrowCapacity(facts?.capacity);
+	const billingCountry = present(facts?.billingCountry)?.toUpperCase() ?? null;
+	if (!facts || !capacity || !billingCountry) {
+		throw new PaidOrderRefusedError("Tell us who this purchase is for before subscribing.");
+	}
+	const billingState = billingCountry === "US" ? present(facts.billingState) : null;
+	const vatIdStatus = narrowVatIdStatus(facts.vatIdStatus);
+
+	let address: CommerceBillingAddress;
+	let billingName: string;
+	if (input.billingAddress) {
+		const parsed = orderBillingAddressSchema.safeParse(input.billingAddress);
+		if (!parsed.success) {
+			throw new PaidOrderRefusedError(parsed.error.issues[0]?.message ?? "Check the billing address.");
+		}
+		const a = parsed.data;
+		if (a.country !== billingCountry) {
+			throw new PaidOrderRefusedError(
+				"The billing address is in a different country from the one declared for this purchase.",
+			);
+		}
+		billingName = a.name;
+		address = {
+			line1: a.line1,
+			line2: present(a.line2),
+			city: a.city,
+			postalCode: a.postalCode,
+			region: billingState ?? present(a.state),
+			country: billingCountry,
+		};
+	} else {
+		const last = await latestOrderAddress(input.orgId);
+		if (last && last.address.country === billingCountry) {
+			address = last.address;
+			billingName = last.name;
+		} else {
+			// No address collected and none on file (a team created first, O2). The merchant of record
+			// collects the full address in its checkout and invoices with it; our record keeps the declared
+			// country — the fact the gate judged — and the org's name, and says nothing it was not told.
+			address = { line1: "", line2: null, city: "", postalCode: "", region: billingState, country: billingCountry };
+			billingName = (await orgNameOf(input.orgId)) ?? "";
+		}
+	}
+
+	return {
+		organizationId: input.orgId,
+		placedByUserId: input.userId,
+		capacity,
+		authorityAttestation: capacity === "organization" ? present(facts.authorityAttestation) : null,
+		billingCountry,
+		billingState,
+		vatIdStatus,
+		vatId: vatIdStatus === "given" ? present(facts.vatId) : null,
+		billingName,
+		billingAddress: address,
+	};
+}
+
+/**
+ * The address snapshot of the org's most recent order, with the org's name as the name to bill —
+ * the order row stores no billing name of its own.
+ */
+async function latestOrderAddress(
+	orgId: string,
+): Promise<{ address: CommerceBillingAddress; name: string } | null> {
+	const [row] = await getServiceDb()
+		.select({ address: commerceOrder.billingAddress, orgName: organization.name })
+		.from(commerceOrder)
+		.innerJoin(organization, eq(organization.id, commerceOrder.organizationId))
+		.where(eq(commerceOrder.organizationId, orgId))
+		.orderBy(desc(commerceOrder.placedAt))
+		.limit(1);
+	return row ? { address: row.address, name: row.orgName } : null;
+}
+
+/** The organization's name, or null when it does not exist. */
+async function orgNameOf(orgId: string): Promise<string | null> {
+	const [row] = await getServiceDb()
+		.select({ name: organization.name })
+		.from(organization)
+		.where(eq(organization.id, orgId))
+		.limit(1);
+	return row?.name ?? null;
+}
+
 /** Puts `vatId` on the customer as its one `eu_vat` tax id, leaving it alone when it is already there. */
 async function ensureEuVatTaxId(stripe: Stripe, customerId: string, vatId: string): Promise<void> {
 	const existing = await stripe.customers.listTaxIds(customerId, { limit: 5 });
@@ -325,6 +426,8 @@ export interface PaidOrderCharge {
 	readonly renewsAutomatically: boolean;
 	readonly stripeSubscriptionId?: string | null;
 	readonly stripePaymentIntentId?: string | null;
+	/** The provider the order is placed through; Stripe when omitted (the column's default). */
+	readonly provider?: BillingProviderId;
 }
 
 /**
@@ -357,8 +460,28 @@ export async function recordPaidOrder(
 			documentVersions: documentsInForce(),
 			stripeSubscriptionId: charge.stripeSubscriptionId ?? null,
 			stripePaymentIntentId: charge.stripePaymentIntentId ?? null,
+			...(charge.provider ? { provider: charge.provider } : {}),
 		})
 		.returning({ id: commerceOrder.id });
 	if (!row) throw new Error("The order record was not written.");
 	return row.id;
+}
+
+/** Links a Paddle order to the checkout transaction opened for it. */
+export async function attachPaddleTransaction(orderId: string, transactionId: string): Promise<void> {
+	await getServiceDb()
+		.update(commerceOrder)
+		.set({ paddleTransactionId: transactionId, updatedAt: new Date() })
+		.where(and(eq(commerceOrder.id, orderId), eq(commerceOrder.provider, "paddle")));
+}
+
+/**
+ * Marks an order whose checkout could not be opened as `cancelled`: nothing payable exists for it.
+ * Kept, not deleted — the row records what was offered and when.
+ */
+export async function cancelUnopenedOrder(orderId: string): Promise<void> {
+	await getServiceDb()
+		.update(commerceOrder)
+		.set({ state: "cancelled", cancelledAt: new Date(), updatedAt: new Date() })
+		.where(and(eq(commerceOrder.id, orderId), eq(commerceOrder.state, "placed")));
 }
