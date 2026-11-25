@@ -1930,4 +1930,6 @@ export interface PaddleTransactionCustomData {
 	commerceOrderId?: string;
 	/** The user who opened the checkout (uuid). */
 	userId?: string;
+	/** For a `credit_pack`: how many AI credits it buys (one of `AI_CREDIT_PACKS`). */
+	credits?: number;
 }
