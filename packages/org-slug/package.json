@@ -1,6 +1,6 @@
 {
   "name": "@repo/org-slug",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The Alethia organization-slug rule: the characters and length an organization's URL segment may use.",
   "private": true,
   "exports": {
