@@ -6,6 +6,7 @@
 // tests/integration/runners-org-bounded.test.ts; this file pins what each read RETURNS — above all
 // that no runner read selects or returns the credential column — and what it does not do.
 
+import { createRouterClient, ORPCError } from "@orpc/server";
 import { getTableColumns } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -84,7 +85,9 @@ import {
 	readRunnersData,
 	readRunnersPage,
 	RUNNER_CHANGELOG_LENGTH,
+	runnersRouter,
 } from "@/lib/rpc/procedures/runners";
+import { encodeKeysetCursor, KEYSET_MAX_LIMIT } from "@/lib/queries/keyset";
 
 const ORG = "o1";
 const USER = "u1";
@@ -100,6 +103,8 @@ function own(over: Record<string, unknown> = {}, release: unknown = null) {
 			supported_providers: ["aws"],
 			status: "ONLINE",
 			last_heartbeat: new Date("2026-10-01T00:00:00Z"),
+			// The grid's keyset sort key (#7484): selected for the order, never put on the view.
+			created_at: new Date("2026-09-01T00:00:00Z"),
 			version: "1.2.0",
 			location: null,
 			is_default: false,
@@ -293,12 +298,88 @@ describe("runners.list — the universe, the latest release and the changelog", 
 });
 
 describe("runners.page — the grid", () => {
-	it("narrows by the query and counts facets over every runner", async () => {
-		h.rows.set("tx:runners", [own({ id: "a", status: "ONLINE" }), own({ id: "b", status: "OFFLINE", supported_providers: ["gcp"] })]);
+	/** The read router's in-process client, as the route and the browser reach `runners.page`. */
+	const routerClient = () =>
+		createRouterClient(runnersRouter, { context: { actor: { credential: "session", userId: USER, orgId: ORG } } });
+
+	/** A uuid whose trailing digits are `n` (cursor ids are validated as uuids). */
+	const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+	it("narrows by the query and counts facets over every runner, on the first page", async () => {
+		h.rows.set("tx:runners", [
+			own({ id: uuid(1), status: "ONLINE" }),
+			own({ id: uuid(2), status: "OFFLINE", supported_providers: ["gcp"] }),
+		]);
 		const page = await readRunnersPage({ statuses: ["OFFLINE"] });
-		expect(page.rows.map((r) => r.id)).toEqual(["b"]);
-		expect(page.total).toBe(2);
-		expect(page.facets.clouds.map((c) => c.value)).toEqual(["aws", "gcp"]);
+		expect(page.rows.map((r) => r.id)).toEqual([uuid(2)]);
+		expect(page.facets?.clouds.map((c) => c.value)).toEqual(["aws", "gcp"]);
+		expect(page.universeEmpty).toBe(false);
+		expect(page.nextCursor).toBeNull();
+		// No list size on the wire — not a result count, not a total (#7484).
+		expect(Object.keys(page).sort()).toEqual(["facets", "nextCursor", "rows", "universeEmpty"]);
+	});
+
+	it("pages the COMPOSED universe — own and managed together — newest first, without sending the sort key", async () => {
+		h.rows.set("tx:runners", [
+			own({ id: uuid(1), created_at: new Date("2026-01-01T00:00:00Z") }),
+			own({ id: uuid(3), created_at: new Date("2026-03-01T00:00:00Z") }),
+		]);
+		h.rows.set("svc:runners", [managed({ id: uuid(2), created_at: new Date("2026-02-01T00:00:00Z") })]);
+		const first = await readRunnersPage({ limit: 2 });
+		expect(first.rows.map((r) => r.id)).toEqual([uuid(3), uuid(2)]);
+		expect(first.nextCursor).not.toBeNull();
+		expect(first.rows.every((r) => !("created_at" in r))).toBe(true);
+
+		const client = routerClient();
+		const second = await client.page({ limit: 2, cursor: first.nextCursor ?? undefined });
+		expect(second.rows.map((r) => r.id)).toEqual([uuid(1)]);
+		expect(second.nextCursor).toBeNull();
+		expect(second.facets).toBeNull();
+		expect(second.universeEmpty).toBeNull();
+	});
+
+	it("pins the addressed org's default runner first on page one, and never walks it again", async () => {
+		h.rows.set("tx:runners", [
+			own({ id: uuid(1), is_default: true, created_at: new Date("2026-01-01T00:00:00Z") }),
+			own({ id: uuid(3), created_at: new Date("2026-03-01T00:00:00Z") }),
+			own({ id: uuid(4), created_at: new Date("2026-04-01T00:00:00Z") }),
+		]);
+		h.rows.set("svc:runners", [managed({ id: uuid(2), created_at: new Date("2026-02-01T00:00:00Z") })]);
+		const first = await readRunnersPage({ limit: 2 });
+		expect(first.rows.map((r) => r.id)).toEqual([uuid(1), uuid(4), uuid(3)]);
+		const second = await routerClient().page({ limit: 2, cursor: first.nextCursor ?? undefined });
+		expect(second.rows.map((r) => r.id)).toEqual([uuid(2)]);
+	});
+
+	it("does not pin a default of another org (a personal runner listed from a team org)", async () => {
+		h.rows.set("tx:runners", [
+			own({ id: uuid(1), is_default: true, org_id: USER, created_at: new Date("2026-01-01T00:00:00Z") }),
+			own({ id: uuid(2), created_at: new Date("2026-02-01T00:00:00Z") }),
+		]);
+		const page = await readRunnersPage({});
+		expect(page.rows.map((r) => r.id)).toEqual([uuid(2), uuid(1)]);
+	});
+
+	it("says universeEmpty for an actor who can see no runner at all", async () => {
+		const page = await readRunnersPage({ statuses: ["ONLINE"] });
+		expect(page.rows).toEqual([]);
+		expect(page.universeEmpty).toBe(true);
+	});
+
+	it.each([
+		["not a cursor at all", "nope"],
+		["a cursor whose id is not a runner id", encodeKeysetCursor({ at: "2026-11-20T10:00:00.123Z", id: "r-1" })],
+	])("refuses %s as a 400 before reading — never page one", async (_name, cursor) => {
+		const client = routerClient();
+		const error = await client.page({ cursor }).catch((e: unknown) => e);
+		expect(error instanceof ORPCError ? error.code : error).toBe("BAD_REQUEST");
+		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("refuses a limit above the contract's maximum rather than clamping it", async () => {
+		const client = routerClient();
+		await expect(client.page({ limit: KEYSET_MAX_LIMIT + 1 })).rejects.toBeInstanceOf(ORPCError);
+		expect(authorize).not.toHaveBeenCalled();
 	});
 });
 
