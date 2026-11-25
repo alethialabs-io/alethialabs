@@ -162,6 +162,122 @@ resource "github_repository_ruleset" "main" {
   # swallow the push failure. Do not add a bypass actor here to "fix" a badge.
 }
 
+# ── require_extra_approval_for_unattributed_changes = FALSE, re-asserted after every ruleset write ──
+#
+# THE DECISION (maintainer, 2026-11-25, #7654): this `pull_request` rule parameter is FALSE on both
+# protect-dev (18583159) and protect-main (18465988). The orchestrator set it live that day with
+# `gh api -X PUT`. GitHub's REST reference describes it as extra approval for a PR that Copilot opens
+# without a human collaborator.
+#
+# WHY IT CANNOT LIVE IN THE RULESET BLOCKS ABOVE. `integrations/github` 6.12.1 has no attribute for
+# it, and neither has 6.13.0 (what `~> 6.0` resolved to on 2026-11-25; read with `tofu providers
+# schema -json`). The ruleset schema's `pull_request` block has allowed_merge_methods, dismiss_stale_reviews_on_push,
+# require_code_owner_review, require_last_push_approval, required_approving_review_count,
+# required_review_thread_resolution and required_reviewers, and nothing else. The provider therefore
+# PUTs a `pull_request` rule that OMITS the field on every create and update. GitHub then sets it
+# TRUE (#7654's finding; scripts/ci/fixtures/rules-branches.2026-09-23.json, a verbatim capture of
+# both branches' rules, reads `true` on each, which is that default in force before anyone chose).
+# So without this resource, the next apply that writes either ruleset would silently undo the
+# decision, and the plan would not show it.
+#
+# HOW. One `terraform_data` per ruleset, with `lifecycle.replace_triggered_by` naming that ruleset.
+# OpenTofu replaces a resource when "a plan to update or replace that instance" of the referenced
+# resource exists (OpenTofu docs, "Resource behavior", replace_triggered_by), so every apply that
+# writes a ruleset also replaces its `terraform_data`, and replacing it runs the local-exec below
+# AFTER the ruleset write (it reads the ruleset's id, so it depends on it). The script:
+#   · GETs the LITERAL path `repos/<owner>/<repo>/rulesets/<numeric id>` (a non-numeric id is refused
+#     before any call);
+#   · exits 0 without writing when every `pull_request` rule already reads `false`;
+#   · otherwise PUTs `{"rules": [...]}`, the rules array it just read with ONLY that one field set to
+#     false. Name, target, enforcement, conditions and bypass actors are left out of the body, so the
+#     PUT cannot change them; every other rule and parameter goes back exactly as it was read;
+#   · reads the ruleset again and fails the apply unless the field is now false.
+#
+# WHY NOT A TRIGGER ON THE RULESET'S `etag`, which was the first design. The provider changes `etag`
+# on every write, but its plan does not mark it unknown for an in-place update (the ruleset's
+# CustomizeDiff only validates), so the plan would carry the OLD etag into `triggers_replace` and the
+# apply would hand it a new one: an inconsistent final plan at best, a missed run at worst. It would
+# also replace this resource again on the plan after every PUT here, since that PUT moves the etag.
+# `replace_triggered_by` asks the plan itself whether the ruleset is being written, which is the
+# question. Our own PUT leaves no diff behind: the provider cannot see this field, and `etag` is
+# computed, so the next plan is clean.
+#
+# WHAT IT DOES NOT COVER, stated. Someone flipping the flag back to true by hand, with no other
+# change, produces no plan for the ruleset, so no apply will re-assert it. That case is the drift
+# check's: `node scripts/ci/check-required-checks.mjs --live` (workflow-health.yml) reports drift,
+# and opens its tracker issue, when either branch reads `true`.
+#
+# It runs where `tofu apply` runs and needs `gh` and `jq` on PATH. It uses the same token as the
+# provider (`var.github_token`, which needs Administration write for the rulesets anyway).
+# `node scripts/ci/check-required-checks.mjs` fails if a ruleset with a `pull_request` block has no
+# such resource wired to it.
+locals {
+  reassert_unattributed_changes_false = <<-EOT
+    set -euo pipefail
+    case "$RULESET_ID" in
+      '' | *[!0-9]*) echo "ruleset id '$RULESET_ID' is not numeric; refusing to write" >&2; exit 1 ;;
+    esac
+    path="repos/$OWNER/$REPO/rulesets/$RULESET_ID"
+    flags_of() { jq -c '[.rules[] | select(.type == "pull_request") | .parameters.require_extra_approval_for_unattributed_changes]'; }
+    current="$(gh api "$path")"
+    before="$(flags_of <<<"$current")"
+    if [ "$before" = "[]" ]; then
+      echo "$path has no pull_request rule, so there is nothing to re-assert; the HCL says otherwise" >&2
+      exit 1
+    fi
+    if [ "$(jq -c 'map(. == false) | all' <<<"$before")" = "true" ]; then
+      echo "$path: require_extra_approval_for_unattributed_changes already false; nothing written"
+      exit 0
+    fi
+    jq -c '{rules: [.rules[] | if .type == "pull_request" then .parameters.require_extra_approval_for_unattributed_changes = false else . end]}' <<<"$current" \
+      | gh api -X PUT "$path" --input - >/dev/null
+    after="$(gh api "$path" | flags_of)"
+    if [ "$(jq -c 'length > 0 and (map(. == false) | all)' <<<"$after")" != "true" ]; then
+      echo "$path: after the PUT the field reads $after, not false" >&2
+      exit 1
+    fi
+    echo "$path: require_extra_approval_for_unattributed_changes $before -> $after"
+  EOT
+}
+
+resource "terraform_data" "dev_ruleset_unattributed_changes_false" {
+  triggers_replace = [github_repository_ruleset.dev.ruleset_id]
+
+  lifecycle {
+    replace_triggered_by = [github_repository_ruleset.dev]
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = local.reassert_unattributed_changes_false
+    environment = {
+      GH_TOKEN   = var.github_token
+      OWNER      = var.github_owner
+      REPO       = var.repository
+      RULESET_ID = tostring(github_repository_ruleset.dev.ruleset_id)
+    }
+  }
+}
+
+resource "terraform_data" "main_ruleset_unattributed_changes_false" {
+  triggers_replace = [github_repository_ruleset.main.ruleset_id]
+
+  lifecycle {
+    replace_triggered_by = [github_repository_ruleset.main]
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    command     = local.reassert_unattributed_changes_false
+    environment = {
+      GH_TOKEN   = var.github_token
+      OWNER      = var.github_owner
+      REPO       = var.repository
+      RULESET_ID = tostring(github_repository_ruleset.main.ruleset_id)
+    }
+  }
+}
+
 # ── Deployer-role ARNs as Actions variables (consumed by the OIDC workflows) ──
 resource "github_actions_variable" "cp_deployer" {
   count         = var.cp_deployer_role_arn != "" ? 1 : 0

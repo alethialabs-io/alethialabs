@@ -57,16 +57,40 @@ name: Release gate
 #     one-hour gate re-fired on every dev merge would be the single most expensive mistake this file
 #     could make.
 #   · a non-draft PR into dev carrying the `release-gate:run` (or `release-gate:all`) label — for a
-#     lane that wants per-PR gate feedback, and for capturing or re-recording the baseline.
+#     lane that wants per-PR gate feedback, and for capturing or re-recording the baseline. A push to
+#     such a PR runs here directly; ADDING the label runs this file through
+#     .github/workflows/release-gate-label.yml (`workflow_call`), never as a `labeled` run of its own.
 #   · workflow_dispatch, with an optional comma-separated `legs` input.
 # Never `merge_group` (Mergify replaced it), never `paths:` (a filtered-out required workflow reports
 # nothing and wedges every PR — ci.yml's `build-console` job comment has the incident).
 #
 # THAT LIST IS ENFORCED BY EVERY JOB'S OWN `if:`, BEFORE A CHECKOUT. `on:` cannot filter by base
-# branch AND label at once, so an ordinary feature PR into dev, and a `labeled` event for any label
-# other than the two above, still CREATE a run — and every job in it is skipped at the job level, so
-# the run costs no runner slot and no checkout. A run whose jobs all skipped concludes `skipped`,
-# which scripts/ci/workflow-health.mjs's `classify()` correctly reads as no signal.
+# branch AND label at once, so an ordinary feature PR into dev still CREATES a run — and every job in
+# it is skipped at the job level, so the run costs no runner slot and no checkout. A run whose jobs all
+# skipped concludes `skipped`, which scripts/ci/workflow-health.mjs's `classify()` correctly reads as
+# no signal.
+#
+# ── WHY `labeled` IS NOT IN THE TYPES BELOW, AND MUST NEVER BE AGAIN (#7654, 2026-11-25) ────────
+#
+# A skipped run is not harmless when it lands on a sha that already has a decided one. Until #7654
+# every label added to any PR created a run here, and a label other than the two above skipped every
+# job. release-please opens its PR and adds `autorelease: pending` in the same second, so a release PR
+# got two `pull_request` runs of this workflow on ONE head sha: `opened` (the legs ran and passed) and
+# `labeled` (all skipped). When the skipped run had the higher run id, GitHub showed its check suite
+# for this workflow, and protect-main's seven required `Release gate (<leg>)` contexts read "Expected —
+# Waiting for status to be reported" until the next push: #7640 (runs 45574672159 success <
+# 45574674013 skipped) never became mergeable, #7631 (opposite order) merged. The concurrency fix of
+# 2026-11-22 (below) stopped a label from CANCELLING the gate; it could not stop the label's run from
+# SUPERSEDING it, because supersession needs no cancellation — only a newer run.
+#
+# So on a PR into `main`, every run this workflow can now create on a head sha is `opened`,
+# `synchronize`, `reopened` or `ready_for_review`, and each of those runs all seven legs unless the PR
+# is a draft (which cannot merge). No event left in the list is one whose run skips on a mergeable
+# promotion. The two gate labels on a dev PR are served by .github/workflows/release-gate-label.yml,
+# which calls this file; its legs report as `Gate by label / Release gate (<leg>)`, a different check
+# name (required checks match by name only, and a called job is named `<caller job> / <called job>` —
+# that file's header has the sources), so they cannot stand in for, or shadow, the bare contexts
+# protect-main requires. `node scripts/ci/check-required-checks.mjs` fails if `labeled` returns here.
 #
 # ── WHY AN UNLABELLED dev PR NO LONGER RUNS ANYTHING HERE (2026-11-22) ─────────────────────────
 #
@@ -120,7 +144,12 @@ name: Release gate
 on:
   pull_request:
     branches: [main, staging, dev]
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Called by .github/workflows/release-gate-label.yml when a `release-gate:run` or `release-gate:all`
+  # label is added to a non-draft dev PR. The caller's `labeled` event payload IS this run's
+  # `github.event`, so the job-level `if:` clauses and the picker below read it exactly as they read
+  # a direct `labeled` run before #7654 — which is why those `labeled` clauses are still here.
+  workflow_call:
   workflow_dispatch:
     inputs:
       legs:
@@ -128,29 +157,34 @@ on:
         required: false
         default: ""
 
-# A LABEL EVENT MUST NEVER CANCEL A RUNNING GATE — AND MUST NEVER DISPLACE A QUEUED ONE.
+# A LABEL MUST NEVER CANCEL A GATE, DISPLACE A QUEUED ONE, OR SUPERSEDE A DECIDED ONE.
 #
-# The concurrency group is evaluated when a run is CREATED, before any job-level `if:` is
-# considered. So with a blanket `cancel-in-progress: true`, adding any unrelated label to a
-# promotion PR (`qa:prod`, a triage label) 40 minutes into the `qa` leg creates a new run, cancels
-# the in-flight one, and is then skipped by the job-level label guards below. The SEVEN
-# `Release gate (<leg>)` contexts on that promotion PR then never report. protect-main requires them
-# (see the header), so a promotion into `main` is BLOCKED with nothing red to explain why; into
-# `staging`, where nothing requires them, it merges normally and deploy-console.yml's receipt is what
-# then refuses the deploy, because a leg that never reported cannot have passed. The state recovers
-# only on a new push or `ready_for_review`.
+# Three different ways one run can take another's verdict away, and `concurrency` governs only the
+# first two:
 #
-# So `cancel-in-progress` is true only for a `pull_request` event that is not `labeled`: a push
-# supersedes its predecessor as before, and a label event cannot cancel anything. A dispatch has
-# its own group (`github.event_name` is in it) and never cancels or is cancelled by a PR run.
+#   1. CANCELLATION. The group is evaluated when a run is CREATED, before any job-level `if:`. With a
+#      blanket `cancel-in-progress: true`, an unrelated label 40 minutes into the `qa` leg created a
+#      new run, cancelled the in-flight one, then skipped every job — and the seven contexts never
+#      reported. So `cancel-in-progress` is true only for a `pull_request` event that is not
+#      `labeled`: a push supersedes its predecessor as before, and a gate-label request (which now
+#      arrives as a `labeled` payload through release-gate-label.yml's `workflow_call`) cannot cancel
+#      anything. A dispatch has its own group (`github.event_name` is in it).
+#   2. DISPLACEMENT (2026-11-22). With cancel-in-progress off, a group still holds ONE pending run,
+#      and a newer run REPLACES the pending one. So a gate-label request queued behind a running gate
+#      could be replaced by a run that then skipped every job. The `-unrelated-label-<run id>` suffix
+#      gave such a run a group of its own. Since #7654 an unrelated label never reaches this file at
+#      all (release-gate-label.yml's job `if:` stops it before the call), so the suffix is defence in
+#      depth for a `labeled` event that should no longer exist here.
+#   3. SUPERSESSION (#7654). Nothing in this block can prevent it. A newer run of this workflow on the
+#      same head sha is the one whose check suite GitHub shows for the workflow, whether or not it
+#      cancelled anything; a skipped newer run hid a passing older one, and protect-main read its
+#      seven required contexts as "Expected" (#7640). The only fix is not to create such a run, which
+#      is why `labeled` left the `pull_request` types above. Read the header section on `labeled`.
 #
-# THE SECOND HALF IS NEW (2026-11-22). Even with cancel-in-progress off, a group holds ONE pending
-# run, and a newer run REPLACES the pending one — which is a cancellation by another name. So a
-# `release-gate:run` label queued behind a running gate, followed by a triage label, used to lose
-# the gate it asked for to a run that then skipped every job. An unrelated label therefore gets a
-# group of its own (suffixed with its run id): it is created, skips at the job level in seconds, and
-# never touches the PR's real group. A label that IS one of the `release-gate:*` pair stays in the
-# PR's group and queues behind any in-flight run, as before.
+# The gate-label request runs in the PR's own group: release-gate-label.yml has no group of its own,
+# and the group string below does not use `github.workflow` (which a called workflow takes from its
+# caller), so the called run lands in `release-gate-pull_request-<n>`. It queues behind an in-flight
+# gate and is cancelled by a later push, as a direct `labeled` run was.
 concurrency:
   group: release-gate-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}${{ (github.event.action == 'labeled' && !contains(fromJSON('["release-gate:run","release-gate:all"]'), github.event.label.name)) && format('-unrelated-label-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'labeled' }}
@@ -192,10 +226,10 @@ jobs:
     #     the moment it is not one.
     #   · base is `main` or `staging`, OR the PR carries `release-gate:run` / `release-gate:all`. An
     #     ordinary feature PR into dev skips here, before any checkout or API call.
-    #   · a `labeled` event counts only when the label just added is one of those two. Any other
-    #     label — a triage label, `claimed`, `qa:prod`, whatever the board automation adds — skips
-    #     here instead of starting the job. (It cannot cancel or displace a gate either; see the
-    #     `concurrency` note above.)
+    #   · a `labeled` event counts only when the label just added is one of those two. Since #7654
+    #     the only `labeled` payload that reaches this file is release-gate-label.yml's call, whose
+    #     own job `if:` already admitted only those two labels on a non-draft dev PR; the clause stays
+    #     as defence in depth, and so that the two files cannot disagree about which labels count.
     #
     # NOTHING REQUIRES THIS CHECK, AND NOW NOTHING CAN. It is in neither `.mergify.yml` nor
     # `infra/github`. Before this change it reported on every non-draft PR event, which is what made
@@ -632,9 +666,9 @@ jobs:
     # or a dev PR carrying a `release-gate:*` label. The two clauses here are defence in depth:
     #
     #   · `run` is `yes` for exactly those three (the picker re-asks the same conjunct).
-    #   · the `labeled` clause: `labeled` fires for ANY label, and a `qa:prod` or a triage label added
-    #     to a promotion PR must not restart an hour of browser legs. `legs` already skips on such an
-    #     event; this keeps the gate from running if that clause ever drifts.
+    #   · the `labeled` clause: a `labeled` payload arrives only through release-gate-label.yml's
+    #     call (#7654), which admits the two gate labels alone. `legs` asks the same question; this
+    #     keeps the gate from running if either copy ever drifts.
     #
     # A SKIP HERE IS NON-REPORTING, AND deploy-console.yml's RECEIPT DEPENDS ON THAT. The receipt
     # keeps the LATEST check-run per context name and refuses the production deploy unless all seven
@@ -654,10 +688,15 @@ jobs:
     #   · run 34351806933, where the gate actually ran: seven expanded names, six green.
     #
     # The matrix expands only when the job runs. Both before and after, a label leaves the seven
-    # contexts untouched and the receipt reads the successes that are already there. Since
-    # 2026-11-22 an unrelated label skips `legs` itself — the first of the three measured cases —
-    # and its run sits in a concurrency group of its own, so it cannot cancel or displace the run
-    # that reported those successes either.
+    # contexts untouched and the receipt reads the successes that are already there.
+    #
+    # ⚠ THAT WAS TRUE OF THE RECEIPT AND FALSE OF THE MERGE BUTTON (#7654). The receipt asks the
+    # check-runs API for the latest run per NAME, and a skipped run's lone placeholder name collides
+    # with none of the seven. protect-main does not ask that question: a newer, skipped run of this
+    # workflow on the same head sha superseded the passing run's suite, and the seven required
+    # contexts read "Expected" (#7640). "Untouched" was a measurement of one reader, reported as a
+    # property of the commit. Since #7654 an unrelated label creates no run of this workflow at all,
+    # which closes both readings; see the header section on `labeled`.
     # `success()` is written out, not implied (#5615): a red or skipped `legs` runs no leg, and a
     # skipped `legs` (a draft, an unlabelled dev PR, an unrelated label) has no output at all.
     # (It was load-bearing while `require-label` could fail `legs` after `pick` had already emitted
