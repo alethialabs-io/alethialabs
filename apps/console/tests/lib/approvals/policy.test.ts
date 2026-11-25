@@ -8,7 +8,7 @@
 // combination is enumerated so a new credential kind or stage cannot fall through untested.
 
 import { describe, expect, it } from "vitest";
-import { applyRequirement, type Requirement } from "@/lib/approvals/policy";
+import { agentAccessRefusal, applyRequirement, type Requirement } from "@/lib/approvals/policy";
 import { CREDENTIAL_KINDS, type CredentialKind } from "@/lib/authz/types";
 import type { EnvironmentStage } from "@/lib/db/schema/enums";
 
@@ -117,5 +117,31 @@ describe("the rules the table states in words", () => {
 	it("never deploys a production environment or destroys anything automatically for a service token", () => {
 		expect(ask("service_token", "deploy", "production")).toEqual(APPROVAL);
 		for (const stage of STAGES) expect(ask("service_token", "destroy", stage)).toEqual(APPROVAL);
+	});
+});
+
+describe("the kill switch's own answer (agentAccessRefusal), which the tool guard also asks", () => {
+	it("refuses exactly the two agent kinds while agent access is off, and nothing while it is on", () => {
+		for (const credential of CREDENTIAL_KINDS) {
+			const agent = credential === "agent_oauth" || credential === "agent_in_app";
+			expect(agentAccessRefusal(credential, { agentAccessEnabled: false })).toBe(agent ? "agent_access_disabled" : null);
+			expect(agentAccessRefusal(credential, { agentAccessEnabled: true })).toBeNull();
+		}
+	});
+
+	it("refuses an agent's plan too: off means off, the PLAN column included", () => {
+		for (const credential of ["agent_oauth", "agent_in_app"] as const) {
+			for (const stage of STAGES) {
+				expect(
+					applyRequirement({
+						credential,
+						operation: "plan",
+						stage,
+						policy: { agentAccessEnabled: false, agentsMayNotApplyToProduction: false },
+						tokenAutoApprovesEnvironment: false,
+					}),
+				).toEqual({ kind: "refused", reason: "agent_access_disabled" });
+			}
+		}
 	});
 });

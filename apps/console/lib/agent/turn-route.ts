@@ -85,6 +85,7 @@ import {
 	TURN_REFUSAL_STATUS,
 } from "./turn-claims";
 import { inAppAgentActor } from "./in-app-credential";
+import { AGENT_ACCESS_DISABLED_SYSTEM, guardAgentTools } from "./kill-switch";
 import { pendingClientToolCalls, type TurnRequest } from "./turn-key";
 
 /** The transient part the stream opens with, once the turn is accepted (ADR 0003 §5.1 step 9). */
@@ -616,6 +617,10 @@ async function streamAcceptedTurn<R>(
 		// around the whole stream, so every tool call and subagent the model starts reads it from
 		// `currentActor()`; a deploy or destroy it asks for then needs a person's approval (table 4.2).
 		const toolActor = inAppAgentActor(actor, turn.threadId);
+		// The org's kill switch (#7477): while agent access is off every tool the model calls is refused,
+		// reads included, and the prompt says so. Read here and again before each tool call.
+		const guarded = await guardAgentTools(prepared.tools, toolActor);
+		const system = guarded.disabledAtStart ? `${prepared.system}\n\n${AGENT_ACCESS_DISABLED_SYSTEM}` : prepared.system;
 
 		const stream = createUIMessageStream({
 			execute: ({ writer }) => runWithActor(toolActor, async () => {
@@ -632,10 +637,10 @@ async function streamAcceptedTurn<R>(
 					model: base.model,
 					// Our own system prompt (cached) is intentionally a system message; user turns are never
 					// system-role, so this is not a prompt-injection surface.
-					messages: [cachedSystemMessage(prepared.system), ...modelMessages],
+					messages: [cachedSystemMessage(system), ...modelMessages],
 					allowSystemInMessages: true,
 					abortSignal,
-					tools: prepared.tools,
+					tools: guarded.tools,
 					stopWhen: stepCountIs(8),
 					providerOptions: thinkEveryStep ? thinkingOptions(base) : undefined,
 					prepareStep: ({ stepNumber }) => {
@@ -718,7 +723,7 @@ async function streamAcceptedTurn<R>(
 						sessionId: turn.threadId,
 						input: uiMessagesToAiInput(turn.modelInput),
 						outputChoices: textToAiOutput(answerText(answer)),
-						tools: Object.keys(prepared.tools),
+						tools: Object.keys(guarded.tools),
 						latencyMs: Date.now() - startedAt,
 						...(error === "provider-error" ? { isError: true, error } : {}),
 					},

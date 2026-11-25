@@ -19,12 +19,25 @@ a job or an organization that its person cannot reach, and cannot read across or
 | --- | --- |
 | Scopes | The token carries the scopes you granted: `read`, `design`, `plan`, `apply`, `destroy`. A scope only narrows your own permissions. A tool that needs a scope the token lacks is not listed and refuses a call. |
 | Approval by a person | `request_apply` and `request_destroy` start nothing on their own. The job starts only after a person signed in to the console approves the request, and only for the plan that was approved, once. No tool approves. See [how an apply runs](/agents/tools#how-an-apply-or-a-destroy-runs). |
-| Organization switch | An owner can turn agent access off for the organization. The server then refuses every request, and no approval can start a job. An owner can also refuse agents any apply or destroy in a production environment. |
+| Organization switch | An owner can turn agent access off for the organization. Off means off: the server refuses every request, including reads, designs and plans. An approval granted before the switch was turned off can no longer start a job. The server checks the switch on every request, so a client that kept its tool list is refused at its next call. An owner can also refuse agents any apply or destroy in a production environment. |
 | OAuth sign-in | A client gets a token only after you sign in to Alethia in the browser. There is no API key to paste or leak. |
 | Client ID Metadata Documents | A client identifies itself by the URL of a metadata document that it publishes. Clients cannot register themselves anonymously. |
 | Tokens bound to the server | Each access token names the MCP endpoint as its audience. The server refuses a token issued for anything else. |
 | No secrets in results | No tool returns a password, a token or a cloud credential. Tools that issue cluster credentials are kept away from the agent entirely. |
 | Plan check | On hosted Alethia the server answers `403` when AI is turned off for the organization. |
+
+## The assistant in the console
+
+The assistant in the console is an agent too. It acts with your permissions, and a deploy or a
+destroy that it requests needs a person's approval, as over MCP.
+
+The organization switch applies to it in the same way. While agent access is off, every tool call that
+the assistant makes is refused, reads included, and it tells you that agent access is turned off. Alethia checks
+the switch before each tool call, so turning the switch off also stops a conversation that is
+already running at its next call. A call that has already started finishes.
+
+The switch does not apply to you in the console, to the CLI signed in as you, or to
+service-account tokens.
 
 ## The CLI
 

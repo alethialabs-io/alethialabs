@@ -259,6 +259,10 @@ vi.mock("@/lib/billing/ai-quota", async (importOriginal) => ({
 // The two reads the shared route body makes itself (the thread's pin, the project check), against the
 // fake tables. Their WHERE clauses are rendered with drizzle's own dialect, so the fake answers the
 // parameters the route actually bound (thread + owner; project + org), not a guess.
+vi.mock("@/lib/approvals/context", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/context")>()),
+	readAgentPolicy: async () => ({ agentAccessEnabled: true }),
+}));
 vi.mock("@/lib/db", async () => {
 	const schema = await import("@/lib/db/schema");
 	const dialect = new PgDialect();
@@ -281,6 +285,8 @@ vi.mock("@/lib/db", async () => {
 	};
 	return {
 		withScope: async (_scope: unknown, fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
+		// The kill switch's read (lib/agent/kill-switch.ts); readAgentPolicy is faked below as on.
+		withActorScope: async (_actor: unknown, fn: (t: object) => Promise<unknown>) => fn({}),
 		getServiceDb: () => ({
 			select: () => ({
 				from: (table: unknown) => ({
