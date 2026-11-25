@@ -461,6 +461,26 @@ type ComponentInsert<T> = Omit<
 	| "updated_at"
 >;
 
+/**
+ * What a design write (`createProject`, `updateProjectDesign`) can carry besides the design: the
+ * idempotency key of the MCP design tools (lib/ai/mcp/design.ts). It is a SHA-256 hex the caller
+ * derived from the organisation, the person and its own key, and it is recorded on the write's
+ * audit row, which is append-only. A repeated tool call finds the row by it and answers with the
+ * first result instead of writing again.
+ */
+export interface DesignWriteOptions {
+	idempotencyKey?: string;
+}
+
+/** A SHA-256 hex: the only shape a design-write idempotency key is recorded in. */
+const DESIGN_WRITE_KEY = /^[0-9a-f]{64}$/;
+
+/** The audit `changes` member that records `opts`' idempotency key; empty when there is none. */
+function designWriteKey(opts: DesignWriteOptions | undefined): { idempotency_key?: string } {
+	const key = opts?.idempotencyKey;
+	return key && DESIGN_WRITE_KEY.test(key) ? { idempotency_key: key } : {};
+}
+
 export interface CreateProjectInput {
 	project: {
 		project_name: string;
@@ -777,7 +797,7 @@ async function clearComponents(
  * parse above the guard answers a question for a caller who has not cleared it. That is also why
  * the wrapper below re-asks nothing.
  */
-export async function createProject(data: CreateProjectInput) {
+export async function createProject(data: CreateProjectInput, opts?: DesignWriteOptions) {
 	// Recorded AFTER the insert (#6735): `authorize()` recorded the create before the project had an
 	// id, so the Activity line could never name it — and recorded it for a create that was refused.
 	const actor = await authorizeDeferred("create", { type: "project" });
@@ -841,6 +861,7 @@ export async function createProject(data: CreateProjectInput) {
 			changes: {
 				project_name,
 				environment: data.project.environment_stage,
+				...designWriteKey(opts),
 			},
 		});
 
@@ -873,13 +894,15 @@ export async function createProject(data: CreateProjectInput) {
  * ProjectNameInvalidError}. The ordering that matters is `authorize` → parse → write.
  *
  * @param data the same `CreateProjectInput` `createProject` takes
+ * @param opts the same `DesignWriteOptions` `createProject` takes
  * @returns the created project, or `{ ok: false, error }` with a sentence to show
  */
 export async function tryCreateProject(
 	data: CreateProjectInput,
+	opts?: DesignWriteOptions,
 ): Promise<CreateProjectResult> {
 	try {
-		const { project } = await createProject(data);
+		const { project } = await createProject(data, opts);
 		return { ok: true, project };
 	} catch (err) {
 		// The name rule, asked by `createProject` AFTER its `authorize` (see above). Its message is
@@ -927,6 +950,7 @@ export async function updateProjectDesign(
 	projectId: string,
 	environmentId: string,
 	data: CreateProjectInput,
+	opts?: DesignWriteOptions,
 ) {
 	const actor = await authorize("edit", { type: "project", id: projectId });
 	const owner = actor.userId;
@@ -965,7 +989,7 @@ export async function updateProjectDesign(
 			project_id: projectId,
 			user_id: owner,
 			action: "UPDATED",
-			changes: { project_name: data.project.project_name },
+			changes: { project_name: data.project.project_name, ...designWriteKey(opts) },
 		});
 
 		return { success: true };
