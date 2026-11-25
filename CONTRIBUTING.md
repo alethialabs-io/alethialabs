@@ -91,7 +91,11 @@ was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in
   **on Mergify's queue builds** (the `mergify/merge-queue/*` draft PRs; T1 runs on every one, the
   browser E2Es when their paths changed), graded by `scripts/merge-signal-health.sh` and the weekly
   *Merge-signal health* workflow — the release gate is a promotion-path check and does not run on a `dev` PR at all
-  unless you label it `release-gate:run`. See the promotion checklist below.
+  unless you label it `release-gate:run`, with one exception: its **`qa` leg** runs on every `dev` PR
+  that touches the console UI, its e2e specs or the packages it renders (`ci.yml`'s `e2e-qa-leg`,
+  which calls `release-gate.yml`; #7647), and it is **required when it runs** — a `needs:` of
+  `CI required`, so a skip passes and a ratchet regression blocks the merge. It is about ten runner
+  minutes, not in the merge queue, and documented in `TESTING.md`. See the promotion checklist below.
 
 - **Why the promotion head is pinned.** The old `dev → staging` promotion PR lived as a DRAFT
   between promotions, because a draft does not fire the release gate. Its head was an integration

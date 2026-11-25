@@ -25,6 +25,28 @@
 // tab has its own sessionStorage, so the only thing that can restore the view there is the URL,
 // which is the claim F8 makes ("a filtered view is linkable").
 //
+// ── THE LIST'S SIZE IS ITS RENDERED ITEMS, NOT A PILL (#7673) ──────────────────────────────────
+//
+// A list is sized by counting `[data-list-item]` — the ONE marker every list primitive puts on each
+// row or card it renders: `DataTable`'s body rows (`components/data-table.tsx`), the card grids
+// (runners, connectors), the rails (alert policies and channels, roles, SSO), the activity feed, the
+// support cases list and the evidence table. Until #7673 the size was read off the count pill
+// first; the maintainer's no-count-pills ruling (epic #7481) removed the pills, and every card grid
+// and feed lost its size with them. A pill was also never the list's own answer on a page with two
+// lists: `~/environments` read "1" off the PROMOTIONS heading's pill and scored that as the
+// environments list. Rendered items are what the reader sees, on every page, with or without a pill.
+//
+// What the count means: the items RENDERED in `main`, summed over every list on the page. Keyset
+// lists page on the server, so this is "rows loaded", not "rows that exist" — and that is the
+// quantity every step below compares against itself (full → narrowed → reloaded → reset), so a cap
+// at the page size cannot pass a broken bar: a narrowing option whose count is at or over the
+// loaded size is never chosen (`narrows`), and one under it must visibly shrink the list. Summing a
+// multi-list page (the alerts hub stacks policies, channels and the delivery ledger) is sound for
+// the same reason: the lists the filter does not govern hold still, so any change is the filter's.
+// Two fallbacks stay for lists that do not mark their items: #7668's listbox-rail reading (a
+// master-detail rail of `role="option"` rows) and the legacy table-row reading (a table composed
+// straight from `@repo/ui/table`). A page that marks items is never read through either.
+//
 // A facet is found by its COUNT. Every shared facet primitive in `@repo/ui` renders an option's count
 // through `CountFigure` (`data-slot="count-figure"`), and nothing else in a console page does — so
 // "a button carrying a numeric count figure" is the one shape FacetFilter, FilterChip, MultiCombobox
@@ -172,45 +194,44 @@ const TOKEN_PREFIX = SEARCH_TOKEN.slice(0, 3);
 
 // ── reading the page ────────────────────────────────────────────────────────────────────────────
 
-/** How a list's size was read. `empty` is the shared empty state with no rows beside it. */
+/** The marker every list primitive puts on each item it renders — see the header. */
+const LIST_ITEM_ATTR = "data-list-item";
+
+/** How a list's size was read. `empty` is the shared empty state with no items beside it. */
 export interface ListCount {
-	source: "count-pill" | "rows" | "options" | "empty" | "none";
+	source: "items" | "options" | "rows" | "empty" | "none";
 	value: number | null;
 }
 
 /**
- * The list's size: the count pill when the page has one, otherwise its table rows, otherwise the
- * options of its first single-select rail (`role="listbox"`).
+ * The list's size: the `[data-list-item]` elements rendered in `main`; otherwise the options of the
+ * first single-select rail (`role="listbox"`) that does not mark its options; otherwise 0 when the
+ * shared empty state is showing; otherwise the rows of an unmarked table.
  *
- * The pill first, because it is the standard's own answer to "how many results" (F5); the rows are
- * the fallback for the pages F5 already fails, and the evidence says which one was read.
+ * Items first, because they are what the reader sees whatever else the page renders (see the
+ * header). Only the OUTERMOST marked element counts, so a row that renders a marked sub-list cannot
+ * be counted twice. There is no count-pill reading any more: the console carries no list counts
+ * (epic #7481), and where a pill survives it is either a count of a DIFFERENT list on the page or
+ * the same number the items already give.
  *
- * The rail is read because the console lists dropped their count pills (#7481), and a master-detail
- * list renders its rows as `role="option"` in a listbox, not as a table: the alerts hub's policies
- * and channels (#7531). Without it the read fell through to the first `[data-slot="empty"]` in
- * `main` — on the hub, the delivery ledger's, a different list from the one the facet narrows — and
- * read 0. A listbox whose options carry a `count-figure` is a facet's own option list, not the
- * result list, so it is skipped. The rail is read only after the table, so a page that measured
- * before measures exactly as it did; only a page that read `empty` or `none` can read differently.
- * On a hub with several lists the FIRST rail is read, and `discoverFacet` drives the FIRST facet:
- * they name the same list only while each list's filter bar sits above its own rail, in page order.
+ * The rail reading is #7668's, kept as the fallback for a master-detail list that renders its rows
+ * as `role="option"` in a listbox without the item marker. The alerts hub's policy and channel
+ * rails, which it was written for, now carry `data-list-item` and are read (and summed) through the
+ * items path. A listbox whose options carry a `count-figure` is a facet's own option list, not the
+ * result list, so it is skipped. On a page with several unmarked rails only the FIRST is read, and
+ * `discoverFacet` drives the FIRST facet: they name the same list only while each list's filter bar
+ * sits above its own rail, in page order.
  */
 export async function readListCount(page: Page): Promise<ListCount> {
-	return page.evaluate(() => {
+	return page.evaluate((attr) => {
 		const main = document.querySelector("main");
 		if (main === null) return { source: "none" as const, value: null };
 		const shown = (el: Element) => {
 			const r = el.getBoundingClientRect();
 			return r.width > 0 && r.height > 0;
 		};
-		const pill = [...main.querySelectorAll('[data-slot="count-pill"]')].find(shown);
-		const digits = pill?.textContent?.replace(/[^\d]/g, "") ?? "";
-		if (pill !== undefined && digits !== "") return { source: "count-pill" as const, value: Number(digits) };
-		const table = [...main.querySelectorAll("table")].find(shown);
-		if (table !== undefined) {
-			const rows = [...table.querySelectorAll("tbody tr")].filter((tr) => shown(tr) && tr.querySelectorAll("td").length > 1 && tr.querySelector('[data-slot="empty"]') === null);
-			return { source: "rows" as const, value: rows.length };
-		}
+		const items = [...main.querySelectorAll(`[${attr}]`)].filter((el) => shown(el) && (el.parentElement?.closest(`[${attr}]`) ?? null) === null);
+		if (items.length > 0) return { source: "items" as const, value: items.length };
 		const rail = [...main.querySelectorAll('[role="listbox"]')].find(
 			(lb) => shown(lb) && lb.querySelector('[data-slot="count-figure"]') === null,
 		);
@@ -218,10 +239,17 @@ export async function readListCount(page: Page): Promise<ListCount> {
 			const options = [...rail.querySelectorAll('[role="option"]')].filter(shown);
 			return { source: "options" as const, value: options.length };
 		}
+		// The shared empty state before any unmarked table: with no item rendered, the empty state is a
+		// list's answer, and an unmarked table beside it (a role's permission grid) is not a list.
 		const empty = [...main.querySelectorAll('[data-slot="empty"]')].find(shown);
 		if (empty !== undefined) return { source: "empty" as const, value: 0 };
+		const table = [...main.querySelectorAll("table")].find(shown);
+		if (table !== undefined) {
+			const rows = [...table.querySelectorAll("tbody tr")].filter((tr) => shown(tr) && tr.querySelectorAll("td").length > 1 && tr.querySelector('[data-slot="empty"]') === null);
+			return { source: "rows" as const, value: rows.length };
+		}
 		return { source: "none" as const, value: null };
-	});
+	}, LIST_ITEM_ATTR);
 }
 
 /** Is anything in `main` — or `main` itself — marked `aria-busy="true"`? */
@@ -249,6 +277,13 @@ export interface SettledCount extends ListCount {
  * a fresh tab showed the unfiltered grid for as long as the filtered fetch took, and F8 scored that
  * as the restored list whenever the fetch took longer than the window. Stillness cannot tell a
  * placeholder from an answer; `aria-busy` is the page saying which one it is.
+ *
+ * Keyset lists are exactly this case (#7673): `useKeysetList` keeps the previous filter's rows as
+ * placeholder data while the server pages the new one, so a facet click is followed by a window in
+ * which the OLD list is on screen. `DataTable`'s server mode declares that window `aria-busy` on its
+ * body, and the hand-built keyset lists (jobs, the activity feed, the alerts hub, support cases)
+ * declare it on their own region — which is what lets "the list did not narrow" mean the list,
+ * not the placeholder.
  */
 export function isSettledPair(previous: ListRead | null, next: ListRead): boolean {
 	if (previous === null || previous.busy || next.busy) return false;
@@ -291,8 +326,10 @@ export interface FacetOption {
  * Mark every VISIBLE facet option on the page with `data-filter-option=<index>` and describe it.
  *
  * An option is the nearest button, `role=option` or `command-item` around a `count-figure` whose
- * text is a number — see the header for why the count is the anchor. The count pill beside a
- * heading is `data-slot="count-pill"`, a different slot, and is never read as an option.
+ * text is a number — see the header for why the option's count is the anchor. (That is the FACET
+ * option's count, which the standard keeps; it is not a list count, and #7673's change to how the
+ * list is sized does not touch it.) A `count-pill`, where one survives, is a different slot and is
+ * never read as an option.
  */
 export async function markFacetOptions(page: Page): Promise<FacetOption[]> {
 	return page.evaluate(() => {
@@ -685,7 +722,7 @@ export async function measureRoute(page: Page, url: string, surfaces: readonly O
 		F8 = { kind: "not-measured", reason, evidence: { count: full } };
 		F9 = { kind: "not-measured", reason, evidence: { count: full } };
 	} else if (full.value === null) {
-		const reason = "the page rendered no count pill, no table and no empty state in `main`, so there is no list size to narrow";
+		const reason = "the page rendered no `[data-list-item]`, no table and no empty state in `main`, so there is no list size to narrow — a list primitive that does not mark its items is the gap (#7673)";
 		F8 = { kind: "not-measured", reason };
 		F9 = { kind: "not-measured", reason };
 	} else if (full.value < MIN_ROWS) {
@@ -743,15 +780,21 @@ export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke" 
 export const SLOW_RELOAD_MS = 2_000;
 
 /**
- * The fixture list page. Plain DOM, the SAME slots the real primitives render — a `count-pill`, chips
- * with `aria-pressed` and a `count-figure`, a search input beside `svg.lucide-search`, a "Reset · N"
- * button and a `data-slot="empty"` state — so the control exercises the matchers the routes use.
+ * The fixture list page. Plain DOM, the SAME markers the real primitives render — items carrying
+ * `data-list-item`, chips with `aria-pressed` and a `count-figure`, a search input beside
+ * `svg.lucide-search`, a "Reset · N" button and a `data-slot="empty"` state — so the control
+ * exercises the matchers the routes use.
+ *
+ * The items are a `ul`, NOT table rows, so the good bar can only be sized through the item marker:
+ * read any other way it has no size and every arm goes NOT MEASURED. And the heading carries a
+ * `count-pill` DECOY frozen at 99 — a list count the console no longer means — so an instrument that
+ * went back to sizing by the pill would see a list that never narrows and turn the control red.
  */
 export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>filters control</title></head><body><main>
 <div><div><svg class="lucide lucide-search" width="10" height="10"></svg><input aria-label="Search widgets" id="q" autocomplete="off"></div>
 <div role="group" aria-label="Kind" id="chips"></div><span id="reset-slot"></span></div>
-<h2>Widgets <span data-slot="count-pill" id="pill"></span></h2>
-<table><thead><tr><th>Name</th><th>Kind</th></tr></thead><tbody id="rows"></tbody></table>
+<h2>Widgets <span data-slot="count-pill">99</span></h2>
+<ul id="rows"></ul>
 <div id="empty-slot"></div>
 </main>
 <script>
@@ -773,8 +816,7 @@ function writeUrl() {
 }
 function render() {
 	var rows = ROWS.filter(match);
-	document.getElementById("pill").textContent = String(rows.length);
-	document.getElementById("rows").innerHTML = rows.map(function (r) { return "<tr><td>" + r.name + "</td><td>" + r.kind + "</td></tr>"; }).join("");
+	document.getElementById("rows").innerHTML = rows.map(function (r) { return "<li data-list-item>" + r.name + " · " + r.kind + "</li>"; }).join("");
 	var universe = MODE === "moving-counts" || MODE === "one-kind" ? rows : ROWS.filter(function (r) { return !state.search || r.name.indexOf(state.search) >= 0; });
 	document.getElementById("chips").innerHTML = ["a", "b"].map(function (k) {
 		var n = universe.filter(function (r) { return r.kind === k; }).length;

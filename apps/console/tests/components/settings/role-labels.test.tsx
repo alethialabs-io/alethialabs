@@ -23,6 +23,7 @@ import { grantRoleLabel } from "@/components/settings/access/access-filters";
 import { AccessManager } from "@/components/settings/access/access-manager";
 import { MEMBER_ROLE_FILTER_OPTIONS } from "@/components/settings/members/members-filters";
 import { MembersTable } from "@/components/settings/members/members-table";
+import { membersPageOf, settledKeysetList } from "../../helpers/keyset-list";
 import { RoleSheet } from "@/components/settings/roles/role-sheet";
 import {
 	BUILT_IN_ROLE_DESCRIPTIONS,
@@ -98,24 +99,27 @@ function member(id: string, name: string, role: string) {
 	};
 }
 
+// Both lists page through `useKeysetList` since LST-8 (#7490); each test hands the one it renders.
+const LIST = vi.hoisted((): { current: unknown } => ({ current: null }));
+vi.mock("@/lib/query/use-keyset-list", () => ({ useKeysetList: () => LIST.current }));
+
+/** The members list the table renders: three members, read for the owner. */
+function membersList() {
+	const page = membersPageOf({
+		members: [
+			member("owner", "Grace Hopper", "owner"),
+			member("ada", "Ada Lovelace", "admin"),
+			member("linus", "Linus Torvalds", "viewer"),
+		],
+		invitations: [],
+		viewerUserId: "u_owner",
+		asOf: "2026-01-04T00:00:00.000Z",
+		facets: { statuses: [], roles: [], teams: [] },
+	});
+	return settledKeysetList(page.rows, { facets: page.facets });
+}
+
 vi.mock("@/lib/query/use-members-query", () => ({
-	useMembersPageQuery: () => ({
-		data: {
-			members: [
-				member("owner", "Grace Hopper", "owner"),
-				member("ada", "Ada Lovelace", "admin"),
-				member("linus", "Linus Torvalds", "viewer"),
-			],
-			invitations: [],
-			resultCount: 3,
-			total: 3,
-			viewerUserId: "u_owner",
-			asOf: "2026-01-04T00:00:00.000Z",
-			facets: { statuses: [], roles: [], teams: [] },
-		},
-		isPending: false,
-		isPlaceholderData: false,
-	}),
 	// The members gate is prefetched with the rows since #6129; `canManage` follows the test's switch.
 	useMembersGateQuery: () => ({
 		data: { canManage: entitled, canInvite: false, plan: "community", inviteBlockedReason: "x" },
@@ -135,20 +139,18 @@ function grant(id: string, roleName: string) {
 		resourceType: "org",
 		resourceId: null,
 		createdAt: "2026-01-01T00:00:00.000Z",
+		asOf: "2026-01-04T00:00:00.000Z",
 	};
 }
 
+/** The grants list the Access table renders. */
+function grantsList() {
+	return settledKeysetList([grant("g1", "owner"), grant("g2", "k8s-readers"), grant("g3", "iOS team")], {
+		facets: { scopes: [], roles: [], effects: [] },
+	});
+}
+
 vi.mock("@/lib/query/use-access-grants-query", () => ({
-	useAccessGrantsPageQuery: () => ({
-		data: {
-			rows: [grant("g1", "owner"), grant("g2", "k8s-readers"), grant("g3", "iOS team")],
-			resultCount: 3,
-			total: 3,
-			facets: { scopes: [], roles: [], effects: [] },
-		},
-		isPending: false,
-		isPlaceholderData: false,
-	}),
 	useGrantOptionsQuery: () => ({ data: undefined }),
 }));
 
@@ -160,6 +162,7 @@ function renderWithClient(ui: ReactNode) {
 
 beforeEach(() => {
 	entitled = true;
+	LIST.current = membersList();
 });
 
 describe("the role label source (lib/authz/registry.ts)", () => {
@@ -217,6 +220,7 @@ describe("Settings › Members renders role labels, not CSS-capitalised keys", (
 
 describe("Settings › Access renders the role chip without re-casing", () => {
 	it("a built-in grant shows its label; a custom role shows exactly what was typed", () => {
+		LIST.current = grantsList();
 		renderWithClient(<AccessManager />);
 		const table = screen.getByRole("table");
 		expect(within(table).getByText("Owner")).toBeInTheDocument();

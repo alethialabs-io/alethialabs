@@ -94,7 +94,9 @@ export function ActivityFeed({
 						{g.rows.map((row) => {
 							const e = describeEvent(row, ctx);
 							return (
-								<li key={row.id} className="flex items-center gap-2 py-1">
+								// The list-item marker (#7673, components/data-table.tsx): the feed is
+								// sized by its rendered events, not by a count it no longer shows.
+								<li key={row.id} data-list-item="" className="flex items-center gap-2 py-1">
 									{row.actorImage ? (
 										// eslint-disable-next-line @next/next/no-img-element
 										<img

@@ -38,7 +38,32 @@ vi.mock("@/lib/db", () => ({ getServiceDb }));
 
 import { exists, ilike, inArray, isNull, SQL, sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { MEMBER_ROW_STATUSES, queryMembersPage } from "@/lib/queries/members";
+import { decodeKeysetTextCursor } from "@/lib/queries/keyset";
+import {
+	MEMBER_ROW_STATUSES,
+	type MembersListRow,
+	type MembersPage,
+	queryMembersPage,
+} from "@/lib/queries/members";
+
+/** A list row without the fields the SERVER stamps on every row of a page (kind, isYou, asOf). */
+function plain(row: MembersListRow): Record<string, unknown> {
+	const out: Record<string, unknown> = { ...row };
+	delete out.kind;
+	delete out.isYou;
+	delete out.asOf;
+	return out;
+}
+
+/** The member rows of a page, in page order, as the action module's `MemberRow` shape. */
+function membersOf(page: MembersPage) {
+	return page.rows.filter((r) => r.kind === "member").map(plain);
+}
+
+/** The invitation rows of a page, in page order, as `MembersPageInvitation`. */
+function invitesOf(page: MembersPage) {
+	return page.rows.filter((r) => r.kind === "invite").map(plain);
+}
 
 /** Renders a recorded drizzle fragment the way the service db does (`casing: "snake_case"`). */
 const dialect = new PgDialect({ casing: "snake_case" });
@@ -120,7 +145,7 @@ describe("queryMembersPage", () => {
 
 		const page = await queryMembersPage("org-1", "viewer-1");
 
-		expect(page.members).toEqual([
+		expect(membersOf(page)).toEqual([
 			{
 				...memberRow(),
 				joinedAt: "2026-01-05T09:00:00.000Z",
@@ -128,7 +153,7 @@ describe("queryMembersPage", () => {
 				lastActiveAt: "2026-08-25T08:00:00.000Z",
 			},
 		]);
-		expect(page.invitations).toEqual([
+		expect(invitesOf(page)).toEqual([
 			{
 				id: "i1",
 				email: "grace@x.io",
@@ -142,19 +167,21 @@ describe("queryMembersPage", () => {
 				expiresAt: "2026-08-22T09:00:00.000Z",
 			},
 		]);
-		expect(page.resultCount).toBe(2);
-		// 2 members + 1 invitation in the UNFILTERED universe.
-		expect(page.total).toBe(3);
-		// The page names who it was read for and when, so the table's "You" badge and its
-		// "… ago" come from the dehydrated payload, not from each renderer's session or clock (#5377).
-		expect(page.viewerUserId).toBe("viewer-1");
-		expect(Number.isNaN(Date.parse(page.asOf))).toBe(false);
-		expect(page.facets.statuses).toEqual([
+		// One list; these fixtures carry no sort text, so the id breaks the tie ("i1" < "m1").
+		expect(page.rows.map((r) => r.kind)).toEqual(["invite", "member"]);
+		expect(page.nextCursor).toBeNull();
+		expect(page.universeEmpty).toBe(false);
+		// Every row names whether it is the viewer's and when its page was read, so the table's "You"
+		// badge and its "… ago" come from the dehydrated payload, not each renderer's session or
+		// clock (#5377).
+		expect(page.rows.find((r) => r.kind === "member")).toMatchObject({ isYou: false });
+		for (const r of page.rows) expect(Number.isNaN(Date.parse(r.asOf))).toBe(false);
+		expect(page.facets?.statuses).toEqual([
 			{ value: "active", label: null, count: 1 },
 			{ value: "pending", label: null, count: 1 },
 			{ value: "suspended", label: null, count: 1 },
 		]);
-		expect(page.facets.teams).toEqual([
+		expect(page.facets?.teams).toEqual([
 			{ value: "Ops", label: "Ops", count: 1 },
 			{ value: "Platform", label: "Platform", count: 2 },
 		]);
@@ -163,7 +190,7 @@ describe("queryMembersPage", () => {
 	it("counts a NULL invitation role as viewer, because that is what accepting it grants", async () => {
 		seed([], [], [{ role: "owner", status: "active" }], [{ role: null }, { role: "admin" }]);
 		const page = await queryMembersPage("org-1", "viewer-1");
-		expect(page.facets.roles).toEqual([
+		expect(page.facets?.roles).toEqual([
 			{ value: "admin", label: null, count: 1 },
 			{ value: "owner", label: null, count: 1 },
 			{ value: "viewer", label: null, count: 1 },
@@ -187,8 +214,8 @@ describe("queryMembersPage", () => {
 		const page = await queryMembersPage("org-1", "viewer-1");
 		// The row's <select> offers owner/admin/operator/viewer; `member` matches no option and
 		// renders blank, and a second facet bucket claims the org has a role it cannot filter to.
-		expect(page.members[0]?.role).toBe("viewer");
-		expect(page.facets.roles).toEqual([
+		expect(membersOf(page)[0]?.role).toBe("viewer");
+		expect(page.facets?.roles).toEqual([
 			{ value: "viewer", label: null, count: 2 },
 		]);
 	});
@@ -228,7 +255,7 @@ describe("queryMembersPage", () => {
 		// personal-workspace case, and would issue a fifth read to synthesize its owner.
 		const chains = seed([], [{ role: "admin", status: "active" }], [{ role: "member" }]);
 		const page = await queryMembersPage("org-1", "viewer-1", { statuses: ["pending"] });
-		expect(page.members).toEqual([]);
+		expect(membersOf(page)).toEqual([]);
 		// Chains created: invitations + three facet passes. No member rows pass at all —
 		// a status the page cannot contain should not cost a round trip.
 		expect(chains).toHaveLength(4);
@@ -240,7 +267,7 @@ describe("queryMembersPage", () => {
 		// wantsInvitations is false here, so the order is members, facet(members), … .
 		const chains = seed([], [{ role: "admin", status: "active" }]);
 		const page = await queryMembersPage("org-1", "viewer-1", { teams: ["Platform"] });
-		expect(page.invitations).toEqual([]);
+		expect(invitesOf(page)).toEqual([]);
 		// The team filter is an EXISTS subquery, which creates a chain that is never awaited.
 		expect(exists).toHaveBeenCalledTimes(1);
 		expect(chains.some((c) => !c.awaited)).toBe(true);
@@ -288,8 +315,8 @@ describe("queryMembersPage", () => {
 
 		const page = await queryMembersPage("u-me", "u-me");
 
-		expect(page.members).toHaveLength(1);
-		expect(page.members[0]).toMatchObject({
+		expect(membersOf(page)).toHaveLength(1);
+		expect(membersOf(page)[0]).toMatchObject({
 			id: "u-me",
 			userId: "u-me",
 			role: "owner",
@@ -299,10 +326,11 @@ describe("queryMembersPage", () => {
 		});
 		// The viewer is reading the page, so the synthesized owner is active AS OF the read — the
 		// same instant as the page's `asOf`, which is what renders it as "less than a minute ago".
-		expect(page.members[0].lastActiveAt).toBe(page.asOf);
+		expect(membersOf(page)[0]?.lastActiveAt).toBe(page.rows[0]?.asOf);
 		// The synthesized row IS the universe, so the facets describe it rather than nothing.
-		expect(page.total).toBe(1);
-		expect(page.facets.roles).toEqual([{ value: "owner", label: null, count: 1 }]);
+		expect(page.universeEmpty).toBe(false);
+		expect(page.rows[0]).toMatchObject({ isYou: true });
+		expect(page.facets?.roles).toEqual([{ value: "owner", label: null, count: 1 }]);
 	});
 
 	it("applies the query to the synthesized owner in memory", async () => {
@@ -320,31 +348,30 @@ describe("queryMembersPage", () => {
 		const personal = () => seed([], [], [], [], owner);
 
 		personal();
-		expect((await queryMembersPage("u-me", "u-me", { search: "ada" })).members).toHaveLength(1);
+		expect(membersOf(await queryMembersPage("u-me", "u-me", { search: "ada" }))).toHaveLength(1);
 
 		personal();
-		expect((await queryMembersPage("u-me", "u-me", { search: "grace" })).members).toEqual([]);
+		expect(membersOf(await queryMembersPage("u-me", "u-me", { search: "grace" }))).toEqual([]);
 
 		personal();
-		expect((await queryMembersPage("u-me", "u-me", { roles: ["viewer"] })).members).toEqual([]);
+		expect(membersOf(await queryMembersPage("u-me", "u-me", { roles: ["viewer"] }))).toEqual([]);
 
 		personal();
 		// The personal owner is in no team, so ANY team selection excludes them. That branch
 		// also drops the invitations read, which is why the owner seed moves down one slot.
 		seed([], [], [], owner);
-		expect((await queryMembersPage("u-me", "u-me", { teams: ["Ops"] })).members).toEqual([]);
+		expect(membersOf(await queryMembersPage("u-me", "u-me", { teams: ["Ops"] }))).toEqual([]);
 
 		personal();
 		expect(
-			(await queryMembersPage("u-me", "u-me", { statuses: ["suspended"] })).members,
+			membersOf(await queryMembersPage("u-me", "u-me", { statuses: ["suspended"] })),
 		).toEqual([]);
 	});
 
 	it("returns nothing rather than throwing when the personal owner's user row is gone", async () => {
 		seed([], [], [], [], []);
 		const page = await queryMembersPage("u-me", "u-me", {});
-		expect(page.members).toEqual([]);
-		expect(page.resultCount).toBe(0);
+		expect(page.rows).toEqual([]);
 	});
 
 	it("treats any status that is not the explicit suspended flag as active", async () => {
@@ -354,7 +381,7 @@ describe("queryMembersPage", () => {
 			{ role: "admin", status: "suspended" },
 		]);
 		const page = await queryMembersPage("org-1", "viewer-1");
-		expect(page.facets.statuses).toEqual([
+		expect(page.facets?.statuses).toEqual([
 			{ value: "active", label: null, count: 2 },
 			{ value: "pending", label: null, count: 0 },
 			{ value: "suspended", label: null, count: 1 },
@@ -368,62 +395,93 @@ describe("queryMembersPage", () => {
 			inviteRow({ id: "c", role: null }),
 		]);
 		const page = await queryMembersPage("org-1", "viewer-1");
-		expect(page.invitations.map((i) => i.inviterName)).toEqual([
+		// One sort text for all three, so the id breaks the tie — ascending: a, b, c.
+		expect(invitesOf(page).map((i) => i.inviterName)).toEqual([
 			"ada@x.io",
 			"—",
 			"Ada Lovelace",
 		]);
-		expect(page.invitations[2].role).toBe("viewer");
+		expect(invitesOf(page)[2]?.role).toBe("viewer");
 	});
 
 	it("leaves lastActiveAt null for a member with no session row", async () => {
 		seed([memberRow()], [], [{ role: "admin", status: "active" }], [], [], [], []);
 		const page = await queryMembersPage("org-1", "viewer-1");
-		expect(page.members[0].lastActiveAt).toBeNull();
-		expect(page.members[0].teams).toEqual([]);
+		expect(membersOf(page)[0].lastActiveAt).toBeNull();
+		expect(membersOf(page)[0].teams).toEqual([]);
 	});
 
-	it("orders member rows totally: displayed name, then email, then the primary key", async () => {
+	it("orders both kinds alphabetically by what the row displays, folded with COLLATE \"C\", then id", async () => {
 		// Creation order: rows(members), rows(invites), facet(members), facet(invites), facet(teams).
 		const chains = seed([], [], [{ role: "admin", status: "active" }]);
 		await queryMembersPage("org-1", "viewer-1");
-		// The table pages members-then-invitations 20 at a time on the client, so an unordered
-		// read can move a row onto another page — or off every page — between two reads. The last
-		// key is the primary key, which is what makes the order TOTAL rather than "usually".
+		// A member sorts under the name it shows — trimmed, or the email when the name is blank.
 		expect(orderByOf(chains[0])).toBe(
-			'lower(coalesce("user"."name", "user"."email")) asc, "user"."email" asc, "member"."id" asc',
+			`lower(coalesce(nullif(btrim("user"."name"), ''), "user"."email")) collate "C" asc, "member"."id" asc`,
 		);
+		expect(orderByOf(chains[1])).toBe(`lower("invitation"."email") collate "C" asc, "invitation"."id" asc`);
+		// limit + 1 of each kind: the one extra row is how the end of the list is known exactly.
+		expect(chains[0]?.argsOf("limit")).toEqual([51]);
+		expect(chains[1]?.argsOf("limit")).toEqual([51]);
 	});
 
-	it("orders pending invitations totally: email, then oldest first, then the primary key", async () => {
-		const chains = seed([], [], [{ role: "admin", status: "active" }]);
-		await queryMembersPage("org-1", "viewer-1");
-		expect(orderByOf(chains[1])).toBe(
-			'lower("invitation"."email") asc, "invitation"."created_at" asc, "invitation"."id" asc',
-		);
-	});
-
-	it("keeps the order on a filtered read, so a filter change cannot reshuffle the pages", async () => {
-		const chains = seed([], [], [{ role: "admin", status: "active" }]);
-		await queryMembersPage("org-1", "viewer-1", { search: "ada", roles: ["viewer"] });
-		expect(orderByOf(chains[0])).toMatch(/"member"\."id" asc$/);
-		expect(orderByOf(chains[1])).toMatch(/"invitation"\."id" asc$/);
-	});
-
-	it("returns rows in the order the database gave them — no client-side re-sort to disagree with SQL", async () => {
+	it("interleaves the two kinds alphabetically and cuts at the limit, with an exact next cursor", async () => {
 		seed(
 			[
-				memberRow({ id: "m-b", userId: "u-b", name: "beth" }),
-				memberRow({ id: "m-a", userId: "u-a", name: "Ada" }),
+				memberRow({ id: "m-bob", userId: "u-bob", name: "Bob", sortText: "bob" }),
+				memberRow({ id: "m-dee", userId: "u-dee", name: "Dee", sortText: "dee" }),
 			],
-			[inviteRow({ id: "i-z", email: "zed@x.io" }), inviteRow({ id: "i-a", email: "amy@x.io" })],
+			[
+				inviteRow({ id: "i-amy", email: "amy@x.io", sortText: "amy@x.io" }),
+				inviteRow({ id: "i-cy", email: "cy@x.io", sortText: "cy@x.io" }),
+			],
 			[{ role: "admin", status: "active" }],
 		);
-		const page = await queryMembersPage("org-1", "viewer-1");
-		// The mock returns them "unsorted" on purpose: the ORDER BY is the one source of order,
-		// and a second sort in memory (with JS collation) could disagree with Postgres's.
-		expect(page.members.map((m) => m.id)).toEqual(["m-b", "m-a"]);
-		expect(page.invitations.map((i) => i.id)).toEqual(["i-z", "i-a"]);
+		const page = await queryMembersPage("org-1", "viewer-1", {}, { limit: 3 });
+		// An invitation keeps its kind (and its "Pending" status), so it stays distinguishable.
+		expect(page.rows.map((r) => `${r.kind}:${r.id}`)).toEqual(["invite:i-amy", "member:m-bob", "invite:i-cy"]);
+		// The cursor carries the LAST kept row's sort text and id themselves.
+		expect(decodeKeysetTextCursor(page.nextCursor ?? "", "text")).toEqual({ text: "cy@x.io", id: "i-cy" });
+	});
+
+	it("breaks a tie on the sort text by id, across the two kinds", async () => {
+		seed(
+			[memberRow({ id: "bbbb", sortText: "same" })],
+			[inviteRow({ id: "aaaa", sortText: "same" })],
+			[{ role: "admin", status: "active" }],
+		);
+		const page = await queryMembersPage("org-1", "viewer-1", {}, { limit: 1 });
+		// id ascending: aaaa first, and bbbb starts the next page rather than being lost.
+		expect(page.rows.map((r) => r.id)).toEqual(["aaaa"]);
+		expect(decodeKeysetTextCursor(page.nextCursor ?? "", "text")).toEqual({ text: "same", id: "aaaa" });
+	});
+
+	it("applies the text cursor to both kinds and issues no facet pass on a later page", async () => {
+		const cursor = { text: "grace", id: "00000000-0000-4000-8000-000000000002" };
+		const chains = seed([], []);
+		const page = await queryMembersPage("org-1", "viewer-1", {}, { limit: 50, cursor });
+		// Two rows passes and nothing else: the facets describe the universe, which page two shares.
+		expect(chains).toHaveLength(2);
+		for (const c of chains) {
+			const where = (c.argsOf("where") ?? []).filter((a): a is SQL => a instanceof SQL);
+			expect(dialect.sqlToQuery(sql.join(where)).sql).toContain('> ($');
+		}
+		expect(page.facets).toBeNull();
+		expect(page.universeEmpty).toBeNull();
+		expect(page.nextCursor).toBeNull();
+	});
+
+	it("reads one row by id — the deep link — inside the same org scope as the list", async () => {
+		const id = "00000000-0000-4000-8000-0000000000aa";
+		const chains = seed([memberRow({ id })], [], [{ role: "admin", status: "active" }]);
+		const page = await queryMembersPage("org-1", "viewer-1", { id });
+		expect(page.rows.map((r) => r.id)).toEqual([id]);
+		// Both kinds are narrowed to the id, and both still carry the org predicate.
+		for (const c of [chains[0], chains[1]]) {
+			const q = dialect.sqlToQuery(sql.join((c?.argsOf("where") ?? []).filter((a): a is SQL => a instanceof SQL)));
+			expect(q.params).toContain(id);
+			expect(q.params).toContain("org-1");
+		}
 	});
 
 	it("exposes the three row statuses the facet renders", () => {

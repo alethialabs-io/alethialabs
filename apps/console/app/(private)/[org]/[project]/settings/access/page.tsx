@@ -3,7 +3,7 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
-import { accessQueryFromUrl } from "@/components/settings/access/access-filters";
+import { accessQueryFromUrl, type NormalizedAccessQuery } from "@/components/settings/access/access-filters";
 import { AccessManager } from "@/components/settings/access/access-manager";
 import {
 	isForbiddenRead,
@@ -30,7 +30,7 @@ export const metadata = pageMetadata({
  * scope. The `customRoles` entitlement is resolved here, on the server, so the first paint is the
  * list (or the upsell) rather than an upsell shown while the client store loads (#5850).
  *
- * #6129 (B1): with the entitlement, the project's grants — pristine (`{ projectId }`, the facet
+ * #6129 (B1): with the entitlement, the first page of the project's grants walk — pristine (`{ projectId }`, the facet
  * universe) and for the link's filters — and the grant builder's options are prefetched in-process
  * exactly as the org Access page prefetches them, so the browser fetches nothing on mount. The
  * pristine read goes first and alone: a viewer without `member:view` is refused there once, and gets
@@ -58,17 +58,28 @@ export default async function ProjectAccessPage({
 	const filtered = accessQueryFromUrl(paramReader(await searchParams), projectId);
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
-	const pristine = rpc.members.grants.queryOptions({ input: { projectId }, retry: retryUnlessRefused });
+	/**
+	 * The first page of one filter's walk, under the infinite key `useKeysetList` reads (LST-8 #7490).
+	 * Not retried: a refusal answers the same the second time.
+	 */
+	const grantsWalk = (filter: NormalizedAccessQuery) =>
+		rpc.members.grants.infiniteOptions({
+			input: (cursor: string | null) => (cursor === null ? filter : { ...filter, cursor }),
+			initialPageParam: null,
+			getNextPageParam: (last) => last.nextCursor,
+			retry: retryUnlessRefused,
+		});
+	const pristine = grantsWalk({ projectId });
 	const [canManage] = await Promise.all([
 		getPdp()
 			.can(actor, "manage_members", { type: "member" })
 			.then((d) => d.allowed),
-		queryClient.prefetchQuery(pristine),
+		queryClient.prefetchInfiniteQuery(pristine),
 	]);
 	const forbidden = isForbiddenRead(queryClient.getQueryState(pristine.queryKey)?.error);
 	if (!forbidden) {
 		await Promise.all([
-			queryClient.prefetchQuery(rpc.members.grants.queryOptions({ input: filtered, retry: retryUnlessRefused })),
+			queryClient.prefetchInfiniteQuery(grantsWalk(filtered)),
 			queryClient.prefetchQuery(
 				rpc.members.grantOptions.queryOptions({ input: undefined, retry: retryUnlessRefused }),
 			),

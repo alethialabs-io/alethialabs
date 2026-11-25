@@ -4,7 +4,9 @@
 
 // Settings · Teams — the org's teams on the shared DataTable, on the console filter standard
 // (lib/query/README.md → "Server-side filters"): a URL-synced zustand store → debounce →
-// `normalizeTeamsQuery` → the `members.teams` GET procedure, which the route prefetches (#6129).
+// `normalizeTeamsQuery` → the `members.teams` GET procedure, which the route prefetches (#6129), paged
+// on the keyset contract (`useKeysetList` + the server-mode table's `ListFooter`, LST-8 #7490). No
+// count pill: the console carries no list counts.
 //
 // Writes go to Better Auth's organization endpoints (createTeam/updateTeam/removeTeam, and the
 // member roster in ManageTeamDialog) through `useActionMutation`, so each is pending while in flight
@@ -18,6 +20,8 @@
 import { planMeta } from "@repo/plan-catalog";
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Users } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { TeamRow } from "@/app/server/actions/teams";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
@@ -45,7 +49,9 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
-import { useTeamsPageQuery } from "@/lib/query/use-teams-query";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useTeamsFilters } from "@/lib/stores/use-settings-filters";
@@ -59,7 +65,6 @@ import { ManageTeamDialog } from "./manage-team-dialog";
 import { CreateTeamDialog } from "./create-team-dialog";
 import { RenameTeamDialog } from "./rename-team-dialog";
 import { NO_TEAM_WRITES, type TeamsGate } from "./teams-gate";
-import { SETTINGS_LIST_PAGE_SIZE } from "@/components/settings/members/members-filters";
 
 /** Two-letter avatar initials for a team name. */
 function monogram(name: string): string {
@@ -260,7 +265,6 @@ export function TeamsList({
 	);
 
 	const [creating, setCreating] = useState(false);
-	const [manage, setManage] = useState<TeamRow | null>(null);
 	const [renaming, setRenaming] = useState<TeamRow | null>(null);
 	const [deleting, setDeleting] = useState<TeamRow | null>(null);
 	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close (the
@@ -268,27 +272,49 @@ export function TeamsList({
 	const [deletingName, setDeletingName] = useState("");
 	const createReason = writeReason(entitled, gate.canCreate);
 
-	// Filtered SERVER-SIDE: `members.teams` narrows in SQL and returns the size facet counted
-	// over the org's UNFILTERED teams, so an option never disappears as you select it. The
-	// normalized query IS the input, and `keepPreviousData` (in the hook) keeps the table's rows
-	// across a filter change — `isPlaceholderData` is what marks them stale while the next
-	// answer loads.
-	const teamsQuery = useTeamsPageQuery(query);
-	const rows = useMemo(() => teamsQuery.data?.rows ?? [], [teamsQuery.data]);
-	const total = teamsQuery.data?.total ?? 0;
+	// Filtered AND paged SERVER-SIDE: `members.teams` narrows in SQL a page at a time,
+	// alphabetically, and its first page carries the size facet counted over the org's UNFILTERED teams, so
+	// an option never disappears as you select it. The normalized query IS the key, and
+	// `keepPreviousData` (in the hook) keeps the table's rows across a filter change —
+	// `isPlaceholderData` is what marks them stale while the next answer loads.
+	const list = useKeysetList(orpc.members.teams, query);
+	const rows = list.rows;
+	const facets = list.facets;
 	const counts = useMemo(() => {
 		const byBucket: Record<string, number> = {};
-		for (const o of teamsQuery.data?.facets.sizes ?? []) byBucket[o.value] = o.count;
+		for (const o of facets?.sizes ?? []) byBucket[o.value] = o.count;
 		return byBucket;
-	}, [teamsQuery.data]);
+	}, [facets]);
+
+	// The roster dialog's team is URL state (`?selected=<team id>`, R6 E-23): a link to a team opens
+	// its roster, and a refresh keeps it. Written with `history.replaceState`, so opening a roster is
+	// not a server navigation.
+	const searchParams = useSearchParams();
+	const selectedId = selectionFromUrl(searchParams);
+	const openRoster = useCallback((team: TeamRow | null) => {
+		window.history.replaceState(
+			null,
+			"",
+			hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(team?.id ?? null)),
+		);
+	}, []);
+	// A linked team the loaded pages do not hold is read BY ID through the same builder and scope as
+	// the list (`members.teams` with `id`), so a link to a team on page three opens at once.
+	const selectedLoaded = selectedId !== null && rows.some((r) => r.id === selectedId);
+	const selectedRead = useQuery({
+		...orpc.members.teams.queryOptions({ input: { id: selectedId ?? undefined } }),
+		enabled: selectedId !== null && !selectedLoaded && !list.isPending,
+		retry: retryUnlessRefused,
+	});
+	const selectedTeam = selectedRead.data?.rows[0];
 	// The list is BUSY while what it shows may not answer the URL and the bar: before the link has
 	// been read into the store, before the first answer, while the rows are the previous query's
 	// placeholder, and while a typed search is still inside its debounce — the jobs, runners,
 	// members, alerts and activity lists' rule (#4980, #5045, #5471).
 	const busy =
 		!urlRead ||
-		teamsQuery.isPending ||
-		teamsQuery.isPlaceholderData ||
+		list.isPending ||
+		list.isPlaceholderData ||
 		filters.search !== search;
 
 	const removeTeam = useActionMutation(
@@ -311,33 +337,36 @@ export function TeamsList({
 			entitled,
 			gate,
 			removingId,
-			openRoster: setManage,
+			openRoster,
 			openRename: setRenaming,
 			askDelete,
 		}),
-		[entitled, gate, removingId, askDelete],
+		[entitled, gate, removingId, openRoster, askDelete],
 	);
 
-	// The team the roster dialog is open on, read from the CURRENT rows, so an add or a removal
-	// shows in the dialog as soon as the list refetches; the snapshot covers a team the filters
-	// now exclude.
-	const manageRow = manage ? (rows.find((r) => r.id === manage.id) ?? manage) : null;
+	// The team the roster dialog is open on, read from the CURRENT rows when they hold it, so an add
+	// or a removal shows in the dialog as soon as the list refetches — otherwise from the by-id read
+	// above (a deep link to a team on a page not loaded yet, or one the filters now exclude).
+	const manageRow = selectedId ? (rows.find((r) => r.id === selectedId) ?? selectedTeam ?? null) : null;
 
 	const activeFilters = countActiveFilters(filters, DEFAULT_TEAMS_FILTERS);
 
 	// Pending is the route skeleton's shape (B2); the route prefetches, so this is reached only when
 	// the cache was evicted under the page.
-	if (teamsQuery.isPending) return <PeopleListSkeleton facets={1} columns={3} />;
-	// A failed first load is an ERROR, never "No teams yet" and never the upsell (B4).
-	if (teamsQuery.isError && teamsQuery.data === undefined) {
+	if (list.isPending) return <PeopleListSkeleton facets={1} columns={3} />;
+	// A failed first load is an ERROR, never "No teams yet" and never the upsell (B4). A failed
+	// refresh behind rows is the table's stale notice; a failed later page, the footer's retry line.
+	if (list.query.isError && list.query.data === undefined) {
 		return (
 			<RegionError
 				title="Couldn't load teams"
 				description="The team list didn't load. Nothing about your teams changed."
-				onRetry={() => void teamsQuery.refetch()}
+				onRetry={() => void list.query.refetch()}
 			/>
 		);
 	}
+	/** The org has no team at all — the first-run state, a boolean from the server, never a count. */
+	const firstRun = list.universeEmpty === true;
 
 	// Without the entitlement, or without a role that may create a team, the SAME button is shown
 	// disabled with its reason (F017, R6 E-08) — not an enabled control that opens an upgrade modal
@@ -352,14 +381,13 @@ export function TeamsList({
 	);
 	// The upsell IS the page body when the org is not entitled and has no teams to show; then there
 	// is nothing to filter, so the filter bar is not drawn above it (F017).
-	const upsellIsBody = !entitled && total === 0;
+	const upsellIsBody = !entitled && firstRun;
 
 	return (
 		<div aria-busy={busy}>
 			<PageToolbar
 				className="mb-4"
 				description="Grant access to a group of members at once."
-				count={rows.length}
 				actions={createAction}
 			/>
 
@@ -396,14 +424,14 @@ export function TeamsList({
 					<EmptyState
 						className="border border-border bg-surface-sunken"
 						icon={<Users />}
-						title={total === 0 ? "No teams yet" : "No matching teams"}
+						title={firstRun ? "No teams yet" : "No matching teams"}
 						description={
-							total === 0
+							firstRun
 								? "Create one to grant access to a group of members at once."
 								: "No team matches these filters."
 						}
 						action={
-							total > 0 ? (
+							!firstRun ? (
 								<Button variant="outline" size="sm" onClick={reset}>
 									Clear filters
 								</Button>
@@ -419,11 +447,11 @@ export function TeamsList({
 			) : (
 				<div
 					className={cn(
-						teamsQuery.isPlaceholderData && "opacity-60 transition-opacity",
+						list.isPlaceholderData && "opacity-60 transition-opacity",
 					)}
 				>
 					<TeamsCellsContext.Provider value={cells}>
-						<DataTable columns={TEAM_COLUMNS} data={rows} pageSize={SETTINGS_LIST_PAGE_SIZE} />
+						<DataTable columns={TEAM_COLUMNS} keyset={list} />
 					</TeamsCellsContext.Provider>
 				</div>
 			)}
@@ -431,8 +459,8 @@ export function TeamsList({
 			{manageRow && (
 				<ManageTeamDialog
 					team={manageRow}
-					open={manage !== null}
-					onOpenChange={(o) => !o && setManage(null)}
+					open
+					onOpenChange={(o) => !o && openRoster(null)}
 					rosterReason={writeReason(entitled, gate.canEditRoster)}
 				/>
 			)}

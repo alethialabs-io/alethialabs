@@ -111,9 +111,17 @@ function runnersPageKey(input: Record<string, unknown>): readonly unknown[] {
 	return serverOrpc().runners.page.queryKey({ input });
 }
 
-/** The browser's key for the members page read of `query` (`orpc.members.page`). */
+/**
+ * The browser's key for the members list walk of `query` (`useKeysetList(orpc.members.page, …)`,
+ * LST-8 #7490): an INFINITE key whose input is the filter alone — the cursor is the page param.
+ */
 function membersKey(query: unknown): readonly unknown[] {
-	return [["members", "page"], { input: query, type: "query" }];
+	return [["members", "page"], { input: query, type: "infinite" }];
+}
+
+/** A prefetched walk holding exactly one first page — what the route dehydrates. */
+function firstPageOf(data: unknown): unknown {
+	return { pages: [data], pageParams: [null] };
 }
 
 /** Render the members route for one link. */
@@ -152,13 +160,13 @@ describe("~/settings/members prefetches the link's filtered list (#4999)", () =>
 		const state = await members({ statuses: "pending", roles: "viewer,admin", search: "  ann " });
 		// Trimmed and sorted by the normalize step — the key the client builds, character for character.
 		const query = { search: "ann", statuses: ["pending"], roles: ["admin", "viewer"] };
-		expect(dataAt(state, membersKey(query))).toEqual({ query, rows: [] });
+		expect(dataAt(state, membersKey(query))).toEqual(firstPageOf({ query, rows: [] }));
 		expect(getMembersPage).toHaveBeenCalledWith(query);
 	});
 
 	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
 		const state = await members({ statuses: "pending" });
-		expect(dataAt(state, membersKey({}))).toEqual({ query: {}, rows: [] });
+		expect(dataAt(state, membersKey({}))).toEqual(firstPageOf({ query: {}, rows: [] }));
 		// Never the member LIST (`members.list`): a different payload shape, and seeding it with a
 		// page would serve the wrong one.
 		expect(keysOf(state).some((k) => k.includes('"list"'))).toBe(false);
