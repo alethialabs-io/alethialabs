@@ -81,8 +81,8 @@ export function isSalesProviderConfigured(env: Env = process.env): boolean {
 
 /**
  * The adapter factory per provider. Null until that provider's adapter lands (Stripe: the thin
- * wrapper over billing.ts). Paddle's carries the webhook today (L3); its purchase and plan methods
- * arrive with L4 and throw until then. A mapped type over
+ * wrapper over billing.ts). Paddle's carries the webhook (L3), purchases, portal and plan changes (L4)
+ * and usage charges and documents (L5). A mapped type over
  * `BillingProviderId`, so adding a provider to the closed list fails to compile until it has an entry.
  */
 const ADAPTERS: { readonly [K in BillingProviderId]: (() => BillingProvider) | null } = {
