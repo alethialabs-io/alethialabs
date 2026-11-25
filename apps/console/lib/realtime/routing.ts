@@ -201,7 +201,9 @@ export function keysFor(notice: ChangeNotice): Route[] {
 			return notice.o ? [{ key: orgKey(notice.o), filterProject: notice.p }] : [];
 		// project_environments, project_fabrics, the component family (`environments`) and
 		// project_addons (`addons`), #6119; environment_promotions, promotion_approvals and
-		// environment_protection_rules (`environments`, #6120); environment_drift and
+		// environment_protection_rules (`environments`, #6120); apply_approvals (`environments`, #6862:
+		// its RLS is the org's, and its read, readApproval, requires the project's `view`, which is the
+		// filter below); environment_drift and
 		// environment_security (`environments`, #6126), whose org the trigger reads from the parent
 		// project. Their RLS is the project's: the org arm, or the PROJECT's owner
 		// (`projects.user_id`) — which is not a column of these rows, so there is no owner route.

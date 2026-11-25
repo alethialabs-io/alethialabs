@@ -12,6 +12,7 @@ import {
 	ToolView,
 } from "@/components/agent/agent-tool-views";
 import { ApprovalCard, fitClientToolText } from "@/components/agent/approval-card";
+import { renderApprovalRequestPart } from "@/components/agent/approval/approval-request-part";
 import { DashboardPinnedCard } from "@/components/agent/render-tool-parts/dashboard-pinned";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
 import type { AddToolResult } from "@/components/agent/use-agent-chat";
@@ -83,6 +84,11 @@ export function projectRenderToolPart({
 	openGrid,
 }: ProjectToolPartsDeps): RenderToolPart {
 	return function renderProjectToolPart(part: ToolUIPart) {
+		// A deploy or destroy request (request_apply / request_destroy) → the approval card, where a
+		// person decides it and the requester starts the approved job.
+		const approvalRequest = renderApprovalRequestPart(part);
+		if (approvalRequest) return approvalRequest;
+
 		// Generative dashboard ready → its blocks auto-pin to the grid; the transcript
 		// shows the framed receipt with an "Open grid" action.
 		if (
@@ -145,8 +151,8 @@ export function projectRenderToolPart({
 			);
 		}
 
-		// Plan/deploy proposal → approval card (HITL: runs plan/deploy on the user's click,
-		// then feeds the outcome back so the model continues).
+		// Plan proposal → approval card (HITL: queues the plan on the user's click, then feeds the
+		// outcome back so the model continues). A deploy is a request_apply card, above.
 		if (part.type === "tool-propose_operation") {
 			if (part.state === "input-streaming")
 				return <ToolResultFrame part={part} title="Proposal" />;
