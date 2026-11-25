@@ -7,7 +7,7 @@
 // presents the approval's id as `approval_id` to `POST /api/jobs`.
 
 import { NextResponse } from "next/server";
-import { approvalErrorResponse, approvePath, cliApprovalActor } from "@/lib/approvals/http";
+import { approvalErrorResponse, approvePathForOrg, cliApprovalActor } from "@/lib/approvals/http";
 import { viewOf } from "@/lib/approvals/read";
 import { requestApproval } from "@/lib/approvals/request";
 import { authorizeCli } from "@/lib/authz/guard";
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
 			});
 			return viewOf(tx, approval);
 		});
-		return NextResponse.json({ approval: view, approve_path: approvePath(view.id) }, { status: 201 });
+		return NextResponse.json({ approval: view, approve_path: await approvePathForOrg(actor.orgId, view.id) }, { status: 201 });
 	} catch (err) {
 		const refused = approvalErrorResponse(err);
 		if (refused) return refused;
