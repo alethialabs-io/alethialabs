@@ -10,13 +10,12 @@ import { isDeniedToolName } from "@/lib/ai/tools/registry";
  * needs, and the group a `?features=` URL selects.
  *
  * WHAT THIS FILE IS NOT. It registers nothing and holds no handler. The server
- * (`lib/ai/mcp/server.ts`) serves two things side by side: the in-app read tools under their in-app
- * names, through `buildExternalAgentTools()` and `registerAiToolsOnMcp()`, and the declared tools
- * below that have a handler in `lib/ai/mcp/handlers.ts` (`HANDLED_TOOLS`). Each read tool below names
- * the in-app tools it stands for in `replaces`, and `tests/lib/ai/mcp/surface.test.ts` fails when the
- * union of those lists stops being exactly the set the in-app projection registers — so a tool added
- * to, or removed from, the live surface has to be given a place here in the same change. A declared
- * read tool with `replaces` is served by its in-app tools until it gets a handler of its own.
+ * (`lib/ai/mcp/server.ts`) lists the declared tools below, each served by its handler
+ * (`HANDLED_TOOL_NAMES` in `lib/ai/mcp/handlers.ts`: reads.ts, design.ts and handlers.ts). Each read
+ * tool below names, in `replaces`, the in-app tools its handler answers through, and
+ * `tests/lib/ai/mcp/surface.test.ts` fails when the union of those lists stops being exactly the set
+ * of the in-app external projection (`buildExternalAgentTools()`) — so a tool added to, or removed
+ * from, that projection has to be given a place here in the same change.
  *
  * Protocol facts are from the MCP specification, revision 2026-07-28 (`server/tools` and the schema
  * reference), read on 2026-11-17:
@@ -225,7 +224,7 @@ export const LIST_ITEM_SCHEMAS = {
 		id: z.string(),
 		name: z.string(),
 		operator: z.string(),
-		status: z.string(),
+		status: nullableString,
 		version: nullableString,
 		online: z.boolean(),
 	}),
@@ -653,6 +652,11 @@ export const EXTERNAL_TOOLS = {
 		annotations: RECORD_WRITE,
 		inputSchema: z.object({
 			project_id: z.string().min(1),
+			environment_id: z
+				.string()
+				.min(1)
+				.optional()
+				.describe("The environment whose design to change. Default: the project's own."),
 			base_revision: z
 				.number()
 				.int()
