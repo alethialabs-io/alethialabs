@@ -3198,11 +3198,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -3224,11 +3224,11 @@
 				}
 			},
 			"overall": {
-				"pass": 38,
-				"fail": 1,
+				"pass": 39,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 2,
-				"score": 0.9744
+				"score": 1
 			}
 		},
 		{
@@ -11771,8 +11771,7 @@
 		{
 			"route": "/[org]/~/support/my-cases",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useSupportFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/support/my-cases",

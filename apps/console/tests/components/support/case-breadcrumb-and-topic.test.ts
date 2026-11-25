@@ -33,11 +33,20 @@ describe("the case crumb (F044)", () => {
 	});
 });
 
+/** The key "My cases" reads: the first page of the `support.cases` infinite query (`useKeysetList`). */
+function casesKey(input: { bucket: "all" | "active" }) {
+	return orpc.support.cases.infiniteOptions({
+		input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+		initialPageParam: null,
+		getNextPageParam: (last) => last.nextCursor,
+	}).queryKey;
+}
+
 describe("the support topic reaches every support read (#6130)", () => {
 	const reads: Array<[string, readonly unknown[]]> = [
 		["the bell's feed", orpc.workspace.supportCases.queryOptions().queryKey],
-		["My cases, All", orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey],
-		["My cases, Active", orpc.support.cases.queryOptions({ input: { bucket: "active" } }).queryKey],
+		["My cases, All", casesKey({ bucket: "all" })],
+		["My cases, Active", casesKey({ bucket: "active" })],
 		["the open case", orpc.support.case.queryOptions({ input: { id: CASE } }).queryKey],
 	];
 
