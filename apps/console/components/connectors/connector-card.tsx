@@ -147,6 +147,9 @@ export function ConnectorCard({
 		// many connectors it matched.
 		<div
 			data-slot="connector-card"
+			// The GENERAL list-item marker (#7673, components/data-table.tsx); the slot above stays
+			// for the connectors specs that already count cards by it.
+			data-list-item=""
 			onClick={isPick ? onSelect : undefined}
 			role={isPick ? "button" : undefined}
 			tabIndex={isPick ? 0 : undefined}

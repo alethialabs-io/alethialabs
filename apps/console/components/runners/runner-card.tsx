@@ -80,7 +80,9 @@ export function RunnerCard({
 	const instanceId = runner.cloud_instance_id;
 
 	return (
-		<Card className="gap-0 overflow-hidden py-0">
+		// `data-list-item`: the list-item marker every list primitive emits (#7673, see
+		// components/data-table.tsx), so the runners grid is sized without a count pill.
+		<Card data-list-item="" className="gap-0 overflow-hidden py-0">
 			{/* header */}
 			<div className="flex items-start gap-2.5 border-b border-border p-4">
 				<div className="min-w-0 flex-1">

@@ -9,9 +9,9 @@
 import { describe, expect, it } from "vitest";
 import { isSettledPair, type ListRead } from "../../e2e/audit/filters";
 
-/** One read of `value` rows from the count pill, busy or not. */
+/** One read of `value` rendered list items (`[data-list-item]`, #7673), busy or not. */
 function read(value: number, busy = false): ListRead {
-	return { count: { source: "count-pill", value }, busy };
+	return { count: { source: "items", value }, busy };
 }
 
 describe("isSettledPair", () => {

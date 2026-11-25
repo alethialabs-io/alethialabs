@@ -61,7 +61,8 @@ export function ConnectorRow({
 	const secondaryInk = isComingSoon ? "text-text-tertiary" : "text-muted-foreground";
 
 	return (
-		<TableRow>
+		// The list-item marker (#7673, components/data-table.tsx) — the list view's twin of the card.
+		<TableRow data-list-item="">
 			<TableCell className="py-3">
 				<div className="flex items-center gap-3">
 					<div className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-muted/40 p-1.5">
