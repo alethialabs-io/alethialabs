@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq } from "drizzle-orm";
+import { and, count, countDistinct, eq, exists, inArray, max, type SQL, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import type { ProjectListItem, ProjectWithProvider } from "@/app/server/actions/projects";
 import type { Tx } from "@/lib/db";
 import {
 	normalizeWebhookCaConsumers,
@@ -12,15 +14,34 @@ import { assertCloudOffered } from "@/lib/cloud-providers/availability";
 import { claimPlacementNamespace } from "@/lib/projects/placement-namespace-claim";
 import {
 	cloudIdentities,
+	cloudProvider,
 	type EnvironmentLifecycle,
 	type EnvironmentStage,
 	type PlacementMode,
 	type Project,
+	projectAddons,
 	projectEnvironments,
 	projectFabrics,
+	projectServices,
+	projectSourceRepos,
 	projects,
 	resourceHierarchy,
 } from "@/lib/db/schema";
+import { likeTerm } from "@/lib/db/like";
+import { narrowTo, nonEmpty, searchTerm } from "@/lib/queries/facets";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	type KeysetPosition,
+	keysetAfter,
+	keysetFetchLimit,
+	keysetListPage,
+	keysetOrderBy,
+	keysetPage,
+	keysetSortKey,
+} from "@/lib/queries/keyset";
+import { repoLabel } from "@/lib/repos/repo-label";
 import { pickFreeSlug, RESERVED_PROJECT_CHILD_SLUGS } from "@/lib/routing";
 import { slugify } from "@/lib/utils/slugify";
 import {
@@ -632,4 +653,290 @@ export async function insertProjectWithDefaultFabric(
 	mirrorHierarchyEdge("project", project.id, "org", input.orgId);
 
 	return { project, defaultFabric, defaultEnv, previewEnv };
+}
+
+// ============================================================
+// The org overview's project grid — one keyset page at a time (LST-4 #7486, epic #7481).
+// ============================================================
+//
+// Before this builder the grid read EVERY project of the organization (`queryProjects`, deleted
+// here), filtered and sorted them in memory, and the browser drew a growing "Show more" window
+// over the lot. Now the rows are filtered, ordered and cut in SQL, the per-card rollups are read
+// for the page's ids only, and the facets are a separate pass over the unfiltered universe.
+//
+// SCOPE IS THE TRANSACTION. Every read here runs in the caller's `withActorScope` transaction, so
+// the org wall is the RLS policy on `projects` (`org_id = app.current_org`), as it was for the
+// reader this replaces — there is no `org_id` predicate to thread, and the facet pass therefore
+// carries no WHERE at all. That is the support list's shape (`queryCasesPage`), and why this builder
+// is declared in `F7_UNDRIVEN` and its two-pass property is asserted by
+// tests/lib/queries/projects-page.test.ts instead.
+//
+// TWO ORDERS, BOTH TOTAL.
+// - `activity` (the default): the project's `updated_at`, newest first, through the shared codec —
+//   ms-truncated sort key, then id ({@link keysetSortKey}, {@link keysetOrderBy}, {@link keysetAfter}).
+// - `name`: `lower(project_name)` ascending, then id. A name is not an instant, so this order takes
+//   the shape `queryRolesPage` (LST-8) gave its alphabetical rail: the cursor is still the shared
+//   opaque codec over the last row's id (a malformed one is a 400 at the boundary), its instant is a
+//   constant, and the predicate reads the cursor row's name back by id in the same statement — under
+//   the same RLS, so a cursor can never name another org's project. The cursor stays short and free
+//   of user text. If the cursor's project is deleted between two pages the walk ends there; the
+//   delete is a `projects` hint, which refetches the list from page one without it.
+//
+// FAVOURITES are the browser's (`useProjectsStore`), so they cannot order the server's walk without
+// putting them in the list's key, where the route's prefetch could never match them. The grid asks
+// for its starred projects by id instead (`ids`), as a second, bounded read of the same builder,
+// draws them first, and drops them from the walk's rows — so a starred project on page four is on
+// screen at once, not when the reader scrolls to it.
+
+/** The grid's query: the address's search, filters and sort, plus the starred-projects lookup. */
+export interface ProjectsPageQuery {
+	/** Case-insensitive contains-match on the project name (LIKE-escaped). */
+	q?: string;
+	/** Keep projects whose cloud is one of these (OR). An unknown cloud matches nothing. */
+	clouds?: string[];
+	/** Keep projects that use any of these source-repository URLs (OR). */
+	repos?: string[];
+	/** `activity` = most recently updated first (default); `name` = A→Z. */
+	sort?: "activity" | "name";
+	/**
+	 * Only these projects — the grid's starred-projects lookup. A lookup, not a walk: it answers
+	 * no facets and no `universeEmpty` (both null), because the walk beside it already has them.
+	 */
+	ids?: string[];
+}
+
+/** A cloud facet option with its count of projects over the unfiltered universe. */
+interface ProjectCloudFacet {
+	value: string;
+	count: number;
+}
+
+/** A repository facet option — its URL and `owner/repo` label — with its unfiltered project count. */
+interface ProjectRepoFacet {
+	url: string;
+	label: string;
+	count: number;
+}
+
+/** The grid's facets: every cloud and repository in the organization, never narrowed by the query. */
+export interface ProjectsFacets {
+	clouds: ProjectCloudFacet[];
+	repos: ProjectRepoFacet[];
+}
+
+/** One page of the grid (`KeysetListPage`): rows, the next cursor, and first-page facets. */
+export type ProjectsPage = KeysetListPage<ProjectListItem, ProjectsFacets>;
+
+/** The instant every name-ordered cursor carries: the predicate reads the row's name back by id. */
+const NAME_CURSOR_AT = new Date(0);
+
+/** The `activity` order's sort key: `updated_at` truncated to ms, as the codec requires. */
+const PROJECT_UPDATED_AT: SQL = keysetSortKey(projects.updated_at);
+
+/** The `name` order's sort key: the name case-folded, matching the per-org unique index. */
+const PROJECT_SORT_NAME: SQL = sql`lower(${projects.project_name})`;
+
+/** The cursor row, read back inside the `name` predicate to learn the name it sorts under. */
+const cursorProject = alias(projects, "cursor_project");
+
+/**
+ * Rows strictly after `cursor` in `(lower(name), id)` order — one row-value comparison against the
+ * cursor row as it reads now, in the same transaction (so under the same RLS wall).
+ */
+function nameAfter(tx: Tx, cursor: KeysetPosition | undefined): SQL | undefined {
+	if (cursor === undefined) return undefined;
+	const at = tx
+		.select({ name: sql`lower(${cursorProject.project_name})`, id: cursorProject.id })
+		.from(cursorProject)
+		.where(eq(cursorProject.id, cursor.id));
+	return sql`(${PROJECT_SORT_NAME}, ${projects.id}) > (${at})`;
+}
+
+/**
+ * The rows-pass predicate for `query`: search, clouds, repositories and the starred-ids lookup.
+ * A cloud list with no cloud this schema knows matches NOTHING — dropping the predicate would widen
+ * a narrowed view to the whole organization.
+ */
+function projectsPredicate(tx: Tx, query: ProjectsPageQuery): SQL | undefined {
+	const search = searchTerm(query.q);
+	const cloudsAsked = nonEmpty(query.clouds);
+	const clouds = narrowTo(cloudProvider.enumValues, query.clouds);
+	const repos = nonEmpty(query.repos);
+	const ids = nonEmpty(query.ids);
+	return and(
+		search ? sql`${projects.project_name} ilike ${likeTerm(search)}` : undefined,
+		cloudsAsked ? (clouds ? inArray(cloudIdentities.provider, clouds) : sql`false`) : undefined,
+		repos
+			? exists(
+					tx
+						.select({ one: sql`1` })
+						.from(projectSourceRepos)
+						.where(and(eq(projectSourceRepos.project_id, projects.id), inArray(projectSourceRepos.repo_url, repos))),
+				)
+			: undefined,
+		ids ? inArray(projects.id, ids) : undefined,
+	);
+}
+
+/**
+ * The per-card rollups for one page's projects: distinct source repositories, environment count and
+ * last deploy (every environment), and the DEFAULT environment's services and add-ons. Read for the
+ * page's ids only — never for the organization.
+ */
+async function projectRollups(tx: Tx, rows: ProjectWithProvider[]): Promise<ProjectListItem[]> {
+	const ids = rows.map((p) => p.id);
+	if (ids.length === 0) return [];
+	const defaultEnvIds = rows.map((p) => p.default_environment_id).filter((id): id is string => Boolean(id));
+	const [repoRows, envRows, serviceRows, addonRows] = await Promise.all([
+		tx
+			.selectDistinct({ project_id: projectSourceRepos.project_id, repo_url: projectSourceRepos.repo_url })
+			.from(projectSourceRepos)
+			.where(inArray(projectSourceRepos.project_id, ids)),
+		tx
+			.select({
+				project_id: projectEnvironments.project_id,
+				n: count(),
+				last_deployed_at: max(projectEnvironments.last_deployed_at),
+			})
+			.from(projectEnvironments)
+			.where(inArray(projectEnvironments.project_id, ids))
+			.groupBy(projectEnvironments.project_id),
+		defaultEnvIds.length
+			? tx
+					.select({ project_id: projectServices.project_id, n: count() })
+					.from(projectServices)
+					.where(inArray(projectServices.environment_id, defaultEnvIds))
+					.groupBy(projectServices.project_id)
+			: [],
+		defaultEnvIds.length
+			? tx
+					.select({ project_id: projectAddons.project_id, n: count() })
+					.from(projectAddons)
+					.where(inArray(projectAddons.environment_id, defaultEnvIds))
+					.groupBy(projectAddons.project_id)
+			: [],
+	]);
+	const repos = new Map<string, { url: string; label: string }[]>();
+	for (const r of repoRows) {
+		if (!r.project_id) continue;
+		const list = repos.get(r.project_id) ?? [];
+		list.push({ url: r.repo_url, label: repoLabel(r.repo_url) });
+		repos.set(r.project_id, list);
+	}
+	const envs = new Map(envRows.map((r) => [r.project_id, r]));
+	const services = new Map(serviceRows.map((r) => [r.project_id, Number(r.n)]));
+	const addons = new Map(addonRows.map((r) => [r.project_id, Number(r.n)]));
+	return rows.map((p) => {
+		const env = envs.get(p.id);
+		return {
+			...p,
+			repositories: repos.get(p.id) ?? [],
+			services_count: services.get(p.id) ?? 0,
+			addons_count: addons.get(p.id) ?? 0,
+			environments_count: env ? Number(env.n) : 0,
+			last_deployed_at: env?.last_deployed_at ?? null,
+		};
+	});
+}
+
+/**
+ * The facet pass: every cloud and repository of the organization's projects, each with its count of
+ * projects. It is handed NOTHING from the query — no search, no filter, no cursor — which is the
+ * invariant: an option never disappears as you pick it. The scope is the transaction's RLS.
+ */
+async function projectsFacetPass(tx: Tx): Promise<{ facets: ProjectsFacets; universeEmpty: boolean }> {
+	const [cloudRows, repoRows, anyProject] = await Promise.all([
+		tx
+			.select({ value: cloudIdentities.provider, count: count() })
+			.from(projects)
+			.innerJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.groupBy(cloudIdentities.provider),
+		tx
+			.select({ url: projectSourceRepos.repo_url, count: countDistinct(projectSourceRepos.project_id) })
+			.from(projectSourceRepos)
+			.innerJoin(projects, eq(projects.id, projectSourceRepos.project_id))
+			.groupBy(projectSourceRepos.repo_url),
+		tx.select({ id: projects.id }).from(projects).limit(1),
+	]);
+	return {
+		facets: {
+			clouds: cloudRows
+				.map((r) => ({ value: r.value, count: Number(r.count) }))
+				.sort((a, b) => a.value.localeCompare(b.value)),
+			repos: repoRows
+				.map((r) => ({ url: r.url, label: repoLabel(r.url), count: Number(r.count) }))
+				.sort((a, b) => a.label.localeCompare(b.label)),
+		},
+		universeEmpty: anyProject.length === 0,
+	};
+}
+
+/**
+ * One page of the overview grid for `query`, inside the caller's actor-scoped transaction: at most
+ * `limit` projects strictly after the cursor in the query's order, each with its card rollups, and
+ * — on the first page of a walk only — the facets over the UNFILTERED organization and whether it
+ * has any project at all. A later page, and the starred-ids lookup, carry `facets: null`.
+ */
+export async function queryProjectsPage(
+	tx: Tx,
+	query: ProjectsPageQuery = {},
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): Promise<ProjectsPage> {
+	const byName = query.sort === "name";
+	const walk = query.ids === undefined;
+	const firstPage = request.cursor === undefined && walk;
+
+	const [fetched, first] = await Promise.all([
+		tx
+			.select({
+				project: projects,
+				cloud_provider: cloudIdentities.provider,
+				env_id: projectEnvironments.id,
+				env_name: projectEnvironments.name,
+				env_status: projectEnvironments.status,
+			})
+			.from(projects)
+			.leftJoin(cloudIdentities, eq(projects.cloud_identity_id, cloudIdentities.id))
+			.leftJoin(
+				projectEnvironments,
+				and(eq(projectEnvironments.project_id, projects.id), eq(projectEnvironments.is_default, true)),
+			)
+			.where(
+				and(
+					projectsPredicate(tx, query),
+					byName ? nameAfter(tx, request.cursor) : keysetAfter(PROJECT_UPDATED_AT, projects.id, request.cursor),
+				),
+			)
+			.orderBy(
+				...(byName
+					? [sql`${PROJECT_SORT_NAME} asc`, sql`${projects.id} asc`]
+					: keysetOrderBy(PROJECT_UPDATED_AT, projects.id)),
+			)
+			.limit(keysetFetchLimit(request.limit)),
+		firstPage ? projectsFacetPass(tx) : null,
+	]);
+
+	const cut = keysetPage(fetched, request.limit, (r) => ({
+		at: byName ? NAME_CURSOR_AT : r.project.updated_at,
+		id: r.project.id,
+	}));
+	const rows = await projectRollups(
+		tx,
+		cut.rows.map((r) => ({
+			...r.project,
+			cloud_provider: r.cloud_provider ?? null,
+			environment_stage: r.env_name ?? "development",
+			status: r.env_status ?? "DRAFT",
+			default_environment_id: r.env_id ?? null,
+		})),
+	);
+	const page = { rows, nextCursor: walk ? cut.nextCursor : null };
+	if (first === null) return keysetListPage(page, null);
+	return keysetListPage(page, { facets: first.facets, universeEmpty: first.universeEmpty });
+}
+
+/** How many projects the actor's organization has — the Usage card's count, not a list size. */
+export async function countProjects(tx: Tx): Promise<number> {
+	const [row] = await tx.select({ n: count() }).from(projects);
+	return Number(row?.n ?? 0);
 }

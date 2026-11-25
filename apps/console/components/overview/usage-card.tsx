@@ -146,7 +146,7 @@ function usageRows(
 			clockSizer: "resets Wed 10:59 AM",
 		});
 	}
-	// The project count is the grid's read, not this card's: while that read has not answered, or
+	// The project count is the grid's summary read, not this card's: while that read has not answered, or
 	// could not count, the card prints no number for it and never a wrong one.
 	const counts: CountRow[] = [
 		...(typeof projectCount === "number"
@@ -219,8 +219,8 @@ export function UsageCardSkeleton() {
 }
 
 /**
- * Usage card. `projectCount` is the organization's project total from the grid's read
- * (`overview.projects`); absent or `null` while that is not known.
+ * Usage card. `projectCount` is the organization's project count from the grid's summary
+ * read (`overview.projects.summary`); absent or `null` while that is not known.
  */
 export function UsageCard({ orgSlug, projectCount }: { orgSlug: string; projectCount?: number | null }) {
 	const usage = useQuery(overviewUsageQuery());
