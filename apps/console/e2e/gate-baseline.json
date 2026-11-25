@@ -565,7 +565,7 @@
 				"RBAC — Roles › default detail panel shows the Owner built-in role (read-only)": "passed",
 				"RBAC — Roles › selecting Viewer swaps the detail panel to the Viewer description": "passed",
 				"RBAC — Roles › no custom roles yet — the rail shows the empty custom section": "passed",
-				"RBAC — Roles › Create role is gated → opens the Enterprise custom-roles dialog": "passed",
+				"RBAC — Roles › Create role is gated → disabled, and says which plan has custom roles": "passed",
 				"RBAC — Roles › the built-in detail renders the per-service permission matrix": "passed",
 				"RBAC — Roles › searching the rail filters the built-in roles": "passed",
 				"RBAC — Roles › Pro: roles remain custom-role gated (built-ins still visible)": "passed",
