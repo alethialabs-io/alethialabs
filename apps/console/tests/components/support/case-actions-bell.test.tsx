@@ -41,10 +41,18 @@ describe("case actions refresh the bell (#6114)", () => {
 	it("invalidates the bell's case feed, every case list and the case itself (#6130)", async () => {
 		const client = new QueryClient();
 		const bell = orpc.workspace.supportCases.queryOptions().queryKey;
-		const list = orpc.support.cases.queryOptions({ input: { bucket: "active" } }).queryKey;
+		const active = { bucket: "active" as const };
+		const list = orpc.support.cases.infiniteOptions({
+			input: (cursor: string | null) => (cursor === null ? active : { ...active, cursor }),
+			initialPageParam: null,
+			getNextPageParam: (last) => last.nextCursor,
+		}).queryKey;
 		const detail = orpc.support.case.queryOptions({ input: { id: CASE } }).queryKey;
 		client.setQueryData(bell, []);
-		client.setQueryData(list, { rows: [], facets: null });
+		client.setQueryData(list, {
+			pages: [{ rows: [], nextCursor: null, facets: null, universeEmpty: null }],
+			pageParams: [null],
+		});
 		client.getQueryCache().build(client, { queryKey: detail });
 		render(
 			<QueryClientProvider client={client}>
