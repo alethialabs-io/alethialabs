@@ -67,7 +67,8 @@ beforeEach(() => {
 	nav.search = "";
 	useInvoiceFilters.getState().reset();
 	resetReads();
-	reads.invoices.mockResolvedValue([]);
+	// A keyset page since #7493: an empty, final first page.
+	reads.invoices.mockResolvedValue({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 });
 
 describe("the invoices default is all time, and the bar says so (#6731)", () => {
