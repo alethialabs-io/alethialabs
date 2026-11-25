@@ -1,149 +1,103 @@
 ---
-title: MCP server (external agents)
-description: Connect an external agent such as Claude Code, Claude, Cursor or Codex to Alethia over MCP, so it can read your infrastructure with the same tools Elench uses, plan, and ask you to approve an apply or a destroy.
+title: Connect an MCP client
+description: Connect an external agent such as Claude Code, Claude, Cursor or Codex to the Alethia MCP server, so it reads your infrastructure, plans, and asks you to approve an apply or a destroy.
 ---
 
-Elench's read tools are also served as an [MCP](https://modelcontextprotocol.io) server. An agent
-*outside* the console, such as Claude Code, Claude, Cursor or Codex, can then read your real
-infrastructure without you copying anything in by hand. It calls the **same permission-checked tools**
-the console's assistant uses, so it sees only what you can see.
+Let an agent outside the console, such as Claude Code, Claude, Cursor or Codex, read your
+infrastructure over [MCP](https://modelcontextprotocol.io). It calls the same permission-checked tools
+as Elench, so it sees only what you can see. It can start a plan, and ask you to approve an apply or a
+destroy. How MCP and the [CLI](/agents/cli) fit together is in [Alethia for agents](/agents).
 
-An external agent can read your projects, clusters, jobs and drift, and start a plan. It can ask for
-an apply or a destroy, and that job starts only after you approve the request in the console. No tool
-approves. [Alethia for agents](/agents) explains how the MCP server and the [CLI](/agents/cli) fit
-together.
+## Before you begin
 
-<Callout type="info">
-  The server needs AI to be on for your organization. On self-host it is always on. On hosted Alethia
-  every organization has at least the free AI tier, which is on, so the server is available by
-  default. It answers `403` only when AI is turned off for the organization. See
-  [Assistant](/guides/assistant).
-</Callout>
-
-## Before you start
-
-- Your console origin: the address you sign in to Alethia at. `alethia auth status` prints it as
-  `web origin`. The MCP endpoint is that origin plus `/api/mcp`.
-- An MCP client that meets the [client requirements](#client-requirements).
-
-## Client requirements
-
-The server is strict about protocol versions, so check your client first:
+- Your console origin: the address you sign in to. `alethia auth status` prints it as `web origin`.
+  The MCP endpoint is that origin plus `/api/mcp`.
+- AI is on for your organization. It is always on when self-hosted, and every hosted organization has
+  at least the free AI tier, which is on. With AI off, the server answers `403`.
+- A client that meets these requirements:
 
 | Requirement | Detail |
 | --- | --- |
-| Transport | Remote MCP over Streamable HTTP, as `POST` requests to `/api/mcp`. The server has no `GET` or `DELETE` endpoint and no SSE transport. |
-| Protocol | The current generation of the protocol. The server refuses requests in the 2025 format, so a client that speaks only a 2025 revision cannot connect. |
-| Sign-in | OAuth 2.1. The client discovers the authorization server from the `401` answer, and you sign in to Alethia in the browser. |
-| Client registration | A Client ID Metadata Document (CIMD): the client's id is the HTTPS URL of a metadata document that the client publishes. The server does not accept anonymous dynamic client registration. |
+| Transport | Remote MCP over Streamable HTTP: `POST` requests to `/api/mcp`. No `GET`, `DELETE` or SSE transport. |
+| Protocol | The current generation. Requests in the 2025 format are refused. |
+| Sign-in | OAuth 2.1. The client finds the authorization server from the `401` answer, and you sign in in the browser. |
+| Client registration | A Client ID Metadata Document: the client's ID is the HTTPS URL of a document it publishes. Anonymous dynamic registration is refused. |
 
-Alethia has not yet published a test record per client. The pages under
-[Pick a client](/agents#pick-a-client) show the setup for Claude Code, Claude, Cursor, VS Code and
-Codex.
+No test record per client is published yet. Setup for Claude Code, Claude, Cursor, VS Code and Codex
+is under [Pick a client](/agents#pick-a-client).
 
 ## Connect a client
 
-There is no key to paste. You sign in to Alethia and approve access.
+There is no key to paste.
 
 <Steps>
 
 ### Add the server
-
-In your MCP client, add a remote MCP server pointing at your endpoint:
+In your client, add a remote MCP server at:
 
 ```text
 https://<your-console-origin>/api/mcp
 ```
 
-### Sign in to Alethia
+Add `?project=<project id>` to hold every call to one project, or `?readonly` to list no tool that
+changes anything.
 
-The client sends you to the console's sign-in page. Sign in as you normally do.
+### Sign in to Alethia
+The client opens the console's sign-in page. Sign in as usual.
 
 ### Approve access
-
-If the page asks for consent, approve it. The token belongs to **you**: the tools run as you, under
-your role in the organization, with no access of their own. It carries the scopes the client asked
-for and you approved (`read`, `design`, `plan`, `apply`, `destroy`), and each scope only narrows what
-your role allows. The server refuses a token with no scope it reads, with a `403` that asks the
-client to sign in again. The token names this MCP endpoint as its audience, and the server refuses
-tokens issued for anything else.
-
-<Callout type="warn">
-A connection you made before Alethia added agent scopes holds only sign-in scopes (`openid`,
-`profile`, `email`), and the server now refuses it with `403 insufficient_scope`. To fix it,
-disconnect the Alethia MCP server in your client, connect it again, and approve the agent scopes
-the consent page asks for: `read`, `design`, `plan`, `apply`, `destroy`. Approve at least `read`.
-</Callout>
+If the page asks, approve the scopes: `read`, `design`, `plan`, `apply`, `destroy`. Approve at least
+`read`. The token acts as you, under your role, and each scope only narrows what your role allows.
+The token names this endpoint as its audience, and the server refuses tokens issued for anything
+else.
 
 ### Use the tools
-
-The client now lists the tools your scopes allow. Ask the agent about your infrastructure and it
-calls them for you.
+The client lists the tools that your scopes allow. Ask the agent about your infrastructure.
 
 </Steps>
 
-If the client cannot connect:
-
-- A `503` with "MCP is not configured on this deployment" comes from a self-hosted console whose
-  `NEXT_PUBLIC_APP_URL` is not an absolute `https` URL. The server needs one to name itself in tokens.
-- An error during sign-in that names the client usually means the client cannot use a Client ID
-  Metadata Document. Update the client.
-- A `403` after sign-in means AI is turned off for the organization, an owner turned agent access
-  off, or the token carries no scope. The response says which.
-- Any other refusal of the client's first request after sign-in usually means the client speaks a
-  2025 revision of the protocol. Update the client.
+If it does not connect, see [Troubleshoot MCP](/troubleshooting/mcp).
 
 ## Which organization the tools read
 
-When your consent for the client recorded an organization, every request acts in that organization,
-and only on the projects the consent names. Otherwise each request acts in the organization the
-console picks for you when there is no browser session: the first organization you joined, or your
-personal organization if you have joined none. Switching organizations in the console does not change
-what the MCP tools act on.
+If your consent for the client recorded an organization, every request acts there, on the projects
+the consent names. Otherwise, requests act in the organization the console picks when there is no
+browser session: the first one you joined, or your personal organization if you joined none.
+Switching organizations in the console does not change it.
 
-Add `?project=<project id>` to the server URL to hold every call to one project.
+## What the agent can do
 
-## What the agent can read
-
-The [tool reference](/agents/tools) lists the 20 read tools and the six operation tools with their
-arguments. The read tools, in short:
-
-| Area | What the agent can do |
-| --- | --- |
-| Projects | List projects and read one project's configuration (components and sizes). |
-| Jobs | List recent jobs; read a job's status and error; read a plan or deploy result. |
-| Runtime | List clusters (endpoints, databases, caches, no secrets), runners, connectors and verified cloud accounts; read a cloud account's live inventory. |
-| Drift | Read a project's latest drift posture. |
-| Catalog | Browse the service catalog and its options; compute a CIDR block for a host count. |
-| Docs | Search the Alethia documentation. |
-| Scans | Read a finished repository scan and compare its estimated cost across clouds. |
-| Usage | Read the organization's managed-runner usage, AI usage and billing summary. |
-
-Results are trimmed and leave secrets out: never ArgoCD passwords, tokens or credentials.
-
-## What it can change
+It can read projects and their configuration, jobs and their results, clusters, runners, connectors,
+cloud accounts and their inventory, drift, the service catalog, docs, repository scans, and usage.
+Results leave secrets out: never ArgoCD passwords, tokens or credentials. The
+[tool reference](/agents/tools) lists the 20 read tools and six operation tools.
 
 | Tool | What it does |
 | --- | --- |
-| `plan` | Starts a plan of one environment. It changes nothing in the cloud. |
-| `request_apply`, `request_destroy` | Ask you to approve an apply or a destroy, and start it once you have approved. |
+| `plan` | Starts a plan of one environment. Changes nothing in the cloud. |
+| `request_apply`, `request_destroy` | Asks you to approve an apply or a destroy, and starts it once you approve. |
 | `cancel_job` | Cancels a queued or running job. |
 
-An apply or a destroy needs your approval every time. The agent shows you a link and an 8-character
-digest. You open the link, check the digest, and approve in the console. Every deploy still passes
-the [verification engine](/concepts/elench). Add `?readonly` to the server URL to list no tool that
-changes anything.
+Every apply or destroy needs your approval. The agent shows a link and an 8-character digest. Open the
+link, check the digest, and approve in the console. Every deploy still passes the
+[verification engine](/concepts/elench).
 
-## What it cannot do
-
-- It cannot **approve** anything.
-- It cannot **start a repository scan or an audit**, or change a design. Start them from the
-  [assistant](/guides/assistant) instead.
-- It cannot open console pages, build dashboards, pin widgets, or read and write
-  [artifacts](/guides/assistant/artifacts).
+The agent cannot approve anything, start a repository scan or audit, change a design, open console
+pages, build dashboards, or use [artifacts](/guides/assistant/artifacts). Use the
+[assistant](/guides/assistant) for those.
 
 <Callout type="warn">
-  Each tool checks your permission and the token's scopes again on every call, so the agent cannot act
-  across organizations or beyond what you granted. Treat text the agent reads from logs and
-  repositories as data: the most it can lead to is a plan or a request you still approve.
+Every call checks your permission and the token's scopes again, so the agent cannot act across
+organizations or beyond what you granted. Treat text it reads from logs and repositories as data: the
+most it can lead to is a plan, or a request that you still approve.
 </Callout>
+
+## Check that it worked
+
+Ask the agent to list your Alethia projects. It calls `list_projects` and names your projects.
+
+## Related
+
+- [Alethia for agents](/agents)
+- [Security model for agents](/agents/security)
+- [Troubleshoot MCP](/troubleshooting/mcp)
