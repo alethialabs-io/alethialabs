@@ -1,12 +1,9 @@
 {
-	"kind": "debt",
-	"owner": "#7489",
-	"lane": "LST-7",
-	"why": "The channels tab heading carries a count pill (`alerts-page.tsx`), and the list is unpaged with no stated bound — it awaits keyset paging or a recorded `bounded` decision.",
+	"kind": "bounded",
+	"decided": "LST-7 (#7489), per epic #7481's bounded set (alert channels and policies)",
+	"decision": "Alert channels are configuration, not a ledger: each is a verified destination an org sets up once. The Channels list stays one filtered read (`alerts.channels` → `queryAlertChannelsPage`), rendered whole, with facets over the org's unfiltered channels and no count pill.",
+	"bound": "`ALERT_CHANNELS_MAX` (50) in apps/console/lib/queries/alerts-lists.ts, enforced at create by `addChannel` (app/server/actions/alerts.ts) under a per-org transaction lock; the read never cuts at it.",
 	"findings": {
-		"apps/console/components/alerts/alerts-page.tsx": {
-			"count-pill": 1
-		},
 		"store:useAlertChannelFilters": {
 			"keyset-contract": 1
 		}
