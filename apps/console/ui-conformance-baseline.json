@@ -14,16 +14,16 @@
 		"rubric": "apps/console/docs/ui-conformance/RUBRIC.md"
 	},
 	"totals": {
-		"routes": 41,
+		"routes": 42,
 		"redirectOnly": 4,
-		"real": 37,
+		"real": 38,
 		"predicates": 44,
 		"scoredHere": 24,
 		"live": 19,
 		"notInstrumented": 1,
 		"findings": 21,
 		"findingFiles": 14,
-		"liveNotMeasured": 121
+		"liveNotMeasured": 140
 	},
 	"ledgers": {
 		"baseline": 15,
@@ -107,7 +107,7 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 37,
+			"pass": 38,
 			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
@@ -121,7 +121,7 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 36,
+			"pass": 37,
 			"fail": 1,
 			"na": 4,
 			"notMeasured": 0,
@@ -129,13 +129,13 @@
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {},
-			"score": 0.973
+			"score": 0.9737
 		},
 		"S3": {
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 37,
+			"pass": 38,
 			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
@@ -149,7 +149,7 @@
 			"family": "S",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 37,
+			"pass": 38,
 			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
@@ -163,7 +163,7 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 37,
+			"pass": 38,
 			"fail": 0,
 			"na": 4,
 			"notMeasured": 0,
@@ -177,7 +177,7 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -191,10 +191,10 @@
 			"owner": null,
 			"pass": 11,
 			"fail": 0,
-			"na": 30,
+			"na": 31,
 			"notMeasured": 0,
 			"naReasons": {
-				"does-not-call-not-found": 30
+				"does-not-call-not-found": 31
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -203,7 +203,7 @@
 			"family": "T",
 			"instrument": "check-route-states",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -219,12 +219,12 @@
 			"pass": 18,
 			"fail": 0,
 			"na": 22,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"no-empty-state": 22
 			},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -236,12 +236,12 @@
 			"pass": 36,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -253,12 +253,12 @@
 			"pass": 2,
 			"fail": 0,
 			"na": 25,
-			"notMeasured": 14,
+			"notMeasured": 15,
 			"naReasons": {
 				"no-restricted-surface": 25
 			},
 			"notMeasuredReasons": {
-				"the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given": 14
+				"the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given": 15
 			},
 			"score": 1
 		},
@@ -266,7 +266,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -278,7 +278,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -290,7 +290,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -302,7 +302,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -314,7 +314,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -326,7 +326,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -338,7 +338,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -350,7 +350,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -362,7 +362,7 @@
 			"family": "H",
 			"instrument": "check-shared-surface",
 			"owner": null,
-			"pass": 41,
+			"pass": 42,
 			"fail": 0,
 			"na": 0,
 			"notMeasured": 0,
@@ -376,10 +376,10 @@
 			"owner": null,
 			"pass": 19,
 			"fail": 0,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -390,10 +390,10 @@
 			"owner": null,
 			"pass": 19,
 			"fail": 0,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -404,10 +404,10 @@
 			"owner": null,
 			"pass": 19,
 			"fail": 0,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -418,10 +418,10 @@
 			"owner": null,
 			"pass": 19,
 			"fail": 0,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -432,10 +432,10 @@
 			"owner": null,
 			"pass": 7,
 			"fail": 12,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 0.3684
@@ -446,10 +446,10 @@
 			"owner": null,
 			"pass": 19,
 			"fail": 0,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -460,10 +460,10 @@
 			"owner": null,
 			"pass": 19,
 			"fail": 0,
-			"na": 22,
+			"na": 23,
 			"notMeasured": 0,
 			"naReasons": {
-				"not-a-list-page": 22
+				"not-a-list-page": 23
 			},
 			"notMeasuredReasons": {},
 			"score": 1
@@ -476,12 +476,12 @@
 			"pass": 16,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 1
+				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 2
 			},
 			"score": 1
 		},
@@ -493,12 +493,12 @@
 			"pass": 16,
 			"fail": 0,
 			"na": 24,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"not-a-list-page": 24
 			},
 			"notMeasuredReasons": {
-				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 1
+				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 2
 			},
 			"score": 1
 		},
@@ -510,13 +510,13 @@
 			"pass": 15,
 			"fail": 0,
 			"na": 25,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"not-a-list-page": 24,
 				"no-search-field": 1
 			},
 			"notMeasuredReasons": {
-				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 1
+				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 2
 			},
 			"score": 1
 		},
@@ -528,12 +528,12 @@
 			"pass": 36,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -545,12 +545,12 @@
 			"pass": 39,
 			"fail": 0,
 			"na": 1,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"opens-no-overlay": 1
 			},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -562,12 +562,12 @@
 			"pass": 36,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -579,12 +579,12 @@
 			"pass": 36,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -596,10 +596,10 @@
 			"pass": 40,
 			"fail": 0,
 			"na": 0,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -611,10 +611,10 @@
 			"pass": 40,
 			"fail": 0,
 			"na": 0,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -626,10 +626,10 @@
 			"pass": 40,
 			"fail": 0,
 			"na": 0,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {},
 			"notMeasuredReasons": {
-				"the `routes` run did not reach this route — it covers every route the manifest names": 1
+				"the `routes` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -641,13 +641,13 @@
 			"pass": 35,
 			"fail": 0,
 			"na": 5,
-			"notMeasured": 1,
+			"notMeasured": 2,
 			"naReasons": {
 				"redirect-only": 4,
 				"no-enabled-controls": 1
 			},
 			"notMeasuredReasons": {
-				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 1
+				"the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS": 2
 			},
 			"score": 1
 		},
@@ -659,13 +659,13 @@
 			"pass": 27,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 10,
+			"notMeasured": 11,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
 				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 9,
-				"the `behaviour` run did not reach this route — it covers every route the manifest names": 1
+				"the `behaviour` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -677,13 +677,13 @@
 			"pass": 30,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 7,
+			"notMeasured": 8,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
 				"hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition": 6,
-				"the `behaviour` run did not reach this route — it covers every route the manifest names": 1
+				"the `behaviour` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -695,14 +695,14 @@
 			"pass": 5,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 32,
+			"notMeasured": 33,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
 				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 28,
 				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 3,
-				"the `behaviour` run did not reach this route — it covers every route the manifest names": 1
+				"the `behaviour` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -714,14 +714,14 @@
 			"pass": 21,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 16,
+			"notMeasured": 17,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
 				"answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same": 6,
 				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 8,
-				"the `behaviour` run did not reach this route — it covers every route the manifest names": 1,
+				"the `behaviour` run did not reach this route — it covers every route the manifest names": 2,
 				"no-reads-failed — the route made no data read, so forcing reads to fail reached nothing": 1
 			},
 			"score": 1
@@ -734,14 +734,14 @@
 			"pass": 8,
 			"fail": 0,
 			"na": 4,
-			"notMeasured": 29,
+			"notMeasured": 30,
 			"naReasons": {
 				"redirect-only": 4
 			},
 			"notMeasuredReasons": {
 				"not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed": 19,
 				"no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser": 9,
-				"the `behaviour` run did not reach this route — it covers every route the manifest names": 1
+				"the `behaviour` run did not reach this route — it covers every route the manifest names": 2
 			},
 			"score": 1
 		},
@@ -2558,6 +2558,73 @@
 				"fail": 0,
 				"na": 13,
 				"notMeasured": 2,
+				"score": 1
+			}
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"redirectOnly": false,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"notMeasured": 3,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 10,
+					"of": 10,
+					"pass": 0,
+					"fail": 0,
+					"na": 7,
+					"notMeasured": 3,
+					"score": null
+				},
+				"R": {
+					"instrumented": 8,
+					"of": 8,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 8,
+					"score": null
+				},
+				"B": {
+					"instrumented": 5,
+					"of": 6,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 5,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 16,
+				"fail": 0,
+				"na": 8,
+				"notMeasured": 19,
 				"score": 1
 			}
 		},
@@ -9669,6 +9736,248 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "B1",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "B2",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "B4",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F1",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F10",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F2",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F3",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F4",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F5",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F6",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F7",
+			"verdict": "N/A",
+			"reason": "not-a-list-page"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F8",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "F9",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R1",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R2",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R3",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R4",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R6",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "R8",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T6",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/settings/connected",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
 		},
 		{
 			"route": "/[org]/~/settings/general",

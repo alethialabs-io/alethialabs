@@ -98,7 +98,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 53 controls — 53 confirmed
+#   census: 54 controls — 54 confirmed
 
 version: 1
 
@@ -678,6 +678,21 @@ controls:
     status: confirmed
     prod-qa: skip
     reason: an identity provider on production is real sign-in configuration
+
+  - id: settings.connected-agent.disconnect
+    route: /[org]/~/settings/connected
+    surface: apps/console/components/settings/connected/connected-agents-page.tsx
+    mutation: disconnectAgent
+    reach: [{ open: "Manage <name>" }]
+    control: { role: button, name: "Disconnect" }
+    confirm: confirm-dialog
+    confirm_action: "Disconnect"
+    dialog_title: "Disconnect <name>?"
+    fixture: connected-agent
+    persona: owner
+    status: confirmed
+    prod-qa: skip
+    reason: a connected agent is a person's real OAuth consent; the sweep has none of its own to open
 
   - id: access.grant.revoke
     route: /[org]/~/settings/access
