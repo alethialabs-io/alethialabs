@@ -410,17 +410,18 @@ test.describe("RBAC — Roles", () => {
 	const rail = (page: import("@playwright/test").Page, role: string) =>
 		page.getByRole("button", { name: new RegExp(`^${role}\\b`) });
 
-	test("built-in roles rail renders all four roles + the count", async ({ owner }) => {
+	test("built-in roles rail renders all four roles, as four list items and no count", async ({ owner }) => {
 		await owner.page.goto(rolesUrl(owner.orgSlug));
 		await expect(owner.page).not.toHaveURL(/\/login/);
 		for (const r of ["Owner", "Admin", "Operator", "Viewer"]) {
 			await expect(rail(owner.page, r).first()).toBeVisible({ timeout: 30_000 });
 		}
-		// The "4 built-in · 0 custom" line went when Settings moved onto the filter standard
-		// (#2928); the count is the page toolbar's count pill, built-in + custom.
-		await expect(
-			owner.page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]'),
-		).toHaveText("4");
+		// The toolbar count pill went in LST-8 (#7542: no count pills anywhere). The rail IS the roles
+		// list and marks each role with `data-list-item` (#7673); with no custom role there are exactly
+		// the four built-ins. The presence checks above run first, so the absence below cannot pass on
+		// a page that never rendered.
+		await expect(owner.page.locator("main [data-list-item]")).toHaveCount(4);
+		await expect(owner.page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]')).toHaveCount(0);
 	});
 
 	test("default detail panel shows the Owner built-in role (read-only)", async ({ owner }) => {

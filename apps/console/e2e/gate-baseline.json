@@ -561,7 +561,7 @@
 				"RBAC — Teams (Enterprise gate) › Hobby: Create team is disabled and says it needs the Enterprise plan": "passed",
 				"RBAC — Teams (Enterprise gate) › Pro: teams is still Enterprise-gated (upsell present)": "passed",
 				"RBAC — Teams (Enterprise gate) › Pro: Create team is also disabled with the Enterprise reason": "passed",
-				"RBAC — Roles › built-in roles rail renders all four roles + the count": "passed",
+				"RBAC — Roles › built-in roles rail renders all four roles, as four list items and no count": "passed",
 				"RBAC — Roles › default detail panel shows the Owner built-in role (read-only)": "passed",
 				"RBAC — Roles › selecting Viewer swaps the detail panel to the Viewer description": "passed",
 				"RBAC — Roles › no custom roles yet — the rail shows the empty custom section": "passed",
