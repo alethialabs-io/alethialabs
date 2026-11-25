@@ -1,0 +1,58 @@
+name: Release packages
+
+# Publishes the workspace packages listed in packages/public-packages.json to npm as @alethialabs/*
+# (docs/contributing/releasing-packages.md). It runs when a promotion lands on main; a version that
+# is already on npm is skipped, so a run with no new version publishes nothing.
+#
+# Authentication: npm trusted publishing (this workflow's OIDC token) for every package that has
+# this workflow registered as its trusted publisher. The very first release of a package cannot use
+# it — npm attaches a trusted publisher only to a package that already exists — so until then
+# NODE_AUTH_TOKEN comes from the `npm-release` environment's NPM_TOKEN, which only `main` can read.
+# Once every package has its trusted publisher, that secret is deleted.
+#
+# `id-token: write` (provenance + trusted publishing) is reachable only from push to main and a
+# manual dispatch — never from a pull_request (scripts/check-workflow-oidc-isolation.mjs).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - ".changeset/**"
+      - "scripts/release/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-packages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10.
+      - run: npm install -g npm@11
+      - run: pnpm install --frozen-lockfile
+      - name: Build and stage the packages
+        run: node scripts/release/stage-public-packages.mjs
+      - name: Publish new versions (provenance; skips versions already on npm)
+        run: node scripts/release/publish-public-packages.mjs
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

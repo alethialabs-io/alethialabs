@@ -1,0 +1,15 @@
+{
+  "$comment": "The workspace packages published to npm as @alethialabs/<name> (docs/contributing/releasing-packages.md). Inside the monorepo they keep their @repo/* names; scripts/release/stage-public-packages.mjs renames them only in the staged copy that is published. A published package may depend only on other published packages. `shipSource` also ships src/ for packages whose source a consumer's Tailwind must scan. `omitExports` are workspace-only entry points that are deliberately not published.",
+  "scope": "@alethialabs",
+  "packages": {
+    "brand": { "shipSource": true },
+    "email": {},
+    "format": { "omitExports": ["./conformance"] },
+    "legal": {},
+    "org-slug": {},
+    "platform": {},
+    "privacy": { "shipSource": true },
+    "support": {},
+    "ui": { "shipSource": true }
+  }
+}
