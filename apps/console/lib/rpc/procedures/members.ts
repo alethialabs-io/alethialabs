@@ -22,7 +22,7 @@ import {
 	PERMISSIONS,
 } from "@/lib/authz/registry";
 import { isStripeConfigured } from "@/lib/billing/config";
-import { isBillingActive } from "@/lib/billing/plan";
+import { entitlementStatus, isBillingActive } from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { getServiceDb } from "@/lib/db";
 import { likeTerm } from "@/lib/db/like";
@@ -236,7 +236,7 @@ export async function readMembersGate(): Promise<MembersGate> {
 		personal ? Promise.resolve(null) : getOrgBilling(actor.orgId),
 	]);
 	const plan: BillingPlan =
-		billing && isBillingActive(billing.status) ? billing.plan : "community";
+		billing && isBillingActive(entitlementStatus(billing)) ? billing.plan : "community";
 	return {
 		canManage: getEntitlements(actor).organizations,
 		canInvite: collaboration.canInvite,
