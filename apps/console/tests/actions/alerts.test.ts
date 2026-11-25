@@ -87,6 +87,7 @@ function mockDb(
 	const setSpy = vi.fn();
 	const valuesSpy = vi.fn();
 	const whereSpy = vi.fn();
+	const executeSpy = vi.fn();
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
 		select: () => db,
@@ -110,11 +111,16 @@ function mockDb(
 			return db;
 		},
 		returning: () => returningRows,
+		// The per-org cap's transaction lock (#7489): `select pg_advisory_xact_lock(…)`.
+		execute: (...a: unknown[]) => {
+			executeSpy(...a);
+			return Promise.resolve([]);
+		},
 		transaction: (fn: (tx: unknown) => unknown) => fn(db),
 		then: (resolve: (v: unknown) => void) => resolve(selectRows),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
-	return { setSpy, valuesSpy, whereSpy };
+	return { setSpy, valuesSpy, whereSpy, executeSpy };
 }
 
 describe("addChannel", () => {
@@ -347,6 +353,55 @@ describe("verifyChannel", () => {
 			data: { verified: false, error: expect.stringMatching(/Couldn't reach the endpoint/) },
 		});
 		expect(setSpy).not.toHaveBeenCalled();
+	});
+});
+
+// Channels and policies are unpaged lists by a recorded `bounded` decision
+// (apps/console/list-standard/alert-{channels,policies}.json, #7489). The bound that decision names
+// is THIS: a per-org cap enforced at create, under a transaction lock, so the read can return every
+// row without ever cutting one off.
+describe("the per-org caps behind the hub's two unpaged lists", () => {
+	const email = { type: "email", name: "Mail", enabled: true, recipients: ["x@y.com"] };
+	const policy = {
+		name: "P",
+		event_patterns: ["system.job.failed"],
+		match: {},
+		severity: "warning",
+		throttle_seconds: 0,
+		escalate: false,
+		enabled: true,
+		channels: [{ id: UUID }],
+	};
+
+	it("addChannel at 50 channels is refused (conflict) BEFORE any test delivery, and inserts nothing", async () => {
+		const { valuesSpy, executeSpy } = mockDb({ selectRows: [{ n: 50 }], returningRows: [{ id: "ch-new" }] });
+		expect(await addChannel(email as never)).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: expect.stringMatching(/already has 50 alert channels/) },
+		});
+		expect(senderVerify).not.toHaveBeenCalled();
+		expect(valuesSpy).not.toHaveBeenCalled();
+		expect(executeSpy).toHaveBeenCalled();
+	});
+
+	it("addChannel below the cap counts again under the lock at the insert", async () => {
+		const { valuesSpy, executeSpy } = mockDb({ selectRows: [{ n: 49 }], returningRows: [{ id: "ch-new" }] });
+		expect(await addChannel(email as never)).toEqual({ ok: true, data: { added: true, id: "ch-new" } });
+		// Once before the verification, once in the insert's own transaction.
+		expect(executeSpy).toHaveBeenCalledTimes(2);
+		expect(valuesSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("createPolicy at 100 policies is refused (conflict) inside its transaction, and binds nothing", async () => {
+		// One row answers both reads: the channel-ownership lookup (one channel) and the count.
+		const { valuesSpy, executeSpy } = mockDb({ selectRows: [{ id: UUID, n: 100 }], returningRows: [{ id: "rule-1" }] });
+		expect(await createPolicy(policy as never)).toEqual({
+			ok: false,
+			error: { kind: "conflict", message: expect.stringMatching(/already has 100 alert policies/) },
+		});
+		expect(executeSpy).toHaveBeenCalledTimes(1);
+		expect(valuesSpy).not.toHaveBeenCalled();
+		expect(invalidateOrgRules).not.toHaveBeenCalled();
 	});
 });
 
