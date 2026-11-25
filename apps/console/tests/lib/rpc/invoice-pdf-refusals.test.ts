@@ -17,11 +17,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
-const { authorize, getOrgInvoice, storageGet } = vi.hoisted(() => ({
+const { authorize, getOrgInvoice, storageGet, paddleInvoicePdfUrl } = vi.hoisted(() => ({
 	authorize: vi.fn(),
 	getOrgInvoice: vi.fn(),
 	storageGet: vi.fn(),
+	paddleInvoicePdfUrl: vi.fn(),
 }));
+vi.mock("@/lib/billing/paddle/documents", () => ({ paddleInvoicePdfUrl }));
 vi.mock("@/lib/authz/guard", () => ({ authorize }));
 vi.mock("@/lib/billing/invoices", () => ({ getOrgInvoice }));
 vi.mock("@/lib/storage", () => ({ storage: { get: storageGet } }));
@@ -37,6 +39,7 @@ beforeEach(() => {
 	getOrgInvoice.mockReset();
 	getOrgInvoice.mockResolvedValue(null);
 	storageGet.mockReset();
+	paddleInvoicePdfUrl.mockReset();
 });
 
 /** Asserts `res` is the HTML failure page, not JSON, and answers its body. */
@@ -161,5 +164,50 @@ describe("invoice PDF refusals", () => {
 		const res = await call();
 		expect(res.status).toBe(503);
 		await htmlBody(res);
+	});
+});
+
+// L5: a Paddle customer's invoice (id `txn_…`) is Paddle's document — Paddle is the merchant of
+// record — so the route redirects to Paddle's short-lived PDF, but only for a transaction the
+// lookup confirms is this org's. The local mirror is never consulted for it.
+describe("Paddle invoice PDFs (L5)", () => {
+	const callTxn = (download = false) =>
+		GET(new Request(`http://console.test/acme/~/settings/billing/invoices/txn_01abc/pdf${download ? "?download=1" : ""}`), {
+			params: Promise.resolve({ id: "txn_01abc" }),
+		});
+
+	it("redirects to Paddle's PDF for the org's own transaction, inline or as a download", async () => {
+		authorize.mockResolvedValue({ orgId: "org-1" });
+		paddleInvoicePdfUrl.mockResolvedValue("https://paddle.test/invoice.pdf?sig=x");
+		const res = await callTxn();
+		expect(res.status).toBe(302);
+		expect(res.headers.get("location")).toBe("https://paddle.test/invoice.pdf?sig=x");
+		expect(paddleInvoicePdfUrl).toHaveBeenCalledWith("org-1", "txn_01abc", "inline");
+		await callTxn(true);
+		expect(paddleInvoicePdfUrl).toHaveBeenLastCalledWith("org-1", "txn_01abc", "attachment");
+		expect(getOrgInvoice).not.toHaveBeenCalled();
+	});
+
+	it("answers another org's (or an unknown) transaction as not found", async () => {
+		authorize.mockResolvedValue({ orgId: "org-1" });
+		paddleInvoicePdfUrl.mockResolvedValue(null);
+		const res = await callTxn();
+		expect(res.status).toBe(404);
+		expect(res.headers.get("location")).toBeNull();
+		expect(await htmlBody(res)).toContain("Invoice not found");
+	});
+
+	it("answers a Paddle failure as a 503 page", async () => {
+		authorize.mockResolvedValue({ orgId: "org-1" });
+		paddleInvoicePdfUrl.mockRejectedValue(new Error("paddle down"));
+		const res = await callTxn();
+		expect(res.status).toBe(503);
+		await htmlBody(res);
+	});
+
+	it("checks billing permission before asking Paddle", async () => {
+		authorize.mockRejectedValue(new ForbiddenError("manage_billing", { type: "billing" }));
+		expect((await callTxn()).status).toBe(403);
+		expect(paddleInvoicePdfUrl).not.toHaveBeenCalled();
 	});
 });

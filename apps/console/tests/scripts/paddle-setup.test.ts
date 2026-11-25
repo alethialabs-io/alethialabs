@@ -292,7 +292,7 @@ describe("--plan and --apply", () => {
 		expect(out).toMatch(/PADDLE_PRICE_AI_PLUS=pri_/);
 		expect(out).toMatch(/PADDLE_PRICE_AI_MAX=pri_/);
 		expect(out).toMatch(/PADDLE_PRICE_CREDITS_S=pri_/);
-		expect(out).toMatch(/PADDLE_PRODUCT_RUNNER_OVERAGE=pro_/);
+		expect(out).toMatch(/PADDLE_PRODUCT_RUNNER_MINUTES=pro_/);
 	});
 
 	it("replaces a price whose amount drifted: new price first, then the old one archived, never PATCHed", async () => {

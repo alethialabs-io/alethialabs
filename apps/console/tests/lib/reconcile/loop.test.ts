@@ -11,6 +11,10 @@ vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(() => ({})) }));
 vi.mock("@/lib/billing/factura/sweeper", () => ({
 	runFacturaSweep: vi.fn(async () => ({ retried: 0, issued: 0, alerted: 0, pdfsRendered: 0, failures: 0 })),
 }));
+vi.mock("@/lib/billing/paddle/overage-sweeper", () => ({
+	paddleOverageSweepEnabled: vi.fn(() => false),
+	runPaddleOverageSweep: vi.fn(async () => ({ posted: 0, reconciled: 0, waived: 0, failed: 0, pending: 0, skipped: 0 })),
+}));
 vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async () => ({ converged: 0, candidates: 0 })) }));
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
@@ -42,6 +46,7 @@ import {
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
+import { paddleOverageSweepEnabled, runPaddleOverageSweep } from "@/lib/billing/paddle/overage-sweeper";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
@@ -117,6 +122,29 @@ describe("tick — the фактура sweep (#7369)", () => {
 		expect(runFacturaSweep).not.toHaveBeenCalled();
 		await tick(new Date(t0.getTime() + 61 * 60_000));
 		expect(runFacturaSweep).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("tick — the Paddle overage sweep (L5)", () => {
+	it("never runs while the flag is off", async () => {
+		vi.mocked(paddleOverageSweepEnabled).mockReturnValue(false);
+		await tick(new Date());
+		expect(runPaddleOverageSweep).not.toHaveBeenCalled();
+		expect(getHeartbeats().map((h) => h.task)).not.toContain("paddle-overage-sweep");
+	});
+
+	it("runs under its own heartbeat when enabled, then waits 15 minutes", async () => {
+		vi.mocked(paddleOverageSweepEnabled).mockReturnValue(true);
+		const t0 = new Date();
+		await tick(t0);
+		expect(runPaddleOverageSweep).toHaveBeenCalledWith(t0);
+		expect(getHeartbeats().map((h) => h.task)).toContain("paddle-overage-sweep");
+		vi.mocked(runPaddleOverageSweep).mockClear();
+		await tick(new Date(t0.getTime() + 10 * 60_000));
+		expect(runPaddleOverageSweep).not.toHaveBeenCalled();
+		await tick(new Date(t0.getTime() + 16 * 60_000));
+		expect(runPaddleOverageSweep).toHaveBeenCalledTimes(1);
+		vi.mocked(paddleOverageSweepEnabled).mockReturnValue(false);
 	});
 });
 

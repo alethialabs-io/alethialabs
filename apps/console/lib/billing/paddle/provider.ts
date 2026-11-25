@@ -3,11 +3,13 @@
 
 // The Paddle adapter behind the billing-provider seam (lib/billing/provider/types.ts). L3 implements
 // what the webhook needs — `parseWebhook`, `isConfigured`, `mode`. The purchase, portal and plan
-// methods arrive with L4 and the usage/document methods with L5; until then they throw
-// `PaddleNotImplementedError` rather than pretend, and nothing calls them.
+// methods arrive with L4 and throw `PaddleNotImplementedError` until then rather than pretend; the
+// usage and document methods are L5's (./overage.ts, ./documents.ts).
 
+import { createPaddleClient } from "@/lib/billing/paddle/api";
 import { getPaddleConfig, isPaddleConfigured } from "@/lib/billing/paddle/config";
 import { normalizePaddleEvent, parsePaddleEnvelope } from "@/lib/billing/paddle/events";
+import { postPaddleUsageCharge, recordPaddleJobUsage } from "@/lib/billing/paddle/overage";
 import { type PaddleSignatureFailure, verifyPaddleSignature } from "@/lib/billing/paddle/signature";
 import { paddleApiKey, paddleKeyEnvironment } from "@/lib/billing/paddle-key";
 import type { BillingProvider, NormalizedBillingEvent, WebhookDelivery } from "@/lib/billing/provider/types";
@@ -82,9 +84,16 @@ export function createPaddleProvider(deps: PaddleProviderDeps = defaultDeps): Bi
 		cancelAtPeriodEnd: () => Promise.reject(new PaddleNotImplementedError("cancelAtPeriodEnd", "L4")),
 		resume: () => Promise.reject(new PaddleNotImplementedError("resume", "L4")),
 		changePlan: () => Promise.reject(new PaddleNotImplementedError("changePlan", "L4")),
-		postUsageCharge: () => Promise.reject(new PaddleNotImplementedError("postUsageCharge", "L5")),
-		reportJobUsage: () => Promise.resolve(false),
-		listDocuments: () => Promise.reject(new PaddleNotImplementedError("listDocuments", "L5")),
+		// L5: overage (./overage.ts, swept by ./overage-sweeper.ts) and documents (./documents.ts, loaded
+		// lazily so this adapter's static imports stay inside lib/billing/paddle/* — see select.ts).
+		postUsageCharge: (charge) => {
+			const config = deps.config();
+			const client = createPaddleClient({ apiKey: config.apiKey, environment: config.environment });
+			return postPaddleUsageCharge(client, config.products.runnerMinutes, charge);
+		},
+		reportJobUsage: recordPaddleJobUsage,
+		listDocuments: async (organizationId, opts) =>
+			(await import("@/lib/billing/paddle/documents")).listPaddleDocuments(organizationId, opts),
 		livePrices: () => Promise.reject(new PaddleNotImplementedError("livePrices", "L4")),
 	};
 }
