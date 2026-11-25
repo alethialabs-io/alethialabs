@@ -1,281 +1,120 @@
 ---
-title: Security architecture
-description: The zero-credential model — Alethia's own OIDC issuer, how each cloud federates against it and what it may do there, execution isolation, and data isolation.
+title: Security
+description: The keyless model — Alethia's own OIDC issuer, how AWS, GCP and Azure trust it and what Alethia may do in each, Hetzner's token, key rotation, execution isolation and tenant isolation.
 ---
 
-The platform's security model is built on one principle: **never store static cloud credentials**. Every cloud access is temporary, scoped, and revocable.
-
-<img src="/docs/diagrams/concepts/security.svg" alt="Security Architecture" />
-
-## Zero-Credential Model
-
-Traditional infrastructure tools require users to provide long-lived access keys (AWS Access Key ID, GCP service account JSON, Azure client secret). These keys are stored in configuration files, environment variables, or vault systems — creating a persistent attack surface.
-
-Console takes a different approach. The platform never stores cloud credentials. Instead, the control plane is **its own OIDC identity provider** (see [the Alethia OIDC issuer](#the-alethia-oidc-issuer-workload-identity) below): it mints short-lived, audience-scoped assertions that each cloud federates against. **All three managed clouds are keyless** — no access key, service-account JSON, or client secret anywhere:
-
-| Provider | Mechanism | Session |
-|----------|-----------|---------|
-| AWS | `AssumeRoleWithWebIdentity` directly into the customer role (IAM OIDC provider — no platform account, no ExternalId) | ~1 hour, auto-refreshed |
-| GCP | Workload Identity Federation (OIDC token exchange) | ~1 hour, auto-refreshed |
-| Azure | Client assertion into the customer's user-assigned managed identity (federated credential — no platform Entra app) | ~1 hour, auto-refreshed |
-
-The only long-lived secret is the issuer's **signing key** (`ALETHIA_OIDC_SIGNING_KEY`), held on the control plane and never shared — clouds verify assertions against the published JWKS. If the user wants to revoke access, they delete the IAM role / WIF config / managed identity in their cloud account. There is nothing to leak from the Console side.
-
-## The Alethia OIDC issuer (workload identity)
-
-Rather than assume into each cloud with a static platform key, the control plane runs a minimal,
-single-purpose **workload-identity OIDC issuer** at `${APP_URL}/api/oidc` (`lib/oidc/issuer.ts`). It is
-the trust root every managed cloud federates against:
-
-- **Mint.** `mintWorkloadToken({ audience })` signs a short-lived (≤10 min) RS256 assertion with a fixed
-  subject (`alethia-connector`) and the cloud's expected **audience** (`sts.amazonaws.com`,
-  `alethia-gcp-wif`, `api://AzureADTokenExchange` — one per cloud, from
-  `packages/workload-identity`). The audience scopes the token so it can't be replayed at a
-  different cloud.
-- **Publish.** The public half is served as a JWKS at `${APP_URL}/api/oidc/jwks` (plus an OIDC discovery
-  document). The customer's cloud fetches it to verify signatures — the private key never leaves the vault.
-- **Verify.** Each cloud validates the assertion (issuer + subject + audience + signature) and exchanges it
-  for its own ~1 hour credential. A successful exchange **is** the proof of access.
-
-Because the exchanged credential is short-lived, the runner re-mints the assertion into a token **file**
-that the provider re-reads, so a `tofu apply` longer than the ~1 hour session keeps authenticating — the
-per-cloud runner mechanics are in [Cloud credentials](/concepts/runner/cloud-credentials). Key material is
-rotatable with zero downtime — see [Key rotation](#key-rotation).
-
-**This one model powers all three managed clouds.** The sections below are per-cloud deep dives — they differ
-only in the federation primitive each cloud exposes (AWS `AssumeRoleWithWebIdentity`, GCP Workload Identity
-Federation, Azure federated identity) and in what the customer creates to trust
-the issuer. Each ends with a **Permissions scope** — exactly what Alethia provisions in that cloud, and how
-tightly the role is (being) scoped.
-
-## AWS: Keyless, issuer-direct IAM role
-
-### Setup
-
-The user deploys a CloudFormation template (or OpenTofu module) in their AWS account. This creates:
-
-1. **An IAM OIDC provider** for the Alethia issuer (`${APP_URL}/api/oidc`) — the account's trust root for Alethia
-2. **`AlethiaProvisionerRole`** — an IAM role whose trust policy allows **only** `sts:AssumeRoleWithWebIdentity` from that provider, pinned to the fixed audience (`sts.amazonaws.com`) and subject (`alethia-connector`)
-
-There is **no ExternalId and no trust in an Alethia AWS account** — the cryptographic sub/aud pin replaces the
-confused-deputy shared secret entirely, and no other identity (not even a different Alethia token) can assume
-the role.
-
-### Runtime Flow
-
-The control plane (for server-side connection health / inventory) and managed runners (for provisioning)
-federate **directly** into the customer role with a minted assertion — a single hop, no platform account:
+Alethia stores no static cloud credential for AWS, GCP or Azure. The control plane is its own OIDC
+issuer: it signs short-lived assertions, and each cloud exchanges one for a session of about an hour
+on a role, service account or managed identity that you create and can delete at any time.
 
 <Mermaid chart={`
 sequenceDiagram
-  participant R as Console / Runner
-  participant STS as AWS STS
-  R->>STS: AssumeRoleWithWebIdentity(customer RoleArn, OIDC assertion) — no access key
-  STS-->>R: Temporary customer credentials (~1h)
-  Note over R: tofu runs; the assertion auto-refreshes from the re-read token file
+  participant A as Alethia control plane (issuer)
+  participant R as Console or runner
+  participant C as Your cloud (STS / Entra)
+  A-->>C: publishes JWKS at /api/oidc/jwks
+  R->>A: request an assertion for one cloud
+  A-->>R: RS256 assertion, 10 min or less, fixed subject and audience
+  R->>C: exchange the assertion
+  C->>C: check issuer, subject, audience, signature
+  C-->>R: session of about 1 hour
 `} />
 
-How a managed runner hands the assertion to OpenTofu, and how a self-operated runner differs, is in
-[Cloud credentials → AWS](/concepts/runner/cloud-credentials#aws-keyless-assumerolewithwebidentity).
+## How it works
 
-### Permissions scope
+### The issuer
 
-The OIDC trust above controls *who* may assume the role. This section is *what* the role is allowed to do —
-a separate, independent axis.
+The issuer lives at `${APP_URL}/api/oidc` and publishes its public keys and an OIDC discovery
+document. Each assertion it signs lasts 10 minutes or less, has the fixed subject `alethia-connector`,
+and names one cloud as its audience: `sts.amazonaws.com`, `alethia-gcp-wif` or
+`api://AzureADTokenExchange`. The audience stops an assertion for one cloud being replayed at another.
 
-**Exactly what Alethia provisions in AWS** (every service the project templates can touch — feature-gated,
-so a given Project uses a subset): EC2/VPC (subnets, NAT, route tables, security groups, VPC endpoints),
-EKS (cluster, managed node groups, add-ons, IRSA OIDC provider + roles), RDS (Aurora), ElastiCache
-(Redis/Valkey), Route 53, ACM, Secrets Manager, DynamoDB, SQS/SNS, ECR, S3, KMS (envelope keys), CloudWatch
-Logs + Kinesis Firehose (log delivery), EventBridge (Karpenter interruption), Application Auto Scaling, and
-the IAM roles for the in-cluster controllers (external-dns, the AWS Load Balancer Controller, EBS CSI,
-Karpenter, …).
+The only long-lived secret is the issuer's signing key, `ALETHIA_OIDC_SIGNING_KEY`, held by the
+control plane. To revoke Alethia's access, delete the role, the federation provider or the managed
+identity in your account. How a runner uses the assertion during a job is in
+[Cloud credentials](/concepts/runner/cloud-credentials).
 
-<Callout type="info">
-**Least-privilege by default — no account admin, fully action-enumerated.** The setup attaches **five
-scoped policies** instead of `AdministratorAccess`: `ComputeNet`, `ComputeScale`, `Data`, `Edge` (the
-data-plane, split into net/scale to stay under AWS's 6144-char managed-policy limit — each lists the
-**specific `ec2:`/`eks:`/`rds:`/… actions** the templates issue, not `service:*`), and an action-enumerated
-`IAM` policy that lets the templates create the roles they need but **explicitly denies** attaching
-admin-grade managed policies (`AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess`), scopes `PassRole`
-to the provisioned services, and denies `organizations:*`/`account:*`/billing — so the connector **cannot
-escalate to admin**. (Reads stay `Describe*`/`Get*`/`List*` so a template/module bump doesn't break a real
-apply.) A permissions boundary on the created roles is the next hardening increment. See the
-[AWS connector guide](/guides/connectors/aws).
-</Callout>
+### Per cloud
 
-## GCP: Workload Identity Federation
+| | AWS | GCP | Azure |
+| --- | --- | --- | --- |
+| You create | An IAM OIDC provider for the issuer, and `AlethiaProvisionerRole`, whose trust policy allows only `sts:AssumeRoleWithWebIdentity` from that provider for the fixed audience and subject | A Workload Identity Pool with an OIDC provider for the issuer, and a service account bound with `roles/iam.workloadIdentityUser` | A user-assigned managed identity with a federated credential for the issuer, in your subscription. No app registration |
+| Alethia stores | The role ARN | The project ID and federation configuration | The tenant, subscription and client IDs |
+| Permissions | Five scoped policies instead of `AdministratorAccess` | 11 predefined and 5 custom roles instead of `roles/editor` | A custom "Alethia Provisioner" role instead of `Contributor` |
 
-### Setup
+There is no ExternalId and no trust in an Alethia AWS account: the subject and audience pin replaces
+it. No access key, service account key or client secret exists.
 
-The user configures a Workload Identity Pool and Provider in their GCP project:
+### What Alethia may do in your cloud
 
-1. Creates a Workload Identity Pool
-2. Adds an OIDC Provider with the Console issuer URL and audience
-3. Binds a GCP service account to the pool with `roles/iam.workloadIdentityUser`
+The trust controls who may use the role. The permissions control what it may do.
 
-### Runtime Flow
+- **AWS.** Four data-plane policies list the specific EC2, EKS, RDS and other actions the templates
+  use. An IAM policy lets the templates create the roles they need, explicitly denies attaching
+  `AdministratorAccess`, `PowerUserAccess` or `IAMFullAccess`, limits `PassRole` to the provisioned
+  services, and denies `organizations:*`, `account:*` and billing. Reads stay `Describe*`, `Get*` and
+  `List*`. See [Connect AWS](/guides/connectors/aws).
+- **GCP.** Predefined admin roles for services whose Google-maintained role is already narrow, such as
+  GKE, networking, Cloud SQL and DNS. Five custom roles replace admin roles that included data access:
+  bucket management without object data, Firestore management without entity data, Pub/Sub management
+  without publish or consume, add-on service account management, and a project metadata reader. IAM
+  bindings are scoped to resources, so the provisioner needs no project `setIamPolicy`.
+  `cloudkms.admin` creates the key for Kubernetes Secrets encryption but cannot use it. See
+  [Connect GCP](/guides/connectors/gcp).
+- **Azure.** The custom role lists only the actions the services need. Its one escalation-grade
+  permission, `roleAssignments/write`, is limited by a condition to the built-in DNS Zone Contributor
+  role, for external-dns, so it has no path to Owner. See [Connect Azure](/guides/connectors/azure).
 
-<Mermaid chart={`
-sequenceDiagram
-  participant R as Console / Runner
-  participant STS as GCP STS
-  R->>STS: Present minted OIDC token (Console issuer)
-  STS-->>R: Short-lived GCP access token (~1h)
-  Note over R: tofu runs with the exchanged credentials
-`} />
+### Hetzner
 
-No service account JSON key files are created or stored. The OIDC token exchange happens at runtime for each job.
+Hetzner has no federation, so it is not keyless. It uses one API token, scoped to a whole Hetzner
+project. You choose to store it encrypted in Alethia, or to keep it only in your own runner so it never
+enters Alethia's database. See [Cloud credentials](/concepts/runner/cloud-credentials#hetzner).
 
-### Permissions scope
+### Key rotation
 
-**Exactly what Alethia provisions in GCP:** Compute/VPC (networks, subnets, Cloud Router + NAT, firewall
-rules, Cloud Armor), GKE (cluster + node pools), Cloud SQL, Memorystore (Redis), Cloud DNS, Artifact
-Registry, Secret Manager, Cloud Storage, Firestore, Pub/Sub, and the workload-identity service accounts +
-bindings for in-cluster controllers.
+The signing key rotates without downtime. During the overlap, the published key set holds the old and
+the new key, and each assertion's `kid` header selects one. New assertions use the new key; the old
+one is retired once every cloud has refreshed its copy of the key set. See
+[Rotating the issuer signing key](/self-host/managed-cloud-connectors#rotate-the-issuer-signing-key).
 
-<Callout type="info">
-**Least-privilege by default — no `roles/editor`.** The service account gets **11 predefined roles + 5
-custom roles**. The predefined roles are kept for services whose Google-maintained admin set is already
-tightly scoped and churns with new features (container / compute.network / compute.security /
-servicenetworking / cloudsql / redis / dns / artifactregistry / secretmanager / cloudkms, plus
-`iam.serviceAccountUser`) — hand-enumerating those buys nothing. `cloudkms.admin` lets the provisioner
-create the customer-managed key that encrypts Kubernetes Secrets; it carries no permission to *use* that
-key, so the provisioner writes the key's encrypt/decrypt binding for the cluster and can never read a
-Secret with it. The **5 custom roles replace the predefined admin roles that bundled
-data-plane access a provisioner must never hold**, granting management verbs only: GCS bucket mgmt *without
-object data*, Firestore database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without
-publish/consume*, add-on SA mgmt (dropping undelete/enable/disable), and a project-metadata reader
-(replacing `roles/browser`, no folder/org hierarchy reads). The templates also use **resource-scoped IAM**
-(zone-scoped external-dns; per-secret accessor; per-GSA workloadIdentityUser), so the provisioner needs **no
-project `setIamPolicy`**. `secretmanager.admin` is kept predefined on purpose — dropping
-`secretmanager.versions.access` breaks the provider's secret-version refresh. See the
-[GCP connector guide](/guides/connectors/gcp).
-</Callout>
+### Execution isolation
 
-## Azure: Federated Identity
+Keyless credentials control who can reach a cloud. [Isolated execution](/concepts/isolated-execution)
+controls what provisioning code can do once it runs. Alethia's own templates run in the runner. Your
+OpenTofu or Helm runs, on the managed fleet, in a per-job container with no platform secrets, no cloud
+metadata, and egress only to allowed domains. One job's state token reaches only its own state, and
+cloud credentials are minted per job.
 
-Azure is keyless and **customer-side** — there is **no platform Entra app** and no `ALETHIA_AZURE_CLIENT_ID`.
-The customer creates a **user-assigned managed identity** in their own subscription (a plain ARM resource —
-no App Registration, no directory-admin rights) with a **federated-identity credential** trusting the
-Alethia OIDC issuer (subject `alethia-connector`, audience `api://AzureADTokenExchange`). The console and the
-runner authenticate **as that customer identity** (its `client_id` is stored per-connection) via a client
-assertion — **no client secret**. This is parity with the GCP Workload Identity Federation model.
+### Signing in
 
-### Setup
+People sign in to the console with OAuth or an email code, and to the CLI with a device grant or a
+service-account token. Runners use a per-runner token stored only as a hash. See
+[Authentication](/concepts/authentication).
 
-The customer runs the connect script (Azure Cloud Shell or OpenTofu), which creates everything in **their**
-subscription and stores nothing but three public identifiers:
+### Row-level security
 
-1. `az identity create` — a user-assigned managed identity in the customer's subscription
-2. `az identity federated-credential create` — a credential trusting the Alethia issuer (subject
-   `alethia-connector`, audience `api://AzureADTokenExchange`)
-3. `az role definition/assignment create` — the least-privilege **Alethia Provisioner** custom role (below)
+Every table that belongs to an organization has a Postgres row-level security policy on its
+organization ID. Each request sets the active organization, so even a query that forgets to filter
+returns only that organization's rows. Role and permission decisions are made above it, by the
+[access control](/concepts/access-control) layer.
 
-The customer pastes back their **tenant id**, **subscription id**, and the **managed identity's client id**.
+### Git tokens
 
-### Runtime Flow
+OAuth tokens for GitHub, GitLab and Bitbucket are kept on your sign-in account. Alethia checks a
+token's expiry before use and refreshes it through the provider. A job gets the token when it needs
+it, never in its snapshot.
 
-<Mermaid chart={`
-sequenceDiagram
-  participant R as Console / Runner
-  participant AZ as Azure (Entra / ARM)
-  R->>AZ: Present minted OIDC assertion as a client assertion
-  AZ-->>R: Access token for Azure Resource Manager (~1h)
-  Note over R: tofu runs; the runner re-mints into the token file so long applies refresh
-`} />
+## What it does not do
 
-No client secret is ever generated or stored. Access revocation is instant by deleting the managed
-identity (or its role assignment) in the customer's subscription.
+- It does not store a cloud key for AWS, GCP or Azure.
+- It does not give the connector account admin rights in any cloud.
+- It does not make Hetzner keyless.
+- It does not let one job read another job's state.
 
-### Permissions scope
+## Related
 
-**Exactly what Alethia provisions in Azure:** Resource Group, AKS (+ node pools), VNet (subnets, NSGs, NAT
-gateway, public IPs), PostgreSQL Flexible Server (+ private DNS zone), Redis Cache, DNS zones, Container
-Registry, Key Vault (+ secrets), Storage, Service Bus, Cosmos DB, WAF policy, and the managed identities +
-role assignments for in-cluster workload identity.
-
-<Callout type="info">
-**Least-privilege by default — a custom role, not `Contributor`.** The customer's managed identity is granted a
-**custom role definition** ("Alethia Provisioner") enumerating only the actions the services above need —
-including the AKS credential-list and per-resource-provider registration that `Contributor` omits (so this
-also *fixes* a gap: pure `Contributor` cannot create the external-dns role assignment the templates require).
-The one escalation-grade permission it needs — `roleAssignments/write` — is **constrained by an ABAC
-condition** to a single built-in role (*DNS Zone Contributor*), so the connector can grant that to the
-external-dns identity and **nothing else** (no path to Owner). See the
-[Azure connector guide](/guides/connectors/azure).
-</Callout>
-
-## Key rotation
-
-The issuer's signing key is the trust root for all three federated clouds, so it rotates with **zero downtime** via an
-overlap: the JWKS publishes the outgoing and the new key at once, and each assertion's `kid` header selects
-the right one. New assertions are signed by the new key while in-flight ones still verify; the old key is
-retired once every cloud's cached JWKS has refreshed. The operator steps are in the
-[rotation runbook](/self-host/managed-cloud-connectors#rotate-the-issuer-signing-key).
-
-## Execution isolation (managed untrusted BYO)
-
-Keyless auth controls *who* can touch a cloud; **execution isolation** controls what the *provisioning code
-itself* can do. In **managed** mode Alethia runs the provisioning fleet, so the trust question is: whose code
-runs on it?
-
-- **Trusted templates** — Alethia's own project templates (EKS/GKE/AKS/Talos + supporting services) run
-  in-process on the runner. They are reviewed platform code, so this is safe.
-- **Untrusted bring-your-own** — customer OpenTofu / Helm (a provider, an `external` data source, a chart
-  hook) is arbitrary code. It runs inside a **per-job container sandbox**: a fresh container per job with its
-  own PID namespace, an **allowlisted environment** (no runner token, no storage key, no signing key — only
-  the short-lived, job-scoped cloud credentials it needs), read-only credential mounts, and a **default-deny,
-  domain-allowlisted network**. A fail-closed guard refuses to start the container if any platform secret
-  would leak into it.
-
-Three properties keep the blast radius of a single job to that one job:
-
-- **No storage master key on the runner.** OpenTofu state goes through a Console **state proxy**
-  (`backend "http"` → `/api/jobs/[id]/state`) authenticated by a **per-job, key-scoped** token; the state
-  object key is derived server-side from the job. The runner never holds the object-storage credential, and
-  one job's token can only touch its own state (fenced locking prevents lost updates).
-- **Per-job, per-VM credentials.** Cloud tokens are minted per job and bound to it (a stolen runner token
-  can't mint another cloud's credentials); each fleet VM self-registers with its own short-TTL, instance-bound
-  bootstrap token rather than a shared fleet secret.
-- **Metadata + egress locked down.** The untrusted child has no network route of its own — it reaches only a
-  domain-allowlist forward proxy, so the cloud metadata service (and arbitrary exfiltration endpoints) are
-  unreachable by construction; only the registries, Git hosts, and the target cloud's API can be reached.
-
-The container boundary is what actually contains a hostile provider (env-scrubbing alone doesn't — a child
-sharing the worker's PID namespace can read the parent's `/proc`). Until it is enabled and verified on the
-fleet, managed **untrusted** BYO stays gated off; trusted provisioning is unaffected. Operators turn it on per
-the [managed provisioning runbook](/self-host/fleet-sandbox). See
-[Isolated Execution](/concepts/isolated-execution) for the full picture; the engineering detail lives in the
-`packages/core/sandbox` package README.
-
-## Signing in
-
-People sign in to the console with Better Auth (OAuth or email OTP, a cookie-backed session) and to the
-CLI with a device grant or a service-account token. Runners authenticate with a per-runner token stored
-only as a hash. Each is explained in [Authentication flows](/concepts/authentication).
-
-## Row Level Security (RLS)
-
-Every org-scoped table in the database has a coarse Row Level Security policy keyed on `org_id`. The current org is set per request via `set_config('app.current_org', …)`, driven by a Policy Decision Point (PDP) in the app:
-
-```sql
-CREATE POLICY "Org members can only access own org data"
-  ON projects FOR ALL
-  USING (org_id = current_setting('app.current_org')::uuid);
-```
-
-This means even if there is a bug in application code that constructs a query without a `WHERE org_id = ?` clause, PostgreSQL will filter the results to only the current org's data. A raw `SELECT * FROM projects` returns only the current org's Projects.
-
-RLS is the coarse, unbypassable backstop; fine-grained role/permission decisions are made by the PDP. See [Access Control](/concepts/access-control) for the full authorization model (roles, permissions, grants, and the org/tenancy model).
-
-Cloud identities are additionally filtered by provider — an AWS identity will not appear in a GCP context.
-
-## Git Token Management
-
-OAuth tokens for Git providers (GitHub, GitLab, Bitbucket) are stored on the Better Auth `account` table:
-
-- Better Auth persists each linked provider's `accessToken` / `refreshToken` / expiry on `account` at login
-- The `getValidProviderToken()` server action checks token expiry before use
-- Expired tokens are automatically refreshed via the provider's refresh flow
-- Access is scoped to the owning user (the `org_id` RLS backstop + the PDP)
+- [Cloud credentials](/concepts/runner/cloud-credentials)
+- [Isolated execution](/concepts/isolated-execution)
+- [Access control](/concepts/access-control)
+- [Managed cloud connectors](/self-host/managed-cloud-connectors)

@@ -1,126 +1,96 @@
 ---
-title: GitOps & ArgoCD
-description: How ArgoCD is installed automatically and configured with the App of Apps pattern.
+title: GitOps and ArgoCD
+description: What Alethia installs in every cluster it provisions — ArgoCD, the cluster services each cloud needs, and the Application that deploys your apps from Git.
 ---
 
-After a successful `tofu apply`, the runner automatically installs **ArgoCD** on the provisioned Kubernetes cluster. ArgoCD manages all subsequent application deployments via GitOps — Git is the source of truth.
+After a successful apply, the runner installs ArgoCD in the new cluster and hands it the cluster
+services and your apps repository. From then on, Git is the source of truth: ArgoCD keeps the cluster
+in sync with the repository.
 
-<img src="/docs/diagrams/concepts/gitops-argocd.svg" alt="GitOps ArgoCD" />
+<Mermaid chart={`
+flowchart TD
+  Apply["tofu apply"] --> Out["OpenTofu outputs"]
+  Out --> Facts["Infrastructure facts: cluster, DNS, endpoints, identities"]
+  Facts --> Argo["ArgoCD installed with Helm"]
+  Argo --> Plat["Platform Applications: external-dns, External Secrets, ingress, ..."]
+  Argo --> Apps["apps Application: your apps repository"]
+  Argo --> Add["Add-ons and your own charts"]
+`} />
 
-## What Gets Installed
+## How it works
 
-Every provisioned cluster comes with ArgoCD and a set of supporting components:
+1. The runner reads the OpenTofu outputs: cluster name, endpoint and certificate, DNS zone, database
+   and cache endpoints, and the cloud identities made for in-cluster controllers.
+2. It writes a kubeconfig whose credential plugin is the runner itself. Each `kubectl` or Helm call
+   mints a short-lived token from the job's keyless cloud credential. No cloud CLI is used and no
+   long-lived kubeconfig is stored.
+3. It installs ArgoCD with Helm and waits for its pods to be ready.
+4. It renders the outputs into a values file, the *infrastructure facts*, and applies the platform
+   Applications that use them.
+5. It creates an `apps` Application that syncs your apps repository, at the environment's apps path or
+   the repository root.
+6. It records the ArgoCD address and cluster details on the environment. Passwords, kubeconfigs and
+   generated secret values are never stored.
 
-| Component | Purpose |
-|-----------|---------|
-| **ArgoCD** | GitOps continuous delivery engine |
-| **AWS Load Balancer Controller** | Kubernetes ingress via ALB/NLB (AWS) |
-| **External DNS** | Automatic DNS record management from Kubernetes resources |
-| **External Secrets Operator** | Sync secrets from cloud stores to Kubernetes Secrets |
-| **Karpenter** | Just-in-time node provisioning (AWS) |
-| **Metrics Server** | Resource metrics for Horizontal Pod Autoscaler |
-| **Storage Class** | EBS / Persistent Disk / Managed Disk provisioner |
-
-## Installation Flow
-
-<Steps>
-
-### `tofu apply` completes
-The runner provisions all infrastructure (VPC, cluster, databases, etc.) via `tofu`. Outputs include cluster name, endpoint, and ARN.
-
-### Exec-plugin kubeconfig (CLI-free)
-The runner is **CLI-free** — it does not shell out to `aws eks update-kubeconfig`, `gcloud`, or `az`.
-It writes an **exec-credential** kubeconfig (`packages/core/cloud.writeExecKubeconfig`) built from the
-`tofu` cluster outputs (endpoint + CA), whose exec block invokes the runner itself as the credential
-plugin: `runner kube-token --provider <aws|gcp|azure>` (`apps/runner/internal/agent/kube_token.go`).
-So kubectl/helm mint a fresh short-lived token in-process on demand, exchanging the keyless cloud
-credential for cluster access — no cluster CLIs, no long-lived kubeconfig secret.
-
-### ArgoCD installed via Helm
-The Runner runs `helm upgrade --install argocd` with the ArgoCD Helm chart. It waits for all ArgoCD pods to become Ready.
-
-### Admin password stays in the cluster
-The ArgoCD admin password lives in the `argocd-initial-admin-secret` Kubernetes Secret and is **never extracted or stored by Alethia** — retrieve it on demand:
+The ArgoCD admin password stays in the cluster, in the `argocd-initial-admin-secret` Secret. Read it
+with admin [cluster access](/concepts/cluster-access):
 
 ```bash
 kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d
 ```
 
-### Infrastructure facts rendered
-`tofu` outputs (cluster name, VPC ID, RDS endpoints, ElastiCache endpoints, etc.) are rendered into a **Helm values file** called "infra facts." This file provides concrete resource identifiers to ArgoCD applications.
+### Platform services
 
-### App of Apps configured
-ArgoCD Application manifests are rendered from templates and applied to the cluster.
+Each service is an ArgoCD Application. A service that does not apply to a cloud renders nothing and is
+skipped, and the console records why. The per-cloud result is in
+[Cloud abstraction](/concepts/cloud-abstraction#cluster-services-after-the-apply).
 
-### Metadata reported
-The ArgoCD URL and cluster metadata are stored in the job's execution metadata and written to the Project's component tables. Credentials (the admin password, kubeconfigs, generated secret values) are scrubbed and never persisted.
+| Service | What it does | Where |
+| --- | --- | --- |
+| external-dns | Creates DNS records from your Ingress objects. | Every cloud, when DNS is on with a domain and its identity or token exists. Uses Route 53, Cloud DNS, Azure DNS, Hetzner DNS, or Cloudflare when that connector is attached. |
+| External Secrets Operator | Syncs secrets from the cloud's secret store into Kubernetes Secrets. | Every cloud. |
+| cert-manager | Issues certificates through a DNS challenge, and provides webhook certificates for add-ons that need them. | Issuing on AWS, GCP and Azure with the cloud's own DNS. Webhook certificates on every cloud. |
+| AWS Load Balancer Controller | Turns Ingress objects into ALBs. | AWS. |
+| Application Gateway Ingress Controller | Turns Ingress objects into rules on one Application Gateway. | Azure, when the gateway is on. |
+| Karpenter | Launches nodes for pending pods. | AWS, when enabled. |
+| metrics-server | CPU and memory metrics for autoscaling and `kubectl top`. | AWS and Hetzner. GKE and AKS ship their own. |
+| gp3 storage class | The default EBS storage class. | AWS. |
 
-</Steps>
+### Keyless identities for controllers
 
-## App of Apps Pattern
+Controllers that call the cloud use a workload identity, never a static key:
 
-ArgoCD uses the **App of Apps** pattern: a single "parent" Application watches a directory of YAML files, each defining a child Application.
+| Cloud | Identity | Bound with |
+| --- | --- | --- |
+| AWS | IAM role for the service account (IRSA) | `eks.amazonaws.com/role-arn` annotation |
+| GCP | Google service account through GKE Workload Identity | `iam.gke.io/gcp-service-account` annotation |
+| Azure | User-assigned managed identity with a federated credential on the AKS OIDC issuer | `azure.workload.identity/client-id` annotation |
 
-<Files>
-  <Folder name="manifests/applications" defaultOpen>
-    <File name="aws-load-balancer-controller.yaml" />
-    <File name="external-dns.yaml" />
-    <File name="external-secrets-operator.yaml" />
-    <File name="karpenter.yaml" />
-    <File name="metrics-server.yaml" />
-    <File name="storage-class.yaml" />
-  </Folder>
-</Files>
+On Hetzner, external-dns and the cloud controller use the connected Hetzner API token, which is
+stored in the cluster as a Secret.
 
-The parent Application points to this directory. When a new YAML file is added (via Git push), ArgoCD automatically deploys the new application.
+### Your apps
 
-## Infrastructure Facts
+The `apps` Application syncs your apps repository with automatic sync, prune and self-heal. If the
+repository is empty, the runner first commits generated manifests for your detected services: a
+Deployment, Service and Ingress each, running as non-root with a read-only root file system and
+resource limits. A repository that already has manifests is never changed.
 
-`tofu` outputs are injected into ArgoCD applications as Helm values. This bridges the gap between infrastructure provisioning (OpenTofu) and application deployment (ArgoCD).
+Marketplace add-ons and [your own charts](/concepts/bring-your-own-charts) are Applications too, each
+in its own ArgoCD project.
 
-Example infra facts:
+## What it does not do
 
-```yaml
-cluster:
-  name: api-backend-production
-  endpoint: https://ABC123.gr7.eu-west-1.eks.amazonaws.com
-  oidcProviderArn: arn:aws:iam::123456789012:oidc-provider/...
+- It does not extract or store the ArgoCD admin password.
+- It does not overwrite your apps repository.
+- It does not install an ingress controller on GCP, Azure (without the gateway) or Hetzner. Install
+  the Traefik add-on there.
+- It does not expose the ArgoCD UI outside AWS. Elsewhere, port-forward to it.
 
-database:
-  endpoint: api-backend-production.cluster-abc123.eu-west-1.rds.amazonaws.com
-  port: 5432
+## Related
 
-cache:
-  endpoint: api-backend-production.abc123.euw1.cache.amazonaws.com
-  port: 6379
-
-dns:
-  domain: api.example.com
-  zoneId: Z1234567890
-```
-
-ArgoCD applications reference these values in their Helm charts. For example, an application's database connection string uses `{{ .Values.database.endpoint }}`.
-
-## ArgoCD Templates
-
-Templates are stored in `infra/templates/argocd/` and staged into the Runner Docker image during the release build. Each template is a Kubernetes manifest with Helm-style placeholders:
-
-| Template | What It Deploys |
-|----------|----------------|
-| `aws-load-balancer-controller.yaml` | ALB/NLB ingress controller |
-| `external-dns.yaml` | Route53/Cloud DNS/Azure DNS sync (renders only when DNS is enabled with a domain and the cloud has a supported backend + workload identity) |
-| `external-secrets-operator.yaml` | Secrets Manager → Kubernetes Secrets |
-| `karpenter.yaml` | Node auto-provisioning |
-| `metrics-server.yaml` | CPU/memory metrics for HPA (renders on AWS and Hetzner only — GKE and AKS ship their own) |
-| `storage-class-gp3.yaml` | GP3 EBS storage class |
-| `project-infra.yaml` | ArgoCD AppProject boundary |
-
-## Post-Installation
-
-After ArgoCD is installed:
-
-1. **All infrastructure components are managed by ArgoCD** — changes to Git repos are automatically synced
-2. **The ArgoCD URL is displayed** in the Console Clusters page with a clickable link
-3. **Applications can be added** by pushing new YAML files to the `manifests/applications/` directory
-4. **Drift detection** — ArgoCD continuously compares the live cluster state against Git and alerts on drift
+- [Cloud abstraction](/concepts/cloud-abstraction)
+- [Bring-your-own charts](/concepts/bring-your-own-charts)
+- [Provisioning pipeline](/concepts/provisioning-pipeline)
+- [Repositories](/guides/design-project/repositories)

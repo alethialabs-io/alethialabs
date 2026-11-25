@@ -1,14 +1,3 @@
 {
-	"agents/tools.mdx": 1030,
-	"concepts/bring-your-own-charts.mdx": 3975,
-	"concepts/bring-your-own-iac.mdx": 2452,
-	"concepts/cloud-abstraction.mdx": 1749,
-	"concepts/drift.mdx": 1290,
-	"concepts/promotions.mdx": 1433,
-	"concepts/runner/infrastructure-templates/aws.mdx": 1730,
-	"concepts/runner/infrastructure-templates/azure.mdx": 2014,
-	"concepts/runner/infrastructure-templates/gcp.mdx": 1698,
-	"concepts/runner/infrastructure-templates/hetzner.mdx": 2118,
-	"concepts/runner/scaling.mdx": 1449,
-	"concepts/security.mdx": 2428
+	"agents/tools.mdx": 1030
 }

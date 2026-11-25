@@ -1,42 +1,68 @@
 ---
-title: Connectors architecture
-description: How pluggable per-category connectors are declared, stored, and composed into a provision.
+title: Connectors
+description: How a project uses a provider you already run — Cloudflare DNS, Vault or another secret manager, an external registry, Datadog or Grafana — in place of the cloud's own service, and how its credential reaches a job.
 ---
 
-Connectors decouple **what** a Project needs (a DNS zone, secrets, a registry, observability) from **who** provides it. A **connector** is a provider *type* in the catalog; an account you actually connect to a cloud is a **cloud identity** (see the [glossary](/reference/glossary#connectivity)). Cloud and Git connectors are first-class; the **pluggable per-category** connectors are added by registration, not by editing call sites.
+A connector separates what a project needs, such as a DNS zone, secrets, a registry or observability,
+from who provides it. You pick a provider per component; Alethia composes that provider's OpenTofu
+module into the plan and skips the cloud's native resource.
 
-This page explains how the catalog is built and how credentials flow. To connect an account, read its status, or disconnect it, see [Connectors](/guides/connectors).
+<Mermaid chart={`
+flowchart LR
+  Comp["Component: DNS, secrets, registry, observability"] -->|provider chosen| Mod["Provider module added to the plan"]
+  Comp -->|native| Native["Cloud's own resource"]
+  Cred["Connector credential, encrypted"] -->|decrypted at claim| Job["Runner job, in memory"]
+  Job --> Mod
+`} />
 
-## Single source of truth
+To connect an account, check it or remove it, see [Connectors](/guides/connectors).
 
-Every pluggable provider is declared once in a manifest, `packages/core/categories/catalog.json` (slug, category, `auth_method`, icon, credential fields, provider-config fields, module path). That manifest is consumed three ways so the provider set never drifts:
+## How it works
 
-- **Go** loads it with `go:embed` (`packages/core/categories`) to resolve which module to compose and what credential a provider needs.
-- **Codegen** (`pnpm -F console gen:connectors`) emits the typed TS registry (`lib/connectors/registry.generated.ts`) that drives the credential form and the Project provider selectors, plus the SQL seed of `connectors` catalog rows.
-- **Behavior** that can't be data — `Tfvars()` and `Validate()` — lives in small per-slug Go impls.
+### Terms
 
-This mirrors the [cloud-provider registry](/concepts/cloud-abstraction) one level down, per category.
+A **connector** is a provider type in the catalog, such as Cloudflare DNS. An account you connect to
+a cloud is a **cloud identity**, not a connector. See the [glossary](/reference/glossary#connectivity).
 
-## The `CategoryProvider` contract
+### Categories
 
-Each provider impl exposes a small interface: `Category()`, `Slug()`, `ModulePath()`, `Tfvars(ctx)` (maps the component's config + decrypted credential into module variables), and `Validate(ctx)` (rejects nonsensical combinations before a plan is produced). A registry resolves a provider by `(category, slug)`.
+| Category | Providers |
+| --- | --- |
+| DNS | Cloudflare |
+| Secrets | HashiCorp Vault, Doppler, Infisical, 1Password, AWS Secrets Manager in another account, and more |
+| Container registry | Docker Hub, GitHub, GitLab, Quay, Harbor, DigitalOcean, Scaleway, a generic registry, and ECR, Artifact Registry or ACR in another account |
+| Helm chart registry | HTTPS and OCI registries, including Docker Hub, GitHub, GitLab and ECR |
+| Observability | Datadog, Grafana Cloud |
 
-## Credential storage
+Each provider is declared once in a catalog that the console's forms, the database and the runner all
+read, so the set cannot drift between them. Observability adds to the cluster; it replaces nothing.
 
-API-key credentials live in the `connector_credentials` table, owner/org-scoped under the same RLS as everything else. Secret fields are encrypted at rest with AES-256-GCM (`ALETHIA_CRED_ENCRYPTION_KEY`); non-secret fields (a Vault address, a Docker Hub username) are stored in clear.
+### Credentials
 
-## Runtime credential flow
+API-key credentials are stored per organization, with secret fields encrypted at rest (AES-256-GCM).
+Non-secret fields, such as a Vault address, are stored in clear. A connector for another cloud
+account, such as ECR in a second AWS account, uses a role or service account instead of a key.
 
-The zero-credential model is preserved end to end:
+The [configuration snapshot](/concepts/provisioning-pipeline#2-snapshot) of a job holds only the
+chosen provider, never a secret. When a runner claims the job, the control plane decrypts the
+credentials the project uses and sends them with the claim. The runner passes them to OpenTofu in
+memory and never holds the encryption key.
 
-1. A Project's `config_snapshot` carries only **identifiers** — including each component's chosen provider slug — never secrets.
-2. When a runner **claims** a job, the claim endpoint (`app/api/jobs/claim/route.ts`) resolves the connectors the Project references, decrypts their credentials **in the console**, and attaches the plaintext to the claim response (alongside the cloud identity). The runner never holds the encryption key.
-3. The runner injects them into OpenTofu variables **in memory** at provision time.
+### In the plan
 
-## Module composition
+For each component with a provider chosen, the runner copies that provider's module into the work
+directory, wires it with its variables, and sets a guard variable such as `dns_provider`. The cloud
+template skips its native resource when the guard names another provider. Before planning, the
+provider checks that the combination makes sense and refuses one that does not.
 
-For each component with a pluggable provider, the runner copies the provider's module from `infra/templates/categories/<category>/<slug>/` into the working directory, writes a generated `_categories.tf.json` wiring the module with its variables, and sets a `<category>_provider` guard variable. The cluster-cloud templates gate their native resources on that variable (`count = var.dns_provider == "native" ? 1 : 0`), so the native resource is **skipped** when a pluggable provider is chosen. Observability is purely additive (no native default).
+## What it does not do
 
-## Open-core
+- It does not put a credential in the job's snapshot or logs.
+- It does not give the runner the encryption key.
+- It does not connect a cloud account. That is a [cloud identity](/guides/connectors).
 
-Connectors are core value and stay AGPL/community — the registry-of-record (`connectors` table) and the category contract are community. Only premium connectors or org-scoped connector governance would live in `ee/` (see [Open Core](/concepts/access-control/open-core)).
+## Related
+
+- [Connectors guide](/guides/connectors)
+- [Pluggable connectors](/guides/connectors/pluggable)
+- [Cloud abstraction](/concepts/cloud-abstraction)

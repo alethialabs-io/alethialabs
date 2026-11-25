@@ -51,7 +51,7 @@ back to email OTP.
 
 On callback, Better Auth exchanges the code (with PKCE) and creates a session — an HTTP-only cookie
 backed by the `session` table. Next.js middleware validates it on every request; the
-[PDP](/concepts/access-control/architecture) then resolves the active org and sets `app.current_org` for the
+[PDP](/concepts/access-control) then resolves the active org and sets `app.current_org` for the
 coarse Postgres [RLS](/concepts/security) tenant guard. See
 [JWT / JWS](/reference/standards/jose) for the token formats and [OIDC](/reference/standards/oidc) for enterprise SSO.
 

@@ -1,104 +1,62 @@
 ---
-title: Platform Overview
-description: High-level architecture of the multi-cloud infrastructure orchestration platform.
+title: Concepts
+description: A map of how Alethia works — the model, how infrastructure is provisioned, how runners execute jobs, and how access and verification are secured.
 ---
 
-This platform is a hybrid multi-cloud infrastructure orchestration system. It combines a visual web interface, a command-line tool, and autonomous execution agents to provision production-grade Kubernetes clusters with databases, caches, networking, DNS, secrets, and GitOps — across AWS, GCP, and Azure.
-
-<img src="/docs/diagrams/concepts/platform-overview.svg" alt="Platform Architecture" />
-
-## Three-Component Model
-
-| Component | Type | Language | Role |
-|-----------|------|----------|------|
-| **Console** | Web application | TypeScript (Next.js) | Visual configuration, job management, real-time monitoring |
-| **alethia** | CLI tool | Go | Terminal-based operations, scripting, CI/CD integration |
-| **Runner** | Execution agent | Go | Runs OpenTofu (`tofu`), installs ArgoCD, streams logs back to Console |
-
-## Data Flow
+Alethia provisions Kubernetes clusters and their backing services into your own cloud account, from
+a design you make in the console or the CLI. A runner does the work: it plans with OpenTofu, checks
+the plan, applies it, and installs ArgoCD so your apps deploy through Git.
 
 <Mermaid chart={`
 flowchart LR
-  Web["Console (web form)"] --> Q["Job Queue (Postgres)"]
-  CLI["alethia CLI"] --> Q
-  Q -->|claim| Runner["Runner (agent)"]
-  Runner -->|keyless assume| Cloud["Cloud Provider"]
-  Runner -->|logs| Notify["LISTEN/NOTIFY"]
-  Notify -->|SSE| Web
+  You["Console or CLI"] -->|design, plan, apply| CP["Alethia control plane"]
+  CP -->|job| R["Runner"]
+  R -->|short-lived credential| Cloud["Your cloud account"]
+  R -->|tofu apply, then ArgoCD| Cluster["Your cluster"]
+  R -->|logs, results| CP
 `} />
 
-1. The user configures infrastructure through Console (web form) or the `alethia` CLI
-2. Actions are queued as jobs in Postgres
-3. A runner claims the job atomically and assumes temporary, keyless cloud credentials
-4. The runner executes `tofu` and streams logs back in real time over LISTEN/NOTIFY → SSE
-5. On completion, ArgoCD is installed for GitOps-managed deployments
+Read the sections in order. Each page explains one part and links to the guides that use it.
 
-## Multi-Cloud Support
+## The model
 
-Every infrastructure component has provider-specific implementations across three clouds:
+| Page | What it explains |
+| --- | --- |
+| [Domain model](/concepts/domain-model) | Organizations, projects, environments, components and jobs, and the states they move through. |
+| [Fabrics and placement](/concepts/fabrics-and-placement) | How an environment sits on shared or dedicated infrastructure. |
+| [Promotions](/concepts/promotions) | How a change moves from one environment to a higher one, behind gates. |
+| [Cloud abstraction](/concepts/cloud-abstraction) | What each cloud provides for each component, and where clouds differ. |
+| [Multi-cloud conversion](/concepts/multi-cloud-conversion) | What changes when you copy a project to another cloud. |
 
-| Capability | AWS | GCP | Azure |
-|-----------|-----|-----|-------|
-| Kubernetes | EKS | GKE | AKS |
-| Relational DB | Aurora PostgreSQL/MySQL | Cloud SQL | Azure Database |
-| Cache | ElastiCache (Redis/Valkey) | Memorystore | Azure Cache for Redis |
-| NoSQL | DynamoDB | Firestore | Cosmos DB |
-| Messaging | SQS + SNS | Pub/Sub | Service Bus |
-| DNS | Route 53 | Cloud DNS | Azure DNS |
-| Secrets | Secrets Manager | Secret Manager | Key Vault |
-| Container Registry | ECR | Artifact Registry | ACR |
-| Object Storage | S3 | Cloud Storage | Storage Account |
-| WAF | AWS WAFv2 | Cloud Armor | Azure WAF |
+## Provisioning
 
-## Concept Pages
+| Page | What it explains |
+| --- | --- |
+| [Provisioning pipeline](/concepts/provisioning-pipeline) | How a design becomes OpenTofu variables, a plan and an apply. |
+| [OpenTofu state](/concepts/terraform-state) | Where state is kept and how a runner reaches it without a storage key. |
+| [GitOps and ArgoCD](/concepts/gitops-argocd) | What Alethia installs in every cluster, and how apps deploy. |
+| [Bring-your-own IaC](/concepts/bring-your-own-iac) | Provisioning from your own OpenTofu module. |
+| [Bring-your-own charts](/concepts/bring-your-own-charts) | Deploying your own Helm chart, and what it may create. |
+| [Chart namespace admission](/concepts/chart-admission) | What a bring-your-own chart's namespace refuses. |
+| [Drift detection](/concepts/drift) | How Alethia checks that live infrastructure still matches its state. |
+| [Cost estimation](/concepts/cost-estimation) | Where the cost figures come from. |
 
-Deep dives into the platform's key technical patterns:
+## Execution
 
-<Cards>
-  <Card title="Domain Model" href="/concepts/domain-model">
-    Project/Runner entities, lifecycles, and relationships.
-  </Card>
-  <Card title="Security Architecture" href="/concepts/security">
-    Zero-credential model, RLS, cloud provider federation.
-  </Card>
-  <Card title="Database Schema" href="https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/database-schema.md">
-    Full PostgreSQL schema — tables, enums, functions, LISTEN/NOTIFY.
-  </Card>
-  <Card title="Job queue" href="/concepts/job-queue">
-    Atomic claiming, FOR UPDATE SKIP LOCKED, failure recovery.
-  </Card>
-  <Card title="Warm-pool scaling" href="/concepts/runner/scaling">
-    The in-app scaler keeping a warm floor of runners per provider and lifting it by queue depth.
-  </Card>
-  <Card title="Cloud Provider Abstraction" href="/concepts/cloud-abstraction">
-    Registry, region mapping, instance types, provider_config JSONB.
-  </Card>
-  <Card title="Provisioning Pipeline" href="/concepts/provisioning-pipeline">
-    Form values → config snapshot → ProjectConfig → `terraform.tfvars.json` → infrastructure.
-  </Card>
-  <Card title="Real-time updates" href="/concepts/realtime">
-    LISTEN/NOTIFY → SSE for job logs and support threads; polling for everything else.
-  </Card>
-  <Card title="Cost Estimation" href="/concepts/cost-estimation">
-    AWS Pricing API, real-time sidebar, Infracost integration.
-  </Card>
-  <Card title="Authentication Flows" href="/concepts/authentication">
-    OAuth (web), Device Code Grant (CLI), token auth (Runner).
-  </Card>
-  <Card title="Multi-Cloud Conversion" href="/concepts/multi-cloud-conversion">
-    Cross-provider Project duplication with mapping and warnings.
-  </Card>
-  <Card title="OpenTofu State" href="/concepts/terraform-state">
-    S3-compatible backend, per-environment state paths, plan artifacts.
-  </Card>
-  <Card title="GitOps & ArgoCD" href="/concepts/gitops-argocd">
-    App of Apps pattern, infra facts, Helm values.
-  </Card>
-  <Card title="Bring-your-own IaC" href="/concepts/bring-your-own-iac">
-    Provision from your own OpenTofu module — safety gate, variable contract, operator model.
-  </Card>
-  <Card title="Release System" href="https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/release-system.md">
-    release-please, GoReleaser, Docker builds, CI/CD.
-  </Card>
-</Cards>
+| Page | What it explains |
+| --- | --- |
+| [Runners](/concepts/runner) | What a runner is, managed or self-operated, and how it runs a job. |
+| [Job queue](/concepts/job-queue) | How jobs are queued, claimed once, and recovered. |
+| [Real-time updates](/concepts/realtime) | How logs stream to the browser, and what is polled. |
+| [Isolated execution](/concepts/isolated-execution) | How your own code runs in a sealed sandbox on the managed fleet. |
 
+## Security and access
+
+| Page | What it explains |
+| --- | --- |
+| [Security](/concepts/security) | The keyless model: how each cloud trusts Alethia, and what Alethia may do there. |
+| [Authentication](/concepts/authentication) | How people, the CLI and runners sign in. |
+| [Cluster access](/concepts/cluster-access) | Short-lived kubeconfigs without a cloud login. |
+| [Connectors](/concepts/connectors) | Using a provider you already run for DNS, secrets, registry or observability. |
+| [Access control](/concepts/access-control) | Roles, permissions and grants. |
+| [Elench](/concepts/elench) | The check between plan and apply, and the evidence it records. |
