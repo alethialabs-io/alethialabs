@@ -1590,11 +1590,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 9,
-					"fail": 1,
+					"pass": 10,
+					"fail": 0,
 					"na": 0,
 					"notMeasured": 0,
-					"score": 0.9
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -1616,11 +1616,11 @@
 				}
 			},
 			"overall": {
-				"pass": 35,
-				"fail": 1,
+				"pass": 36,
+				"fail": 0,
 				"na": 2,
 				"notMeasured": 5,
-				"score": 0.9722
+				"score": 1
 			}
 		},
 		{
@@ -6312,8 +6312,7 @@
 		{
 			"route": "/[org]/~/alerts",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useAlertPolicyFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertChannelFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts · useAlertActivityFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/alerts",
