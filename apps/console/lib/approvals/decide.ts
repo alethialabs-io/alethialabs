@@ -5,7 +5,8 @@
 // who holds the PDP verb on the project. Every other credential kind is refused, so no token and no
 // agent can approve its own request. When the org requires a different approver and holds the
 // enterprise entitlement for it, the requester's own person is refused too (enterprise-policy.ts); in
-// core a person may approve what their own agent asked (decision D6).
+// core a person may approve what their own agent asked (decision D6). Approving also re-reads the
+// org's agent policy (decidable.ts), and a deny may carry the person's reason.
 
 import { and, eq, sql } from "drizzle-orm";
 import { getPdp } from "@/lib/authz";
@@ -14,6 +15,7 @@ import { applyApprovals } from "@/lib/db/schema";
 import type { ApplyApproval } from "@/lib/db/schema/agent-surface";
 import { bindingStaleReason, type Executor, staleMessage } from "./binding";
 import { readAgentPolicy, readEnvironment } from "./context";
+import { DECISION_REASON_MAX, resolveApproveBlock } from "./decidable";
 import { enterpriseAgentPolicy } from "./enterprise-policy";
 import { ApprovalError } from "./refusal";
 
@@ -36,6 +38,15 @@ export interface Decider {
 export interface DecisionInput {
 	decision: "approve" | "reject";
 	confirmEnvironmentName?: string | null;
+	/** Why the person denied it (optional, at most 500 characters). Ignored on approve. */
+	reason?: string | null;
+}
+
+/** The reason to store for `input`: a trimmed, non-empty reason on a reject, else null. */
+export function decisionReasonOf(input: DecisionInput): string | null {
+	if (input.decision !== "reject") return null;
+	const reason = input.reason?.trim();
+	return reason ? reason.slice(0, DECISION_REASON_MAX) : null;
 }
 
 /** What deciding produced: the decided row, or a refusal recorded on the row (expired, superseded). */
@@ -84,14 +95,20 @@ export async function decideApproval(
 	if (stale) return { ok: false, error: await markVoid(db, approval.id, "superseded", staleMessage(stale)) };
 
 	if (input.decision === "approve") {
-		const enterprise = await enterpriseAgentPolicy();
-		if (enterprise) {
-			const policy = await readAgentPolicy(db, approval.org_id);
-			const refusal = await enterprise.approverRefusal(approval.org_id, policy, approval.requester_user_id, actor.userId);
-			if (refusal) throw new ApprovalError("self_approval", refusal);
+		// The org's policy, read again now (G14): a request that waited while agent access was turned
+		// off, while agents were kept off production, or (enterprise) while its app left the allow-list
+		// can only be denied; the enterprise different-approver rule is asked here too.
+		const policy = await readAgentPolicy(db, approval.org_id);
+		const environment = await readEnvironment(db, approval.project_id, approval.environment_id);
+		const block = await resolveApproveBlock(
+			approval,
+			{ policy, stage: environment?.stage ?? "production", deciderUserId: actor.userId },
+			await enterpriseAgentPolicy(),
+		);
+		if (block) {
+			throw new ApprovalError(block.reason === "self_approval" ? "self_approval" : "policy_refused", block.message);
 		}
 		if (approval.operation === "destroy") {
-			const environment = await readEnvironment(db, approval.project_id, approval.environment_id);
 			if (!environment || input.confirmEnvironmentName?.trim() !== environment.name) {
 				throw new ApprovalError("confirmation_mismatch", "Type the environment's name to approve its destroy.");
 			}
@@ -105,6 +122,7 @@ export async function decideApproval(
 			approver_user_id: actor.userId,
 			approver_session_id: decider.sessionId,
 			decided_at: sql`now()`,
+			decision_reason: decisionReasonOf(input),
 			updated_at: sql`now()`,
 		})
 		.where(and(eq(applyApprovals.id, approval.id), eq(applyApprovals.status, "pending")))
