@@ -2461,11 +2461,11 @@
 				"F": {
 					"instrumented": 10,
 					"of": 10,
-					"pass": 8,
-					"fail": 1,
+					"pass": 9,
+					"fail": 0,
 					"na": 1,
 					"notMeasured": 0,
-					"score": 0.8889
+					"score": 1
 				},
 				"R": {
 					"instrumented": 8,
@@ -2487,11 +2487,11 @@
 				}
 			},
 			"overall": {
-				"pass": 36,
-				"fail": 1,
+				"pass": 37,
+				"fail": 0,
 				"na": 4,
 				"notMeasured": 2,
-				"score": 0.973
+				"score": 1
 			}
 		},
 		{
@@ -9399,8 +9399,7 @@
 		{
 			"route": "/[org]/~/settings/billing/invoices",
 			"predicate": "F5",
-			"verdict": "FAIL",
-			"detail": "useInvoiceFilters: a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			"verdict": "PASS"
 		},
 		{
 			"route": "/[org]/~/settings/billing/invoices",
