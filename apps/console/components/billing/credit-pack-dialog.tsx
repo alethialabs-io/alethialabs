@@ -21,11 +21,17 @@ import {
 	createCreditPackIntent,
 	getAiUsageSummary,
 } from "@/app/server/actions/billing";
+import { startCheckout } from "@/app/server/actions/checkout";
 import { PaymentForm } from "@/components/billing/payment-form";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { track } from "@/lib/analytics/track";
 import { AI_CREDIT_PACKS, type CreditPack } from "@/lib/billing/ai-credits";
-import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
+import {
+	billingIntentErrorMessage,
+	CHECKOUT_CLOSED_MESSAGE,
+	checkoutErrorMessage,
+} from "@/lib/billing/intent-error";
+import { openPaddleCheckout } from "@/lib/billing/paddle-js";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import {
@@ -117,6 +123,21 @@ export function CreditPackDialog({
 		setError(null);
 		track("upgrade_started", { plan: `credits_${next.id}`, context: "credit_pack_dialog" });
 		try {
+			// `startCheckout` routes by provider: Paddle opens its overlay on a server-created one-time
+			// transaction (O6); Stripe answers "stripe" and the invoice + card form continue as before.
+			const started = await startCheckout({ item: { kind: "credit_pack", packId: next.id } });
+			if (!started.ok) {
+				setError(checkoutErrorMessage(started.error));
+				return;
+			}
+			if (started.data.provider === "paddle") {
+				await openPaddleCheckout({
+					...started.data,
+					onCompleted: () => handleSuccess(next),
+					onClosed: () => setError(CHECKOUT_CLOSED_MESSAGE),
+				});
+				return;
+			}
 			const intent = await createCreditPackIntent(next.id);
 			setClientSecret(intent.clientSecret);
 		} catch (e) {
@@ -124,12 +145,15 @@ export function CreditPackDialog({
 		}
 	}
 
-	/** Invoice paid — the webhook grants the credits; refresh the balance and close. */
-	function handleSuccess() {
+	/**
+	 * Invoice paid — the webhook grants the credits; refresh the balance and close. `paid` names the
+	 * pack when the caller holds it directly (Paddle's callback outlives the render that chose it).
+	 */
+	function handleSuccess(paid: CreditPack | null = pack) {
 		onPurchased?.();
 		router.refresh();
 		toast.success(
-			pack ? `Added ${pack.credits.toLocaleString("en-US")} AI credits.` : "Credits added.",
+			paid ? `Added ${paid.credits.toLocaleString("en-US")} AI credits.` : "Credits added.",
 		);
 		handleOpenChange(false);
 	}
@@ -156,7 +180,7 @@ export function CreditPackDialog({
 					<PurchaseStep
 						clientSecret={clientSecret}
 						error={error}
-						onSuccess={handleSuccess}
+						onSuccess={() => handleSuccess()}
 						onError={setError}
 						onBack={() => {
 							setPack(null);

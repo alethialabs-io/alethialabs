@@ -10,7 +10,8 @@
 // CoreContext.canOrgInvite). Self-managed / licensed instances have no Stripe billing, so
 // they are never gated here.
 
-import { isStripeConfigured } from "@/lib/billing/config";
+import { isBillingConfigured, isStripeConfigured } from "@/lib/billing/config";
+import { isManualGrantExpired } from "@/lib/billing/plan";
 import type { Entitlements } from "@/lib/authz/types";
 import { getOrgBilling, resolveOrgEntitlements } from "@/lib/billing/queries";
 
@@ -20,9 +21,12 @@ import { getOrgBilling, resolveOrgEntitlements } from "@/lib/billing/queries";
  * instances (no Stripe).
  */
 export async function canOrgInvite(orgId: string): Promise<boolean> {
-	if (!isStripeConfigured()) return true;
+	// Hosted means either rail: Stripe, or a configured sales provider (Paddle).
+	if (!isStripeConfigured() && !isBillingConfigured()) return true;
 	const billing = await getOrgBilling(orgId);
 	if (!billing) return false;
+	// A local trial or contract grant past its term no longer counts (`isManualGrantExpired`).
+	if (isManualGrantExpired(billing)) return false;
 	return billing.status === "active" || billing.status === "trialing";
 }
 

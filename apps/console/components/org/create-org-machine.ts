@@ -192,6 +192,8 @@ export type CreateOrgEvent =
 	| { readonly type: "trial-org-created"; readonly orgId: string; readonly slug: string }
 	| { readonly type: "trial-org-rolled-back" }
 	| { readonly type: "trial-started" }
+	/** A merchant-of-record (Paddle) checkout completed on the org created first (O2). */
+	| { readonly type: "provider-paid" }
 	/** The card was confirmed and the record written: the setup is now unfinished until its last step. */
 	| { readonly type: "charge-confirmed"; readonly record: PendingPaidSetup }
 	/** A run of the post-payment steps starts. */
@@ -376,6 +378,8 @@ export function createOrgReducer(state: CreateOrgState, event: CreateOrgEvent): 
 			return { ...state, createdSlug: "", createdOrgId: null };
 		case "trial-started":
 			return { ...state, isTrialOrg: true, paidPlan: null, view: "invite" };
+		case "provider-paid":
+			return { ...state, isTrialOrg: false, paidPlan: null, view: "invite" };
 		case "charge-confirmed":
 			return { ...state, pending: event.record };
 		case "setup-started":

@@ -20,6 +20,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// The provider-neutral checkout (Paddle L4) routes this instance to Stripe, so the sheet's existing
+// Stripe flow below is what runs — as it did before the routing existed.
+vi.mock("@/app/server/actions/checkout", () => ({
+	checkoutRail: async () => ({ provider: "stripe" }),
+	startCheckout: async () => ({ ok: true, data: { provider: "stripe" } }),
+}));
+
 const isOrgSlugAvailable = vi.fn();
 const getProOffer = vi.fn();
 const startProTrial = vi.fn();

@@ -51,7 +51,8 @@ import {
 	saveNewOrgSetupDetails,
 	startProTrial,
 } from "@/app/server/actions/billing";
-import { payerConversionStatus } from "@/app/server/actions/legal";
+import { checkoutRail, startCheckout } from "@/app/server/actions/checkout";
+import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import { setActiveOrganization } from "@/app/server/actions/workspace";
 import {
 	BillingCheckoutForm,
@@ -60,6 +61,7 @@ import {
 	checkoutFieldOf,
 } from "@/components/billing/billing-checkout-form";
 import {
+	declaredPayerFacts,
 	PayerDeclarationForm,
 	type PayerDeclaration,
 } from "@/components/billing/payer-declaration-form";
@@ -113,6 +115,8 @@ import { CurrencyToggle } from "@/components/billing/currency-toggle";
 import { authClient } from "@/lib/auth/client";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
+import { CHECKOUT_CLOSED_MESSAGE, checkoutErrorMessage } from "@/lib/billing/intent-error";
+import { openPaddleCheckout } from "@/lib/billing/paddle-js";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
 import { orgHost } from "@/lib/org-url";
 import { WIZARD_PARAM, type WizardUrlShape, wizardStepPatch } from "@/lib/query/view-url-params";
@@ -693,6 +697,13 @@ function CreateOrgFlow({ close }: { close: () => void }) {
 				dispatch({ type: "refusal-set", message: verdict.message });
 				return;
 			}
+			// A merchant-of-record rail (Paddle) creates the org FIRST, on Hobby, then checks out for it (O2):
+			// Paddle creates a subscription only after payment, so there is no unpaid subscription to tie to
+			// an org that does not exist yet. Stripe keeps the deferred create below, unchanged.
+			if ((await checkoutRail()).provider === "paddle") {
+				await checkoutPaddleNewOrg(next);
+				return;
+			}
 			const intent = await createNewOrgSubscriptionIntent("team", {
 				orgName: checkoutOrgName,
 				slug: form.getValues().slug,
@@ -730,6 +741,54 @@ function CreateOrgFlow({ close }: { close: () => void }) {
 		} finally {
 			dispatch({ type: "declare-ended" });
 		}
+	}
+
+	/**
+	 * The Paddle half of `handleDeclare` (O2): create the org (or reuse the one an earlier attempt in
+	 * this sheet created), record the declaration ON it, then open Paddle's overlay on a transaction the
+	 * server created for that org. A closed overlay leaves the org on Hobby and says so; Continue again
+	 * reuses it rather than creating a second one.
+	 */
+	async function checkoutPaddleNewOrg(next: PayerDeclaration) {
+		let orgId = createdOrgId;
+		if (!orgId) {
+			const data = await validate();
+			if (!data) {
+				dispatch({ type: "back-to-name" });
+				return;
+			}
+			const org = await createOrg(data);
+			if (!org) {
+				dispatch({ type: "back-to-name" });
+				return;
+			}
+			orgId = org.id;
+			await fetchWorkspace();
+		}
+		await declarePayer(declaredPayerFacts(next), { orgId });
+		const started = await startCheckout({ orgId, item: { kind: "plan", plan: "team" } });
+		if (!started.ok) {
+			dispatch({ type: "refusal-set", message: checkoutErrorMessage(started.error) });
+			return;
+		}
+		if (started.data.provider !== "paddle") {
+			// The rail moved between the two reads (a deploy); the Stripe flow needs the sheet reopened.
+			dispatch({ type: "refusal-set", message: "Couldn't start the purchase — close this and try again." });
+			return;
+		}
+		await openPaddleCheckout({
+			...started.data,
+			onCompleted: () => {
+				void fetchWorkspace();
+				toast.success("You're on Pro — invite your team.");
+				dispatch({ type: "provider-paid" });
+			},
+			onClosed: () =>
+				dispatch({
+					type: "refusal-set",
+					message: `${CHECKOUT_CLOSED_MESSAGE} Your organization was created on the Hobby plan — continue to try again, or upgrade later from Billing.`,
+				}),
+		});
 	}
 
 	/** Switch the checkout currency by re-creating the intent for the same org (Stripe locks

@@ -359,6 +359,7 @@ import { emitAlertEvent } from "@/lib/alerts/emit";
 import { canOrgInvite } from "@/lib/billing/collaboration";
 import {
 	getStripeConfig,
+	isBillingConfigured,
 	isStripeConfigured,
 	isStripeTaxEnabled,
 	meterPriceIdForPlan,
@@ -1224,6 +1225,8 @@ describe("getProOffer", () => {
 
 	it("returns none when billing isn't configured (self-host)", async () => {
 		vi.mocked(isStripeConfigured).mockReturnValue(false);
+		// Neither rail: no Stripe, and no sales provider (a Paddle instance offers its local trial).
+		vi.mocked(isBillingConfigured).mockReturnValueOnce(false);
 		expect(await getProOffer()).toEqual({ kind: "none" });
 		expect(currentActor).not.toHaveBeenCalled();
 	});

@@ -32,10 +32,11 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { createSubscriptionIntent } from "@/app/server/actions/billing";
+import { type CheckoutStart, startCheckout } from "@/app/server/actions/checkout";
 import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import {
 	billingAddressFrom,
@@ -67,7 +68,12 @@ import { legalUrl } from "@/lib/legal";
 import { globalHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import { useLivePlanPrice } from "@/lib/billing/use-live-plan-price";
-import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
+import {
+	billingIntentErrorMessage,
+	CHECKOUT_CLOSED_MESSAGE,
+	checkoutErrorMessage,
+} from "@/lib/billing/intent-error";
+import { openPaddleCheckout } from "@/lib/billing/paddle-js";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
@@ -80,6 +86,12 @@ import {
 } from "@repo/ui/sheet";
 
 type View = "declare" | "address" | "pay" | "invite";
+
+/** What the sheet buys: Pro (the seat count is the server's). */
+const TEAM_ITEM: { kind: "plan"; plan: "team" } = { kind: "plan", plan: "team" };
+
+/** A `startCheckout` answer on the Paddle rail. */
+type PaddleCheckoutStart = Extract<CheckoutStart, { provider: "paddle" }>;
 
 /**
  * What the sheet shows before the payer is asked anything, from the one `billing.salesOpen` answer:
@@ -139,6 +151,9 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// `currency` is what the created intent actually used (Stripe locks it) — drives display.
 	const [selected, setSelected] = useState<SupportedCurrency | undefined>(undefined);
 	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
+	// The purchase runs through Paddle's overlay: no card form and no currency toggle here (O1 —
+	// Paddle localises the price by the buyer's country).
+	const [paddle, setPaddle] = useState(false);
 
 	const [inviteEmail, setInviteEmail] = useState("");
 	const [inviteRole, setInviteRole] = useState<Role>("operator");
@@ -188,31 +203,52 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 	// The previous intent's secret and error are dropped by whatever changed the request (the
 	// declaration, `switchCurrency`) or by the opening changing (above), so the render that asks
 	// again already shows neither.
+	// The Paddle rail (`startCheckout` answered `paddle`): open its overlay on the server-created
+	// transaction. Paid — the webhook activates the plan; refresh, then on to invite, as after a card.
+	// An effect event, so the purchase effect below does not re-run (and open a second transaction).
+	const openPaddle = useEffectEvent((start: PaddleCheckoutStart) => {
+		setPaddle(true);
+		return openPaddleCheckout({
+			...start,
+			onCompleted: () => {
+				void fetchWorkspace();
+				toast.success("You're on Pro — invite your team.");
+				setView("invite");
+			},
+			onClosed: () => setError(CHECKOUT_CLOSED_MESSAGE),
+		});
+	});
+
+	// `startCheckout` routes by provider first: Paddle opens its overlay; Stripe answers "stripe" and the
+	// embedded card flow continues as before. The address the declaration collected goes WITH the
+	// intent (#7324): the server writes it to the customer before the subscription exists.
 	useEffect(() => {
 		if (!open || !declaration) return;
 		let active = true;
-		// The address the declaration collected goes WITH the intent (#7324): the server writes it to the
-		// customer before the subscription exists, so the first invoice carries it.
-		createSubscriptionIntent("team", {
-			...(selected ? { currency: selected } : {}),
-			...(declaration.billingAddress ? { billingAddress: declaration.billingAddress } : {}),
-		})
-			.then((intent) => {
-				if (!active) return;
-				if ("error" in intent) {
-					setError(intent.error);
-					return;
-				}
-				setClientSecret(intent.clientSecret);
-				setCurrency(intent.currency);
-			})
-			.catch((e) => {
-				if (!active) return;
-				// Keep the real cause where an engineer can read it, and show the customer a
-				// sentence about the product.
-				console.error("[upgrade] createSubscriptionIntent failed", e);
-				setError(billingIntentErrorMessage(e));
+		const billingAddress = declaration.billingAddress;
+		void (async () => {
+			const started = await startCheckout({ item: TEAM_ITEM, ...(billingAddress ? { billingAddress } : {}) });
+			if (!active) return;
+			if (!started.ok) return setError(checkoutErrorMessage(started.error));
+			if (started.data.provider === "paddle") return openPaddle(started.data);
+			const intent = await createSubscriptionIntent("team", {
+				...(selected ? { currency: selected } : {}),
+				...(billingAddress ? { billingAddress } : {}),
 			});
+			if (!active) return;
+			if ("error" in intent) {
+				setError(intent.error);
+				return;
+			}
+			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
+		})().catch((e) => {
+			if (!active) return;
+			// Keep the real cause where an engineer can read it, and show the customer a
+			// sentence about the product.
+			console.error("[upgrade] starting the purchase failed", e);
+			setError(billingIntentErrorMessage(e));
+		});
 		return () => {
 			active = false;
 		};
@@ -229,6 +265,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		setRefusalAction(null);
 		setSelected(undefined);
 		setCurrency("usd");
+		setPaddle(false);
 		setInviteEmail("");
 		setInviteRole("operator");
 		setSent([]);
@@ -438,7 +475,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 						subheading="Add a payment method to unlock collaboration and higher limits."
 						onClose={() => handleOpenChange(false)}
 					>
-						{!error && (
+						{!error && !paddle && (
 							<div className="mb-3 flex items-center justify-between">
 								<span className="text-ui-sm text-text-secondary">Billing currency</span>
 								<CurrencyToggle

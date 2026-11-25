@@ -13,9 +13,16 @@
 // for both and carries the address. The two forms are stubbed here to submit a fixed declaration —
 // their own fields are pinned in tests/billing/payer-declaration-form.test.tsx.
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The provider-neutral checkout (Paddle L4) routes this instance to Stripe, so the sheet's existing
+// Stripe flow below is what runs — as it did before the routing existed.
+vi.mock("@/app/server/actions/checkout", () => ({
+	checkoutRail: async () => ({ provider: "stripe" }),
+	startCheckout: async () => ({ ok: true, data: { provider: "stripe" } }),
+}));
 import type { LaunchState } from "@repo/legal/launch";
 
 type Intent = { clientSecret: string; currency: "usd" | "eur" };
@@ -137,10 +144,13 @@ describe("UpgradeAiSheet — the subscription intent", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "switch to EUR" }));
 		expect(screen.queryByText("pay with cs_usd")).toBeNull();
-		expect(h.createAiSubscriptionIntent).toHaveBeenLastCalledWith("ai_plus", {
-			currency: "eur",
-			billingAddress: ADDRESS,
-		});
+		// The provider routing (`startCheckout`) is asked first, so the intent follows a tick later.
+		await waitFor(() =>
+			expect(h.createAiSubscriptionIntent).toHaveBeenLastCalledWith("ai_plus", {
+				currency: "eur",
+				billingAddress: ADDRESS,
+			}),
+		);
 
 		await act(async () => eur.resolve({ clientSecret: "cs_eur", currency: "eur" }));
 		expect(screen.getByText("pay with cs_eur")).toBeTruthy();

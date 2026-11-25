@@ -26,13 +26,14 @@
 
 import { Check } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { toast } from "sonner";
 import {
 	type AiUsageSummary,
 	createAiSubscriptionIntent,
 	getAiUsageSummary,
 } from "@/app/server/actions/billing";
+import { startCheckout } from "@/app/server/actions/checkout";
 import { declarePayer, payerConversionStatus } from "@/app/server/actions/legal";
 import {
 	BillingCheckoutForm,
@@ -51,7 +52,12 @@ import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { track } from "@/lib/analytics/track";
 import type { PaidAiTier } from "@/lib/billing/config";
-import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
+import {
+	billingIntentErrorMessage,
+	CHECKOUT_CLOSED_MESSAGE,
+	checkoutErrorMessage,
+} from "@/lib/billing/intent-error";
+import { openPaddleCheckout } from "@/lib/billing/paddle-js";
 import { rpcClient } from "@/lib/rpc/client";
 import {
 	type AiPlanCatalogEntry,
@@ -119,6 +125,11 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	const [selected, setSelected] = useState<SupportedCurrency | undefined>(undefined);
 	const [currency, setCurrency] = useState<SupportedCurrency>("usd");
 	const [error, setError] = useState<string | null>(null);
+	// The purchase runs through Paddle's overlay: no card form and no currency toggle (O1).
+	const [paddle, setPaddle] = useState(false);
+	// Paddle reported the payment complete: the same close-out as a confirmed card. An effect event,
+	// so the checkout effect does not re-run (and open a second transaction) when the close-out changes.
+	const onPaddlePaid = useEffectEvent(() => void handlePaid());
 
 	// Is anything on sale? The same server answer the org upgrade sheet reads. Asked with the plain
 	// RPC client, not a query hook: this sheet is mounted by surfaces (the chat's budget card)
@@ -166,16 +177,36 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 	useEffect(() => {
 		if (!open || !tier || !declaration) return;
 		let alive = true;
-		createAiSubscriptionIntent(tier, {
-			...(selected ? { currency: selected } : {}),
-			...(declaration.billingAddress ? { billingAddress: declaration.billingAddress } : {}),
-		})
-			.then((intent) => {
-				if (!alive) return;
-				setClientSecret(intent.clientSecret);
-				setCurrency(intent.currency);
-			})
-			.catch((error) => alive && setError(billingIntentErrorMessage(error)));
+		const billingAddress = declaration.billingAddress;
+		// `startCheckout` routes by provider: Paddle opens its overlay on a server-created transaction;
+		// Stripe answers "stripe" and the embedded card flow continues as before.
+		void (async () => {
+			const started = await startCheckout({
+				item: { kind: "ai_tier", tier },
+				...(billingAddress ? { billingAddress } : {}),
+			});
+			if (!alive) return;
+			if (!started.ok) {
+				setError(checkoutErrorMessage(started.error));
+				return;
+			}
+			if (started.data.provider === "paddle") {
+				setPaddle(true);
+				await openPaddleCheckout({
+					...started.data,
+					onCompleted: () => onPaddlePaid(),
+					onClosed: () => setError(CHECKOUT_CLOSED_MESSAGE),
+				});
+				return;
+			}
+			const intent = await createAiSubscriptionIntent(tier, {
+				...(selected ? { currency: selected } : {}),
+				...(billingAddress ? { billingAddress } : {}),
+			});
+			if (!alive) return;
+			setClientSecret(intent.clientSecret);
+			setCurrency(intent.currency);
+		})().catch((error) => alive && setError(billingIntentErrorMessage(error)));
 		return () => {
 			alive = false;
 		};
@@ -194,6 +225,7 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 		setDeclaring(false);
 		setRefusal(null);
 		setRefusalAction(null);
+		setPaddle(false);
 	}
 
 	function handleOpenChange(next: boolean) {
@@ -330,6 +362,7 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 							error={error}
 							ownerEmail={ownerEmail}
 							onCurrencyChange={switchCurrency}
+							showCurrency={!paddle}
 							prefilled={declaration?.billingAddress ?? null}
 							onBack={() => {
 								setView("choose");
@@ -516,6 +549,7 @@ function PayView({
 	ownerEmail,
 	prefilled,
 	onCurrencyChange,
+	showCurrency,
 	onBack,
 	onClose,
 	onPaid,
@@ -528,6 +562,8 @@ function PayView({
 	/** The address the declaration collected, shown instead of asked again. */
 	prefilled: CheckoutPrefill | null;
 	onCurrencyChange: (currency: SupportedCurrency) => void;
+	/** False on the Paddle rail, which localises the price itself (O1). */
+	showCurrency: boolean;
 	onBack: () => void;
 	onClose: () => void;
 	onPaid: () => void | Promise<void>;
@@ -555,11 +591,13 @@ function PayView({
 				>
 					← Change plan
 				</button>
-				<CurrencyToggle
-					value={currency}
-					onChange={onCurrencyChange}
-					disabled={!clientSecret}
-				/>
+				{showCurrency && (
+					<CurrencyToggle
+						value={currency}
+						onChange={onCurrencyChange}
+						disabled={!clientSecret}
+					/>
+				)}
 			</div>
 			{clientSecret ? (
 				<StripeElementsProvider clientSecret={clientSecret}>

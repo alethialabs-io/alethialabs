@@ -224,7 +224,10 @@ export function decideSubscriptionUpsert(
 				alert: PAID.has(event.status),
 			};
 		}
-		if (!slotFree) replacedLive = { ...stored, status: storedStatus };
+		// A local card-less trial (lib/billing/trial/local.ts: `trialing`, no subscription) is what a
+		// checkout converts — replacing it is the expected outcome, not something to alert on.
+		const convertsLocalTrial = event.slot === "plan" && stored.subscriptionId == null && storedStatus === "trialing";
+		if (!slotFree && !convertsLocalTrial) replacedLive = { ...stored, status: storedStatus };
 	}
 
 	const keepsPlan = LIVE.has(event.status);
