@@ -29,7 +29,7 @@ import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { FilterSearch } from "@repo/ui/filter-search";
 import { ViewToggle } from "@repo/ui/view-toggle";
 import { CloudFilter } from "@/components/filters/cloud-filter";
-import type { ProjectListResult } from "@/app/server/actions/projects";
+import type { ProjectsFacets } from "@/lib/queries/projects";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import type { OverviewState } from "@/components/overview/overview-state";
 import { providerLabel } from "@/components/overview/project-cloud";
@@ -63,7 +63,7 @@ export function OverviewToolbar({
   orgSlug: string;
   state: OverviewState;
   /** The facet universe from the grid's read; empty until it has answered. */
-  facets: ProjectListResult["facets"];
+  facets: ProjectsFacets;
   /** Why the viewer cannot create a project right now, or `null` when they can. */
   createProjectReason: string | null;
   onChange: (next: Partial<OverviewState>) => void;

@@ -550,11 +550,20 @@ export const FIXTURES: Record<string, Fixture> = {
 		input: undefined,
 		markers: (out, s) => ({ x: hasItem(out, "deliveries", s.deliveryX), y: hasItem(out, "deliveries", s.deliveryY) }),
 	},
-	// #6817. The project grid's rows are the ADDRESSED org's projects, for the pristine address.
-	"overview.projects": {
+	// #6817, LST-4 #7486. The project grid's first keyset page holds the ADDRESSED org's projects,
+	// for the pristine address.
+	"overview.projects.page": {
 		kind: "org-scoped",
 		input: { q: "", clouds: [], repos: [], sort: "activity" },
-		markers: (out, s) => ({ x: hasItem(out, "projects", s.projectX), y: hasItem(out, "projects", s.projectY) }),
+		markers: (out, s) => ({ x: hasRow(out, s.projectX), y: hasRow(out, s.projectY) }),
+	},
+	// Its summary carries no seeded row to mark — each org holds one project on the same cloud and U
+	// has the same role in both — so the claim is the gated one: neither address refuses it.
+	"overview.projects.summary": {
+		kind: "gated",
+		reason: "the addressed org's project count, connected clouds and U's create decision; both orgs seed the same shape",
+		input: undefined,
+		enterprise: { x: "ok", y: "ok" },
 	},
 	// The Alerts hub's reads (#6125). Each list's PRISTINE page is the org's whole list, so the marker
 	// is that org's seeded row; the settings read's condition options list the ADDRESSED org's projects.
