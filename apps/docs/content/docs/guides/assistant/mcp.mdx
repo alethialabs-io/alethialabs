@@ -105,8 +105,8 @@ Add `?project=<project id>` to the server URL to hold every call to one project.
 
 ## What the agent can read
 
-The [tool reference](/agents/tools) lists the 20 read tools and the six operation tools with their
-arguments. The read tools, in short:
+The [tool reference](/agents/tools) lists all 19 tools with their arguments. What the reads cover, in
+short:
 
 | Area | What the agent can do |
 | --- | --- |
@@ -125,6 +125,8 @@ Results are trimmed and leave secrets out: never ArgoCD passwords, tokens or cre
 
 | Tool | What it does |
 | --- | --- |
+| `create_project`, `apply_design_patch` | Create a project from a design, or change a design. Nothing in the cloud changes. |
+| `scan_repo` | Starts a scan that infers what a repository needs. The repository is never run. |
 | `plan` | Starts a plan of one environment. It changes nothing in the cloud. |
 | `request_apply`, `request_destroy` | Ask you to approve an apply or a destroy, and start it once you have approved. |
 | `cancel_job` | Cancels a queued or running job. |
@@ -137,7 +139,7 @@ changes anything.
 ## What it cannot do
 
 - It cannot **approve** anything.
-- It cannot **start a repository scan or an audit**, or change a design. Start them from the
+- It cannot **start an audit** of existing infrastructure. Start one from the
   [assistant](/guides/assistant) instead.
 - It cannot open console pages, build dashboards, pin widgets, or read and write
   [artifacts](/guides/assistant/artifacts).
