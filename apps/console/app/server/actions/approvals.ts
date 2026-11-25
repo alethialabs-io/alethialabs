@@ -10,6 +10,7 @@ import { headers } from "next/headers";
 import { z } from "zod";
 import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
+import { DECISION_REASON_MAX } from "@/lib/approvals/decidable";
 import { decideApproval } from "@/lib/approvals/decide";
 import { type ApprovalView, viewOf } from "@/lib/approvals/read";
 import { ApprovalError } from "@/lib/approvals/refusal";
@@ -22,6 +23,8 @@ const decisionInput = z.object({
 	decision: z.enum(["approve", "reject"]),
 	/** For a destroy: the environment's name, typed by the person. */
 	confirmEnvironmentName: z.string().max(200).nullish(),
+	/** For a deny: the person's optional reason, shown to the requester and their agent as data. */
+	reason: z.string().trim().max(DECISION_REASON_MAX).nullish(),
 });
 
 /** The refusal an {@link ApprovalError} is shown as. */
@@ -42,7 +45,7 @@ async function decide(input: z.output<typeof decisionInput>): Promise<ApprovalVi
 				tx,
 				{ actor, sessionId: session.session.id, sessionCreatedAt: new Date(session.session.createdAt) },
 				input.approvalId,
-				{ decision: input.decision, confirmEnvironmentName: input.confirmEnvironmentName },
+				{ decision: input.decision, confirmEnvironmentName: input.confirmEnvironmentName, reason: input.reason },
 			);
 			// An expired or superseded approval is marked so in this transaction, which commits; the
 			// refusal is raised after it.
