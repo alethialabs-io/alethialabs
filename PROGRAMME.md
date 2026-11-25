@@ -274,7 +274,7 @@ Work is claimed from the board, never hand-picked: `scripts/coordinate.sh --repo
 
 ## Beta predicates — B1 to B9
 
-**2 of 9 beta predicates are met.** 5 not met · 2 not measured. Evaluated on this tree at the snapshot instant **2026-11-24T19:44:40Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
+**2 of 9 beta predicates are met.** 5 not met · 2 not measured. Evaluated on this tree at the snapshot instant **2026-11-25T18:52:12Z**, over the 4 scored clouds: `aws`, `gcp`, `azure`, `hetzner`.
 
 The predicates are defined in `docs/beta/README.md`; this section only evaluates them. `not measured` is not met: it means the instrument does not exist yet, or reads something the tree and the snapshot do not carry. Evidence records read: **1**.
 
@@ -327,18 +327,18 @@ The predicates are defined in `docs/beta/README.md`; this section only evaluates
   - sealed register: ✅ met — `terms` is sealed at 2026-11-24; the hashes themselves are held by `pnpm check:legal-hashes` and `pnpm check:legal-set` in CI
   - beta terms: ? not measured — nothing in the register records which `terms` version carries the beta and no-SLA wording (LEG-L2 writes it)
 - **B7** ✅ met
-  - off-box backup: ✅ met — newest complete copy `20261124T023031Z` finished 2026-11-24T02:30:34Z, 17.2 h before 2026-11-24T19:44:40Z (backup-status.yml run 45454427918 at 2026-11-24T18:40:49Z)
+  - off-box backup: ✅ met — newest complete copy `20261125T023648Z` finished 2026-11-25T02:36:51Z, 16.2 h before 2026-11-25T18:52:12Z (backup-status.yml run 45664892350 at 2026-11-25T17:35:55Z)
   - restore drill: ✅ met — `docs/beta/evidence/b7/2026-11-23-restore-drill.md` (2026-11-23T19:19:31Z) · 159s · tombstones replayed
-  - public hosts: ✅ met — every check passed, including installer and status-page — 13/13 checks against https://alethialabs.io at 2026-11-24T16:24:45.750Z, 0.1 d before 2026-11-24T19:44:40Z (deploy-console.yml run 45423754184 at 2026-11-24T16:25:05Z, 1a9c4c7)
+  - public hosts: ✅ met — every check passed, including installer and status-page — 13/13 checks against https://alethialabs.io at 2026-11-25T11:27:08.824Z, 0.3 d before 2026-11-25T18:52:12Z (deploy-console.yml run 45597166669 at 2026-11-25T11:27:14Z, b402748)
 - **B8** ❌ not met
   - hosted: ❌ not met — no B8 record
   - enterprise: ❌ not met — no B8 record
   - self-hosted: ❌ not met — no B8 record
 - **B9** ? not measured
-  - aws reaper: ✅ met — run 45464256962 at 2026-11-24T19:07:18Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean
-  - gcp reaper: ✅ met — run 45464256962 at 2026-11-24T19:07:18Z found no orphan runs and verified clean
-  - azure reaper: ✅ met — run 45464256962 at 2026-11-24T19:07:18Z found no orphan runs and verified clean
-  - hetzner reaper: ? not measured — run 45464256962 at 2026-11-24T19:07:18Z found 1 unattributable resource(s)
+  - aws reaper: ✅ met — run 45670125510 at 2026-11-25T18:08:41Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean
+  - gcp reaper: ✅ met — run 45670125510 at 2026-11-25T18:08:41Z found no orphan runs and verified clean
+  - azure reaper: ✅ met — run 45670125510 at 2026-11-25T18:08:41Z found no orphan runs and verified clean
+  - hetzner reaper: ? not measured — run 45670125510 at 2026-11-25T18:08:41Z found 1 unattributable resource(s)
   - nightly 6 of 7: ? not measured — the snapshot does not record the scheduled nightly's per-cloud verdicts, so 6 green of the last 7 cannot be counted
 
 </details>
@@ -431,10 +431,10 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 45405668168 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 45405668168 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 45405668168 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 45405668168 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 45617517579 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 45617517579 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 45617517579 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 45617517579 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -463,10 +463,10 @@ A run that reclaimed an orphan may still finish clean; the incident counts remai
 
 | cloud | state | durable evidence |
 |---|:---:|---|
-| **aws** | ✅ clean | run 45464256962 at 2026-11-24T19:07:18Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
-| **gcp** | ✅ clean | run 45464256962 at 2026-11-24T19:07:18Z found no orphan runs and verified clean |
-| **azure** | ✅ clean | run 45464256962 at 2026-11-24T19:07:18Z found no orphan runs and verified clean |
-| **hetzner** | ? indeterminate | run 45464256962 at 2026-11-24T19:07:18Z found 1 unattributable resource(s) |
+| **aws** | ✅ clean | run 45670125510 at 2026-11-25T18:08:41Z reclaimed 1 orphan run(s) / 1 resource(s), then verified clean |
+| **gcp** | ✅ clean | run 45670125510 at 2026-11-25T18:08:41Z found no orphan runs and verified clean |
+| **azure** | ✅ clean | run 45670125510 at 2026-11-25T18:08:41Z found no orphan runs and verified clean |
+| **hetzner** | ? indeterminate | run 45670125510 at 2026-11-25T18:08:41Z found 1 unattributable resource(s) |
 
 ### Blocked on a human
 
@@ -528,7 +528,7 @@ Every number above is derived from these, and from nothing else:
 - `apps/console/docs/qa/prod-runs/`
 - `docs/beta/evidence/<record kind>/`
 
-Live board snapshot: taken **2026-11-24T19:44:40Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-11-25T18:52:12Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
