@@ -5,12 +5,11 @@ import "server-only";
 
 import { z } from "zod";
 import { authorizeQuiet } from "@/lib/authz/guard";
+import { type KeysetPageRequest, keysetPageInput } from "@/lib/queries/keyset";
 import {
-	CASE_PAGE_SIZE,
 	type CaseListFilter,
 	type CaseListItem,
 	type CasePage,
-	type CasePageRequest,
 	type CaseWithThread,
 	getCaseWithThread,
 	listCasesForOwner,
@@ -22,12 +21,9 @@ import { withSupportScope } from "@/lib/support/scope";
 /** The lifecycle buckets the case list reads by; "all" is the absence of a status filter. */
 const caseBucket = z.enum(["all", "active", "resolved"]);
 
-/** A keyset position in the case list — the last row of the previous page (`CaseCursor`). */
-const caseCursor = z.object({ at: z.string().datetime({ offset: true }), id: z.string().uuid() });
-
 /**
- * The caller's support cases, newest activity first, optionally bucketed by lifecycle. With `page`,
- * one keyset page of them (see {@link listCasesForOwner}); without, every one.
+ * Every one of the caller's support cases, newest activity first, optionally bucketed by lifecycle
+ * (see {@link listCasesForOwner}) — the shell bell's feed. "My cases" pages through `support.cases`.
  *
  * Moved here from `listMyCases` (the `"use server"` support actions, #6130) so the read is a plain
  * function the read router calls in-process, never a queued server-action POST. The visibility rule
@@ -35,12 +31,9 @@ const caseCursor = z.object({ at: z.string().datetime({ offset: true }), id: z.s
  * router resolved) and sets `app.support_all` only for `manage_support` holders, so a viewer reads
  * the cases they opened and an owner/admin reads the org's.
  */
-export async function listSupportCases(
-	filter: CaseListFilter = {},
-	page?: CasePageRequest,
-): Promise<CaseListItem[]> {
+export async function listSupportCases(filter: CaseListFilter = {}): Promise<CaseListItem[]> {
 	const actor = await authorizeQuiet("view", { type: "support_case" });
-	return withSupportScope(actor, (tx) => listCasesForOwner(tx, actor.userId, filter, page));
+	return withSupportScope(actor, (tx) => listCasesForOwner(tx, actor.userId, filter));
 }
 
 /**
@@ -48,7 +41,7 @@ export async function listSupportCases(
  * (see {@link queryCasesPage}). Same visibility rule as {@link listSupportCases}: RLS, under the
  * addressed org's support scope.
  */
-async function readSupportCasesPage(filter: CaseListFilter, page: CasePageRequest): Promise<CasePage> {
+async function readSupportCasesPage(filter: CaseListFilter, page: KeysetPageRequest): Promise<CasePage> {
 	const actor = await authorizeQuiet("view", { type: "support_case" });
 	return withSupportScope(actor, (tx) => queryCasesPage(tx, actor.userId, filter, page));
 }
@@ -66,9 +59,10 @@ async function readSupportCase(id: string): Promise<CaseWithThread | null> {
 }
 
 /**
- * The support domain's reads (ADR 0005 D1, #6130). `cases` backs "My cases", one keyset page of
- * {@link CASE_PAGE_SIZE} at a time: no `cursor` is the first page, and the next page's cursor is the
- * last row's (activity, id) — `nextCaseCursor` — so a case is never out of reach (#7389). Its
+ * The support domain's reads (ADR 0005 D1, #6130). `cases` backs "My cases", one keyset page at a
+ * time on the console list contract (`lib/queries/keyset.ts`, #7494): no `cursor` is the first page,
+ * each page answers the opaque `nextCursor` of the page after it (null at the end), and a malformed
+ * cursor is a 400 — so a case is never out of reach and a bad cursor never restarts the walk. Its
  * search, severity and type are applied in the query, and the first page carries the facet counts
  * over the caller's unfiltered cases (#7396), so a filter reaches every case, not the pages loaded. `case` backs the case
  * view and answers NOT_FOUND — never an empty value — for a case the caller cannot see, so the page
@@ -83,7 +77,7 @@ export const supportRouter = {
 				search: z.string().max(200).optional(),
 				severity: z.array(z.string().max(64)).max(20).optional(),
 				type: z.array(z.string().max(64)).max(20).optional(),
-				cursor: caseCursor.optional(),
+				...keysetPageInput("uuid"),
 			}),
 		)
 		.handler(({ input }) =>
@@ -94,7 +88,7 @@ export const supportRouter = {
 					severity: input.severity,
 					type: input.type,
 				},
-				{ cursor: input.cursor, limit: CASE_PAGE_SIZE },
+				{ cursor: input.cursor, limit: input.limit },
 			),
 		),
 	case: query

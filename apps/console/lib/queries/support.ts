@@ -6,7 +6,7 @@
 // manage_support holders, org-wide); these builders add the customer-facing filters — most
 // importantly, the customer thread NEVER selects is_internal staff notes.
 
-import { and, asc, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import type { getServiceDb } from "@/lib/db";
 import { likeTerm } from "@/lib/db/like";
 import {
@@ -28,6 +28,16 @@ import {
 	supportCaseType,
 } from "@/lib/db/schema/enums";
 import { type FacetOption, narrowTo, searchTerm } from "./facets";
+import {
+	type KeysetListPage,
+	type KeysetPageRequest,
+	type KeysetPosition,
+	keysetAfter,
+	keysetFetchLimit,
+	keysetOrderBy,
+	keysetPage,
+	keysetSortKey,
+} from "./keyset";
 
 type Db = ReturnType<typeof getServiceDb>;
 /** The owner-scoped transaction handed to a withOwnerScope/withScope callback. */
@@ -78,46 +88,11 @@ export interface CaseFacets {
 }
 
 /**
- * One page of the cases list: its rows, and — on the FIRST page only — the facets. A later page
- * walks the same universe, so its counts would be identical (the Activity log's rule).
+ * One page of the cases list, on the console list contract ({@link KeysetListPage}): its rows, the
+ * cursor of the page after it, and — on the FIRST page only — the facets and the universe-empty
+ * probe. A later page walks the same universe, so its counts would be identical.
  */
-export interface CasePage {
-	rows: CaseListItem[];
-	facets: CaseFacets | null;
-}
-
-/**
- * A keyset position in the case list: the last row a page returned, by the list's own sort key.
- * `at` is that row's `last_message_at` as an ISO string (millisecond precision — what a JS `Date`
- * carries), `id` its case id, the tiebreaker that makes the key total.
- */
-export interface CaseCursor {
-	at: string;
-	id: string;
-}
-
-/** One page request for {@link listCasesForOwner}: rows strictly after `cursor`, at most `limit`. */
-export interface CasePageRequest {
-	cursor?: CaseCursor;
-	limit: number;
-}
-
-/** How many cases one page of the "My cases" list carries. */
-export const CASE_PAGE_SIZE = 50;
-
-/**
- * The cursor to request the page after `page`, or null when `page` is the last one. A page shorter
- * than `limit` is the end; a full page may be followed by more (or by an empty page, when the total
- * is an exact multiple — one wasted read, never a dropped case).
- */
-export function nextCaseCursor(
-	page: readonly Pick<CaseListItem, "id" | "last_message_at">[],
-	limit: number = CASE_PAGE_SIZE,
-): CaseCursor | null {
-	const last = page.at(-1);
-	if (last === undefined || page.length < limit) return null;
-	return { at: new Date(last.last_message_at).toISOString(), id: last.id };
-}
+export type CasePage = KeysetListPage<CaseListItem, CaseFacets>;
 
 /** The status values in each lifecycle bucket. */
 const ACTIVE_STATUSES: SupportCaseStatus[] = [
@@ -128,12 +103,10 @@ const ACTIVE_STATUSES: SupportCaseStatus[] = [
 const RESOLVED_STATUSES: SupportCaseStatus[] = ["resolved", "closed"];
 
 /**
- * The list's sort key, truncated to milliseconds. Postgres keeps microseconds but a cursor travels
- * as a JS `Date` (milliseconds), so ordering and comparing on the raw column would let a row in the
- * same millisecond as the cursor, but a later microsecond, fall on the wrong side of it — skipped.
- * Ordering and the cursor predicate both read THIS expression, so they cannot disagree.
+ * The list's sort key — latest activity, truncated to milliseconds by the shared codec
+ * ({@link keysetSortKey}), so the ORDER BY and the cursor predicate read the same expression.
  */
-const caseSortAt = sql`date_trunc('milliseconds', ${supportCases.last_message_at})`;
+const caseSortAt = keysetSortKey(supportCases.last_message_at);
 
 /**
  * The case reference as `caseLabel` renders it (`CASE-` + the number zero-padded to six digits,
@@ -172,27 +145,14 @@ function caseFilterConditions(filter: CaseListFilter) {
 }
 
 /**
- * Lists the owner's cases, newest activity first (ties broken by id, so the order is total),
- * joined to the caller's read watermark so each row carries an `unread` flag. Optionally
- * filtered to the active or resolved lifecycle bucket, and by the list's search, severity and type.
- *
- * With `page`, returns at most `page.limit` rows strictly after `page.cursor` by that same
- * (activity, id) key — keyset paging, so a case can neither be skipped nor repeated at a page
- * boundary, even among cases whose latest message shares a timestamp. Without `page`, every
- * case (the shell bell's feed reads it that way).
+ * The rows pass of the cases list: the owner's cases, newest activity first (ties broken by id, so
+ * the order is total — {@link keysetOrderBy}), joined to the caller's read watermark so each row
+ * carries an `unread` flag, under every filter of {@link CaseListFilter} and, with `cursor`, only
+ * the rows strictly after it ({@link keysetAfter}) — so a case can neither be skipped nor repeated at
+ * a page boundary, even among cases whose latest message shares a timestamp.
  */
-export async function listCasesForOwner(
-	tx: Tx,
-	ownerId: string,
-	filter: CaseListFilter = {},
-	page?: CasePageRequest,
-): Promise<CaseListItem[]> {
-	const cursor = page?.cursor;
-	const afterCursor = cursor
-		? sql`(${caseSortAt}, ${supportCases.id}) < (${cursor.at}::timestamptz, ${cursor.id}::uuid)`
-		: undefined;
-
-	const listed = tx
+function selectCases(tx: Tx, ownerId: string, filter: CaseListFilter, cursor?: KeysetPosition) {
+	return tx
 		.select({
 			id: supportCases.id,
 			case_number: supportCases.case_number,
@@ -220,10 +180,21 @@ export async function listCasesForOwner(
 				eq(supportCaseReads.user_id, ownerId),
 			),
 		)
-		.where(and(...caseFilterConditions(filter), afterCursor))
-		.orderBy(desc(caseSortAt), desc(supportCases.id));
+		.where(and(...caseFilterConditions(filter), keysetAfter(caseSortAt, supportCases.id, cursor)))
+		.orderBy(...keysetOrderBy(caseSortAt, supportCases.id));
+}
 
-	return page ? listed.limit(page.limit) : listed;
+/**
+ * Lists EVERY one of the owner's cases under `filter`, in the list's order — the shell bell's feed
+ * (`workspace.supportCases`) reads it this way. The "My cases" list pages through
+ * {@link queryCasesPage} instead.
+ */
+export async function listCasesForOwner(
+	tx: Tx,
+	ownerId: string,
+	filter: CaseListFilter = {},
+): Promise<CaseListItem[]> {
+	return selectCases(tx, ownerId, filter);
 }
 
 /**
@@ -245,20 +216,27 @@ async function caseFacetsForOwner(tx: Tx): Promise<CaseFacets> {
 }
 
 /**
- * The cases list's read, on the console filter standard's server half (lib/query/README.md, step 6):
- * a filtered ROWS pass — {@link listCasesForOwner} with every filter and the keyset cursor — and, on
- * the first page, a separate FACET pass over the unfiltered scope ({@link caseFacetsForOwner}). The
- * two run one after the other because they share the scoped transaction (one connection).
+ * The cases list's read — a `query<Thing>Page` builder on the console list contract
+ * (lib/query/README.md → "Paging" and "Server-side filters"): a filtered ROWS pass with every filter
+ * and the keyset cursor, reading `limit + 1` rows so the end is known exactly
+ * ({@link keysetFetchLimit}), and, on the first page, a separate FACET pass over the unfiltered scope
+ * ({@link caseFacetsForOwner}). The two run one after the other because they share the scoped
+ * transaction (one connection).
+ *
+ * `universeEmpty` is read off the facet pass: every case carries a severity, so no severity option
+ * means no case in scope at all (the first-run empty state), never a filtered one.
  */
 export async function queryCasesPage(
 	tx: Tx,
 	ownerId: string,
 	filter: CaseListFilter,
-	page: CasePageRequest,
+	page: KeysetPageRequest,
 ): Promise<CasePage> {
-	const rows = await listCasesForOwner(tx, ownerId, filter, page);
-	const facets = page.cursor ? null : await caseFacetsForOwner(tx);
-	return { rows, facets };
+	const fetched = await selectCases(tx, ownerId, filter, page.cursor).limit(keysetFetchLimit(page.limit));
+	const { rows, nextCursor } = keysetPage(fetched, page.limit, (row) => ({ at: row.last_message_at, id: row.id }));
+	if (page.cursor) return { rows, nextCursor, facets: null, universeEmpty: null };
+	const facets = await caseFacetsForOwner(tx);
+	return { rows, nextCursor, facets, universeEmpty: facets.severity.length === 0 };
 }
 
 /** A thread message safe to return to the customer — the internal-note flag is stripped. */
