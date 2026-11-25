@@ -1,73 +1,48 @@
 ---
 title: Scaling out
-description: Run the console across multiple replicas — realtime SSE fan-out already works without a shared broker, and an optional Redis service backs the enterprise fan-out.
+description: Run several console replicas of a self-hosted Alethia behind one ingress, with no message broker.
 ---
 
-One console container handles most self-host workloads. When you need more
-throughput or redundancy, run several console replicas behind the ingress. This
-page shows how, and explains what does and doesn't need a shared service.
+Run more than one console container, for throughput or so that one restart does not take the
+console down. The replicas need nothing beyond the bundled Postgres.
 
-## Why replicas work without a shared broker
+## Before you begin
 
-The console streams realtime updates to the browser over Server-Sent Events (SSE)
-— job logs, support messages, and runner wake/cancel. In the open-source build,
-that fan-out rides on **Postgres `LISTEN`/`NOTIFY`**, not a message broker.
+- A working install. See [Install on a VM](/self-host/install).
+- Memory for each extra replica. The Helm chart requests 512 MiB for each; give it more under load.
 
-A Postgres trigger runs `pg_notify('<channel>', json)` on insert; each console
-instance holds one dedicated `LISTEN` connection per channel and dispatches to its
-own SSE subscribers. Because every replica listens independently, **the fan-out
-scales to multiple instances with no Redis** — a `NOTIFY` from any writer reaches
-the subscribers on every replica.
+## Add replicas
 
-The channels wired today are `job_logs`, `support_messages`, `runner_wake`, and
-`runner_cancel`.
-
-## Run more than one replica
-
-The `app` service binds no host port of its own — Caddy fronts it at `app:3000`
-— and sets no fixed container name, so Compose can run several copies. Scale it up:
+From `/opt/alethia`:
 
 ```bash
-docker compose up -d --scale app=3
+docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml up -d --scale app=3
 ```
 
-Each replica connects to the same bundled Postgres and object storage, so the
-replicas are interchangeable for stored state.
+Caddy sends requests to every `app` container. On the Helm chart, set `console.replicas` instead.
 
-> **Rate limits are shared across replicas.** The console keeps its rate-limit
-> counters in Postgres, so every replica counts against the same limit, and a
-> restart or a deploy does not reset it. Each limit counts in fixed windows.
+## Why no broker is needed
 
-## The optional Redis service
+- **Live updates.** Job logs, support messages and runner wake-ups reach the browser over
+  Server-Sent Events. Each replica listens to Postgres `LISTEN`/`NOTIFY` itself, so an event written
+  through any replica reaches the browsers connected to every replica.
+- **Rate limits.** The counters are in Postgres, so all replicas count against the same limit, and a
+  restart does not reset them.
+- **Stored state.** Every replica uses the same database and object store.
 
-The Compose stack ships a Redis service dedicated to scale-out SSE fan-out:
+The compose file also defines a `redis` service in the `scale-out` profile. Nothing in the current
+release uses it, so do not start it.
 
-```yaml
-# docker-compose.yml
-redis:
-  image: redis:7-alpine
-  profiles: ["scale-out"]
-  volumes:
-    - redis-data:/data
-  restart: unless-stopped
-```
-
-It sits behind the `scale-out` [Compose profile](https://docs.docker.com/compose/how-tos/profiles/),
-so it **never starts in the default bring-up**. The enterprise tier swaps a
-Redis-backed fan-out implementation in behind the same realtime interfaces; the
-open-source `LISTEN`/`NOTIFY` transport above needs no Redis.
-
-To start the profiled service:
+## Check that it worked
 
 ```bash
-docker compose --profile scale-out up -d redis
+docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml ps app
 ```
 
-> The open-source build does not require Redis to run multiple replicas. Enable the
-> `scale-out` profile only for the enterprise Redis-backed fan-out.
+Three `app` containers are `running`. Open a job's log in two browsers: both show new lines as the
+job writes them.
 
-## Next
+## Related
 
-- **[Configuration](/self-host/configuration)** — every `.env` key for the bundle.
-- **[Helm chart](/self-host/helm)** — run the same bundle on Kubernetes instead of a single VM.
-- **[Upgrading & backups](/self-host/upgrading)** — updates, Postgres dumps, volume snapshots.
+- [Helm chart](/self-host/helm)
+- [Configuration](/self-host/configuration)

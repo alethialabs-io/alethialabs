@@ -1,5 +1,5 @@
 {
-	"agents/tools.mdx": 1032,
+	"agents/tools.mdx": 1030,
 	"concepts/bring-your-own-charts.mdx": 3975,
 	"concepts/bring-your-own-iac.mdx": 2452,
 	"concepts/cloud-abstraction.mdx": 1749,
@@ -10,8 +10,5 @@
 	"concepts/runner/infrastructure-templates/gcp.mdx": 1698,
 	"concepts/runner/infrastructure-templates/hetzner.mdx": 2118,
 	"concepts/runner/scaling.mdx": 1449,
-	"concepts/security.mdx": 2428,
-	"self-host/configuration.mdx": 1358,
-	"self-host/email.mdx": 1110,
-	"self-host/managed-provisioning.mdx": 1490
+	"concepts/security.mdx": 2428
 }

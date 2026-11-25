@@ -7,17 +7,15 @@ In this tutorial you build **one Kubernetes cluster** that hosts **three environ
 run their own copy of Online Boutique, a twelve-service shop, delivered by ArgoCD. You do it all
 from the terminal, with one file and one command.
 
-Watch for the second and third environments. They cost no new cluster and no new network. They are
-placed onto the cluster that the first environment owns.
-
-It takes about 40 minutes. Most of that is waiting for the cluster.
+The second and third environments cost no new cluster and no new network: they are placed onto the
+cluster the first one owns. It takes about 40 minutes, most of it waiting for the cluster.
 
 <Callout type="warn">
   This tutorial creates **real infrastructure that costs money** while it runs. The last step tears
   it down. You are not finished until you run it.
 </Callout>
 
-## What you will build
+## What you build
 
 <Mermaid chart={`
 flowchart TB
@@ -43,7 +41,7 @@ onto it, and each one deploys an overlay of the shop from the public
 [alethia-examples](https://github.com/alethialabs-io/alethia-examples) repository. For the model
 behind this, see [Fabrics and placement](/concepts/fabrics-and-placement).
 
-## Before you start
+## Before you begin
 
 You need:
 
@@ -322,9 +320,8 @@ key the control plane trusts, and exits with a non-zero status if the check fail
 same command to gate a CI pipeline. See [`alethia verify`](/reference/cli/verify).
 
 <Callout type="info">
-  To use `kubectl`, you need a kubeconfig for the cluster. On AWS and Google Cloud, get one with your
-  cloud's CLI, as [Clusters](/guides/clusters) shows. Alethia cannot give you a kubeconfig for a
-  Hetzner cluster yet.
+  To use `kubectl`, run `alethia cluster kubeconfig boutique`. See
+  [Get a kubeconfig](/guides/get-a-kubeconfig).
 </Callout>
 
 ## Step 6 — Add a fourth environment
@@ -362,7 +359,7 @@ No new cluster is created. The node sizes in Step 2 are tested with three copies
 running, so `dev-2` fits. To add more environments than that, first raise `node_desired_size` and
 `node_max_size` on `prod`.
 
-## Step 7 — Tear it down
+## Clean up
 
 Destroy the environments that are placed on the cluster **first**, and the environment that owns
 the cluster **last**. If you add `dev-2`, destroy it first too.
@@ -422,6 +419,5 @@ You:
   yourself.
 - Did all of it from a terminal, so you can also do it from CI.
 
-This tutorial did not cover scale, failure behavior, or day-2 operations. Next, read about
-[promoting changes between environments](/concepts/promotions) and
+Next, read about [promoting changes between environments](/concepts/promotions) and
 [drift detection](/concepts/drift).

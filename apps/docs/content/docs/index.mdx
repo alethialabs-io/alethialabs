@@ -1,36 +1,32 @@
 ---
-title: Introduction
-description: Comprehensive documentation for the Alethia Console web platform, alethia CLI, and Runner execution agents.
+title: Alethia documentation
+description: Alethia designs Kubernetes clusters and the services around them, provisions them into your cloud with OpenTofu, and delivers your apps with ArgoCD. Start here.
 ---
 
-Documentation for **Alethia** — the multi-cloud Kubernetes control plane by Alethia Labs. Configure
-infrastructure visually in the Console, deploy from the terminal with the `alethia` CLI, and let Runners
-execute OpenTofu and reconcile GitOps. New to Alethia? Start with [Get started](/get-started).
-
-<Callout type="info">
-  **Two editions, one codebase.** Alethia is open-core: a free, open-source <Community>Community</Community>
-  edition (the complete single-tenant product) and a licensed <Enterprise>Enterprise</Enterprise> edition
-  (multi-member organizations, teams, SSO, custom roles, and the fine-grained access portal). See
-  [**Editions**](/editions) for the full comparison.
-</Callout>
+Alethia is a control plane for Kubernetes on AWS, GCP, Azure and Hetzner. You design a cluster and
+its services in the console or in one file, and Alethia provisions them into your own cloud account
+with OpenTofu, checks every plan before it applies, and delivers your apps with ArgoCD.
 
 <Cards>
   <Card title="Get started" href="/get-started">
-    Sign up, connect a cloud, design a project, and deploy it. Install the `alethia` CLI.
+    Sign up, connect a cloud, and deploy your first cluster. Install the CLI.
   </Card>
-  <Card title="Tutorials" href="/tutorials">
-    Learn by building something real, start to finish, on a cloud you own.
-  </Card>
-  <Card title="How-to guides" href="/guides">
-    Do one task: connect an account, design a project, run jobs, manage access, or self-host.
-  </Card>
-  <Card title="Reference" href="/reference">
-    Every CLI command and flag, the API, configuration variables, controls, and the glossary.
+  <Card title="Guides" href="/guides">
+    Do one task: connect an account, design a project, run jobs, manage access.
   </Card>
   <Card title="Concepts" href="/concepts">
-    How Alethia works: the domain model, provisioning, runners, isolated execution, security, and Elench.
+    How Alethia works: projects and environments, runners, verification, security.
   </Card>
-  <Card title="Editions" href="/editions">
-    Community vs Enterprise: the feature matrix, licensing, and how Alethia compares.
+  <Card title="Reference" href="/reference">
+    Every CLI command, the API, configuration, controls and limits.
+  </Card>
+  <Card title="Self-host" href="/self-host">
+    Run the whole platform on your own VM or Kubernetes cluster.
+  </Card>
+  <Card title="Agents" href="/agents">
+    Connect Claude, Cursor, VS Code or Codex, and let them read and plan.
   </Card>
 </Cards>
+
+New to Alethia? [Tutorials](/tutorials) build something real from start to finish. Stuck? Start at
+[Troubleshooting](/troubleshooting).
