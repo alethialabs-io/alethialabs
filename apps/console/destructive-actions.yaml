@@ -98,7 +98,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 54 controls — 54 confirmed
+#   census: 55 controls — 55 confirmed
 
 version: 1
 
@@ -708,6 +708,19 @@ controls:
     dialog_title: "Revoke <role> from <name>?"
     fixture: access-grant
     persona: team
+    status: confirmed
+    prod-qa: own-rows-only
+
+  - id: settings.service-token.revoke
+    route: /[org]/~/settings/tokens
+    surface: apps/console/components/settings/tokens/revoke-token-dialog.tsx
+    mutation: revokeConsoleServiceToken
+    control: { role: button, name: "Revoke <name>" }
+    confirm: confirm-dialog
+    confirm_action: "Revoke token"
+    dialog_title: "Revoke <name>?"
+    fixture: service-token
+    persona: owner
     status: confirmed
     prod-qa: own-rows-only
 
