@@ -3,6 +3,7 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { Suspense } from "react";
+import { prefetchRunnersList } from "@/components/runners/runners-prefetch";
 import { runnersQueryFromUrl } from "@/components/runners/runners-query";
 import { RunnersSkeleton } from "@/components/runners/runners-skeleton";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
@@ -51,9 +52,10 @@ export default async function RunnersRoute({ searchParams }: { searchParams: Sea
 
 /**
  * Prefetches exactly the keys the client reads on first paint:
- * - `runners.page` for the pristine grid (`{}`), which the client renders before its filter store has
- *   read the link, and for the URL's filters, the key it settles on once it has (#4980, F8) — `{}`
- *   twice for a pristine link, which TanStack dedupes;
+ * - the FIRST keyset page of `runners.page` (#7484, `prefetchRunnersList`) for the pristine grid
+ *   (`{}`), which the client renders before its filter store has read the link, and for the URL's
+ *   filters, the key it settles on once it has (#4980, F8) — `{}` twice for a pristine link, which
+ *   TanStack dedupes;
  * - `runners.list`, the unfiltered universe the Versions panel, the default flags and the pickers
  *   read — a different question from a filtered page, not a leftover;
  * - `runners.fleet` and `runners.fleetEconomics`, only where the Pools column renders (self-managed);
@@ -65,8 +67,8 @@ async function PrefetchedRunners({ searchParams, hosted }: { searchParams: Searc
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
 	await Promise.all([
-		queryClient.prefetchQuery(rpc.runners.page.queryOptions({ input: {} })),
-		queryClient.prefetchQuery(rpc.runners.page.queryOptions({ input: filtered })),
+		prefetchRunnersList(queryClient, {}),
+		prefetchRunnersList(queryClient, filtered),
 		queryClient.prefetchQuery(rpc.runners.list.queryOptions()),
 		hosted ? undefined : queryClient.prefetchQuery(rpc.runners.fleet.queryOptions()),
 		hosted ? undefined : queryClient.prefetchQuery(rpc.runners.fleetEconomics.queryOptions()),

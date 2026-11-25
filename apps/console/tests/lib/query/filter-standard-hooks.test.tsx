@@ -17,7 +17,8 @@
 // So these hooks are driven. Each one is asked the same four questions, because "the console is
 // one product" is exactly the claim that they all answer them the same way.
 //
-// The surfaces #4890 lifted (alerts × 3, access, runners) and the two #4890 lifted first (teams,
+// The surfaces #4890 lifted (alerts × 3, access — runners left for keyset paging in #7484, and its
+// paging is driven in tests/components/runners/runners-list-paging.test.tsx) and the two #4890 lifted first (teams,
 // members) are all here. The older hooks — jobs, evidence, activity, sso, roles, support,
 // connectors — are not: they were already on the standard, and this file is the new work's
 // instrument, not a retro-fit of coverage onto everything that predates it.
@@ -29,7 +30,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useParams: () => ({ org: "org-1" }) }));
 
-// The alerts lists (#6125), the runners grid (#6123) and the people & access lists (#6129) read over
+// The alerts lists (#6125) and the people & access lists (#6129) read over
 // GET procedures: the seam is the read router's handler, reached through the same oRPC query
 // utilities the browser uses. ONE mock of the client carries every router — a second `vi.mock` of the
 // same module would replace the first.
@@ -39,7 +40,6 @@ const getTeamsPage = vi.fn();
 const getMembersPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
 const getAlertDeliveriesPage = vi.fn();
-const getRunnersPage = vi.fn();
 vi.mock("@/lib/rpc/client", async () => {
 	const { os, createRouterClient } = await import("@orpc/server");
 	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
@@ -52,7 +52,6 @@ vi.mock("@/lib/rpc/client", async () => {
 			policies: page((input) => getAlertPoliciesPage(input)),
 			deliveries: page((input) => getAlertDeliveriesPage(input)),
 		},
-		runners: { page: page((input) => getRunnersPage(input)) },
 		members: {
 			grants: page((input) => getAccessGrantsPage(input)),
 			teams: page((input) => getTeamsPage(input)),
@@ -71,7 +70,6 @@ const {
 const { useAccessGrantsPageQuery } = await import(
 	"@/lib/query/use-access-grants-query"
 );
-const { useRunnersPageQuery } = await import("@/lib/query/use-runners-page-query");
 const { useTeamsPageQuery } = await import("@/lib/query/use-teams-query");
 const { useMembersPageQuery } = await import("@/lib/query/use-members-query");
 
@@ -147,14 +145,6 @@ const SUBJECTS: Record<string, Subject> = {
 		prefix: [["members", "grants"]],
 		queryOf: orpcInput,
 	},
-	useRunnersPageQuery: {
-		usePage: (q) => useRunnersPageQuery(q),
-		action: getRunnersPage,
-		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
-		// browser keeps one QueryClient per org instead (lib/query/client.ts).
-		prefix: [["runners", "page"]],
-		queryOf: orpcInput,
-	},
 	useTeamsPageQuery: {
 		usePage: (q) => useTeamsPageQuery(q),
 		action: getTeamsPage,
@@ -174,7 +164,6 @@ const ACTIONS = [
 	getAlertPoliciesPage,
 	getAlertDeliveriesPage,
 	getAccessGrantsPage,
-	getRunnersPage,
 	getTeamsPage,
 	getMembersPage,
 ];
