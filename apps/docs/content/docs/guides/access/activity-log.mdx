@@ -1,42 +1,51 @@
 ---
-title: Activity
-description: A record of everything that happens in your organization — every action and every denied attempt — browsable in Community, exportable in Enterprise.
+title: Read the activity log
+description: See every action and every refused attempt in your organization or a project, filter it, and export it as CSV on Enterprise.
 ---
 
-Every Alethia deployment keeps a full **Activity log**, browsable in **Settings → Activity**. This is
-<Community>open-source</Community> — it works in the free edition.
+Find out who did what, and who tried something they were not allowed to do. The activity log records
+every change in the organization.
 
-## What it records
+## Before you begin
 
-The Activity log is a **complete record of what happens in the org**. The Policy Decision Point writes a row for:
+- Your role can view activity. Every built-in role can.
+- How far back you can read depends on the plan: 7 days on Hobby, 30 on Pro, 365 on Enterprise.
+- Export needs the Enterprise plan.
 
-- **Every action** — create, edit, deploy, destroy, the `manage_*` operations (identities, members, integrations,
-  billing), exports, and more.
-- **Every denied authorization** — someone tried something they weren't allowed to do.
-- **Governance changes** — custom roles created/edited/deleted, access grants assigned/revoked, and member
-  lifecycle (joins, removals, role changes).
+## Steps
 
-Successful **reads** (viewing a page or listing resources) are not recorded — they fire constantly and would
-drown out the signal; their *denials* still are.
+1. Open **Settings → Activity** for the organization, or a project's **Settings → Activity** for one
+   project.
+2. Pick a time range: **Last 7 days**, **Last 30 days**, or a **Custom range**.
+3. Narrow it with the search (**Search actor, action or resource…**), **Member**, **Project** and
+   **Events**.
+4. Select **Load more** to read further back.
 
-Each entry reads as a natural-language line: the **actor**, what they did, the **resource**, and **when**. Denied
-attempts are flagged. Filter by time range, user, project, and event type.
+Each entry is one sentence: who did what, to which resource, and when. Refused attempts are marked.
+A person who left the organization shows as **Former member**.
 
-<Callout type="info">
-  The log is engine-agnostic: whether the deployment uses the Postgres engine or the
-  [OpenFGA engine](/concepts/access-control/openfga), decisions are recorded the same way, so Activity looks
-  identical.
-</Callout>
+## What is recorded
 
-## Export
+| Recorded | Examples |
+| --- | --- |
+| Every action | Create, edit, deploy, destroy, managing identities, members, connectors and billing, exports |
+| Every refused attempt | Someone tried an action their role does not allow |
+| Access changes | Custom roles created, changed or deleted; grants added or revoked; members joining, leaving or changing role |
 
-<Enterprise />
+Successful reads, such as opening a page or a list, are not recorded: there are too many. A refused
+read is recorded.
 
-Exporting the log to **CSV** (for a SIEM, a spreadsheet, or a compliance archive) is an Enterprise feature,
-gated by the `activityExport` entitlement. The **Export CSV** button appears in the header when the entitlement is
-held; the export is also enforced server-side.
+## Export the log
 
-## Next
+Select **Export CSV**, for a SIEM, a spreadsheet or an archive. On other plans, the button says that
+export needs Enterprise, and the server refuses an export too.
 
-- How decisions are made (and recorded): [**architecture**](/concepts/access-control/architecture).
-- The edition split: [**feature matrix**](/editions/feature-matrix).
+## Check that it worked
+
+Make a small change, such as renaming a project. Its entry appears at the top of the log, with your
+name.
+
+## Related
+
+- [Access control architecture](/concepts/access-control/architecture): how decisions are made and recorded.
+- [Feature matrix](/editions/feature-matrix)
