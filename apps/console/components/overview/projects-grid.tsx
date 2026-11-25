@@ -2,28 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The overview's project grid: one region, one read (`overview.projects`), and a distinct render
-// for each thing that read can answer — pending, refused, failed, an organization with no project,
-// a filter that matches none, and the projects as cards or as a table.
+// The overview's project grid: one region over one keyset walk (`overview.projects.page`), and a
+// distinct render for each thing that walk can answer — pending, refused, failed, an organization
+// with no project, a filter that matches none, and the projects as cards or as a table, with the
+// shared list footer (scroll sentinel + "Load more") under them (LST-4 #7486).
 
-import type { UseQueryResult } from "@tanstack/react-query";
+import { type UseQueryResult, useIsFetching } from "@tanstack/react-query";
 import { Boxes, Plus } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { Table, TableBody } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
-import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
+import type { ProjectListItem } from "@/app/server/actions/projects";
 import { RegionError } from "@/components/errors/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
+import { ListFooter } from "@/components/list/list-footer";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { useRealtimeConnection } from "@/hooks/use-realtime";
 import { CLOUD_ACCOUNT, PROJECT, sentenceStart } from "@/lib/copy/vocabulary";
+import type { ProjectsFacets } from "@/lib/queries/projects";
+import type { KeysetList } from "@/lib/query/use-keyset-list";
 import { globalHref } from "@/lib/routing";
-import type { OverviewProjects } from "@/lib/rpc/procedures/overview";
+import { orpc } from "@/lib/rpc/client";
+import type { OverviewProjectsSummary } from "@/lib/rpc/procedures/overview";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useFavoriteProjectIds, useProjectsStore } from "@/lib/stores/use-projects-store";
 import { type OverviewState, isFiltered } from "./overview-state";
@@ -31,13 +36,7 @@ import { cloudNotOfferedReason } from "./project-cloud";
 import { ProjectCard } from "./project-card";
 import { ProjectRow } from "./project-row";
 import { ProjectTableHeader, ProjectsSkeleton } from "./projects-skeleton";
-
-/**
- * How many projects the grid draws before it offers "Show more", and how many more each press adds.
- * The read answers every project of the organization (R6 B-30); drawing them all at once is what
- * made a large organization's overview slow to paint, so the grid draws them a page at a time.
- */
-export const PROJECTS_RENDER_STEP = 48;
+import { createProjectReason, starredFirst, useStarredProjects } from "./use-overview-projects";
 
 /** Where a new project is created. */
 function newProjectHref(orgSlug: string): string {
@@ -52,47 +51,48 @@ function connectCloudHref(orgSlug: string): string {
 /**
  * The grid region.
  *
- * `grid` is the page's one read of it (`useOverviewProjects`), handed down because the toolbar and
- * the usage card read the same answer. `onClearFilters` resets the search and the filters in the
- * address.
+ * `list` is the page's one walk of it (`useOverviewProjects`) and `summary` its summary read
+ * (`useOverviewProjectsSummary`), both handed down because the toolbar and the usage card read the
+ * same answers. `onClearFilters` resets the search and the filters in the address.
+ *
+ * The rows are the walk's pages so far, with the viewer's starred projects first
+ * ({@link starredFirst}: asked by id, so a starred project leads whatever page it is on). Nothing
+ * here counts them: the list carries no count (lib/query/README.md → "Counts").
  */
 export function ProjectsGrid({
 	orgSlug,
 	state,
-	grid,
+	list,
+	summary,
 	onClearFilters,
 }: {
 	orgSlug: string;
 	state: OverviewState;
-	grid: UseQueryResult<OverviewProjects>;
+	list: KeysetList<ProjectListItem, ProjectsFacets>;
+	summary: UseQueryResult<OverviewProjectsSummary>;
 	onClearFilters: () => void;
 }) {
 	const userId = useViewer().viewer?.id ?? null;
 	const favoriteIds = useFavoriteProjectIds(userId);
 	const toggleFavorite = useProjectsStore((store) => store.toggleFavorite);
-	const projects = grid.data?.projects;
+	const starred = useStarredProjects(state, favoriteIds);
+	const refreshing = useIsFetching({ queryKey: orpc.overview.projects.page.key() }) > 0;
 
-	// Starred projects first: a stable reorder that keeps the server's order inside each group.
-	const ordered = useMemo(() => {
-		if (!projects) return [];
-		const starred = projects.filter((project) => favoriteIds.includes(project.id));
-		const rest = projects.filter((project) => !favoriteIds.includes(project.id));
-		return [...starred, ...rest];
-	}, [projects, favoriteIds]);
-	const [shownCount, setShownCount] = useState(PROJECTS_RENDER_STEP);
-	const shown = ordered.slice(0, shownCount);
-	const hiddenCount = ordered.length - shown.length;
+	const ordered = useMemo(
+		() => starredFirst(list.rows, favoriteIds, starred.data?.rows),
+		[list.rows, favoriteIds, starred.data],
+	);
 
-	if (grid.data === undefined) {
-		const refusal = grid.isError ? readRefusalOf(grid.error) : null;
+	if (list.query.data === undefined) {
+		const refusal = list.query.isError ? readRefusalOf(list.query.error) : null;
 		// Refused is not failed: the same question gets the same answer, so there is no retry.
 		if (refusal) return <RegionRefusal refusal={refusal} subject={PROJECT.many} />;
-		if (grid.isError) {
+		if (list.query.isError) {
 			return (
 				<RegionError
 					title="Couldn't load projects"
 					description="Something went wrong loading this organization's projects."
-					onRetry={() => void grid.refetch()}
+					onRetry={() => void list.query.refetch()}
 				/>
 			);
 		}
@@ -103,30 +103,46 @@ export function ProjectsGrid({
 		);
 	}
 
-	const { canCreate, connectedProviders, offeredClouds } = grid.data;
-	const connected = connectedProviders ?? [];
+	// Unknown until the summary answers: no cloud is called "not offered" and no logo greyed on a guess.
+	const connected = summary.data?.connectedProviders ?? [];
+	const offered = summary.data?.offeredClouds;
+	const unavailable = (project: ProjectListItem) =>
+		offered === undefined ? null : cloudNotOfferedReason(project.cloud_provider, offered);
+	const onToggleFavorite = (project: ProjectListItem) =>
+		userId ? () => toggleFavorite(userId, project.id) : undefined;
 
 	return (
 		<div className="space-y-3">
-			<LiveUpdatesNotice refreshing={grid.isFetching} onRefresh={() => void grid.refetch()} />
-			{grid.isError ? (
+			<LiveUpdatesNotice refreshing={refreshing} onRefresh={() => void list.query.refetch()} />
+			{list.query.isError ? (
 				// A failed REFRESH keeps the last answer on screen, and says that it is the last one.
 				<GridNotice
 					role="alert"
 					text="Couldn't refresh projects. This is the last list that loaded."
 					action="Try again"
-					busy={grid.isFetching}
-					onAction={() => void grid.refetch()}
+					busy={refreshing}
+					onAction={() => void list.query.refetch()}
 				/>
 			) : null}
 
 			{/* Dimmed while a changed search or filter is being answered: the rows on screen are the
 			    previous answer's (`keepPreviousData`). */}
-			<div className={cn("transition-opacity", grid.isPlaceholderData && "opacity-60")}>
+			<div className={cn("space-y-3 transition-opacity", list.isPlaceholderData && "opacity-60")}>
 				{ordered.length === 0 ? (
-					isFiltered(state) ? (
-						// The organization may well HAVE projects; this view resolved to none. "No projects
-						// yet" here would read as data loss.
+					list.universeEmpty === true || !isFiltered(state) ? (
+						<FirstProject
+							orgSlug={orgSlug}
+							createReason={createProjectReason(summary)}
+							// `null` means the connected accounts could not be read: say nothing about them.
+							needsCloudAccount={
+								summary.data !== undefined &&
+								summary.data.connectedProviders !== null &&
+								summary.data.connectedProviders.length === 0
+							}
+						/>
+					) : (
+						// The organization HAS projects; this view resolved to none. "No projects yet"
+						// here would read as data loss.
 						<EmptyState
 							title="No projects match your filters"
 							description="Widen or clear the search, cloud and repository filters."
@@ -136,28 +152,21 @@ export function ProjectsGrid({
 								</Button>
 							}
 						/>
-					) : (
-						<FirstProject
-							orgSlug={orgSlug}
-							canCreate={canCreate}
-							// `null` means the connected accounts could not be read: say nothing about them.
-							needsCloudAccount={connectedProviders !== null && connectedProviders.length === 0}
-						/>
 					)
 				) : state.view === "table" ? (
 					<div className="overflow-x-auto rounded-xl border border-border/60">
 						<Table>
 							<ProjectTableHeader />
 							<TableBody>
-								{shown.map((project) => (
+								{ordered.map((project) => (
 									<ProjectRow
 										key={project.id}
 										project={project}
 										orgSlug={orgSlug}
 										isFavorite={favoriteIds.includes(project.id)}
-										onToggleFavorite={userId ? () => toggleFavorite(userId, project.id) : undefined}
+										onToggleFavorite={onToggleFavorite(project)}
 										providerConnected={project.cloud_provider !== null && connected.includes(project.cloud_provider)}
-										cloudUnavailable={cloudNotOfferedReason(project.cloud_provider, offeredClouds)}
+										cloudUnavailable={unavailable(project)}
 									/>
 								))}
 							</TableBody>
@@ -165,30 +174,20 @@ export function ProjectsGrid({
 					</div>
 				) : (
 					<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(238px,1fr))]">
-						{shown.map((project) => (
+						{ordered.map((project) => (
 							<ProjectCard
 								key={project.id}
 								project={project}
 								orgSlug={orgSlug}
 								isFavorite={favoriteIds.includes(project.id)}
-								onToggleFavorite={userId ? () => toggleFavorite(userId, project.id) : undefined}
+								onToggleFavorite={onToggleFavorite(project)}
 								providerConnected={project.cloud_provider !== null && connected.includes(project.cloud_provider)}
-								cloudUnavailable={cloudNotOfferedReason(project.cloud_provider, offeredClouds)}
+								cloudUnavailable={unavailable(project)}
 							/>
 						))}
 					</div>
 				)}
-				{hiddenCount > 0 ? (
-					<div className="mt-3 flex justify-center">
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => setShownCount((count) => count + PROJECTS_RENDER_STEP)}
-						>
-							Show {Math.min(hiddenCount, PROJECTS_RENDER_STEP)} more of {hiddenCount}
-						</Button>
-					</div>
-				) : null}
+				<ListFooter list={list} />
 			</div>
 		</div>
 	);
@@ -199,15 +198,16 @@ export function ProjectsGrid({
  *
  * With no cloud account connected the next step is to connect one, because a project is planned
  * and deployed into one; creating the project stays on offer beside it. A viewer who may not
- * create a project sees the control disabled with the reason, not a page with nothing to do.
+ * create a project — or whose permission has not been answered yet — sees the control disabled with
+ * the reason (`createReason`), not a page with nothing to do.
  */
 function FirstProject({
 	orgSlug,
-	canCreate,
+	createReason,
 	needsCloudAccount,
 }: {
 	orgSlug: string;
-	canCreate: boolean;
+	createReason: string | null;
 	needsCloudAccount: boolean;
 }) {
 	const variant = needsCloudAccount ? "outline" : "default";
@@ -217,12 +217,12 @@ function FirstProject({
 			Create a {PROJECT.one}
 		</>
 	);
-	const create = canCreate ? (
+	const create = createReason === null ? (
 		<Button size="sm" variant={variant} nativeButton={false} render={<Link href={newProjectHref(orgSlug)} />}>
 			{label}
 		</Button>
 	) : (
-		<DisabledReason reason={MANAGE_DENIED_REASON}>
+		<DisabledReason reason={createReason}>
 			<Button size="sm" variant={variant}>
 				{label}
 			</Button>

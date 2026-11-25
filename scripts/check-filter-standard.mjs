@@ -294,14 +294,15 @@ const ANCHORS = [
  * of these score NOT MEASURED on F7 — the honest verdict for a behaviour nothing ran.
  */
 export const F7_UNDRIVEN = /** @type {const} */ ({
-	queryProjects: {
-		file: "apps/console/app/server/actions/projects.ts",
-		owner: "#3796",
+	queryProjectsPage: {
+		file: "apps/console/lib/queries/projects.ts",
+		owner: "#7486",
 		why:
-			"the org overview's URL→RSC read. Its facets are tallied IN MEMORY over the org's whole " +
-			"project set rather than by a second SQL pass, so the invariant holds by a different " +
-			"mechanism and needs a different assertion — the facet set must not shrink as the query " +
-			"narrows — rather than the two-pass predicate check the other builders take.",
+			"its scope is the `projects` RLS wall on the actor-scoped transaction the overview procedure opens " +
+			"(`withActorScope`), not an `org_id` predicate, so its facet pass correctly carries NO `where` at all — " +
+			"F7's second clause looks for an unfiltered pass that still has one (the support list's shape). The " +
+			"two-pass shape is asserted instead by tests/lib/queries/projects-page.test.ts: no value of the query " +
+			"reaches a facet pass, a later page and the starred-ids lookup issue none.",
 	},
 	queryCasesPage: {
 		file: "apps/console/lib/queries/support.ts",
