@@ -4,11 +4,13 @@
 import { describe, expect, it } from "vitest";
 import {
 	COMMUNITY_ENTITLEMENTS,
+	entitlementStatus,
 	hasAiSubscription,
 	hasPlanSubscription,
 	hasProviderSubscription,
 	isBillingActive,
 	isManualGrantExpired,
+	PAST_DUE_GRACE_MS,
 	planEntitlements,
 	resolvePlanEntitlements,
 } from "@/lib/billing/plan";
@@ -190,5 +192,33 @@ describe("provider subscription helpers", () => {
 				new Date("2026-07-13T00:00:00Z"),
 			),
 		).toBe(true);
+	});
+});
+
+describe("entitlementStatus (the Paddle past_due grace, O8)", () => {
+	const start = new Date("2026-11-25T00:00:00Z");
+	const row = { status: "past_due" as const, billingProvider: "paddle" as const, currentPeriodStart: start };
+
+	it("reads a Paddle past_due row as active inside the 7-day grace", () => {
+		expect(entitlementStatus(row, new Date(start.getTime() + PAST_DUE_GRACE_MS - 1))).toBe("active");
+	});
+
+	it("drops it once the grace is over", () => {
+		expect(entitlementStatus(row, new Date(start.getTime() + PAST_DUE_GRACE_MS))).toBe("past_due");
+	});
+
+	it("gives no grace without a period start (fail closed)", () => {
+		expect(entitlementStatus({ ...row, currentPeriodStart: null }, start)).toBe("past_due");
+	});
+
+	it("leaves Stripe rows exactly as they were: past_due grants nothing", () => {
+		expect(entitlementStatus({ ...row, billingProvider: "stripe" }, start)).toBe("past_due");
+		expect(entitlementStatus({ ...row, billingProvider: null }, start)).toBe("past_due");
+	});
+
+	it("passes every other status through", () => {
+		for (const status of ["none", "trialing", "active", "canceled"] as const) {
+			expect(entitlementStatus({ ...row, status }, start)).toBe(status);
+		}
 	});
 });

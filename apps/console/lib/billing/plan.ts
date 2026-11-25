@@ -8,6 +8,7 @@
 // org is actually on, and whether its subscription is active — lives in ee/
 // (it reads the billing record / signed license); this only maps a known plan to flags.
 
+import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import type { Entitlements } from "@/lib/authz/types";
 
@@ -82,6 +83,28 @@ export function planEntitlements(plan: BillingPlan): Entitlements {
 /** A subscription only grants its plan's paid entitlements while live. */
 export function isBillingActive(status: BillingStatus): boolean {
 	return status === "active" || status === "trialing";
+}
+
+/** How long a merchant-of-record subscription keeps its plan after a renewal payment fails (O8). */
+export const PAST_DUE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The billing-row columns {@link entitlementStatus} reads. */
+export interface GraceFields {
+	status: BillingStatus;
+	billingProvider: BillingProviderId | null;
+	currentPeriodStart: Date | null;
+}
+
+/**
+ * The status entitlements are decided from: the stored status, except that a PADDLE subscription
+ * that is `past_due` reads as `active` for {@link PAST_DUE_GRACE_MS} from the start of the period
+ * whose renewal failed (Paddle advances `current_billing_period` when it bills the renewal), then
+ * drops. Stripe rows (`billing_provider` NULL or `stripe`) are unchanged: `past_due` grants nothing
+ * there, as before. No period start → no grace (fail closed).
+ */
+export function entitlementStatus(row: GraceFields, now: Date = new Date()): BillingStatus {
+	if (row.status !== "past_due" || row.billingProvider !== "paddle" || !row.currentPeriodStart) return row.status;
+	return now.getTime() - row.currentPeriodStart.getTime() < PAST_DUE_GRACE_MS ? "active" : "past_due";
 }
 
 /** The billing-row columns naming the ORG-PLAN subscription, one per payment provider. */
