@@ -14,16 +14,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/app/server/actions/projects", () => ({
 	getApprovedJob: vi.fn(),
 	tryPlanProject: vi.fn(),
-	tryProvisionProject: vi.fn(),
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-import {
-	getApprovedJob,
-	tryPlanProject,
-	tryProvisionProject,
-} from "@/app/server/actions/projects";
-import { ApprovalCard } from "@/components/agent/approval-card";
+import { getApprovedJob, tryPlanProject } from "@/app/server/actions/projects";
+import { ApprovalCard, DEPLOY_PROPOSAL_RETIRED } from "@/components/agent/approval-card";
 import type { OperationProposal } from "@/lib/ai/operation";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 
@@ -40,7 +35,7 @@ function plan(environmentId?: string): OperationProposal {
 	};
 }
 
-/** A deploy proposal, optionally naming its environment. */
+/** A deploy proposal as a transcript stored before deploys became approval requests. */
 function deploy(environmentId?: string): OperationProposal {
 	return {
 		id: "call-2",
@@ -64,7 +59,6 @@ function scopeSurface(environmentId: string | null) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(tryPlanProject).mockResolvedValue({ ok: true, jobId: "job-1" });
-	vi.mocked(tryProvisionProject).mockResolvedValue({ ok: true, jobId: "job-2" });
 	vi.mocked(getApprovedJob).mockResolvedValue(null);
 	useElenchStore.setState({ ctx: { kind: "org" }, threadId: null });
 });
@@ -82,20 +76,6 @@ describe("ApprovalCard — environment", () => {
 		);
 	});
 
-	it("deploys the environment the proposal names, keeping the plan job id", async () => {
-		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
-		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
-		await waitFor(() =>
-			expect(tryProvisionProject).toHaveBeenCalledWith(
-				PROJECT,
-				"job-plan",
-				undefined,
-				PROPOSAL_ENV,
-				"call-2",
-			),
-		);
-	});
-
 	it("falls back to the environment the surface is scoped to when the proposal omits it", async () => {
 		scopeSurface(SURFACE_ENV);
 		render(<ApprovalCard proposal={plan()} />);
@@ -107,16 +87,10 @@ describe("ApprovalCard — environment", () => {
 
 	it("prefers the proposal's environment over the surface's", async () => {
 		scopeSurface(SURFACE_ENV);
-		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
-		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
+		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} />);
+		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(tryProvisionProject).toHaveBeenCalledWith(
-				PROJECT,
-				"job-plan",
-				undefined,
-				PROPOSAL_ENV,
-				"call-2",
-			),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, PROPOSAL_ENV, "call-1"),
 		);
 	});
 
@@ -157,22 +131,12 @@ describe("ApprovalCard — a refusal the user can act on", () => {
 describe("ApprovalCard — one approval, one job", () => {
 	it("keys the approval by the thread and the proposing tool call", async () => {
 		useElenchStore.setState({ threadId: "thread-9" });
-		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
-		await userEvent.click(screen.getByRole("button", { name: /approve & deploy/i }));
+		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} />);
+		await userEvent.click(screen.getByRole("button", { name: /approve & plan/i }));
 		await waitFor(() =>
-			expect(tryProvisionProject).toHaveBeenCalledWith(
-				PROJECT,
-				"job-plan",
-				undefined,
-				PROPOSAL_ENV,
-				"thread-9:call-2",
-			),
+			expect(tryPlanProject).toHaveBeenCalledWith(PROJECT, undefined, PROPOSAL_ENV, "thread-9:call-1"),
 		);
-		expect(getApprovedJob).toHaveBeenCalledWith(
-			PROJECT,
-			"provision_project",
-			"thread-9:call-2",
-		);
+		expect(getApprovedJob).toHaveBeenCalledWith(PROJECT, "plan_project", "thread-9:call-1");
 	});
 
 	it("shows the job a previous approval queued instead of an active Approve", async () => {
@@ -189,5 +153,25 @@ describe("ApprovalCard — one approval, one job", () => {
 		render(<ApprovalCard proposal={plan(PROPOSAL_ENV)} />);
 		await waitFor(() => expect(getApprovedJob).toHaveBeenCalled());
 		expect(screen.getByRole("button", { name: /approve & plan/i })).toBeEnabled();
+	});
+});
+
+// AGT-L5 (#6862) — a deploy is requested with request_apply and approved as an approval request. A
+// deploy proposal a transcript stored before that is shown, but its card queues nothing: Dismiss feeds
+// the agent the sentence that sends it to request_apply.
+describe("ApprovalCard — a stored deploy proposal", () => {
+	it("offers Dismiss instead of a deploy, and queues nothing", async () => {
+		const onResolve = vi.fn();
+		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} onResolve={onResolve} />);
+		expect(screen.queryByRole("button", { name: /deploy/i })).toBeNull();
+		await userEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+		await waitFor(() => expect(onResolve).toHaveBeenCalledWith({ status: "denied", reason: DEPLOY_PROPOSAL_RETIRED }));
+		expect(tryPlanProject).not.toHaveBeenCalled();
+	});
+
+	it("still shows the job an earlier approval of it queued", async () => {
+		vi.mocked(getApprovedJob).mockResolvedValue({ jobId: "job-earlier" });
+		render(<ApprovalCard proposal={deploy(PROPOSAL_ENV)} />);
+		expect(await screen.findByText(/already approved/i)).toBeInTheDocument();
 	});
 });

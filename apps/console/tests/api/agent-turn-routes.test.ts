@@ -119,6 +119,8 @@ interface World {
 	finalizeDelayMs: number;
 	mismatchLog: unknown[];
 	toolActors: string[];
+	/** The credential and credential ref each tool call ran as (`kind:ref`). */
+	toolCredentials: string[];
 	throwInTools: boolean;
 	throwInStream: boolean;
 	/** The resolver answers an actor of ANOTHER user (a resolver bug the route must not trust). */
@@ -154,6 +156,7 @@ const world = vi.hoisted(
 		finalizeDelayMs: 5,
 		mismatchLog: [],
 		toolActors: [],
+		toolCredentials: [],
 		throwInTools: false,
 		throwInStream: false,
 		foreignActor: false,
@@ -228,6 +231,7 @@ vi.mock("@/lib/ai/tools", async () => {
 				execute: async () => {
 					const actor = getInjectedActor();
 					world.toolActors.push(actor?.orgId ?? "none");
+					world.toolCredentials.push(`${actor?.credential ?? "none"}:${actor?.credentialRef ?? "none"}`);
 					return { projects: [] };
 				},
 			}),
@@ -891,6 +895,7 @@ beforeEach(() => {
 	world.finalizeDelayMs = 5;
 	world.mismatchLog = [];
 	world.toolActors = [];
+	world.toolCredentials = [];
 	world.throwInTools = false;
 	world.throwInStream = false;
 	world.foreignActor = false;
@@ -1007,6 +1012,13 @@ describe("the billing org (§6.1, case 3)", () => {
 		expect(claims()[0]).toMatchObject({ attemptNo: 2, billingOrgId: ORG_A, state: "answered" });
 		expect(holdList().map((h) => h.orgId)).toEqual([ORG_A]);
 		expect(world.toolActors).toEqual([ORG_A]);
+	});
+
+	it("the model's tools run as the in-product agent (agent_in_app), bound to the conversation", async () => {
+		model.scripts.push(callParts("list_projects", "r1", {}), speakParts("none"));
+		await chunksOf(await postOrg(body([userMsg("u1", "list my projects")], { turnId: "u1", baseRevision: 1 })));
+		expect(world.toolActors).toEqual([ORG_A]);
+		expect(world.toolCredentials).toEqual([`agent_in_app:${THREAD}`]);
 	});
 
 	it("a caller who left the pinned org: 403 org-forbidden before the hold", async () => {
