@@ -167,7 +167,9 @@ describe("sumFreeAiPoolUsed — who counts as free is billingAiTier's answer (#7
 		aiTier: "ai_plus",
 		aiSubscriptionStatus: "active",
 		aiStripeSubscriptionId: null,
+		aiPaddleSubscriptionId: null,
 		stripeSubscriptionId: null,
+		paddleSubscriptionId: null,
 		currentPeriodEnd: null,
 		...over,
 	});

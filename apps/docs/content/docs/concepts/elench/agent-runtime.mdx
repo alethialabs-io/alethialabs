@@ -3,8 +3,6 @@ title: Agent harness
 description: One tool registry exposed read-only to external agents, per-agent identities with isolated memory, a stateless executor, and a supervisor that delegates to a colony.
 ---
 
-# Agent harness
-
 <Enterprise />
 
 The harness exposes the platform's tools **once** and reuses them everywhere — the in-app agent, and the
@@ -30,17 +28,21 @@ explicit audience, so the external surface can never silently widen.
   actor and enforces its PDP verb at call time; the audience map only decides *visibility*.
 </Callout>
 
-## The MCP surface — read-only at launch
+## The MCP surface
 
-The remote MCP server (`app/api/mcp/route.ts`, OAuth 2.1 via Better Auth + actor binding) consumes
-`buildExternalAgentTools()` — so HITL proposals, canvas tools, and job-queuing writes (`scan_repo`) never
-reach an external agent. A single endpoint serves Claude Code, ChatGPT, Codex, and Gemini/Zed-via-ACP.
+The remote MCP server (`app/api/mcp/route.ts`, OAuth 2.1 via Better Auth + actor binding) serves two
+things side by side: `buildExternalAgentTools()` — so HITL proposals, canvas tools and the in-app
+job-queuing tools never reach an external agent — and the declared operation tools of the external
+contract (`lib/ai/mcp/surface.ts`) that have a handler: `plan`, `request_apply`, `request_destroy`,
+`wait_for_job`, `get_job_logs`, `cancel_job`. A single endpoint serves Claude Code, ChatGPT, Codex, and
+Gemini/Zed-via-ACP.
 
-<Callout type="warn">
-  Writes stay **out** of the external surface until an approval-over-MCP design exists: a multi-turn
-  HITL approval (propose → human click → resume) does not project onto a single stateless MCP
-  `tools/call`. The endpoint is a connector, not the moat — the moat is the governed, provable execution
-  behind it.
+<Callout type="info">
+  Approval over MCP is out of band. `request_apply` records a pending approval bound to the plan's
+  digest and the calling client, and returns a console link; a person approves it there. The agent
+  then calls `request_apply` again, and only that call — for the approved plan, once — queues the
+  deploy, through the same queue gate (`requireApplyAuthorization`) every surface uses. No tool
+  approves, so text an agent reads can lead at most to a pending request.
 </Callout>
 
 ### The proof surface over MCP
@@ -54,7 +56,7 @@ The evidence half of Elench is readable by an external agent, not just the dashb
 | `audit_infrastructure` | `in-app` | Queues an `AUDIT` job over a bring-your-own plan / manifests (a job-queuing write → stays in-app). |
 
 So a customer's own agent can ask "is this cluster still in sync, and did the last deploy pass the gate?"
-over the read-only MCP surface — the "keep proving it" evidence, not just the build.
+over the MCP surface — the "keep proving it" evidence, not just the build.
 
 ## Agents are DATA, not processes
 

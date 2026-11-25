@@ -33,6 +33,7 @@
             "/privacy/:path*",
             "/cookies",
             "/consumer-rights",
+            "/refunds",
             "/ai-transparency",
             "/acceptable-use",
             "/legal",

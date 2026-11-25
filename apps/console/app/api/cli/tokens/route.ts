@@ -5,11 +5,7 @@ import { desc, eq } from "drizzle-orm";
 import { AGENT_SCOPES } from "@/lib/approvals/types";
 import { authorizeCli } from "@/lib/authz/guard";
 import type { ScopeCeiling } from "@/lib/authz/types";
-import {
-	type MintedServiceToken,
-	mintServiceToken,
-	NarrowServiceTokenError,
-} from "@/lib/cli/service-token";
+import { mintServiceToken } from "@/lib/cli/service-token";
 import { getServiceDb } from "@/lib/db";
 import { cliServiceTokens } from "@/lib/db/schema";
 import { NextResponse } from "next/server";
@@ -23,11 +19,9 @@ import { createTokenSchema } from "@/lib/validations/cli-request-bodies";
  * SHA-256. A "show me the token again" endpoint is the single change that would undo the whole
  * design, so it is worth stating that its absence is deliberate.
  *
- * `POST` mints one and returns the plaintext, once. A token carries every scope over every project of
- * the org. A request naming fewer scopes, or any project list, is refused with
- * `narrow_tokens_unavailable` (`NarrowServiceTokenError`, lib/cli/service-token.ts): the plan,
- * deploy and destroy route (`POST /api/jobs`) does not read a token's limit yet, so a narrower token
- * is not offered until it does.
+ * `POST` mints one and returns the plaintext, once. A token carries the scopes and the project list
+ * the request names, or every scope over every project when it names neither. Every route that acts
+ * for a service token holds it to that limit, `POST /api/jobs` included.
  *
  * Both are gated on `manage` over `org` rather than `view`: minting a credential that can act as you
  * is an administrative act, and listing them tells an attacker which pipelines exist and when each
@@ -84,21 +78,13 @@ export async function POST(req: Request) {
 		? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
 		: null;
 
-	let minted: MintedServiceToken;
-	try {
-		minted = await mintServiceToken({
-			organizationId: actor.orgId,
-			name: parsed.data.name,
-			createdBy: actor.userId,
-			expiresAt,
-			ceiling,
-		});
-	} catch (e) {
-		if (e instanceof NarrowServiceTokenError) {
-			return NextResponse.json({ error: e.message, code: e.code }, { status: 400 });
-		}
-		throw e;
-	}
+	const minted = await mintServiceToken({
+		organizationId: actor.orgId,
+		name: parsed.data.name,
+		createdBy: actor.userId,
+		expiresAt,
+		ceiling,
+	});
 
 	return NextResponse.json(
 		{

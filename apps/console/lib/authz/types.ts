@@ -103,6 +103,13 @@ export interface Actor {
 	 * a service token); absent means the actor's own grants are the whole answer.
 	 */
 	ceiling?: ScopeCeiling;
+	/**
+	 * Which credential of its kind this actor was built from, when the kind has more than one per
+	 * person: the `cli_service_tokens.id` of a service token. Set beside {@link ceiling} by
+	 * `withServiceTokenCeiling` (lib/authz/guard.ts). The approval engine (lib/approvals) binds an
+	 * approval to it and reads the token's automatic-deploy environments by it.
+	 */
+	credentialRef?: string;
 }
 
 /**
@@ -183,6 +190,15 @@ export interface Entitlements {
 	 * pools are a future project). Self-managed operators manage pools regardless of this flag.
 	 */
 	managedPools: boolean;
+	/**
+	 * The enterprise agent-policy toggles (agent surface §4.9, AGT-L14): "require a different
+	 * approver" — which also makes a person's own console deploy to production, and every destroy,
+	 * need a second person — and the OAuth client allow-list. The columns live in core and are read
+	 * only while this is `true`; the kill switch and "agents may not apply to production" are core
+	 * safety controls and are never gated by it. A licence whose entitlements claim does not name it
+	 * does not grant it (every reader tests for the boolean `true`).
+	 */
+	agentPolicy: boolean;
 	/**
 	 * Runner-scheduling quotas (ADR 20). Mirrors the authoritative SQL mapping in
 	 * programmables.sql (plan_max_concurrency / plan_priority) for UI + insert-time

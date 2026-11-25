@@ -3,8 +3,6 @@ title: OpenFGA engine
 description: The optional relationship-based authorization engine — what it is, how the model is generated, and how to stand it up.
 ---
 
-# OpenFGA engine
-
 <Enterprise />
 
 Alethia's authorization runs behind one interface (the [Policy Decision Point](/concepts/access-control/architecture)),
@@ -39,7 +37,7 @@ same decision — including the allow/deny precedence and hierarchy inheritance 
 ## Standing it up
 
 The high-level operator steps (the full runbook is in
-[Enterprise setup](/guides/self-hosting/enterprise-setup)):
+[Enterprise setup](/self-host/enterprise-setup)):
 
 <Steps>
 <Step>Bring up the `enterprise` compose profile — the OpenFGA server and its own datastore.</Step>
@@ -58,4 +56,4 @@ backfill, no application changes.
 ## Next
 
 - The engine interface and the binding flip: [**architecture**](/concepts/access-control/architecture).
-- Turning it on: [**Enterprise setup**](/guides/self-hosting/enterprise-setup).
+- Turning it on: [**Enterprise setup**](/self-host/enterprise-setup).

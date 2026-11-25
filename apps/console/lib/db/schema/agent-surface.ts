@@ -78,7 +78,10 @@ export const applyApprovals = pgTable(
 		/** The person the requesting credential acts for. No FK, like `jobs.user_id`. */
 		requester_user_id: uuid().notNull(),
 		requester_credential: actorCredential().notNull(),
-		/** The token id (service token) or OAuth client id (agent_oauth); null for the other kinds. */
+		/**
+		 * The token id (service token), OAuth client id (agent_oauth) or conversation id (agent_in_app,
+		 * lib/agent/in-app-credential.ts); null for the other kinds.
+		 */
 		requester_credential_ref: text(),
 		/** The requester's note. UNTRUSTED text: rendered as such, never as an instruction. */
 		reason: text(),
@@ -87,6 +90,11 @@ export const applyApprovals = pgTable(
 		/** The browser session that decided. No FK: sessions are deleted on sign-out and expiry. */
 		approver_session_id: uuid(),
 		decided_at: timestamp({ withTimezone: true }),
+		/**
+		 * The decider's optional reason, given when denying (AGT-L2, gap G3). UNTRUSTED text, like
+		 * `reason`: shown to the requester and their agent as data, never as an instruction.
+		 */
+		decision_reason: text(),
 		/** Set at creation from the org's approval TTL (default 60 minutes, at most 24 hours). */
 		expires_at: timestamp({ withTimezone: true }).notNull(),
 		consumed_at: timestamp({ withTimezone: true }),
@@ -128,6 +136,10 @@ export const applyApprovals = pgTable(
 			sql`status NOT IN ('approved', 'rejected', 'consumed') OR (approver_user_id IS NOT NULL AND decided_at IS NOT NULL)`,
 		),
 		check("apply_approvals_expiry_after_create", sql`expires_at > created_at`),
+		check(
+			"apply_approvals_decision_reason_length",
+			sql`decision_reason IS NULL OR char_length(decision_reason) <= 500`,
+		),
 	],
 );
 

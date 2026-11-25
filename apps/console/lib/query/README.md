@@ -220,7 +220,7 @@ server component and the client read a link identically:
 
 | Param | Read | Write | Absent or unreadable means |
 | --- | --- | --- | --- |
-| `?page=<n>` | `pageFromUrl` | `pagePatch` | the first page |
+| `?page=<n>` | `pageFromUrl` | `pagePatch` | the first page — **retired** (see "Paging"; the guard's `page-url` rule fails a new call, and the helpers go with their last caller, LST-14) |
 | `?selected=<id>` | `selectionFromUrl` | `selectionPatch` | nothing is open |
 | `?range=<value>` | `rangeFromUrl` | `rangePatch` | the page's default window |
 
@@ -237,16 +237,14 @@ way it is one value (`lib/query/range-filter.ts`), so a preset link stays relati
 is the input; `FacetFilter` (checkbox popover) for any option list; `FilterChipGroup`
 for ≤ ~7 always-visible options (stages); `MultiCombobox` for long/searchable entity
 lists (clouds via the option `leading` icon slot, authors, projects); `FilterBarReset`
-for the mono "Reset · N". Result counts live in the **count pill above the list** —
-next to the section heading (`@repo/ui/section-heading`) where the list has one, and
-otherwise in the page's toolbar row (`@repo/ui/page-toolbar`), which is where a list
-page's count went when the console dropped its page titles. Never "N of M" prose in
-the bar. Radix `Select`s and stat-card strips are
+for the mono "Reset · N" — a count of the USER'S OWN choices, which stays. A list carries **no
+result count** at all: see "Counts" below (this paragraph used to require a count pill; the
+maintainer removed it on 2026-11-24, #7481). Radix `Select`s and stat-card strips are
 banned from filter bars.
 
 The evidence page is the reference implementation; jobs (`getJobsPage` + `useJobsFilters`),
-runners (`getRunnersPage` + `useRunnerFilters`), and activity (`useActivityQuery`, the
-cursor-paginated infinite variant — the cursor is the `pageParam`, never part of the key)
+runners (`getRunnersPage` + `useRunnerFilters`), and activity (`queryActivityPage` +
+`useKeysetList`, the keyset-paged variant — the cursor is the `pageParam`, never part of the key)
 follow it (#578).
 
 **Every surface is on it — seventeen since the clusters and environments lists joined (#6819) —
@@ -276,12 +274,100 @@ list page filters in SQL.
 `searchParams → RSC → props` model instead of store→key→`useQuery`, and that is the
 CORRECT form of this standard when the grid itself is server-rendered: the URL is the
 store (shareable by construction, non-default-only params — the same codec
-`useFilterUrlSync` emits), the RSC re-resolves `queryProjects` server-side with facets
-over the unfiltered universe, `useTransition`'s `isPending` plays the `keepPreviousData`
-dim, the search box debounces its draft before touching the URL, and the count pill
-rule applies unchanged. A pristine `/{org}` URL means pristine filters, which since #6814
+`useFilterUrlSync` emits), the RSC prefetches the FIRST keyset page of `queryProjectsPage`
+(facets over the unfiltered universe) under the infinite key `useKeysetList` asks for, the
+browser reads every later page itself (LST-4 #7486), `useTransition`'s `isPending` plays the
+`keepPreviousData` dim, the search box debounces its draft before touching the URL, and the
+paging and counts rules below apply unchanged. A pristine `/{org}` URL means pristine filters, which since #6814
 is what the store form does by default too. Use the TanStack form for client-fetched lists; use URL→RSC when the page is an
 RSC that renders the rows itself. Do not convert one into the other without a reason.
+
+## Paging (the standard, #7481)
+
+Every list pages ONE way: **keyset**, server-side, through one cursor codec. Before this the
+console paged six ways (keyset, grow-limit, client page numbers, a client render window, silent
+server caps, none), three lists silently dropped rows past a cap, and eight shipped their whole
+universe to the browser to page it there.
+
+**Server.** A list reads through a `query<Thing>Page(tx, scope, query, { cursor, limit })` builder in
+`lib/queries/`, returning `KeysetListPage<Row, Facets>` (`lib/queries/keyset.ts`):
+
+```ts
+{ rows: Row[]; nextCursor: string | null; facets: Facets | null; universeEmpty: boolean | null }
+```
+
+`facets` and `universeEmpty` come on the FIRST page only (`keysetListPage(page, first)` sets them
+null on any later one). The order is total: the sort key, then the id. The pieces, all in
+`lib/queries/keyset.ts`:
+
+| Piece | What it does |
+| --- | --- |
+| `keysetPageInput(kind?)` | spread into the procedure's `z.object({ ...filters, ...keysetPageInput() })`: an opaque `cursor`, decoded at the boundary, and `limit` (default 50, **refused** above 100 — never clamped). A malformed cursor fails validation, which oRPC answers **400** — never page one. |
+| `keysetSortKey(col)` | the sort key truncated to milliseconds. Pass THIS to both of the next two: the order and the predicate must read one expression, or a row in the cursor's millisecond but a later microsecond is skipped (the support list's lesson, #7389). |
+| `keysetOrderBy(key, id)` / `keysetAfter(key, id, cursor, kind?)` | `ORDER BY key desc, id desc` and the row-value predicate `(key, id) < (at, id)`. |
+| `keysetFetchLimit(limit)` → `keysetPage(rows, limit, keyOf)` | read `limit + 1`, cut to `limit`, mint `nextCursor` from the last kept row — so the end is known exactly, with no wasted empty page. |
+| `keysetPageInMemory(universe, request, keyOf, kind?)` | the same contract over a COMPOSED universe (runners, clusters, environments): ordered and cut on the server, so the browser still receives one page. |
+| `encodeKeysetCursor` / `decodeKeysetCursor` | the codec: base64url over a versioned `(ms ISO instant, id)` tuple. Opaque on purpose. |
+
+External sources map their native cursor onto `nextCursor` (Stripe's `starting_after`). A
+**bounded** list — configuration whose size the product caps — may be unpaged ONLY with a recorded
+decision naming the server-side bound (a `bounded` file in `apps/console/list-standard/`).
+
+**Client.** `useKeysetList(orpc.<domain>.<proc>, normalizedQuery)` (`lib/query/use-keyset-list.ts`)
+wraps `useInfiniteQuery`: the cursor is the `pageParam`, **never in the key and never in the URL**; a
+filter change is a new key, so the walk restarts at page one; `keepPreviousData` keeps the old rows
+(dim them on `isPlaceholderData`, `opacity-60`); rows are joined across pages keeping each id once.
+Render the rows through `<DataTable keyset={list} …>` (server mode: every loaded row, no client
+sort or pages) or a card grid followed by `<ListFooter list={list} />` (`components/list/`): an
+invisible scroll sentinel PLUS an always-visible "Load more" button (keyboard, screen reader, no
+IntersectionObserver), a busy state while a page is in flight, a "Couldn't load more · Try again"
+line on a failed page with the rows kept, and **nothing** at the end. A route that prefetches the
+first page uses `prefetchInfiniteQuery` with the same `infiniteOptions`, so the keys agree.
+
+**States**, one each: first page pending → the skeleton / DataTable placeholder rows;
+`universeEmpty === true` → `EmptyState` with the create action; rows empty and
+`universeEmpty === false` → `EmptyState` "No … match these filters" + "Clear filters";
+first page failed → `RegionError` with retry (`list.query`); a refresh failed behind rows → rows
+stay plus DataTable's stale notice; a later page failed → rows stay plus `ListFooter`'s retry line.
+
+**Banned:** client page numbers over fetched rows (DataTable client mode, `.slice` page
+arithmetic, `?page=`), render windows over a fully fetched list, grow-limit re-reads, silent
+server caps, the rows-per-page `Select`.
+
+## Counts (the standard, #7481)
+
+- **No count pill on a list.** No `CountPill`, no `count=` on `PageToolbar` or `SectionHeading`.
+  The prop itself goes once its last caller has (LST-14).
+- **No "N of M", "Showing X of Y" or "N total" prose** anywhere around a list.
+- Totals exist only as **facet option counts**, computed by the facet pass. `universeEmpty` is a
+  boolean, never a count.
+- A number that IS the content (the agent artifact tile's plan counts) is not a list count; it is
+  recorded as a `content` decision.
+
+## The guard and its ledger
+
+`pnpm check:filter-standard` measures both sections above (`scripts/check-filter-standard.mjs`,
+"the LIST standard") as site counts per subject — a module, or a filter surface
+(`store:<symbol>`) — under nine rules: `count-pill`, `count-prose`, `page-slice`,
+`render-window`, `page-url`, `grown-limit`, `client-table`, `keyset-contract`, `keyset-builder`.
+The census is wider than the filter surfaces: any module that renders a `DataTable`, calls
+`useKeysetList`, or hand-rolls an infinite query is a list subject, so a list with no filter bar
+cannot escape. F5 (inverted: no pill) is gated here too.
+
+Every site must be declared in `apps/console/list-standard/<surface>.json` — **one file per
+surface**, so lanes converting surfaces in parallel never edit the same file:
+
+```json
+{ "kind": "debt", "owner": "#7483", "lane": "LST-1", "why": "…",
+  "findings": { "apps/console/app/(private)/[org]/~/jobs/jobs-client.tsx": { "count-pill": 1 } } }
+```
+
+`debt` names an open LST issue of #7481 (any other owner fails); `bounded` carries `decided`,
+`decision` and `bound` and may excuse only paging rules; `content` carries `decided` and `decision`
+and may excuse only `count-pill`. The declared count must EQUAL the measured one, both ways: a new
+site in an indebted module fails, and so does a declaration that overstates what is left — so
+converting a surface shrinks or deletes its file in the same commit, and that deletion is the proof.
+`bounded` and `content` files sit under ceilings in the script (`LIST_STANDARD_CEILINGS`).
 
 ## Realtime
 

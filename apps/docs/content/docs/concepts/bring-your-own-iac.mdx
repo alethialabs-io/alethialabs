@@ -3,8 +3,6 @@ title: Bring-your-own IaC
 description: Attach a git repo holding your own OpenTofu root module to a project environment — Alethia provisions from your module instead of its built-in template, behind a fail-closed static safety gate, a frozen variable contract, and the same verify gate as template provisioning.
 ---
 
-# Bring-your-own IaC
-
 Alethia normally provisions from its own per-cloud project templates (EKS / GKE / AKS / Talos +
 supporting services). **Bring-your-own IaC (BYO IaC, "E3")** lets you point a project **environment** at
 a git repository holding your **own OpenTofu root module** — Alethia then provisions that environment
@@ -260,7 +258,7 @@ determines whether it is available:
   **Managed BYO IaC is trusted-only / gated until the isolation canary passes.** Do not assume managed
   availability. The container sandbox and its turn-on sequence are documented in
   [Isolated Execution → Architecture](/concepts/isolated-execution/architecture) and the
-  [Managed provisioning runbook](/guides/self-hosting/managed-provisioning#untrusted-byo-container-sandbox-3b).
+  [Managed provisioning runbook](/self-host/managed-provisioning#untrusted-byo-container-sandbox-3b).
   Self-hosted BYO IaC is available today under the flag.
 </Callout>
 

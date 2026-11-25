@@ -1,7 +1,6 @@
 {
 	"title": "Concepts",
 	"icon": "Lightbulb",
-	"root": true,
 	"pages": [
 		"index",
 		"---The model---",
@@ -26,7 +25,9 @@
 		"---Security & access---",
 		"security",
 		"authentication",
+		"cluster-access",
 		"connectors",
+		"connection-health",
 		"access-control",
 		"elench"
 	]

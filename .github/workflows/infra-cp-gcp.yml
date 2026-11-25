@@ -1,7 +1,7 @@
 name: Infra - CP GCP
 
 # VALIDATE-ONLY, and credential-free by construction. `infra/cp-gcp` is a self-hosting option a
-# user applies in THEIR OWN GCP project (apps/docs/.../self-hosting/terraform/gcp.mdx); it is not a
+# user applies in THEIR OWN GCP project (apps/docs/.../self-host/terraform/gcp.mdx); it is not a
 # deployment target of ours. Hosted prod runs on `cp-hetzner`. Until 2026-11-14 this file also
 # carried a push-to-main `apply` job behind `vars.INFRA_GCP_APPLY` and a static service-account
 # JSON key (`secrets.GOOGLE_CREDENTIALS`). That job never applied anything: its one run (the

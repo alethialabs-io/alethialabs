@@ -3,8 +3,6 @@ title: Command Reference
 description: Complete reference for all alethia CLI commands organized by group.
 ---
 
-# Command Reference
-
 alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
 `org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`,
 `classification`, `ops`), a set of read-only inspection groups (`repo`, `cloud`, `agent`, `addon`,
@@ -27,6 +25,7 @@ alethia
 │                                    # init + apply: from nothing to a running project
 ├── apply [-f alethia.yaml] [--runner <name>] [--env <e>…] [-y/--yes] [--no-wait]   # the file → a running project
 ├── plan  [-f alethia.yaml]          # what apply would create; writes nothing
+├── approve [approval_id] [--no-browser]   # open the page where a person approves a CLI deploy or destroy
 ├── export [project] [--env <e>] [--all] [--out alethia.yaml] [--force]  # a live project → alethia.yaml
 ├── login [-f/--force] [--web-origin <url>]
 ├── logout
@@ -100,9 +99,10 @@ alethia
 ├── provider                          # aliases: providers — read and re-verify a connection
 │   ├── status [provider]             # asks when omitted; `alethia connector` is what CHANGES one
 │   └── verify [provider]             # re-run the server-side auth + capability probe
-├── agent                             # alias: agents — inspect agent identities
+├── agent                             # alias: agents — inspect agent identities, connect coding agents
 │   ├── list
-│   └── get [agent_id]                # asks when omitted
+│   ├── get [agent_id]                # asks when omitted
+│   └── setup [--client <c>…] [--project <p>] [--read-only]   # MCP config + AGENTS.md for Claude Code, Cursor, Codex, VS Code
 ├── addon                             # alias: addons — marketplace add-ons (-p/--project · -e/--env)
 │   ├── list
 │   ├── enable [addon_id] [--mode managed|gitops] [--set k=v] [--values-file f]

@@ -1,13 +1,14 @@
 {
 	"title": "Troubleshooting",
 	"icon": "LifeBuoy",
-	"root": true,
 	"pages": [
 		"index",
 		"sign-in",
 		"connect",
 		"deploy",
 		"destroy",
+		"cluster-access",
+		"mcp",
 		"billing"
 	]
 }

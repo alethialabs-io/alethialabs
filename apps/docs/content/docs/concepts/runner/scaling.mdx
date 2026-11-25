@@ -3,8 +3,6 @@ title: Warm-pool scaling
 description: How the managed fleet sizes itself — the in-app scaler's 60-second loop that keeps a warm pool of runners per provider, lifts it with queue depth, and destroys the idle surplus.
 ---
 
-# Warm-pool scaling
-
 The managed fleet runs as a **warm pool** per provider. A pool keeps a small floor of runners ready
 even when the queue is empty — one by default — so the common job starts without a VM boot. When
 jobs back up, an **in-app scaler** creates more VMs; when the backlog clears, it destroys the idle
@@ -17,7 +15,7 @@ Console process (`apps/console/lib/fleet/`).
   no EventBridge rule, and no `ecs:UpdateService` desired-count toggle in the managed path. ECS
   Fargate survives only in the **self-deployed** runner template (`infra/templates/runner/aws/`) —
   see [Self-operated runners](/guides/runners/self-operated). For the managed-fleet operator's guide
-  see [Managed provisioning](/guides/self-hosting/managed-provisioning).
+  see [Managed provisioning](/self-host/managed-provisioning).
 </Callout>
 
 ## The control loop

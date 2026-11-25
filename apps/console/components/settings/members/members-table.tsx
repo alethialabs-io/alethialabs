@@ -13,6 +13,7 @@
 
 import type { CellContext, ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -30,7 +31,8 @@ import { DataTable } from "@/components/data-table";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import type { ActionResult } from "@/lib/actions/result";
+import { hrefWithParamPatch, PAGE_PARAM, pageFromUrl, pagePatch } from "@/lib/query/view-url-params";
+import { type ActionResult, describeActionError } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import {
   useMembersGateQuery,
@@ -73,6 +75,7 @@ import {
   MEMBER_STATUS_OPTIONS,
   type MemberRowView,
   normalizeMembersQuery,
+  SETTINGS_LIST_PAGE_SIZE,
 } from "./members-filters";
 import { viaAuth } from "./auth-action";
 import { PeopleListSkeleton } from "./people-skeleton";
@@ -343,6 +346,7 @@ function MemberCell({ row }: CellContext<MemberRowView, unknown>) {
         <span className="break-all font-mono text-ui-2xs text-muted-foreground">
           {r.meta}
         </span>
+        {r.expiry && <InvitationExpiryLine row={r} />}
         {/* Classification (Workstream B) — members only (not invites). */}
         {r.kind === "member" && (
           <ClassificationControl
@@ -356,6 +360,49 @@ function MemberCell({ row }: CellContext<MemberRowView, unknown>) {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * When a pending invitation's link stops working, against the page's `asOf` like every relative time
+ * here (#5377). Better Auth keeps an expired invitation `pending`, so this comparison is the only
+ * thing that tells the two apart.
+ */
+export function invitationExpiry(
+  expiresAt: string,
+  asOf: string | undefined,
+): { label: string; expired: boolean } {
+  const now = asOf ? new Date(asOf) : undefined;
+  const expired = new Date(expiresAt).getTime() <= (now ?? new Date()).getTime();
+  const when = formatRelative(expiresAt, now);
+  return { label: expired ? `expired ${when}` : `expires ${when}`, expired };
+}
+
+/**
+ * The invitation's expiry under its sent line. An expired one says so and, for a manager, offers
+ * Resend right there — the same write as the menu's "Resend invitation", which issues a fresh link.
+ */
+function InvitationExpiryLine({ row: r }: { row: MemberRowView }) {
+  const { canManage, resend, busy } = useMembersCells();
+  if (!r.expiry) return null;
+  const reason = resendReason(r);
+  return (
+    <span className="flex flex-wrap items-center gap-2 font-mono text-ui-2xs text-muted-foreground">
+      <span>Link {r.expiry.label}</span>
+      {r.expiry.expired && canManage && (
+        <DisabledReason reason={reason}>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={busy.has(r.key)}
+            onClick={() => resend(r)}
+            aria-label={`Resend invitation to ${r.name}`}
+          >
+            Resend
+          </Button>
+        </DisabledReason>
+      )}
+    </span>
   );
 }
 
@@ -409,8 +456,11 @@ function TeamsCell({ row }: CellContext<MemberRowView, unknown>) {
   );
 }
 
-/** The row's lifecycle pill. */
+/** The row's lifecycle pill; an invitation whose link has expired says so instead of "Pending". */
 function StatusCell({ row }: CellContext<MemberRowView, unknown>) {
+  if (row.original.expiry?.expired) {
+    return <StatusBadge status="expired" tier="disabled" label="Expired" />;
+  }
   return <MemberStatusBadge status={row.original.status} />;
 }
 
@@ -551,33 +601,61 @@ function membersColumns(canManage: boolean): ColumnDef<MemberRowView>[] {
 /** Every read the members page shows; each write below invalidates all of them. */
 const MEMBERS_READS = [orpc.members.key()];
 
-/** One row of a bulk write: the row's key, and the write to run for it. */
+/** One row of a bulk write: the row's key, its name as the table shows it, and the write to run. */
 interface BulkStep {
   key: string;
+  label: string;
   run: () => Promise<ActionResult<unknown>>;
+}
+
+/** What a bulk run answers: the one result the mutation reports, and the rows that failed. */
+interface BulkOutcome {
+  result: ActionResult<{ done: number }>;
+  failedKeys: string[];
+}
+
+/** How many failed rows a partial-failure message names before it says "and N more". */
+const BULK_FAILURES_NAMED = 3;
+
+/**
+ * The partial-failure sentence (R6 E-12): how many failed, WHICH rows (with the server's reason when
+ * it gave one), and that they are still selected — it used to give a count and nothing else.
+ */
+export function bulkFailureMessage(
+  failures: readonly { label: string; reason: string | null }[],
+  total: number,
+): string {
+  const named = failures
+    .slice(0, BULK_FAILURES_NAMED)
+    .map((f) => (f.reason ? `${f.label} (${f.reason})` : f.label));
+  const more = failures.length - named.length;
+  const list = more > 0 ? `${named.join(", ")} and ${more} more` : named.join(", ");
+  return `${failures.length} of ${total} selected ${total === 1 ? "row" : "rows"} could not be changed: ${list}. ${failures.length === 1 ? "It stays" : "They stay"} selected.`;
 }
 
 /**
  * Runs a bulk write row by row and answers once: success when every row succeeded, otherwise a
- * `conflict` naming how many did not — the rows that did are already written, and the list is
- * invalidated either way.
+ * `conflict` naming the rows that did not — the rows that did are already written, and the list is
+ * invalidated either way. The failed rows' keys come back so the table can keep them selected.
  */
-async function runBulk(steps: BulkStep[]): Promise<ActionResult<{ done: number }>> {
-  let failed = 0;
+async function runBulk(steps: BulkStep[]): Promise<BulkOutcome> {
+  const failures: { key: string; label: string; reason: string | null }[] = [];
   for (const step of steps) {
     const result = await step.run();
-    if (!result.ok) failed += 1;
+    if (!result.ok) {
+      failures.push({ key: step.key, label: step.label, reason: describeActionError(result.error) });
+    }
   }
-  if (failed > 0) {
+  if (failures.length > 0) {
     return {
-      ok: false,
-      error: {
-        kind: "conflict",
-        message: `${failed} of ${steps.length} selected ${steps.length === 1 ? "row" : "rows"} could not be changed.`,
+      failedKeys: failures.map((f) => f.key),
+      result: {
+        ok: false,
+        error: { kind: "conflict", message: bulkFailureMessage(failures, steps.length) },
       },
     };
   }
-  return { ok: true, data: { done: steps.length } };
+  return { failedKeys: [], result: { ok: true, data: { done: steps.length } } };
 }
 
 /** Settings · Members: the filterable members + invitations table and its confirmations. */
@@ -594,7 +672,21 @@ export function MembersTable() {
   const filters = useMembersFilters((s) => s.filters);
   const set = useMembersFilters((s) => s.set);
   const reset = useMembersFilters((s) => s.reset);
-  const urlRead = useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS);
+  // A filter change goes back to the first page (`resetParams`): page 3 of the old answer is not a
+  // place in the new one.
+  const urlRead = useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS, undefined, {
+    resetParams: [PAGE_PARAM],
+  });
+  // The page index is URL state (R6 E-23), written in place so paging is not a server navigation.
+  const searchParams = useSearchParams();
+  const pageIndex = pageFromUrl(searchParams) - 1;
+  const onPageIndexChange = useCallback((index: number) => {
+    window.history.replaceState(
+      null,
+      "",
+      hrefWithParamPatch(window.location.pathname, window.location.search, pagePatch(index + 1)),
+    );
+  }, []);
   // Seeded from the URL, so a pasted `?search=…&statuses=…` asks first for the key the route
   // prefetched — not `{statuses}` alone, which it did not (#4999, as #4980 on `~/runners`).
   const search = useDebouncedValue(filters.search, 250, { urlRead });
@@ -682,7 +774,12 @@ export function MembersTable() {
     },
   );
   const bulk = useActionMutation(
-    ({ steps }: { steps: BulkStep[]; keys: string[] }) => runBulk(steps),
+    async ({ steps }: { steps: BulkStep[]; keys: string[] }) => {
+      const outcome = await runBulk(steps);
+      // A partial failure keeps exactly the rows that failed selected, so a retry acts on them.
+      if (outcome.failedKeys.length > 0) setSelected(new Set(outcome.failedKeys));
+      return outcome.result;
+    },
     {
       invalidates: MEMBERS_READS,
       successMessage: (d) => `${d.done} ${d.done === 1 ? "row" : "rows"} updated`,
@@ -762,6 +859,7 @@ export function MembersTable() {
       status: "pending",
       activity: "— invited",
       isYou: false,
+      expiry: invitationExpiry(i.expiresAt, asOf),
     }));
     return [...memberRows, ...inviteRows];
   }, [members, invites, viewerUserId, asOf]);
@@ -822,12 +920,14 @@ export function MembersTable() {
         if (r.role === "owner") continue;
         steps.push({
           key: r.key,
+          label: r.name,
           run: () =>
             viaAuth(() => authClient.organization.removeMember({ memberIdOrEmail: r.refId })),
         });
       } else {
         steps.push({
           key: r.key,
+          label: r.name,
           run: () => viaAuth(() => authClient.organization.cancelInvitation({ invitationId: r.refId })),
         });
       }
@@ -842,6 +942,7 @@ export function MembersTable() {
       .filter((r) => r.kind === "member" && r.role !== "owner" && r.status === "active")
       .map((r) => ({
         key: r.key,
+        label: r.name,
         run: () => setMemberSuspended({ memberId: r.refId, suspended: true }),
       }));
     return bulk.mutateAsync({ steps, keys: steps.map((step) => step.key) });
@@ -1056,7 +1157,13 @@ export function MembersTable() {
           className={page.isPlaceholderData ? "opacity-60 transition-opacity" : undefined}
         >
           <MembersCellsContext.Provider value={cells}>
-            <DataTable columns={columns} data={filtered} pageSize={20} />
+            <DataTable
+              columns={columns}
+              data={filtered}
+              pageSize={SETTINGS_LIST_PAGE_SIZE}
+              pageIndex={pageIndex}
+              onPageIndexChange={onPageIndexChange}
+            />
           </MembersCellsContext.Provider>
         </div>
       )}

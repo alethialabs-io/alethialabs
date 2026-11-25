@@ -100,6 +100,15 @@ vi.mock("@/lib/billing/job-quota", async (importOriginal) => ({
 	assertJobQuotaAllowed: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The reviewed-plan read is not this file's subject (tests/lib/approvals/plan-binding.test.ts and
+// tests/integration/plan-binding.test.ts prove it): every deploy here names a plan that resolves.
+vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/plan-binding")>()),
+	resolveReviewedPlan: vi.fn(async (_tx: unknown, target: { planJobId?: string | null }) => ({
+		planJobId: target.planJobId ?? "plan-1",
+		planSha256: "a".repeat(64),
+	})),
+}));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
 
@@ -220,7 +229,7 @@ describe("planProject — approval key (#5797)", () => {
 		state.insert.set(jobs, []);
 
 		await expect(
-			provisionProject("p1", undefined, undefined, undefined, KEY),
+			provisionProject("p1", "plan-1", undefined, undefined, KEY),
 		).resolves.toEqual({ jobId: "job-winner" });
 
 		expect(jobInserts()).toHaveLength(1);
@@ -231,7 +240,7 @@ describe("planProject — approval key (#5797)", () => {
 	it("a plan key and a deploy key of the same text store different digests", async () => {
 		state.insert.set(jobs, [{ id: "job-new" }]);
 		await planProject("p1", undefined, undefined, KEY);
-		await provisionProject("p1", undefined, undefined, undefined, KEY);
+		await provisionProject("p1", "plan-1", undefined, undefined, KEY);
 
 		const [plan, deploy] = jobInserts();
 		expect(keyOf(plan)).not.toBe(keyOf(deploy));

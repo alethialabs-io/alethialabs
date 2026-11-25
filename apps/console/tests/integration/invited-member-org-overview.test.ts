@@ -17,15 +17,15 @@
 // being right is not the claim — the claim is that the overview's own data path resolves for the
 // actor an accepted invitation produces. So the fixture calls the SAME function the ee
 // `afterAcceptInvitation` hook calls (`core.ensureMemberGrant(org.id, user.id, member.role)`) with
-// the SAME role string better-auth stores, then drives `queryProjects` / `getProjects` /
-// `readConnectedCloudProviders` — the three awaits in `app/(private)/[org]/page.tsx` — through the
-// real actor seam and the real community PDP.
+// the SAME role string better-auth stores, then drives the project grid's two reads — its first
+// keyset page (`readOverviewProjectsPage`) and its summary (`readOverviewProjectsSummary`, which
+// counts the projects and reads the connected clouds), both prefetched by
+// `app/(private)/[org]/page.tsx` — through the real actor seam and the real community PDP.
 
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { readConnectedCloudProviders } from "@/lib/rpc/procedures/connectors";
-import { getProjects, queryProjects } from "@/app/server/actions/projects";
+import { readOverviewProjectsPage, readOverviewProjectsSummary } from "@/lib/rpc/procedures/overview";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { getPdp } from "@/lib/authz";
@@ -56,6 +56,7 @@ const ENTITLEMENTS: Entitlements = {
 	advancedAlerting: true,
 	byoRunners: true,
 	managedPools: true,
+	agentPolicy: true,
 	quotas: {
 		maxConcurrentJobs: null,
 		priorityLevel: 30,
@@ -146,21 +147,22 @@ describeIfDb("an invited member can load /{org} (#3730)", () => {
 		expect(expected.has("member:manage_members")).toBe(false);
 	});
 
-	it("resolves every await in the org overview's server component", async () => {
-		// The three parallel awaits in app/(private)/[org]/page.tsx. Before the fix the first two
-		// threw ForbiddenError, which is what the `[org]` error boundary was catching.
-		const [{ projects, facets }, all, providers] = await runWithActor(
-			actorFor(INVITED),
-			async () =>
-				Promise.all([
-					queryProjects({ q: "", clouds: [], repos: [], sort: "activity" }),
-					getProjects(),
-					readConnectedCloudProviders(),
-				]),
+	it("resolves the project grid's reads the org overview prefetches", async () => {
+		// The grid's first page and its summary, as app/(private)/[org]/page.tsx prefetches them.
+		// Before the fix both authorize `view` on projects and threw ForbiddenError, which is what the
+		// `[org]` error boundary was catching.
+		const actor = actorFor(INVITED);
+		const [page, summary] = await runWithActor(actor, async () =>
+			Promise.all([
+				readOverviewProjectsPage({ q: "", clouds: [], repos: [], sort: "activity" }),
+				readOverviewProjectsSummary(actor),
+			]),
 		);
-		expect(Array.isArray(projects)).toBe(true);
-		expect(facets).toBeDefined();
-		expect(Array.isArray(all)).toBe(true);
-		expect(Array.isArray(providers)).toBe(true);
+		expect(Array.isArray(page.rows)).toBe(true);
+		expect(page.facets).not.toBeNull();
+		expect(typeof page.universeEmpty).toBe("boolean");
+		expect(typeof summary.projectCount).toBe("number");
+		// The summary swallows a failed clouds read into `null`; for this member it must not fail.
+		expect(Array.isArray(summary.connectedProviders)).toBe(true);
 	});
 });

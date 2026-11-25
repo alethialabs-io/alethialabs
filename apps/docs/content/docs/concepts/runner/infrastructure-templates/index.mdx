@@ -3,8 +3,6 @@ title: Infrastructure Templates Overview
 description: OpenTofu modules the runner uses to provision infrastructure across AWS, GCP, Azure, and Hetzner.
 ---
 
-# Infrastructure Templates
-
 The runner provisions infrastructure using pre-built OpenTofu modules (HCL). These templates are
 baked into the runner image at build time — each per-cloud image pre-runs `tofu init` on its
 template so no provider/module download happens at job time.

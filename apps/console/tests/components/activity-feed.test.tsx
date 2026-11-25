@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for the redesigned Activity feed: bold actor + target segments, the Denied
-// badge, avatar image-vs-initials fallback, month grouping, the empty state, and the
-// server-paged "Load more" affordance.
+// badge, avatar image-vs-initials fallback, month grouping, the empty state, and where the
+// caller's paging footer goes (the shared `ListFooter`, LST-10 #7492 — its own states are
+// locked in tests/components/settings/activity/activity-paging.test.tsx).
 
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ActivityRow } from "@/app/server/actions/activity";
 import { ActivityFeed } from "@/components/settings/activity/activity-feed";
 import type { ActivityContext } from "@/components/settings/activity/humanize-event";
@@ -91,8 +91,11 @@ describe("ActivityFeed", () => {
 		);
 		expect(screen.getByText("Denied")).toBeInTheDocument();
 		expect(screen.getByText("an activity-log export").tagName).toBe("STRONG");
-		// The deny reason moves to the row's tooltip (no second line).
-		expect(screen.getByTitle("Not an admin")).toBeInTheDocument();
+		// R6 E-24: the deny reason is on the row as text — a `title` reached only a mouse hover.
+		expect(screen.getByText("Not an admin")).toBeInTheDocument();
+		expect(screen.queryByTitle("Not an admin")).toBeNull();
+		// R6 F-24: through the shared status device, not a local pill.
+		expect(screen.getByText("Denied").closest(".vx-status--failed")).not.toBeNull();
 	});
 
 	it("shows the avatar image when present, else initials", () => {
@@ -128,31 +131,15 @@ describe("ActivityFeed", () => {
 		expect(screen.getByText(/no activity matches these filters/i)).toBeInTheDocument();
 	});
 
-	it("shows 'Load more' only when more pages exist and fires the callback", async () => {
-		const onLoadMore = vi.fn();
-		const { rerender } = render(
-			<ActivityFeed rows={[row()]} ctx={ctx} onLoadMore={onLoadMore} hasMore={false} />,
-		);
+	it("renders the caller's footer under the rows, and no paging control of its own", () => {
+		render(<ActivityFeed rows={[row()]} ctx={ctx} footer={<p>the footer</p>} />);
+		expect(screen.getByText("the footer")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
-
-		rerender(
-			<ActivityFeed rows={[row()]} ctx={ctx} onLoadMore={onLoadMore} hasMore />,
-		);
-		const button = screen.getByRole("button", { name: /load more/i });
-		await userEvent.click(button);
-		expect(onLoadMore).toHaveBeenCalledTimes(1);
 	});
 
-	it("disables 'Load more' while a page is loading", () => {
-		render(
-			<ActivityFeed
-				rows={[row()]}
-				ctx={ctx}
-				onLoadMore={vi.fn()}
-				hasMore
-				loadingMore
-			/>,
-		);
-		expect(screen.getByRole("button", { name: /load more/i })).toBeDisabled();
+	it("renders the empty answer, not the footer, when there are no rows", () => {
+		render(<ActivityFeed rows={[]} ctx={ctx} empty={<p>nothing</p>} footer={<p>the footer</p>} />);
+		expect(screen.getByText("nothing")).toBeInTheDocument();
+		expect(screen.queryByText("the footer")).toBeNull();
 	});
 });

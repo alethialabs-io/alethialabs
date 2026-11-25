@@ -1,0 +1,68 @@
+name: Version packages
+
+# Keeps ONE open "Version packages" PR into dev that turns the pending changesets into version bumps
+# and CHANGELOG entries for the packages published as @alethialabs/* (packages/public-packages.json,
+# docs/contributing/releasing-packages.md). The PR goes through review and the Mergify queue like any
+# other dev PR; a promotion then carries the bump to main, where release-packages.yml publishes it.
+#
+# It targets dev, not main: main only takes pinned release/<sha> promotions (branch-flow-guard.yml).
+#
+# No `id-token` and no cloud credentials, and it runs only on push to dev: nothing here is reachable
+# from a pull_request (scripts/check-workflow-oidc-isolation.mjs).
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - ".changeset/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: version-packages
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # A GitHub App token, not GITHUB_TOKEN: a PR opened by GITHUB_TOKEN triggers no workflows, so
+      # its required checks would never run and Mergify could never merge it (the same reason
+      # release-please.yml mints one).
+      - name: Mint token (GitHub App)
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app_token.outputs.token }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Open or update the Version packages PR
+        uses: changesets/action@v2
+        with:
+          # v2 renamed every input (version -> version-script, title -> pr-title, ...) and reads the
+          # token from `github-token`, not from GITHUB_TOKEN. The app token is what makes the PR
+          # trigger CI; the default GITHUB_TOKEN would open a PR no workflow runs on.
+          version-script: pnpm changeset version
+          pr-title: "chore(release): version the @alethialabs packages"
+          commit-message: "chore(release): version the @alethialabs packages"
+          create-github-releases: false
+          push-git-tags: false
+          github-token: ${{ steps.app_token.outputs.token }}
+        env:
+          GITHUB_TOKEN: ${{ steps.app_token.outputs.token }}

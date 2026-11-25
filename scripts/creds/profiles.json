@@ -21,6 +21,16 @@
       "vars": ["STRIPE_API_KEY"],
       "description": "Stripe LIVE-mode secret key. Real money: only on an explicit maintainer instruction."
     },
+    "paddle-sandbox": {
+      "source": "keychain",
+      "vars": ["PADDLE_API_KEY"],
+      "description": "Paddle SANDBOX API key (pdl_sdbx_apikey_…)."
+    },
+    "paddle-live": {
+      "source": "keychain",
+      "vars": ["PADDLE_API_KEY"],
+      "description": "Paddle LIVE API key (pdl_live_apikey_…). Real money: only on an explicit maintainer instruction."
+    },
     "vercel": {
       "source": "keychain",
       "vars": ["VERCEL_TOKEN"],

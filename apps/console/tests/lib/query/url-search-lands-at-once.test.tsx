@@ -15,7 +15,8 @@
 // Each test renders the REAL surface on a link carrying `search=`, with fake timers that are never
 // advanced — so no debounce can elapse — and asserts the link's search already reached the surface's
 // data seam (the server action or query hook it is asked through) or, where the search is applied
-// on the client (support cases, connectors), that the non-matching row is not on screen.
+// on the client (connectors), that the non-matching row is not on screen. Support cases apply it on
+// the server since #7396: the list must already be reading the link's filtered key.
 //
 // Mutation check (done when this was written): dropping `{ urlRead }` from each surface's
 // `useDebouncedValue` call fails that surface's test. The keystroke test passes either way — it is
@@ -123,6 +124,11 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
+// The Activity feed opens the shell's ONE upgrade sheet (R6 F-31); the provider is the org layout's.
+vi.mock("@/components/org/upgrade-sheet-provider", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/org/upgrade-sheet-provider")>()),
+	useUpgradeSheet: () => ({ openUpgrade: vi.fn() }),
+}));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
 vi.mock("@/components/settings/roles/role-sheet", () => ({ RoleSheet: () => null }));
 vi.mock("@/components/settings/sso/provider-sheet", () => ({ ProviderSheet: () => null }));
@@ -242,12 +248,19 @@ describe("CaseList — ~/support/my-cases?search=…", () => {
 
 	it("shows only the matching case before any debounce has elapsed", async () => {
 		currentSearch = "search=registry";
-		renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) =>
-			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, [
-				item("c1", 1042, "Runner cannot reach the registry"),
-				item("c2", 1043, "Invoice address is wrong"),
-			]),
-		);
+		const facets = { severity: [], type: [] };
+		// The unfiltered key holds both cases, the link's filtered key (what the route prefetches)
+		// only the match: a list still reading the unfiltered key shows the wrong row.
+		renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) => {
+			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, {
+				rows: [item("c1", 1042, "Runner cannot reach the registry"), item("c2", 1043, "Invoice address is wrong")],
+				facets,
+			});
+			qc.setQueryData(
+				orpc.support.cases.queryOptions({ input: { bucket: "all", search: "registry" } }).queryKey,
+				{ rows: [item("c1", 1042, "Runner cannot reach the registry")], facets },
+			);
+		});
 		await settleWithoutTime();
 
 		expect(screen.getByText("Runner cannot reach the registry")).toBeInTheDocument();

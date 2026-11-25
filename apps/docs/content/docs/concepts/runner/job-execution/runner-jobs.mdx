@@ -3,15 +3,13 @@ title: Runner Lifecycle Jobs
 description: DEPLOY_RUNNER, UPDATE_RUNNER, and DESTROY_RUNNER jobs.
 ---
 
-# Runner Lifecycle Jobs
-
 These job types manage Runner infrastructure.
 
 <Callout type="info">
   Connection verification and resource discovery are **not** runner jobs. Cloud connections are
   verified server-side by the console the moment you connect (an instant auth + provisioning-permission
   probe), and the asset inventory is maintained server-side + event-driven — see
-  [Connection health & inventory](/guides/connectors/health-and-inventory). The runner is
+  [Connection health & inventory](/concepts/connection-health). The runner is
   provisioning-only.
 </Callout>
 

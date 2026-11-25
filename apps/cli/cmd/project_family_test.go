@@ -447,11 +447,180 @@ func TestProjDeploy_AsksBeforeItQueues(t *testing.T) {
 	}
 }
 
+// TestProjDeploy_WithoutAPlanPreviewsFirst pins plain `project deploy`: a deploy applies a reviewed
+// plan, so with no --plan-job-id or --latest-plan it queues a PLAN for the same project,
+// environment and runner, waits for it, prints what it would change, asks, and then queues the
+// DEPLOY of exactly that plan.
+func TestProjDeploy_WithoutAPlanPreviewsFirst(t *testing.T) {
+	s := &projServer{envs: projSampleEnvs(), jobMeta: map[string]any{
+		"plan_result": map[string]any{"resource_changes": []any{
+			map[string]any{"change": map[string]any{"actions": []any{"create"}}},
+			map[string]any{"change": map[string]any{"actions": []any{"create"}}},
+			map[string]any{"change": map[string]any{"actions": []any{"update"}}},
+			map[string]any{"change": map[string]any{"actions": []any{"delete", "create"}}},
+			map[string]any{"change": map[string]any{"actions": []any{"no-op"}}},
+		}},
+	}}
+	h := projEnv(t, s)
+	projTTY(t)
+
+	var asked []string
+	prev := confirm
+	confirm = func(title, description string) bool {
+		asked = append(asked, description)
+		return true
+	}
+	t.Cleanup(func() { confirm = prev })
+
+	code, _, stderr := projExitCode(t, h, "project", "deploy", "--project", "web", "--runner-id", "r1", "--env", "production")
+	if code != 0 {
+		t.Fatalf("a confirmed deploy exited %d:\n%s", code, stderr)
+	}
+	var jobs []projPost
+	for _, post := range s.posts {
+		if post.Path == "/api/jobs" {
+			jobs = append(jobs, post)
+		}
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("want a PLAN then a DEPLOY, sent %+v", jobs)
+	}
+	plan, deploy := jobs[0].Body, jobs[1].Body
+	if plan["job_type"] != "PLAN" || plan["environment_id"] != "e1" || plan["assigned_runner_id"] != "r1" || plan["plan_job_id"] != nil {
+		t.Errorf("the preview must be a PLAN of the same environment on the same runner, sent %+v", plan)
+	}
+	if deploy["job_type"] != "DEPLOY" || deploy["plan_job_id"] != "j1" || deploy["environment_id"] != "e1" {
+		t.Errorf("the deploy must apply the plan it just made, sent %+v", deploy)
+	}
+	if !strings.Contains(stderr, "Plan: 2 to create, 1 to update, 1 to replace, 0 to delete.") {
+		t.Errorf("the plan's changes must be shown before the question, stderr:\n%s", stderr)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "plan job j1") {
+		t.Errorf("the question must name the plan it deploys, asked %q", asked)
+	}
+}
+
+// TestProjDeploy_AFailedPreviewDeploysNothing pins the failure: a preview that does not succeed
+// exits with the operation-failed code, says why and which job, and queues no DEPLOY.
+func TestProjDeploy_AFailedPreviewDeploysNothing(t *testing.T) {
+	s := &projServer{envs: projSampleEnvs(), jobStatuses: []string{"FAILED"}, jobErrMsg: "tofu plan: provider error"}
+	h := projEnv(t, s)
+
+	code, stdout, stderr := projExitCode(t, h, "project", "deploy", "--project", "web", "--runner-id", "r1", "--env", "production", "--yes")
+	if code != clierr.ExitOperationFailed {
+		t.Fatalf("a failed preview must exit %d, exited %d:\n%s", clierr.ExitOperationFailed, code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("a refusal writes nothing on stdout, wrote:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "PLAN job j1") || !strings.Contains(stderr, "nothing was deployed") {
+		t.Errorf("the error must name the preview and say nothing was deployed, stderr:\n%s", stderr)
+	}
+	for _, post := range s.posts {
+		if post.Path == "/api/jobs" && post.Body["job_type"] == "DEPLOY" {
+			t.Fatalf("a failed preview queued a DEPLOY: %+v", post.Body)
+		}
+	}
+}
+
+// TestProjDeploy_UnconfirmableQueuesNoPreview pins the order: a deploy nobody can confirm is
+// refused before the preview is queued, so no plan is spent on it.
+func TestProjDeploy_UnconfirmableQueuesNoPreview(t *testing.T) {
+	s := &projServer{envs: projSampleEnvs()}
+	h := projEnv(t, s)
+
+	code, _, _ := projExitCode(t, h, "project", "deploy", "--project", "web", "--env", "production", "--no-input")
+	if code != clierr.ExitInputRequired {
+		t.Fatalf("want exit %d, got %d", clierr.ExitInputRequired, code)
+	}
+	if _, ok := s.lastPost(); ok {
+		t.Fatal("an unconfirmable deploy queued a preview")
+	}
+}
+
+// TestProjDeploy_WithoutAPlanEdges covers the other ways a plain `project deploy` ends: a dry run
+// sends nothing and says a real run previews first; under json the plan summary stays off stderr
+// and stdout is the one result; a preview the control plane refuses, or accepts without naming a
+// job, deploys nothing.
+func TestProjDeploy_WithoutAPlanEdges(t *testing.T) {
+	base := []string{"project", "deploy", "--project", "web", "--runner-id", "r1", "--env", "production", "--yes"}
+
+	t.Run("dry run", func(t *testing.T) {
+		s := &projServer{envs: projSampleEnvs()}
+		h := projEnv(t, s)
+		code, _, stderr := projExitCode(t, h, append(base, "--dry-run")...)
+		if code != 0 {
+			t.Fatalf("a dry run exited %d:\n%s", code, stderr)
+		}
+		if _, ok := s.lastPost(); ok {
+			t.Fatal("a dry run queued a job")
+		}
+		if !strings.Contains(stderr, "first queues a preview") {
+			t.Errorf("the dry run must say a real run previews first, stderr:\n%s", stderr)
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		s := &projServer{envs: projSampleEnvs()}
+		h := projEnv(t, s)
+		r, stderr := famRunJSON(t, h, base...)
+		if r.Job == nil || r.Job.Type != "DEPLOY" {
+			t.Errorf("the result must be the DEPLOY, got %+v", r.Job)
+		}
+		if strings.Contains(stderr, "Plan:") || strings.Contains(stderr, "Job j1") {
+			t.Errorf("under json the plan summary is not printed, stderr:\n%s", stderr)
+		}
+	})
+
+	t.Run("preview refused", func(t *testing.T) {
+		s := &projServer{envs: projSampleEnvs(), failOn: []string{"/api/jobs"}}
+		h := projEnv(t, s)
+		if code, _, _ := projExitCode(t, h, base...); code == 0 {
+			t.Fatal("a refused preview must not exit 0")
+		}
+	})
+
+	t.Run("preview names no job", func(t *testing.T) {
+		s := &projServer{envs: projSampleEnvs(), noJob: true}
+		h := projEnv(t, s)
+		code, _, stderr := projExitCode(t, h, base...)
+		if code == 0 || !strings.Contains(stderr, "no plan to deploy") {
+			t.Fatalf("a preview with no job must stop the deploy, exited %d:\n%s", code, stderr)
+		}
+	})
+}
+
+// TestPlanChangeSummary counts tofu's resource changes the way the console's plan review does,
+// and says nothing for a job that recorded no plan result.
+func TestPlanChangeSummary(t *testing.T) {
+	meta := func(v map[string]interface{}) *map[string]interface{} { return &v }
+	for name, tc := range map[string]struct {
+		meta *map[string]interface{}
+		want string
+	}{
+		"no metadata":         {nil, ""},
+		"no plan result":      {meta(map[string]interface{}{}), ""},
+		"no resource changes": {meta(map[string]interface{}{"plan_result": map[string]interface{}{}}), ""},
+		"every action": {meta(map[string]interface{}{"plan_result": map[string]interface{}{"resource_changes": []interface{}{
+			map[string]interface{}{"change": map[string]interface{}{"actions": []interface{}{"delete"}}},
+			map[string]interface{}{"change": map[string]interface{}{"actions": []interface{}{"create", "delete"}}},
+			map[string]interface{}{"change": map[string]interface{}{"actions": []interface{}{"read"}}},
+			"not an object",
+		}}}), "Plan: 0 to create, 0 to update, 1 to replace, 1 to delete."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := planChangeSummary(tc.meta); got != tc.want {
+				t.Errorf("planChangeSummary = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDeployDescription_SaysWhatHasNoName covers the two defaults of the question: a project that
-// was picked rather than named is shown by its id, and a deploy with no plan says it runs its own.
+// was picked rather than named is shown by its id, and a deploy with no plan says it previews first.
 func TestDeployDescription_SaysWhatHasNoName(t *testing.T) {
 	got := deployDescription(api.QueueJobParams{ConfigurationID: "p1"}, "", "")
-	for _, want := range []string{"the default environment", "project p1", "runs its own plan"} {
+	for _, want := range []string{"the default environment", "project p1", "previews the environment first"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("description is missing %q: %s", want, got)
 		}

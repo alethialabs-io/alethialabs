@@ -9,10 +9,12 @@ import {
 	CASE_PAGE_SIZE,
 	type CaseListFilter,
 	type CaseListItem,
+	type CasePage,
 	type CasePageRequest,
 	type CaseWithThread,
 	getCaseWithThread,
 	listCasesForOwner,
+	queryCasesPage,
 } from "@/lib/queries/support";
 import { query } from "@/lib/rpc/base";
 import { withSupportScope } from "@/lib/support/scope";
@@ -42,6 +44,16 @@ export async function listSupportCases(
 }
 
 /**
+ * One page of the "My cases" list under the list's filters, with the facet counts on the first page
+ * (see {@link queryCasesPage}). Same visibility rule as {@link listSupportCases}: RLS, under the
+ * addressed org's support scope.
+ */
+async function readSupportCasesPage(filter: CaseListFilter, page: CasePageRequest): Promise<CasePage> {
+	const actor = await authorizeQuiet("view", { type: "support_case" });
+	return withSupportScope(actor, (tx) => queryCasesPage(tx, actor.userId, filter, page));
+}
+
+/**
  * One case with its customer-visible thread and attachments, or null when the caller cannot see it
  * — a case that never existed and a case of another org or another requester read the same.
  *
@@ -56,19 +68,34 @@ async function readSupportCase(id: string): Promise<CaseWithThread | null> {
 /**
  * The support domain's reads (ADR 0005 D1, #6130). `cases` backs "My cases", one keyset page of
  * {@link CASE_PAGE_SIZE} at a time: no `cursor` is the first page, and the next page's cursor is the
- * last row's (activity, id) — `nextCaseCursor` — so a case is never out of reach (#7389). `case` backs the case
+ * last row's (activity, id) — `nextCaseCursor` — so a case is never out of reach (#7389). Its
+ * search, severity and type are applied in the query, and the first page carries the facet counts
+ * over the caller's unfiltered cases (#7396), so a filter reaches every case, not the pages loaded. `case` backs the case
  * view and answers NOT_FOUND — never an empty value — for a case the caller cannot see, so the page
  * can render its not-found boundary distinctly from an error. The shell's bell keeps its own feed
  * (`workspace.supportCases`), which reads through {@link listSupportCases} too.
  */
 export const supportRouter = {
 	cases: query
-		.input(z.object({ bucket: caseBucket, cursor: caseCursor.optional() }))
-		.handler(({ input }) =>
-			listSupportCases(input.bucket === "all" ? {} : { status: input.bucket }, {
-				cursor: input.cursor,
-				limit: CASE_PAGE_SIZE,
+		.input(
+			z.object({
+				bucket: caseBucket,
+				search: z.string().max(200).optional(),
+				severity: z.array(z.string().max(64)).max(20).optional(),
+				type: z.array(z.string().max(64)).max(20).optional(),
+				cursor: caseCursor.optional(),
 			}),
+		)
+		.handler(({ input }) =>
+			readSupportCasesPage(
+				{
+					...(input.bucket === "all" ? {} : { status: input.bucket }),
+					search: input.search,
+					severity: input.severity,
+					type: input.type,
+				},
+				{ cursor: input.cursor, limit: CASE_PAGE_SIZE },
+			),
 		),
 	case: query
 		.input(z.object({ id: z.string().uuid() }))

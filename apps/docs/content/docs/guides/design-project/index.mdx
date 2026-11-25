@@ -3,8 +3,6 @@ title: Design a Project Overview
 description: The infrastructure design canvas — add services as nodes, configure each in its inspector, then Plan and Deploy.
 ---
 
-# Design a Project
-
 The design **canvas** is where you define infrastructure. You add services as nodes, configure each one in its inspector, and Plan then Deploy the environment. The canvas is the sole design surface — the legacy multi-section form has been removed.
 
 ## The canvas
@@ -24,7 +22,7 @@ The palette is filtered by the project's cloud: a service the target cloud can't
 Each node opens its **inspector** — a set of collapsible config sections. The node's effective provider drives its fields, region choices, and provider-specific advanced knobs. The cloud account is not set per node; it is inherited from the Project root.
 
 Existing resources you can reuse (VPCs, subnets, and the like) come from Alethia's server-side
-[asset inventory](/guides/connectors/health-and-inventory), which stays current automatically
+[asset inventory](/concepts/connection-health), which stays current automatically
 (event-driven + a reconciliation sweep). There's no manual refresh.
 
 <Callout type="info">

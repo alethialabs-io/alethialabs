@@ -247,6 +247,7 @@ jobs:
               - 'packages/brand/**'
               - 'packages/assets/**'
               - 'packages/email/**'
+              - 'packages/nra/**'
               - 'packages/org-slug/**'
               - 'packages/plan-catalog/**'
               - 'packages/platform/**'
@@ -352,6 +353,7 @@ jobs:
               - '!packages/enterprise-api/**'
               - '!packages/eslint-config/**'
               - '!packages/legal/**'
+              - '!packages/nra/**'
               - '!packages/org-slug/**'
               - '!packages/plan-catalog/**'
               - '!packages/platform/**'
@@ -378,6 +380,7 @@ jobs:
               - '!packages/enterprise-api/**'
               - '!packages/eslint-config/**'
               - '!packages/legal/**'
+              - '!packages/nra/**'
               - '!packages/org-slug/**'
               - '!packages/plan-catalog/**'
               - '!packages/platform/**'
@@ -407,6 +410,7 @@ jobs:
               - '!packages/eslint-config/**'
               - '!packages/format/**'
               - '!packages/legal/**'
+              - '!packages/nra/**'
               - '!packages/org-slug/**'
               - '!packages/plan-catalog/**'
               - '!packages/platform/**'
@@ -561,16 +565,20 @@ jobs:
       # and HEAD^1 the base it was merged onto, so the diff is exactly the PR's own changes.
       # Everything else — a push, the queue build, a dispatch, a root-config change — runs unfiltered.
       - name: Type-check + lint (affected workspace projects on a PR; all of them otherwise)
+        # The console's `tsc --noEmit` outgrew Node's default heap and aborted with "JavaScript heap
+        # out of memory" (exit 134) on several PRs on 2026-11-24. Each task gets a 6 GiB heap and turbo
+        # runs at most two at once, so two tsc/eslint processes fit the 16 GiB ubuntu-latest runner.
         env:
           TS_FILTER: ${{ needs.detect-changes.outputs.ts_filter }}
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           set -euo pipefail
           if [ "$TS_FILTER" = affected ]; then
             echo "affected-only: turbo --filter=...[HEAD^1]"
-            pnpm exec turbo run check-types lint --filter='...[HEAD^1]'
+            pnpm exec turbo run check-types lint --concurrency=2 --filter='...[HEAD^1]'
           else
             echo "full run (ts_filter='${TS_FILTER}')"
-            pnpm exec turbo run check-types lint
+            pnpm exec turbo run check-types lint --concurrency=2
           fi
 
   ts-test:
@@ -1679,6 +1687,26 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:ui-client-boundary -- --self-test
+      # The packages published to npm as @alethialabs/* (packages/public-packages.json,
+      # docs/contributing/releasing-packages.md). Building and packing them on every PR is the only
+      # place a broken publish shows BEFORE it reaches main: a published package depending on an
+      # unpublished one, an export the build did not produce, a missing asset. The changeset check
+      # fails a PR that changes what a published package ships without saying how to version it.
+      # Each script's self-test plants its defects first, so a parser that stopped matching cannot
+      # pass green over nothing.
+      - name: Published packages build, stage and pack (no upload)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/release/stage-public-packages.mjs --self-test
+          node scripts/release/stage-public-packages.mjs
+          node scripts/release/publish-public-packages.mjs --dry-run
+      - name: A change to a published package carries a changeset
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release/check-changeset.mjs --self-test
+          node scripts/release/check-changeset.mjs
       # CLAUDE.md §6's shared-surface table, for the two rows where the rule is unambiguous:
       # @repo/format and @repo/ui/page-header. Before this, no row of that table was guarded by
       # anything — one `numeric` column rendered as `$12.50/mo`, `~$12/mo` and `€12.50`, and
@@ -2037,6 +2065,8 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           ALETHIA_EDITION: community
+          # Same heap as the TypeScript job's type-check: the console's tsc outgrew Node's default.
+          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm -C apps/console run check-types
       - name: Installed dependency licence inventory has no unknown metadata
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
@@ -3155,6 +3185,12 @@ jobs:
       - name: The playwright-install retry retries a fetch and refuses a real failure
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/ci/playwright-install.sh --self-test
+      # release-please cuts a component's commits at its release commit by position in a date-ordered
+      # walk, so a dev commit promoted after a release it predates is never released. The detector
+      # release-please.yml runs after every main push, held to both orderings in a throwaway repo.
+      - name: The release-cursor detector names a commit release-please cannot see
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/release-cursor.sh --self-test
       - name: Guards self-test (runtime · compose · merge · secrets · worktree · spend · destroy)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
@@ -4535,6 +4571,15 @@ jobs:
         run: |
           node scripts/check-template-cost.mjs --self-test
           node scripts/check-template-cost.mjs
+      # Docs rework (2026-11-24): every page stays under its page type's prose-word cap. Pages that
+      # were over when the guard landed sit in page-length-ledger.json and may only shrink; the
+      # self-test plants each defect class first.
+      - name: No docs page is longer than its page type allows
+        if: needs.detect-changes.outputs.docs == 'true'
+        working-directory: apps/docs
+        run: |
+          node scripts/check-page-length.mjs --self-test
+          node scripts/check-page-length.mjs
       # Vale shells out to `mdx2vast` to parse .mdx (prose only — it drops fenced code,
       # code spans, URLs, JSX/ESM); it must be on $PATH.
       - name: Install the MDX preprocessor

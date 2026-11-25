@@ -3,8 +3,6 @@ title: Deploy Jobs
 description: How the runner executes DEPLOY jobs — the verify gate, tofu apply, keyless kubeconfig, and ArgoCD.
 ---
 
-# Deploy Jobs
-
 `DEPLOY` jobs apply the OpenTofu plan and install ArgoCD on the provisioned cluster. Between the
 plan and the apply sits the **fail-closed verify gate** — a real apply will not run while a hard
 control is failing.
@@ -34,7 +32,7 @@ Fetches the bound PLAN job and fails unless it finished `SUCCESS`. When both job
 
 Only jobs queued through the jobs API (`POST /api/jobs`, which the CLI uses) carry the hash; a
 console-queued job relies on the saved artifact below. See
-[Config hash validation](/guides/jobs/plan-and-apply#config-hash-validation).
+[Config hash validation](/guides/jobs/plan-and-apply#how-a-deploy-stays-bound-to-its-plan).
 
 ### Download plan artifact
 Fetches the binary plan from the PLAN job (`GET /api/jobs/{planJobId}/plan-artifact`) into the job

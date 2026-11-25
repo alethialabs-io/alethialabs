@@ -112,9 +112,13 @@
     "wt:release": "bash scripts/worktree.sh --release",
     "wt:steal": "bash scripts/worktree.sh --steal",
     "branch:prune": "bash scripts/branch-prune.sh",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "prepare": "git config core.hooksPath .githooks || true",
+    "changeset": "changeset",
+    "release:stage": "node scripts/release/stage-public-packages.mjs",
+    "release:pack": "node scripts/release/stage-public-packages.mjs && node scripts/release/publish-public-packages.mjs --dry-run"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "prettier": "^3.10.1",
     "turbo": "^2.11.13",
     "typescript": "5.9.3"

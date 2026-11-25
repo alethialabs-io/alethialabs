@@ -3,8 +3,6 @@ title: Project Commands
 description: Create, inspect, design, deploy and destroy projects from the CLI.
 ---
 
-# Project Commands
-
 Projects are infrastructure configurations (an *app* that owns one or more environments). The CLI
 can both **read** projects (`list`, `get`) and **author** them — create a project, manage its
 environments, and CRUD its component resources — so the whole project lifecycle is scriptable.
@@ -48,10 +46,11 @@ says what happened and, where there is one, a `hint` line with the next command 
 
 | Exit | Meaning on this page |
 |------|----------------------|
+| `5` | A person rejected the approval a deploy or a destroy asked for |
 | `6` | The project, environment, component or cloud account that you named does not exist |
-| `7` | The control plane refused the change in its current state, for example a destroy that needs `--cascade` |
+| `7` | The control plane refused the change in its current state, for example a destroy that needs `--cascade`, or an approval that expired |
 | `8` | A flag or a value is not valid |
-| `9` | A confirmation or a value is needed and nothing can ask for it: pass `--yes`, or the flag that the message names |
+| `9` | A confirmation or a value is needed and nothing can ask for it: pass `--yes`, or the flag that the message names. Also a deploy or a destroy that waits for a person's approval, with `--no-wait` or in agent mode |
 | `12` | `--wait` reached its `--timeout`. The job is still running |
 | `13` | The job finished and failed, or was cancelled |
 
@@ -266,7 +265,10 @@ Queue a `PLAN`, `DEPLOY` or `DESTROY` job for one environment of a project.
 
 - `preview` works out what a deploy would change, with a cost estimate. It changes nothing in your
   cloud account.
-- `deploy` creates or updates the environment's cloud resources.
+- `deploy` creates or updates the environment's cloud resources. A deploy applies a reviewed plan:
+  without `--plan-job-id` or `--latest-plan` it previews the environment first, waits for that
+  plan, prints what it would change, asks, and then deploys exactly that plan. See
+  [Deploying without a plan reference](#deploying-without-a-plan-reference).
 - `destroy` tears them down. This cannot be undone.
 
 ```bash
@@ -289,10 +291,11 @@ available runner.
 | `--plan-job-id` | | ✓ | | Deploy a specific `PLAN` job, by id |
 | `--latest-plan` | | ✓ | | Deploy the project's most recent `PLAN` job |
 | `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for the job to finish |
-| `--timeout` | ✓ | ✓ | ✓ | With `--wait`, stop waiting after this long, for example `30m`. The job keeps running and the command exits `12`. |
+| `--timeout` | ✓ | ✓ | ✓ | With `--wait`, stop waiting after this long, for example `30m`. The job keeps running and the command exits `12`. On `deploy`, it also bounds the wait for the preview it makes first. |
 | `--dry-run` | ✓ | ✓ | ✓ | Check every input and print the request. Nothing is queued. |
 | `-y`, `--yes` | | ✓ | ✓ | Skip the confirmation (required with `--no-input`) |
 | `--cascade` | | | ✓ | Also destroy the environments placed on this environment's cluster, first. Prints them and confirms |
+| `--no-wait` | | ✓ | ✓ | When a person's approval is needed, print where to approve and exit `9` instead of waiting. Not with `--wait`. |
 
 `--project` and `--project-id` name the same thing, so passing **both** is refused rather than
 resolved by precedence. A project name that two projects share is also refused, naming both ids —
@@ -317,9 +320,31 @@ each entry in `object.jobs` carries them as a `warnings` array. The array is emp
 none, or when the command did not wait. An error names the job, so
 `alethia jobs logs` can pick it up.
 
+### Deploying without a plan reference
+
+A deploy always applies a reviewed plan, and the control plane refuses a `DEPLOY` that names
+none. So `alethia project deploy` with neither `--plan-job-id` nor `--latest-plan` makes the plan
+itself:
+
+1. It queues a `PLAN` job for the same project, environment and runner.
+2. It waits for that job to finish, as `--wait` does.
+3. It prints the plan on stderr: the job, its verify verdict, its cost estimate, and how many
+   resources it would create, update, replace and delete.
+4. It asks before it deploys. `--yes` skips the question; with `--no-input` and no `--yes` the
+   command exits `9` before it queues the preview.
+5. It queues the `DEPLOY` of exactly that plan.
+
+A preview that fails or is cancelled stops the command: it exits `13`, names the `PLAN` job, and
+deploys nothing. A preview still running when `--timeout` passes exits `12`. Read why with
+`alethia jobs logs <id>`.
+
+```bash
+alethia project deploy --project boutique --env dev-1 --yes --wait
+```
+
 ### Confirming a deploy or a destroy
 
-`deploy` asks before it queues anything. The question names the project, the environment and the
+`deploy` asks before it queues the `DEPLOY`. The question names the project, the environment and the
 plan. `destroy` asks you to **type the project's name**, because a destroy cannot be undone and a
 name has to be read before it is typed. Anything else that you type destroys nothing.
 
@@ -335,19 +360,33 @@ cascade takes with it without destroying anything, add `--dry-run`:
 alethia project destroy --project boutique --env prod --cascade --dry-run
 ```
 
-### A job that waits for approval
+### A deploy or a destroy that needs a person's approval
 
-Your organization can require a person to approve a deploy or a destroy before it runs. Such a job
-is not about to run: it waits. The command says so in place of the queued-job notice, and gives
-the console page where a person approves it:
+A deploy or a destroy started from the CLI, with a device sign-in or a service token, needs a
+person's approval of its reviewed plan. A deploy is approved against the plan it applies. A destroy
+is approved against the plan the environment's current state was deployed from.
+
+When the control plane answers that the job needs an approval, the command asks for one and prints
+the console page where a person approves it, with the first eight characters of the plan's digest:
 
 ```
-DEPLOY job 0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b is waiting for a person to approve it. It does not
-start until someone approves it at https://console.example.com/acme/~/jobs/0b7e6c55-2f0a-4d0e-9a3b-6c1d2e3f4a5b.
+⚠ This deploy needs a person's approval. Approve it at https://console.example.com/approvals/6b21d8f4-0c5e-4a93-9f27-3d81b6e5c704 — the page must show plan 2b7e91c0-5d1a-4f3e-8c2b-7a9d0e1f2a3b with a digest starting a1b2c3d4.
 ```
 
-With `--output json` the job's entry in `object.jobs` has `"awaiting_approval": true` and the page
-as `approval_url`. With `--wait` the command keeps waiting while the job waits, so set `--timeout`.
+The page shows the same eight characters. Check that they match before you approve. The command
+waits for the decision, bounded by `--timeout`, and then queues the job with the approval. Nothing
+is queued before that.
+
+- A rejected approval exits `5`. An expired or superseded one exits `7`; run the command again to
+  ask for a new approval.
+- `--no-wait`, or agent mode, prints the page and exits `9` without waiting. Once the approval is
+  approved, run the same `deploy` with `--plan-job-id` and the plan the message names, or the same
+  `destroy`. Asking again for the same plan returns the same approval, so the command finds it
+  approved and goes ahead.
+- A `--cascade` destroy cannot be approved this way. Start it from the console.
+
+`alethia approve` opens an approval's page in the browser; see the
+[plan and apply page](/reference/cli/plan-and-apply#alethia-approve).
 
 ### The old names: `project plan` and `project apply`
 
@@ -372,9 +411,11 @@ alethia project deploy --project boutique --env prod --latest-plan --wait
 It prints which job it chose before it queues anything. Three things it deliberately does **not**
 do:
 
-- It is **opt-in**. Without it (or `--plan-job-id`) the deploy runs its own plan, which is the
-  ordinary path — a plan reference is a mode, not a hint: the Runner refuses a deploy whose plan
-  did not succeed, or whose configuration moved since the plan was taken.
+- It is **opt-in**. Without it (or `--plan-job-id`) the deploy previews the environment first and
+  applies that plan ([Deploying without a plan reference](#deploying-without-a-plan-reference)).
+  The control plane refuses a deploy whose plan did not succeed, whose configuration moved since
+  the plan was taken, or that something else ran on the environment after; the Runner applies the
+  plan only when its digest matches the one that was reviewed.
 - It resolves `PLAN` jobs **only**. The project's most recent job is as likely to be the `DEPLOY`
   that followed the plan.
 - It takes the most recent `PLAN` **whatever its status**, and refuses when that is not `SUCCESS`,

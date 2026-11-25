@@ -1,0 +1,11 @@
+{
+	"kind": "bounded",
+	"decided": "LST-9 (#7491), under epic #7481, which names SSO providers as a bounded list",
+	"decision": "The SSO settings page lists the organization's identity providers: configuration an administrator connects one at a time, a handful per organization (one per domain or subsidiary). It reads every provider in one `sso.providers` read, filtered on the server with facets over the unfiltered set, and does not page.",
+	"bound": "`SSO_PROVIDERS_MAX` (20) in `ee/src/sso-provider-cap.ts`, enforced on the only write, `/api/auth/sso/register`: a before-hook refuses an organization already at the cap, and an after-hook removes and refuses a registration that raced past it, so the list never ends above 20. @better-auth/sso's own `providersLimit` counts per user and was no organization bound. In the community build the sso plugin is not mounted and the table is never written.",
+	"findings": {
+		"store:useSsoFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

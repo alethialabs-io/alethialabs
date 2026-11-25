@@ -3,8 +3,6 @@ title: Connector Commands
 description: Connect AWS, GCP, Azure and Hetzner cloud accounts to Alethia entirely from the terminal.
 ---
 
-# Connector Commands
-
 The `connector` command group connects your cloud accounts to Alethia so the platform can
 provision infrastructure into them. It drives the **same connection flow as the web console's
 [Connectors](/guides/connectors) page**, but end-to-end from the CLI — there is no need to
@@ -78,7 +76,7 @@ material.
 The captured credentials are sent to Alethia, which verifies them **instantly, server-side** — an
 auth + provisioning-permission probe (no runner). The identity is marked `Connected`, `Degraded`, or
 `Disconnected` and is ready to provision into. Existing resources are discovered separately by the
-server-side [asset inventory](/guides/connectors/health-and-inventory).
+server-side [asset inventory](/concepts/connection-health).
 
 </Steps>
 

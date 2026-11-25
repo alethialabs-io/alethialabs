@@ -108,6 +108,25 @@ export async function getAvailableRunners() {
 }
 
 /**
+ * The console origin a deployed runner connects back to: this instance's own public URL
+ * (`NEXT_PUBLIC_APP_URL`, else the auth origin `BETTER_AUTH_URL`). There is deliberately no hosted
+ * default (EDN-H7, #6904): the old hosted-domain fallback handed every runner deployed by a
+ * self-hosted instance with an unset origin to Alethia Labs' hosted service. An instance with no
+ * public URL is refused instead, before any row is written.
+ */
+function runnerConsoleUrl(): string {
+	const origin = (process.env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || "")
+		.trim()
+		.replace(/\/+$/, "");
+	if (!origin)
+		throw new ActionRefusal(
+			"conflict",
+			"This instance has no public URL (NEXT_PUBLIC_APP_URL is unset), so a deployed runner would have no console to connect to. Set it and try again.",
+		);
+	return origin;
+}
+
+/**
  * Deploys a runner into the user's cloud account through an existing runner that
  * runs Terraform. The new runner is operator=self, provisioning=deployed.
  */
@@ -126,6 +145,9 @@ export async function deployRunner(params: {
 	const owner = actor.userId;
 
 	await assertJobQuotaAllowed(actor.orgId);
+	// Before anything is written: a deploy with no console to connect back to is refused, not
+	// pointed at the hosted service.
+	const alethiaUrl = runnerConsoleUrl();
 
 	const result = await withActorScope(actor, async (tx) => {
 		// Resolve + gate the identity BEFORE anything is written: a deploy we cannot build must
@@ -162,8 +184,7 @@ export async function deployRunner(params: {
 			image_tag: params.imageTag || "latest",
 			region: params.region,
 			cloud_provider: identity.provider,
-			alethia_url:
-				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
+			alethia_url: alethiaUrl,
 		};
 
 		const [job] = await tx
@@ -264,10 +285,7 @@ function buildRunnerConfigSnapshot(
 		region: deployConfig.region,
 		cloud_provider: cloudProvider,
 		image_tag: overrides?.image_tag ?? deployConfig.image_tag ?? "latest",
-		alethia_url:
-			deployConfig.alethia_url ??
-			process.env.NEXT_PUBLIC_APP_URL ??
-			"https://alethialabs.io",
+		alethia_url: deployConfig.alethia_url ?? runnerConsoleUrl(),
 		cpu: deployConfig.cpu ?? 512,
 		memory: deployConfig.memory ?? 1024,
 		image_repository:

@@ -71,6 +71,11 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 }));
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/org/upgrade-org-sheet", () => ({ UpgradeOrgSheet: () => null }));
+// The Activity feed opens the shell's ONE upgrade sheet (R6 F-31); the provider is the org layout's.
+vi.mock("@/components/org/upgrade-sheet-provider", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/components/org/upgrade-sheet-provider")>()),
+	useUpgradeSheet: () => ({ openUpgrade: vi.fn() }),
+}));
 
 import { RecentJobsCard } from "@/components/overview/recent-jobs-card";
 import { CaseList } from "@/components/support/cases/case-list";
@@ -161,7 +166,8 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 			is_mine: true,
 		};
 		const key = orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey;
-		const seed = (qc: QueryClient) => qc.setQueryData(key, [item]);
+		const seed = (qc: QueryClient) =>
+			qc.setQueryData(key, { rows: [item], facets: { severity: [], type: [] } });
 		const { serverHtml, recoverable } = await serverThenHydrate(
 			<CaseList orgSlug="acme" seeAll={false} />,
 			client(seed),

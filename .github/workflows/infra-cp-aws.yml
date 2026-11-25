@@ -1,7 +1,7 @@
 name: Infra - CP AWS
 
 # VALIDATE-ONLY, and credential-free by construction. `infra/cp-aws` is a self-hosting option a
-# user applies in THEIR OWN AWS account (apps/docs/.../self-hosting/terraform/aws.mdx); it is not a
+# user applies in THEIR OWN AWS account (apps/docs/.../self-host/terraform/aws.mdx); it is not a
 # deployment target of ours. Hosted prod runs on `cp-hetzner`. Until 2026-11-14 this file also
 # carried a push-to-main `apply` job behind `vars.INFRA_AWS_APPLY` and static
 # `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` repo secrets. That job never ran (every push run was

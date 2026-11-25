@@ -17,8 +17,13 @@ vi.mock("@/lib/authz", () => ({
 	getPdp: () => ({ can: vi.fn().mockResolvedValue({ allowed: true }) }),
 }));
 
-import { readSsoProviders as getSsoProviders } from "@/lib/rpc/procedures/sso";
+// The bootstrap's SP origin is the auth server's base URL (EDN-H7, #6904); stubbed per case below.
+vi.mock("@/lib/config/auth", () => ({ getAuthConfig: vi.fn() }));
+vi.mock("@/lib/authz/entitlements", () => ({ getEntitlements: () => ({ sso: true }) }));
+
+import { readSsoBootstrap, readSsoProviders as getSsoProviders } from "@/lib/rpc/procedures/sso";
 import { authorizeQuiet } from "@/lib/authz/guard";
+import { getAuthConfig } from "@/lib/config/auth";
 import { getServiceDb } from "@/lib/db";
 
 // A real self-signed cert (generated for the test). Its SHA-256 fingerprint is fixed below.
@@ -215,5 +220,44 @@ describe("readSsoProviders (sso.providers)", () => {
 		expect(rows.map((r) => r.type)).toEqual(["oidc", "saml"]);
 		expect(rows[0].clientId).toBe("ca");
 		expect(rows[1].ssoUrl).toBe("https://b/sso");
+	});
+});
+
+// EDN-H7 (#6904): the SP URLs the SSO page hands an IdP are built on THIS instance's auth origin.
+// The old fallback to the hosted service would have registered a self-hosted instance's IdP
+// against Alethia Labs' ACS and callback URLs.
+describe("readSsoBootstrap — the SP origin", () => {
+	/** Stubs the org lookup and the auth server's base URL. */
+	function seed(baseURL: string) {
+		const db: Record<string, unknown> = {};
+		Object.assign(db, {
+			select: () => db,
+			from: () => db,
+			where: () => db,
+			limit: () => db,
+			then: (resolve: (v: unknown) => void) => resolve([{ slug: "acme" }]),
+		});
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+		vi.mocked(getAuthConfig).mockReturnValue({
+			secret: "test-secret",
+			baseURL,
+			trustedIpHeader: "cf-connecting-ip",
+			providers: { github: null, google: null, gitlab: null, bitbucket: null },
+		});
+	}
+
+	it("is a self-hosted instance's own auth origin, without a trailing slash", async () => {
+		seed("https://alethia.example.com/");
+		const bootstrap = await readSsoBootstrap();
+		expect(bootstrap.origin).toBe("https://alethia.example.com");
+		expect(bootstrap.slug).toBe("acme");
+	});
+
+	it("propagates a missing auth origin instead of defaulting to the hosted service", async () => {
+		seed("");
+		vi.mocked(getAuthConfig).mockImplementation(() => {
+			throw new Error("Invalid auth configuration");
+		});
+		await expect(readSsoBootstrap()).rejects.toThrow(/Invalid auth configuration/);
 	});
 });

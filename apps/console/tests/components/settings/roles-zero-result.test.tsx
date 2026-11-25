@@ -118,7 +118,7 @@ describe("roles: a search that matches nothing", () => {
 		// The excluded role is not still on screen in the detail pane.
 		expect(screen.queryByText("Read-only access.")).toBeNull();
 
-		await user.click(screen.getByRole("button", { name: "Reset filters" }));
+		await user.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useRolesFilters.getState().filters.search).toBe("");
 		expect(screen.queryByText("No roles match")).toBeNull();
 	});

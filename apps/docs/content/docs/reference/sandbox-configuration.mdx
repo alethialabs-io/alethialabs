@@ -3,8 +3,6 @@ title: Configuration
 description: The ALETHIA_SANDBOX_* runner environment variables that select the isolation backend and set its runtime, image, network, egress, memory, and cancellation grace.
 ---
 
-# Configuration
-
 The per-job container sandbox is configured entirely through `ALETHIA_SANDBOX_*` environment
 variables read by the **runner**. This page is the reference for those variables — what each one
 selects, its default, and the accepted values.
@@ -13,7 +11,7 @@ selects, its default, and the accepted values.
   These variables are read on the runner, and the container backend applies only to **untrusted
   bring-your-own** work on the managed fleet. The default backend (`Passthrough`) ignores most of
   them. For the enabling sequence on the fleet, see the
-  [managed provisioning runbook](/guides/self-hosting/managed-provisioning).
+  [managed provisioning runbook](/self-host/managed-provisioning).
 </Callout>
 
 ## Backend selection
@@ -97,7 +95,7 @@ Two gates depend on the variables above:
   <Card title="Isolated Execution — overview" href="/concepts/isolated-execution">
     The trust model, the guarantees, and availability.
   </Card>
-  <Card title="Managed provisioning runbook" href="/guides/self-hosting/managed-provisioning">
+  <Card title="Managed provisioning runbook" href="/self-host/managed-provisioning">
     Enabling the container sandbox on the managed fleet.
   </Card>
 </Cards>

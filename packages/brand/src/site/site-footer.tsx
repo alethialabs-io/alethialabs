@@ -26,6 +26,9 @@ import { eyebrow, mono, Wrap } from "./primitives";
  */
 
 const GITHUB_URL = "https://github.com/alethialabs-io/alethialabs";
+const X_URL = "https://x.com/thealethialabs";
+const YOUTUBE_URL = "https://www.youtube.com/@thealethialabs";
+const LINKEDIN_URL = "https://www.linkedin.com/company/alethialabs/";
 
 interface FooterLink {
 	label: string;
@@ -55,6 +58,9 @@ const COLUMNS: FooterColumn[] = [
 			{ label: "News", href: "/news" },
 			{ label: "Changelog", href: `${GITHUB_URL}/releases`, external: true },
 			{ label: "GitHub", href: GITHUB_URL, external: true },
+			{ label: "X", href: X_URL, external: true },
+			{ label: "YouTube", href: YOUTUBE_URL, external: true },
+			{ label: "LinkedIn", href: LINKEDIN_URL, external: true },
 		],
 	},
 	{
@@ -71,6 +77,7 @@ const COLUMNS: FooterColumn[] = [
 		links: [
 			{ label: "Privacy", href: "/privacy" },
 			{ label: "Terms", href: "/terms" },
+			{ label: "Refunds", href: "/refunds" },
 			{ label: "Imprint", href: "/imprint" },
 			{ label: "All legal documents", href: "/legal" },
 		],

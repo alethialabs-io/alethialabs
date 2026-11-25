@@ -177,6 +177,9 @@ export const jobWire = createSelectSchema(jobs, {
 	// The apply approval a DEPLOY/DESTROY consumed (AGT-S2). Not on the frozen CLI wire until the
 	// approval-aware CLI (AGT-L7) decides to carry it; the Go strict decoder would refuse it today.
 	approval_id: true,
+	// The reviewed plan's digest (AGT-S0b) — what the runner checks the applied plan against. Not on
+	// the frozen CLI wire, for the same reason as `approval_id`: the Go strict decoder would refuse it.
+	plan_sha256: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */

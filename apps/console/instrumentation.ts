@@ -24,6 +24,27 @@ export async function register() {
 			startupLog.error("sentry init failed", { component: "sentry", err }),
 		);
 	}
+	// Instance secrets (#6803): in production, refuse to start while any of them holds a template
+	// placeholder rather than a value generated for this install. The message names each variable and
+	// how to generate it. A self-hosted instance then makes the full check (EDN-H2, #6902): every
+	// value its edition needs present and of the right shape (lib/config/selfhost-secrets.ts says
+	// when that applies). Neither message carries a value.
+	if (process.env.NODE_ENV === "production") {
+		const { assertInstanceSecrets } = await import("@/lib/crypto/secrets");
+		const { assertSelfHostedConfig, selfHostedConfigCheckApplies } = await import(
+			"@/lib/config/selfhost-secrets"
+		);
+		try {
+			assertInstanceSecrets(process.env, ["BETTER_AUTH_SECRET"]);
+			if (selfHostedConfigCheckApplies(process.env)) assertSelfHostedConfig(process.env);
+		} catch (err) {
+			startupLog.error("configuration is not usable — refusing to start", {
+				component: "secrets",
+				err,
+			});
+			throw err;
+		}
+	}
 	// Decide the edition at BOOT for this module instance (#6149, R2). A failed enterprise load used
 	// to surface as one thrown request and then a silently community process serving every org
 	// address from the personal scope. Bundled chunks can hold their own module instances, so this

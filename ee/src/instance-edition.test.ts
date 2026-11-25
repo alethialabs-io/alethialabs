@@ -55,10 +55,11 @@ import { generateLicenseKeypair, issueLicense } from "./license-issue";
 const NOW = new Date("2026-12-01T00:00:00.000Z");
 const NOW_SECONDS = 1_796_083_200;
 
-/** The nine capability names, written out. */
+/** The ten capability names, written out. */
 const ALL_CAPABILITIES = [
   "activityExport",
   "advancedAlerting",
+  "agentPolicy",
   "alerting",
   "byoRunners",
   "customRoles",
@@ -68,7 +69,7 @@ const ALL_CAPABILITIES = [
   "teams",
 ];
 
-/** The registry as the build names it today: one built module, six planned. */
+/** The registry as the build names it today: two built modules, five planned. */
 const FEATURES = [
   { id: "sso-provisioning", built: true },
   { id: "enforced-sso", built: false },
@@ -76,7 +77,7 @@ const FEATURES = [
   { id: "scim", built: false },
   { id: "audit-stream", built: false },
   { id: "session-policy", built: false },
-  { id: "agent-policy", built: false },
+  { id: "agent-policy", built: true },
 ];
 
 /** Every switch off: what an organization with no billing record has. */
@@ -90,6 +91,7 @@ const NO_PLAN: Entitlements = {
   advancedAlerting: false,
   byoRunners: false,
   managedPools: false,
+  agentPolicy: false,
   quotas: {
     maxConcurrentJobs: 2,
     priorityLevel: 0,
@@ -110,6 +112,7 @@ const ENTERPRISE_PLAN: Entitlements = {
   advancedAlerting: true,
   byoRunners: true,
   managedPools: true,
+  agentPolicy: true,
 };
 
 /** The team plan's switches: a paid hosted plan that carries neither teams nor single sign-on. */
@@ -232,7 +235,7 @@ describe("editionReport — what the build reports", () => {
     expect(report.capabilities).toEqual([]);
   });
 
-  it("reports `active`, the licence's claims and all nine capabilities for a licence with no end", () => {
+  it("reports `active`, the licence's claims and all ten capabilities for a licence with no end", () => {
     const report = editionReport(verified(null), ENTERPRISE_FEATURES, NOW, true);
     expect(report.license).toEqual({
       state: "active",
@@ -323,7 +326,8 @@ describe("editionReport — what the build reports", () => {
     const report = editionReport({ verified: false }, ENTERPRISE_FEATURES, NOW, false);
     expect(report.features.map((feature) => feature.id)).toEqual(FEATURES.map((f) => f.id));
     const mismatched = ENTERPRISE_FEATURES.filter(
-      (feature) => feature.built !== feature.authPlugins(stubCore()).length > 0,
+      (feature) =>
+        feature.built !== (feature.authPlugins(stubCore()).length > 0 || feature.agentPolicy !== undefined),
     ).map((feature) => feature.id);
     expect(mismatched).toEqual([]);
   });
@@ -399,7 +403,7 @@ describe("register(core) — the report and the resolver of the registered modul
     expect(billing.resolveOrgEntitlements).toHaveBeenCalledWith("org_1");
   });
 
-  it("reports `active` with nine capabilities and resolves without a billing record under a signed licence", async () => {
+  it("reports `active` with ten capabilities and resolves without a billing record under a signed licence", async () => {
     await installLicense({ expiresInDays: 365 });
     const mod = register(stubCore());
     const report = await mod.instanceEdition?.();
@@ -675,5 +679,72 @@ describe("register(core) — creating a team and registering single sign-on, per
     expect(team.status).not.toBe(200);
     expect(sso.status).not.toBe(200);
     expect(db.team).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AGT-L14 — the agent policy `register` returns, under each licence cell. The toggles are stored ON
+// in every case; what changes is whether the organization holds `agentPolicy`. Unlicensed, a licence
+// another key signed, and a licence whose entitlements claim does not name the switch must all be
+// answered as core answers: no second person, any client, self-approval allowed.
+describe("register(core) — the agent policy follows the licence", () => {
+  const ON = { requireDifferentApprover: true, allowedOauthClientIds: ["claude-code"] };
+  const SELF_APPROVAL =
+    "This organization requires a different person to approve a request than the one it was made for.";
+
+  /** The three answers the approval engine asks for, with the toggles on, for org_1. */
+  async function answers(mod: ReturnType<typeof register>) {
+    const policy = mod.agentPolicy;
+    if (!policy) throw new Error("register returned no agent policy");
+    return {
+      secondPerson: await policy.sessionApplyNeedsSecondPerson("org_1", ON, "deploy", "production"),
+      selfApproval: await policy.approverRefusal("org_1", ON, "user_1", "user_1"),
+      otherClient: await policy.oauthClientRefusal("org_1", ON, "cursor"),
+    };
+  }
+
+  it("applies every toggle under a signed licence, with no billing record", async () => {
+    await installLicense({ expiresInDays: 365 });
+    const got = await answers(register(stubCore()));
+    expect(got.secondPerson).toBe(true);
+    expect(got.selfApproval).toBe(SELF_APPROVAL);
+    expect(got.otherClient).toContain('"cursor"');
+    expect(billing.resolveOrgEntitlements).not.toHaveBeenCalled();
+  });
+
+  it("answers as core with no licence and no plan", async () => {
+    expect(await answers(register(stubCore()))).toEqual({ secondPerson: false, selfApproval: null, otherClient: null });
+  });
+
+  it("answers as core for a licence signed by another key", async () => {
+    const other = generateLicenseKeypair();
+    process.env.ALETHIA_LICENSE_KEY = await issueLicense({ privateKeyB64: other.privateKeyB64, subject: "forged" });
+    process.env.ALETHIA_LICENSE_PUBLIC_KEY = keys.publicKeyB64;
+    expect(await answers(register(stubCore()))).toEqual({ secondPerson: false, selfApproval: null, otherClient: null });
+  });
+
+  it("answers as core for a licence whose entitlements claim does not name agentPolicy", async () => {
+    await installLicense({ expiresInDays: 365, entitlements: { ...NO_PLAN, teams: true, sso: true } });
+    expect(await answers(register(stubCore()))).toEqual({ secondPerson: false, selfApproval: null, otherClient: null });
+  });
+
+  it("applies the toggles for an organization on the enterprise plan, unlicensed (hosted)", async () => {
+    billing.resolveOrgEntitlements.mockResolvedValue(ENTERPRISE_PLAN);
+    const got = await answers(register(stubCore()));
+    expect(got.secondPerson).toBe(true);
+    expect(got.selfApproval).toBe(SELF_APPROVAL);
+  });
+
+  it("answers as core for an organization on the team plan", async () => {
+    billing.resolveOrgEntitlements.mockResolvedValue(TEAM_PLAN);
+    expect(await answers(register(stubCore()))).toEqual({ secondPerson: false, selfApproval: null, otherClient: null });
+  });
+});
+
+describe("register(core) — the identity-provider cap (LST-9, #7491)", () => {
+  it("is mounted after sso(), so its after-hook sees the row the plugin wrote", () => {
+    const ids = (register(stubCore()).authPlugins ?? []).map((p) => p.id);
+    expect(ids.indexOf("sso")).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf("alethia-sso-provider-cap")).toBeGreaterThan(ids.indexOf("sso"));
   });
 });

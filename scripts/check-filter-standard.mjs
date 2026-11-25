@@ -4,8 +4,9 @@
 //
 // The console FILTER STANDARD, measured — RUBRIC.md's family F (F1–F7).
 //
-//   pnpm check:filter-standard              scan the tree, print the census, fail on a BROKEN
-//                                           derivation (not on a non-conforming surface)
+//   pnpm check:filter-standard              scan the tree, print the census, fail on a broken
+//                                           derivation, an undeclared F1–F6 finding, or an
+//                                           undeclared list-standard site
 //   pnpm check:filter-standard --json       the derived view, for a caller
 //   node scripts/check-filter-standard.mjs --self-test
 //
@@ -103,11 +104,11 @@
 //       FAILS on a surface with no `<FilterBar>` at all, and on `lib/query/README.md`'s two named
 //       bans inside the bar region — a Radix `<Select>` and a stat-card strip.
 //
-//   F5  the result count renders through the count pill.
-//       Through `<CountPill>` directly, or through the `count=` prop of `SectionHeading` /
-//       `PageToolbar`, which mount the same primitive — CLAUDE.md §6 dropped the console's page
-//       titles and that is where a list page's count went. FAILS on a surface with no count at
-//       all, and on the standard's own named anti-pattern: "N of M" prose inside the bar.
+//   F5  NO list count: no pill, no "N of M" (INVERTED by #7482, the maintainer's 2026-11-24 ruling).
+//       It used to REQUIRE the pill. FAILS on `<CountPill>`, on `count=` on a `SectionHeading` /
+//       `PageToolbar` opening tag in the neighbourhood, and on "N of M" / "Showing …" prose. Scored
+//       here for the route join; GATED by the list standard below (`count-pill` / `count-prose`,
+//       per-surface ledger), not by `FILTER_STANDARD_DEBT` — see `GATED_BY_LIST_STANDARD`.
 //
 //   F6  `keepPreviousData` plus the `opacity-60` dim on `isPlaceholderData`.
 //       The URL→RSC variant `lib/query/README.md` blesses is admitted in its own terms —
@@ -166,6 +167,9 @@
 //
 // It exits 1 on a BROKEN DERIVATION — no surfaces, no builders, a store nobody reads, a builder
 // nobody drives and nobody declared, a stale `F7_UNDRIVEN` row, an unreadable console tree.
+//
+// AND, as of #7482, on any LIST-STANDARD site (a count pill, count prose, client paging, a list off
+// the keyset contract) not declared in `apps/console/list-standard/` — see "the LIST standard".
 //
 // AND, as of #4890, on a NON-CONFORMING SURFACE: any F1–F6 FAIL not declared in
 // `FILTER_STANDARD_DEBT` fails the run (`checkConformance`). It used to only score them, on the
@@ -290,23 +294,26 @@ const ANCHORS = [
  * of these score NOT MEASURED on F7 — the honest verdict for a behaviour nothing ran.
  */
 export const F7_UNDRIVEN = /** @type {const} */ ({
-	readJobsPage: {
-		file: "apps/console/lib/rpc/procedures/jobs.ts",
-		owner: "#3796",
+	queryProjectsPage: {
+		file: "apps/console/lib/queries/projects.ts",
+		owner: "#7486",
 		why:
-			"a read procedure's reader that opens its own transaction and resolves the actor before it " +
-			"reads, rather than a `lib/queries` builder taking `(orgId, query)`. Driving it needs the " +
-			"auth bootstrap `tests/actions/list-page-reads.test.ts` mocks, which is a second fixture " +
-			"shape, not a second row in this one.",
+			"its scope is the `projects` RLS wall on the actor-scoped transaction the overview procedure opens " +
+			"(`withActorScope`), not an `org_id` predicate, so its facet pass correctly carries NO `where` at all — " +
+			"F7's second clause looks for an unfiltered pass that still has one (the support list's shape). The " +
+			"two-pass shape is asserted instead by tests/lib/queries/projects-page.test.ts: no value of the query " +
+			"reaches a facet pass, a later page and the starred-ids lookup issue none.",
 	},
-	queryProjects: {
-		file: "apps/console/app/server/actions/projects.ts",
-		owner: "#3796",
+	queryCasesPage: {
+		file: "apps/console/lib/queries/support.ts",
+		owner: "#7396",
 		why:
-			"the org overview's URL→RSC read. Its facets are tallied IN MEMORY over the org's whole " +
-			"project set rather than by a second SQL pass, so the invariant holds by a different " +
-			"mechanism and needs a different assertion — the facet set must not shrink as the query " +
-			"narrows — rather than the two-pass predicate check the other builders take.",
+			"its scope is the support RLS policy on the transaction `withSupportScope` opens (requester-own, " +
+			"or org-wide for manage_support), not an `org_id` predicate, so its facet pass correctly carries " +
+			"NO `where` at all — and F7's second clause looks for an unfiltered pass that still has one. The " +
+			"two-pass shape is asserted instead by tests/lib/queries/support.test.ts (only the rows pass takes " +
+			"a WHERE; a later page issues no facet pass) and against real Postgres by " +
+			"tests/integration/support-cases-page.test.ts (the facets do not move under a filter).",
 	},
 });
 
@@ -934,10 +941,11 @@ const QUERY_HOP = /^apps\/console\/lib\/query\/use-[a-z0-9-]+-query\.ts$/;
  * than one argument", which is a rendering of the thing and is wrong in both directions — measured
  * on `dev`, both ways, in one scan:
  *
- *   * UNDER-reports. `components/support/cases/case-list.tsx` keys `qk.supportCases(query.bucket)`
- *     — ONE argument, and it is the whole of what that surface sends the server (the other three
- *     fields are a documented client-side refinement over the bucket's rows). Counting arguments
- *     called the reference-quality surface a cache-sharing defect.
+ *   * UNDER-reports. `components/support/cases/case-list.tsx` keyed `qk.supportCases(query.bucket)`
+ *     — ONE argument, and it was then the whole of what that surface sent the server (the other
+ *     three fields were a documented client-side refinement over the bucket's rows, until #7396
+ *     moved them into the query). Counting arguments called the reference-quality surface a
+ *     cache-sharing defect.
  *   * OVER-reports. `components/settings/access/access-manager.tsx` keys
  *     `qk.accessGrants(org, projectId ? { projectId } : undefined)` — two arguments, neither of
  *     them the query. That surface fetches the scope's whole universe and narrows it in memory, so
@@ -984,6 +992,29 @@ export function keysOnQuery(file, text) {
 		if (hop) return true;
 		const expr = field[1] ?? "input";
 		const roots = [...expr.matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
+		if (roots.some((r) => normalized.has(r))) return true;
+	}
+	return keysetKeyedOnQuery(file, text);
+}
+
+/**
+ * THE LIST CONTRACT'S KEY (#7482). `useKeysetList(orpc.<domain>.<proc>, filter)` keys the infinite
+ * query on `filter` and nothing else (the cursor is the pageParam), so its second argument is read
+ * exactly as a read-router `input` is: its roots must include a binding from this module's own
+ * `normalize*Query(` (or, in the hop module, any argument). Also what F6 asks before it lets the
+ * hook's built-in `keepPreviousData` count: a `useKeysetList` over something else keys nothing the
+ * filters move, so it says nothing about whether a filter change blanks the list.
+ *
+ * @param {string} file repo-relative
+ * @param {string} text comment-stripped source
+ */
+function keysetKeyedOnQuery(file, text) {
+	const normalized = new Set(
+		[...text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:useMemo\s*\(\s*\(\s*\)\s*=>)?\s*normalize\w*Query\s*\(/g)].map((m) => m[1]),
+	);
+	for (const m of text.matchAll(/\buseKeysetList\s*\(\s*orpc\.[\w.]+\s*,\s*([^,)]+)/g)) {
+		if (QUERY_HOP.test(file)) return true;
+		const roots = [...m[1].matchAll(/([A-Za-z_$][\w$]*)/g)].map((i) => i[1]);
 		if (roots.some((r) => normalized.has(r))) return true;
 	}
 	return false;
@@ -1074,18 +1105,23 @@ export function scoreSurface(surface, sources, barPrimitives) {
 				: "the `<FilterBar>` composes no `@repo/ui` filter primitive at all",
 	);
 
-	// F5 — the count pill, and not "N of M" in the bar.
+	// F5 — NO count pill, and no "N of M" prose (inverted by #7482; the maintainer's ruling of
+	// 2026-11-24 removed list counts from everywhere). It used to REQUIRE the pill. Scored here per
+	// surface for the route join, and GATED by the list standard's `count-pill` / `count-prose`
+	// rules (see `checkConformance`), whose ledger is per surface — so the inversion lands green with
+	// every current pill recorded as debt instead of turning eighteen surfaces red at once.
 	const pill =
 		has(/<CountPill[\s>]/) ||
-		has(/<SectionHeading\b[\s\S]{0,800}?\bcount=/) ||
-		has(/<PageToolbar\b[\s\S]{0,800}?\bcount=/);
-	const prose = bar !== null && N_OF_M.test(bar);
+		neighbourhood.some((f) =>
+			["PageToolbar", "SectionHeading"].some((tag) => jsxOpenings(sources.get(f) ?? "", tag).some((o) => hasProp(o, "count"))),
+		);
+	const prose = N_OF_M.test(text) || /\bShowing\b/.test(text);
 	verdict(
 		"F5",
-		pill && !prose,
-		prose
-			? '"N of M" prose inside the `<FilterBar>` — the count belongs in the pill above the list, not in the bar'
-			: "no result count renders through `CountPill` (directly, or as `SectionHeading`/`PageToolbar`'s `count`)",
+		!pill && !prose,
+		pill
+			? "a result count renders as a pill (`CountPill`, or `count=` on `PageToolbar`/`SectionHeading`) — the console carries no list counts"
+			: '"N of M" / "Showing …" prose around the list — totals exist only as facet option counts',
 	);
 
 	// F6 — a filter change must not blank the list.
@@ -1116,7 +1152,11 @@ export function scoreSurface(surface, sources, barPrimitives) {
 	// behind, and the surface still passed F6 while its table had gone back to blanking. So the
 	// matcher is `lib/query/README.md`'s own prescription, verbatim, and a surface that reaches
 	// the same behaviour some other way is a second answer to a settled question.
-	const kept = has(/placeholderData\s*:\s*keepPreviousData\b/);
+	// `useKeysetList(` passes `placeholderData: keepPreviousData` itself (lib/query/use-keyset-list.ts),
+	// so a surface on the paging contract keeps its rows by construction; the DIM is still the caller's.
+	const kept =
+		has(/placeholderData\s*:\s*keepPreviousData\b/) ||
+		neighbourhood.some((file) => keysetKeyedOnQuery(file, sources.get(file) ?? ""));
 	const dimmed = has(/isPlaceholderData/) && has(/opacity-60/);
 	const rscVariant = has(/useTransition\s*\(/) && has(/\bisPending\b/) && has(/opacity-60/);
 	verdict(
@@ -1187,6 +1227,15 @@ export function checkF7Subject(builders, driven, undriven = F7_UNDRIVEN) {
  *   over a fixture tree, which does not contain the console's real rows
  * @returns {string[]} one line per problem
  */
+/**
+ * F1–F6 predicates whose GATE is the list standard's per-surface ledger rather than
+ * {@link FILTER_STANDARD_DEBT}. F5 (no count pill, no "N of M") is the same fact as the
+ * `count-pill` / `count-prose` rules, which measure every module of every surface's neighbourhood
+ * (and more), so gating it twice would demand two declarations of one pill — one of them in a
+ * shared table every list lane would then edit (#7482).
+ */
+const GATED_BY_LIST_STANDARD = new Set(["F5"]);
+
 export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DEBT) {
 	/** @type {string[]} */
 	const problems = [];
@@ -1195,7 +1244,7 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
 	for (const s of surfaces) {
 		const declared = new Set(debt[s.symbol]?.predicates ?? []);
 		for (const [id, v] of Object.entries(perSurface[s.symbol] ?? {})) {
-			if (v.verdict !== "FAIL" || declared.has(id)) continue;
+			if (v.verdict !== "FAIL" || declared.has(id) || GATED_BY_LIST_STANDARD.has(id)) continue;
 			problems.push(
 				`${s.file}: \`${s.symbol}\` fails ${id} — ${v.detail} Fix the surface, or add ${id} to ` +
 					"`FILTER_STANDARD_DEBT` with an owner and the reason it stays. A filter surface that " +
@@ -1215,6 +1264,13 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
 			continue;
 		}
 		for (const id of row.predicates) {
+			if (GATED_BY_LIST_STANDARD.has(id)) {
+				problems.push(
+					`FILTER_STANDARD_DEBT declares \`${symbol}\` ${id}, which is gated by the list standard's ledger ` +
+						`(${LIST_LEDGER_DIR}/), not here. Declare the count sites there.`,
+				);
+				continue;
+			}
 			const v = perSurface[symbol]?.[id];
 			if (v === undefined) {
 				problems.push(`FILTER_STANDARD_DEBT declares \`${symbol}\` ${id}, which this file does not score.`);
@@ -1232,6 +1288,563 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
 	return problems;
 }
 
+// ── the LIST standard: counts and paging (#7481, LST-0 #7482) ────────────────────────────────
+//
+// lib/query/README.md → "Paging" and "Counts". The maintainer's ruling of 2026-11-24 removed the
+// list count pill from everywhere and asked for ONE paging contract, so this half of the file
+// measures the opposite of what F5 used to: a count pill on a list is a FAILURE now, and so is
+// every paging mode but keyset. The rules are named, not numbered, because RUBRIC.md's F8–F10
+// are already the LIVE half of family F (`e2e/audit/filters.spec.ts`) and a static "F8" here would
+// be a second predicate under the same name.
+//
+// THE SUBJECT IS A MODULE, OR A FILTER SURFACE. A finding is a (subject, rule) site count. Module
+// subjects are repo-relative paths; a filter surface is `store:<symbol>`, the same unit F1–F6 use.
+// The census is WIDER than the filter surfaces on purpose (the epic's F9): a module that renders a
+// `<DataTable>`, calls `useKeysetList(`, or hand-rolls an infinite query is a list subject whether
+// or not it has a filter bar, so billing transactions, evidence waivers and promotions history —
+// lists with no bar — cannot escape by having none.
+//
+// THE RULES, each with the shape that makes it FAIL:
+//
+//   count-pill     `<CountPill`, or `count=` on a `<PageToolbar>` / `<SectionHeading>` opening
+//                  tag, anywhere under the console roots. Read from the element's OWN opening tag
+//                  at brace depth 0, so a `count` prop of a child element passed in `actions={…}`
+//                  is not read as the toolbar's. Where the number IS the content (the agent
+//                  artifact tile) the ledger records a `content` decision.
+//   count-prose    "N of M", "Showing …", "N total" — in the list census, the filter surfaces'
+//                  neighbourhoods and the DataTable shell. Not tree-wide: "Step {n} of {total}"
+//                  in a wizard is not a list count, and the census is where a list is.
+//   page-slice     `.slice(` page arithmetic in a client module: arguments that multiply by a
+//                  page-ish identifier, or name a page size.
+//   render-window  `.slice(0, x)` where `x` is a `useState` binding of the same module — a "Show
+//                  more" that grows a window over rows that were all fetched.
+//   page-url       a `pageFromUrl(` call — `?page=` is retired.
+//   grown-limit    `limit + …` in a client module — a "Show more" that re-reads a bigger window.
+//   client-table   a `<DataTable` in CLIENT mode (no `keyset=`). DataTable pages a client-mode
+//                  table by default (20 rows), which is how alert deliveries got page numbers over
+//                  50 rows without asking for them. The mode goes with its last caller (LST-14).
+//   keyset-contract a list that does not page through the contract: a raw `useInfiniteQuery(` or
+//                  `useInfiniteScrollSentinel(` outside the primitives; a `.tsx` module that calls
+//                  `useKeysetList(` and renders neither `<ListFooter` nor `<DataTable keyset=`
+//                  (rows with no way to page two); a filter surface whose neighbourhood never
+//                  calls `useKeysetList(`.
+//   keyset-builder a `useKeysetList(orpc.<domain>.<proc>` whose procedure module (resolved
+//                  through `lib/rpc/router.ts`) calls no `query*Page` builder in
+//                  `lib/queries/` that returns `nextCursor` — the server half of the contract.
+//
+// WHAT IS NOT READ, stated so nobody infers it: an unpaged list rendered as a plain `.map` over a
+// fetched array, with no filter store, no DataTable and no paging machinery, carries no
+// structural mark of being a list and is not a subject. `.slice` in a SERVER module (a builder
+// trimming its `limit + 1` read) is not paging in the browser and is not read. A count passed to a
+// component other than the three named is not read (`ProgressRing total=` is not a list count).
+//
+// THE LEDGER is `apps/console/list-standard/*.json`, ONE FILE PER SURFACE, so the lanes converting
+// surfaces in parallel never edit the same file. Each file is one of:
+//
+//   { "kind": "debt",    "owner": "#7483", "why": "…", "findings": { subject: { rule: n } } }
+//   { "kind": "bounded", "decided": "…", "decision": "…", "bound": "…", "findings": { … } }
+//   { "kind": "content", "decided": "…", "decision": "…", "findings": { … } }
+//
+// `debt` is a known finding with the open LST issue that removes it; the owner must be one of
+// {@link LIST_STANDARD_OWNERS}, so new debt cannot be filed against an unrelated issue. `bounded`
+// is an unpaged list whose size the product caps, with the SERVER-SIDE bound named; it may excuse
+// only paging rules. `content` is a count that is the content, not list chrome; it may excuse only
+// `count-pill`. The per-(subject, rule) sum over every file must EQUAL the measured count, in both
+// directions: a new site in an indebted module is undeclared, and a converted one leaves a
+// declaration that now overstates — which fails until the number comes down, so fixing a surface
+// deletes or shrinks its file in the same commit, and that deletion is the proof of the fix.
+// `bounded` and `content` are held under ceilings ({@link LIST_STANDARD_CEILINGS}): growing either
+// past the epic's named set is a reviewed edit of this file.
+
+/** Every rule the list standard measures. */
+export const LIST_RULES = /** @type {const} */ ([
+	"count-pill",
+	"count-prose",
+	"page-slice",
+	"render-window",
+	"page-url",
+	"grown-limit",
+	"client-table",
+	"keyset-contract",
+	"keyset-builder",
+]);
+
+/** The rules a `bounded` decision may excuse: the paging ones — never a count, never a builder. */
+const BOUNDED_RULES = new Set(["page-slice", "render-window", "client-table", "keyset-contract"]);
+
+/** The rules a `content` decision may excuse. */
+const CONTENT_RULES = new Set(["count-pill"]);
+
+/** Where the per-surface ledger lives. */
+export const LIST_LEDGER_DIR = "apps/console/list-standard";
+
+/**
+ * The issues that may own list-standard debt: the epic's children (#7481), LST-1 to LST-14. A debt
+ * file naming any other owner fails — the way new debt is kept from being filed against whatever
+ * issue is to hand. LST-0 (#7482) is not here: it is the unit that seeds the ledger, and owns none.
+ */
+export const LIST_STANDARD_OWNERS = /** @type {const} */ ([
+	"#7483", "#7484", "#7485", "#7486", "#7487", "#7488", "#7489",
+	"#7490", "#7491", "#7492", "#7493", "#7494", "#7495", "#7496",
+]);
+
+/**
+ * Ceilings on the decision kinds, counted in FILES. The epic names seven bounded lists (roles, SSO
+ * providers, alert policies, alert channels, classification dimensions, the connectors catalog,
+ * evidence's per-environment roll-up) plus the agent suggestion carousel measured here, and two
+ * content counts (the agent artifact tile, the canvas review's pending tally). A lane converting
+ * one of those into a decision stays under the ceiling without touching this file; a NINTH bounded
+ * list is a reviewed line here.
+ */
+export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 8, content: 2 });
+
+/** The paging primitives themselves — they implement the machinery the census bans elsewhere. */
+const LIST_PRIMITIVES = new Set([
+	"apps/console/components/data-table.tsx",
+	"apps/console/components/list/list-footer.tsx",
+	"apps/console/lib/query/use-keyset-list.ts",
+	"apps/console/lib/query/use-infinite-scroll.ts",
+]);
+
+/** The modules the list standard IS. A scan that did not read them has not read the console. */
+const LIST_ANCHORS = [
+	"apps/console/lib/queries/keyset.ts",
+	"apps/console/lib/query/use-keyset-list.ts",
+	"apps/console/components/list/list-footer.tsx",
+];
+
+/** The read router: where `orpc.<domain>` is resolved to its procedure module. */
+const READ_ROUTER = "apps/console/lib/rpc/router.ts";
+
+/**
+ * The opening tag of every `<Tag` element in `text`, up to its closing `>` at brace depth 0.
+ * Quote- and brace-aware, so `onClick={() => a > b}` does not end the tag early.
+ *
+ * @param {string} text
+ * @param {string} tag
+ * @returns {{ at: number, source: string, shallow: string }[]} `shallow` is the opening tag with
+ *   every `{…}` expression blanked — the props that belong to THIS element, not to a child passed in
+ */
+export function jsxOpenings(text, tag) {
+	/** @type {{ at: number, source: string, shallow: string }[]} */
+	const out = [];
+	const re = new RegExp(`<${tag}(?=[\\s/>])`, "g");
+	let m;
+	while ((m = re.exec(text)) !== null) {
+		let depth = 0;
+		/** @type {string | null} */
+		let quote = null;
+		let shallow = "";
+		let end = text.length;
+		for (let i = m.index; i < text.length; i += 1) {
+			const c = text[i];
+			if (quote !== null) {
+				if (c === quote && text[i - 1] !== "\\") quote = null;
+				shallow += depth === 0 ? c : " ";
+				continue;
+			}
+			if (c === '"' || c === "'" || c === "`") {
+				quote = c;
+				shallow += depth === 0 ? c : " ";
+				continue;
+			}
+			if (c === "{") depth += 1;
+			if (c === "}") {
+				depth -= 1;
+				shallow += " ";
+				continue;
+			}
+			shallow += depth === 0 ? c : " ";
+			if (c === ">" && depth === 0) {
+				end = i + 1;
+				break;
+			}
+		}
+		out.push({ at: m.index, source: text.slice(m.index, end), shallow });
+	}
+	return out;
+}
+
+/** Does this opening tag carry `prop=` as its OWN prop (brace depth 0)? */
+function hasProp(opening, prop) {
+	return new RegExp(`\\s${prop}=`).test(opening.shallow);
+}
+
+/** The argument text of every `<callee>(` call, by paren depth, comment-stripped source. */
+function callArgs(text, callee) {
+	/** @type {string[]} */
+	const out = [];
+	const re = new RegExp(`${callee.replace(/[.$]/g, "\\$&")}\\(`, "g");
+	let m;
+	while ((m = re.exec(text)) !== null) {
+		let depth = 0;
+		for (let i = m.index + m[0].length - 1; i < text.length; i += 1) {
+			if (text[i] === "(") depth += 1;
+			else if (text[i] === ")") {
+				depth -= 1;
+				if (depth === 0) {
+					out.push(text.slice(m.index + m[0].length, i));
+					break;
+				}
+			}
+		}
+	}
+	return out;
+}
+
+/** A client module: a `.tsx` file, or a `.ts` one that declares `"use client"`. */
+function isClientModule(file, text) {
+	return file.endsWith(".tsx") || /^\s*["']use client["']/m.test(text.slice(0, 400));
+}
+
+/**
+ * The source with trailing `// …` comments dropped. `stripCommentLines` blanks whole-line and block
+ * comments, which is enough for a matcher looking for CODE; the prose matcher reads words, and a
+ * trailing comment saying "showing the newest" is not a rendered string.
+ */
+function withoutTrailingComments(text) {
+	return text
+		.split("\n")
+		.map((line) => {
+			const at = line.search(/\s\/\/\s/);
+			if (at === -1) return line;
+			const before = line.slice(0, at);
+			const quotes = (before.match(/["'`]/g) ?? []).length;
+			return quotes % 2 === 0 ? before : line;
+		})
+		.join("\n");
+}
+
+/** Page arithmetic in a `.slice(` argument list. */
+const PAGE_SLICE = /\*[^,]*\b\w*page\w*\b|\b\w*page\w*\b[^,]*\*|\bpage_?size\b/i;
+
+/**
+ * "N of M" / "Showing N…" / "N total" prose, each counted as a site. Shaped to the RENDERED
+ * phrase, measured against the console: a JSX `{a} of {b}` (also across `of{" "}` and a line
+ * break, which is how DataTable wrote it), "Showing" followed by a number or an interpolation
+ * within two words ("Showing the newest ${n}"), and "total" straight after an interpolation on the
+ * same line. Not "Showing it again" (sso-manager's DNS help), not a `total={…}` PROP (the runners
+ * pager), and not a template `${a} of ${b}` on its own — the console uses that for bulk-action
+ * results and selection tallies, which are not list sizes; a list-size one says "Showing" and is
+ * caught by that.
+ */
+const COUNT_PROSE = [
+	/\}[ \t]*of(?:\{"\s*"\})?\s*\{/g,
+	/\bShowing\s+(?:the\s+)?(?:\w+\s+)?(?:\{|\$\{|\d)/g,
+	/\}[ \t]*total\b(?![\w=])/g,
+	/\$\{[^}]*\}[ \t]+total\b/g,
+];
+
+/**
+ * The `query*Page` builders under `lib/queries/` that return the keyset contract — an exported
+ * function whose body returns `nextCursor`, or assembles its page through `keysetListPage(`.
+ *
+ * @param {ReturnType<typeof fsIo>} io
+ * @returns {Set<string>}
+ */
+export function deriveKeysetBuilders(io) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	const dir = "apps/console/lib/queries";
+	for (const e of io.listDir(dir)) {
+		if (e.dir || !/\.ts$/.test(e.name) || /\.test\.ts$/.test(e.name)) continue;
+		const text = stripCommentLines(io.readFile(`${dir}/${e.name}`)).lines.join("\n");
+		for (const m of text.matchAll(/export (?:async )?function (query\w+Page)\s*\(/g)) {
+			const body = functionBody(text, m.index, text.length);
+			if (/\bnextCursor\b\s*[,:}]/.test(body) || /\bkeysetListPage\s*\(/.test(body)) names.add(m[1]);
+		}
+	}
+	return names;
+}
+
+/**
+ * The procedure module a read-router domain resolves to, through `lib/rpc/router.ts`'s own map
+ * and imports — never by guessing `procedures/<domain>.ts`, which is a convention, not a fact.
+ *
+ * @param {string} domain
+ * @param {Map<string, string>} sources
+ * @returns {string | null}
+ */
+function procedureModuleOf(domain, sources) {
+	const router = sources.get(READ_ROUTER);
+	if (router === undefined) return null;
+	const entry = new RegExp(`\\b${domain}\\s*:\\s*(\\w+)`).exec(router);
+	if (entry === null) return null;
+	for (const imp of router.matchAll(/import\s+\{([^}]*)\}\s*from\s*["']([^"']+)["']/g)) {
+		const named = imp[1].split(",").map((n) => n.trim().split(/\s+as\s+/).at(-1)?.trim());
+		if (named.includes(entry[1])) return resolveImport(READ_ROUTER, imp[2], sources);
+	}
+	return null;
+}
+
+/**
+ * Every list-standard finding in the tree, as site counts per (subject, rule).
+ *
+ * @param {Map<string, string>} sources comment-stripped console modules
+ * @param {Surface[]} surfaces the filter surfaces (their neighbourhoods are subjects too)
+ * @param {Set<string>} keysetBuilders
+ * @returns {{ findings: Map<string, Map<string, number>>, census: string[] }}
+ */
+export function measureListStandard(sources, surfaces, keysetBuilders) {
+	/** @type {Map<string, Map<string, number>>} */
+	const findings = new Map();
+	/** @param {string} subject @param {string} rule @param {number} [n] */
+	const add = (subject, rule, n = 1) => {
+		if (n <= 0) return;
+		const row = findings.get(subject) ?? new Map();
+		row.set(rule, (row.get(rule) ?? 0) + n);
+		findings.set(subject, row);
+	};
+
+	/** @type {Set<string>} the list census: modules with list machinery */
+	const census = new Set();
+	for (const [file, text] of sources) {
+		if (LIST_PRIMITIVES.has(file)) continue;
+		const client = isClientModule(file, text);
+
+		// count-pill — tree-wide.
+		add(file, "count-pill", jsxOpenings(text, "CountPill").length);
+		for (const tag of ["PageToolbar", "SectionHeading"]) {
+			add(file, "count-pill", jsxOpenings(text, tag).filter((o) => hasProp(o, "count")).length);
+		}
+
+		// page-url — tree-wide, the call and never the definition.
+		add(file, "page-url", [...text.matchAll(/(?<!function\s)\bpageFromUrl\s*\(/g)].length);
+
+		// client-table — every DataTable not in server mode.
+		const tables = jsxOpenings(text, "DataTable");
+		add(file, "client-table", tables.filter((o) => !hasProp(o, "keyset")).length);
+
+		const rawInfinite = client ? [...text.matchAll(/\b(?:useInfiniteQuery|useInfiniteScrollSentinel)\s*(?:<[^>()]*>)?\s*\(/g)].length : 0;
+		const callsKeyset = /\buseKeysetList\s*\(/.test(text);
+		if (tables.length > 0 || callsKeyset || rawInfinite > 0) census.add(file);
+
+		if (client) {
+			// page-slice and render-window — the browser paging the rows it already holds.
+			const stateVars = new Set([...text.matchAll(/const\s+\[\s*(\w+)\s*,\s*set\w*\s*\]\s*=\s*useState\b/g)].map((s) => s[1]));
+			for (const args of callArgs(text, ".slice")) {
+				const window = /^\s*0\s*,\s*([A-Za-z_$][\w$]*)\s*$/.exec(args);
+				if (window !== null && stateVars.has(window[1])) add(file, "render-window");
+				else if (PAGE_SLICE.test(args)) add(file, "page-slice");
+			}
+			// grown-limit — a read whose window grows in client state.
+			add(file, "grown-limit", [...text.matchAll(/\blimit\s*\+\s*[\w(]/g)].length);
+			// keyset-contract (i) — hand-rolled infinite machinery.
+			add(file, "keyset-contract", rawInfinite);
+		}
+
+		// keyset-contract (ii) — a rendering module that pages with no footer.
+		if (callsKeyset && file.endsWith(".tsx")) {
+			const footed = /<ListFooter[\s/>]/.test(text) || tables.some((o) => hasProp(o, "keyset"));
+			if (!footed) add(file, "keyset-contract");
+		}
+
+		// keyset-builder — the procedure behind every `useKeysetList(orpc.<domain>.<proc>`.
+		for (const m of text.matchAll(/\buseKeysetList\s*\(\s*orpc\.(\w+)\.\w+/g)) {
+			const proc = procedureModuleOf(m[1], sources);
+			const body = proc === null ? "" : (sources.get(proc) ?? "");
+			if (![...keysetBuilders].some((b) => new RegExp(`\\b${b}\\s*\\(`).test(body))) add(file, "keyset-builder");
+		}
+	}
+
+	// A module with a paging finding is a list whatever else it lacks (an unfiltered waivers table
+	// paging with `.slice`), so its prose is read too.
+	for (const [subject, rules] of findings) {
+		if (["page-slice", "render-window", "page-url", "grown-limit"].some((r) => rules.has(r))) census.add(subject);
+	}
+
+	// keyset-contract (iii) — a filter surface that never pages through the contract.
+	/** @type {Set<string>} */
+	const proseScope = new Set([...census, "apps/console/components/data-table.tsx"]);
+	for (const s of surfaces) {
+		const hood = [s.file, ...s.consumers];
+		for (const f of hood) proseScope.add(f);
+		if (!hood.some((f) => /\buseKeysetList\s*\(/.test(sources.get(f) ?? ""))) add(`store:${s.symbol}`, "keyset-contract");
+	}
+
+	// count-prose — the census, the surfaces' neighbourhoods, and the table shell.
+	for (const file of proseScope) {
+		const text = withoutTrailingComments(sources.get(file) ?? "");
+		add(file, "count-prose", COUNT_PROSE.reduce((n, re) => n + [...text.matchAll(re)].length, 0));
+	}
+
+	return { findings, census: [...census].sort() };
+}
+
+/**
+ * Reads the per-surface ledger. A file that does not parse, or whose shape is wrong, is a problem
+ * named by its path — never skipped: a skipped ledger file is a set of findings nobody declared,
+ * reported as if they had been.
+ *
+ * @param {ReturnType<typeof fsIo>} io
+ * @returns {{ entries: { file: string, kind: string, findings: Record<string, Record<string, number>> }[], problems: string[] }}
+ */
+export function readListLedger(io) {
+	/** @type {{ file: string, kind: string, findings: Record<string, Record<string, number>> }[]} */
+	const entries = [];
+	/** @type {string[]} */
+	const problems = [];
+	for (const e of io.listDir(LIST_LEDGER_DIR).sort((a, b) => a.name.localeCompare(b.name))) {
+		const file = `${LIST_LEDGER_DIR}/${e.name}`;
+		if (e.dir) {
+			problems.push(`${file}: a directory in the list-standard ledger. One JSON file per surface, flat.`);
+			continue;
+		}
+		if (e.name === "README.md") continue;
+		if (!/^[a-z0-9-]+\.json$/.test(e.name)) {
+			problems.push(`${file}: ledger files are \`<surface-slug>.json\` (lower-case, hyphens).`);
+			continue;
+		}
+		/** @type {unknown} */
+		let row;
+		try {
+			row = JSON.parse(io.readFile(file));
+		} catch (err) {
+			problems.push(`${file}: does not parse as JSON (${err instanceof Error ? err.message : String(err)}).`);
+			continue;
+		}
+		if (row === null || typeof row !== "object" || Array.isArray(row)) {
+			problems.push(`${file}: a ledger entry is a JSON object.`);
+			continue;
+		}
+		const { kind, findings } = /** @type {Record<string, unknown>} */ (row);
+		const text = (k) => {
+			const v = /** @type {Record<string, unknown>} */ (row)[k];
+			return typeof v === "string" && v.trim() !== "";
+		};
+		if (kind === "debt") {
+			const owner = /** @type {Record<string, unknown>} */ (row).owner;
+			if (typeof owner !== "string" || !LIST_STANDARD_OWNERS.some((o) => o === owner)) {
+				problems.push(`${file}: debt owner \`${String(owner)}\` is not one of the list standard's LST issues (${LIST_STANDARD_OWNERS.join(", ")}).`);
+			}
+			if (!text("why")) problems.push(`${file}: debt needs a \`why\` — the mechanism, never "not got to it yet".`);
+		} else if (kind === "bounded") {
+			for (const k of ["decided", "decision", "bound"]) if (!text(k)) problems.push(`${file}: a bounded decision needs \`${k}\`.`);
+		} else if (kind === "content") {
+			for (const k of ["decided", "decision"]) if (!text(k)) problems.push(`${file}: a content decision needs \`${k}\`.`);
+		} else {
+			problems.push(`${file}: \`kind\` is \`debt\`, \`bounded\` or \`content\`, not \`${String(kind)}\`.`);
+			continue;
+		}
+		if (findings === null || typeof findings !== "object" || Array.isArray(findings) || Object.keys(findings).length === 0) {
+			problems.push(`${file}: \`findings\` is a non-empty object, subject → { rule: sites }.`);
+			continue;
+		}
+		/** @type {Record<string, Record<string, number>>} */
+		const clean = {};
+		for (const [subject, rules] of Object.entries(findings)) {
+			if (rules === null || typeof rules !== "object" || Array.isArray(rules)) {
+				problems.push(`${file}: \`${subject}\` maps to { rule: sites }.`);
+				continue;
+			}
+			clean[subject] = {};
+			for (const [rule, n] of Object.entries(rules)) {
+				if (!LIST_RULES.some((r) => r === rule)) {
+					problems.push(`${file}: \`${subject}\` declares \`${rule}\`, which is not a list-standard rule (${LIST_RULES.join(", ")}).`);
+					continue;
+				}
+				if (!Number.isInteger(n) || n < 1) {
+					problems.push(`${file}: \`${subject}\` ${rule} is a site count, a positive integer — not \`${String(n)}\`.`);
+					continue;
+				}
+				const allowed = kind === "bounded" ? BOUNDED_RULES : kind === "content" ? CONTENT_RULES : null;
+				if (allowed !== null && !allowed.has(rule)) {
+					problems.push(`${file}: a \`${kind}\` decision cannot excuse \`${rule}\` (it may excuse ${[...allowed].join(", ")}). That finding is debt, with an LST owner.`);
+					continue;
+				}
+				clean[subject][rule] = n;
+			}
+		}
+		entries.push({ file, kind: String(kind), findings: clean });
+	}
+	return { entries, problems };
+}
+
+/**
+ * The list-standard gate: every measured site declared, every declaration measured, in both
+ * directions, and the decision kinds under their ceilings.
+ *
+ * @param {Map<string, Map<string, number>>} findings
+ * @param {ReturnType<typeof readListLedger>["entries"]} entries
+ * @param {Set<string>} subjects every subject that exists (modules read, `store:` surfaces)
+ * @param {{ bounded: number, content: number }} [ceilings]
+ * @returns {string[]}
+ */
+export function checkListStandard(findings, entries, subjects, ceilings = LIST_STANDARD_CEILINGS) {
+	/** @type {string[]} */
+	const problems = [];
+	/** @type {Map<string, {n: number, files: string[]}>} */
+	const declared = new Map();
+	for (const e of entries) {
+		for (const [subject, rules] of Object.entries(e.findings)) {
+			if (!subjects.has(subject)) {
+				problems.push(
+					`${e.file}: declares \`${subject}\`, which is not a module or filter surface in this tree. It was renamed or ` +
+						"deleted — move or delete the declaration in the same commit; one whose subject is gone proves nothing.",
+				);
+				continue;
+			}
+			for (const [rule, n] of Object.entries(rules)) {
+				const key = `${subject}\u0000${rule}`;
+				const d = declared.get(key) ?? { n: 0, files: [] };
+				d.n += n;
+				d.files.push(e.file);
+				declared.set(key, d);
+			}
+		}
+	}
+	for (const [subject, rules] of findings) {
+		for (const [rule, n] of rules) {
+			const d = declared.get(`${subject}\u0000${rule}`);
+			if (d === undefined) {
+				problems.push(
+					`${subject}: ${n} \`${rule}\` site(s) that no file under ${LIST_LEDGER_DIR}/ declares. ${LIST_RULE_ADVICE[rule]} ` +
+						"(lib/query/README.md → \"Paging\" / \"Counts\").",
+				);
+			} else if (d.n < n) {
+				problems.push(
+					`${subject}: ${n} \`${rule}\` site(s), but ${d.files.join(", ")} declare(s) ${d.n}. A NEW site in an indebted ` +
+						`module is still a new site. ${LIST_RULE_ADVICE[rule]}`,
+				);
+			}
+		}
+	}
+	for (const [key, d] of declared) {
+		const [subject, rule] = key.split("\u0000");
+		if (!subjects.has(subject)) continue;
+		const n = findings.get(subject)?.get(rule) ?? 0;
+		if (n < d.n) {
+			problems.push(
+				`${d.files.join(", ")}: declare(s) ${d.n} \`${rule}\` site(s) in \`${subject}\`, and ${n} remain. Lower the number ` +
+					"(or delete the file) in this commit — a declaration that outlives its finding silently excuses the next one.",
+			);
+		}
+	}
+	for (const kind of /** @type {const} */ (["bounded", "content"])) {
+		const got = entries.filter((e) => e.kind === kind).length;
+		if (got > ceilings[kind]) {
+			problems.push(
+				`${got} \`${kind}\` ledger file(s), above the ceiling of ${ceilings[kind]} in \`LIST_STANDARD_CEILINGS\`. ` +
+					"Raising it is a reviewed line in scripts/check-filter-standard.mjs, not a new file.",
+			);
+		}
+	}
+	return problems;
+}
+
+/** What to do about each rule, said once and appended to its finding. */
+const LIST_RULE_ADVICE = {
+	"count-pill": "The console carries no list counts: drop the `count` (a number that IS the content is a `content` decision).",
+	"count-prose": 'No "N of M", "Showing …" or "N total" around a list — totals exist only as facet option counts.',
+	"page-slice": "The browser must not page rows it fetched: read a page from a keyset builder (`useKeysetList`).",
+	"render-window": 'A "Show more" window over fetched rows is a client page: page from the server (`useKeysetList` + `ListFooter`).',
+	"page-url": "`?page=` is retired: the cursor is the infinite query's pageParam, never in the URL.",
+	"grown-limit": "Re-reading a bigger window is not paging: walk the keyset cursor (`useKeysetList`).",
+	"client-table": "Render the list through `<DataTable keyset={useKeysetList(…)}>` (server mode).",
+	"keyset-contract": "Page through `useKeysetList` + `ListFooter` (or `<DataTable keyset=…>`), or record a `bounded` decision naming the server-side bound.",
+	"keyset-builder": "The procedure must read through a `query*Page` builder in lib/queries/ that returns `nextCursor` (lib/queries/keyset.ts).",
+};
+
 // ── the scan ─────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -1241,7 +1854,7 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
  * @param {typeof F7_UNDRIVEN} [undriven] injectable so `--self-test` drives the whole pipeline
  *   over a fixture tree, which does not hold the console's two real exemptions
  */
-export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, floors = FLOORS) {
+export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, floors = FLOORS, ceilings = LIST_STANDARD_CEILINGS) {
 	const { sources, census, unterminated } = readConsole(io);
 
 	/** @type {string[]} */
@@ -1253,7 +1866,7 @@ export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, fl
 	for (const [root, n] of census) {
 		if (n === 0) problems.push(`no modules under \`${root}\` — that root has moved or been renamed, and every predicate over it is now unmeasurable.`);
 	}
-	for (const anchor of ANCHORS) {
+	for (const anchor of [...ANCHORS, ...LIST_ANCHORS]) {
 		if (!sources.has(anchor)) {
 			problems.push(
 				`\`${anchor}\` was not read. It is one of the modules the filter standard IS, so a scan that ` +
@@ -1328,6 +1941,18 @@ export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, fl
 		problems.push(...checkConformance(surfaces, perSurface, debt));
 	}
 
+	// The LIST standard (#7482): counts and paging, measured over every module and every surface,
+	// gated by the per-surface ledger. Measured even when the scan already has problems, so a broken
+	// derivation elsewhere does not hide a new pill; gated only on a clean read, like the rest.
+	const keysetBuilders = problems.length > 0 ? new Set() : deriveKeysetBuilders(io);
+	const list = measureListStandard(sources, surfaces, keysetBuilders);
+	const ledger = readListLedger(io);
+	problems.push(...ledger.problems);
+	if (problems.length === 0) {
+		const subjects = new Set([...sources.keys(), ...surfaces.map((s) => `store:${s.symbol}`)]);
+		problems.push(...checkListStandard(list.findings, ledger.entries, subjects, ceilings));
+	}
+
 	// The params each surface writes — the live F8–F10 pass's subject detail. A surface whose URL
 	// sync EXISTS and cannot be followed is a broken read and is reported; one with no URL sync at
 	// all is F2's finding, already scored, and simply carries no params.
@@ -1339,7 +1964,7 @@ export function scan(io, undriven = F7_UNDRIVEN, debt = FILTER_STANDARD_DEBT, fl
 		urlParams[s.symbol] = derived;
 	}
 
-	return { sources, census, surfaces, builders, driven, barPrimitives, perSurface, urlParams, problems };
+	return { sources, census, surfaces, builders, driven, barPrimitives, perSurface, urlParams, list, ledger, keysetBuilders, problems };
 }
 
 // ── the route join ───────────────────────────────────────────────────────────────────────────
@@ -1452,7 +2077,7 @@ function fixtureIo(overrides = {}) {
 			"const q = useMemo(() => normalizeWidgetsQuery({ ...filters, search }), []);",
 			"const search = useDebouncedValue(filters.search, 300, { urlRead });",
 			"useQuery({ queryKey: qk.widgets(org, q), placeholderData: keepPreviousData });",
-			'<SectionHeading title="Widgets" count={n} />',
+			'<SectionHeading title="Widgets" />',
 			'<div className={isPlaceholderData ? "opacity-60" : ""}>',
 			"<FilterBar><FilterSearch /><FacetFilter /><FilterBarReset /></FilterBar>",
 		].join("\n"),
@@ -1463,7 +2088,30 @@ function fixtureIo(overrides = {}) {
 		"apps/console/app/page.tsx": "export default function P() { return null; }",
 		"apps/console/lib/queries/widgets.ts": [
 			"export async function queryWidgetsPage(orgId, query) {",
-			"\treturn { rows: [], facets: { kinds: [] } };",
+			"\treturn { rows: [], nextCursor: null, facets: { kinds: [] }, universeEmpty: false };",
+			"}",
+		].join("\n"),
+		// The list standard's half (#7482): the primitives, the read router, the procedure, and the
+		// module that renders the widgets as a keyset list — written as a lane converting a surface
+		// would write them, not as the matchers read.
+		"apps/console/lib/queries/keyset.ts": "export function encodeKeysetCursor() {}",
+		"apps/console/lib/query/use-keyset-list.ts": '"use client";\nexport function useKeysetList(p, f) { return useInfiniteQuery(p.infiniteOptions({})); }',
+		"apps/console/components/list/list-footer.tsx": "export function ListFooter({ list }) { const ref = useInfiniteScrollSentinel({}); return null; }",
+		"apps/console/lib/rpc/router.ts": 'import { widgetsRouter } from "@/lib/rpc/procedures/widgets";\nexport const router = { widgets: widgetsRouter };',
+		"apps/console/lib/rpc/procedures/widgets.ts": [
+			'import { queryWidgetsPage } from "@/lib/queries/widgets";',
+			"export const widgetsRouter = { page: query.handler(({ input }) => queryWidgetsPage(org, input)) };",
+		].join("\n"),
+		"apps/console/components/widgets-list.tsx": [
+			'"use client";',
+			"import { useWidgetFilters } from '@/lib/stores/use-widgets-filters';",
+			"export function WidgetsList({ query }) {",
+			"\tconst reset = useWidgetFilters((s) => s.reset);",
+			"\tconst list = useKeysetList(orpc.widgets.page, query);",
+			"\treturn (<>",
+			"\t\t<ul>{list.rows.map((r) => <li key={r.id}>{r.name}</li>)}</ul>",
+			"\t\t<ListFooter list={list} />",
+			"\t</>);",
 			"}",
 		].join("\n"),
 		"packages/ui/src/filter-bar.tsx": "export function FilterBar() {}\nexport function FilterBarReset() {}",
@@ -1622,14 +2270,52 @@ export function positiveControl() {
 		(v) => v.F4.verdict === "FAIL",
 	);
 	drive(
-		"F5 fires with no count pill anywhere",
-		{ [CLIENT]: clean.readFile(CLIENT).replace('<SectionHeading title="Widgets" count={n} />', '<SectionHeading title="Widgets" />') },
+		"F5 fires when a count pill is planted (inverted by #7482: the pill is the defect now)",
+		{ [CLIENT]: clean.readFile(CLIENT).replace('<SectionHeading title="Widgets" />', '<SectionHeading title="Widgets" count={n} />') },
+		(v) => v.F5.verdict === "FAIL" && v.F4.verdict === "PASS",
+	);
+	drive(
+		"F5 fires on a raw CountPill",
+		{ [CLIENT]: clean.readFile(CLIENT).replace('<SectionHeading title="Widgets" />', '<SectionHeading title="Widgets" /><CountPill count={n} />') },
 		(v) => v.F5.verdict === "FAIL",
 	);
 	drive(
-		'F5 fires on "N of M" prose in the bar',
+		"F5 does NOT read a `count` prop of a CHILD element passed into the toolbar",
+		{ [CLIENT]: clean.readFile(CLIENT).replace('<SectionHeading title="Widgets" />', '<PageToolbar actions={<Badge count={n} />} />') },
+		(v) => v.F5.verdict === "PASS",
+	);
+	drive(
+		'F5 fires on "N of M" prose',
 		{ [CLIENT]: clean.readFile(CLIENT).replace("<FilterSearch />", "<FilterSearch />{shown} of {total}") },
 		(v) => v.F5.verdict === "FAIL",
+	);
+	drive(
+		"F3 and F6 accept `useKeysetList` keyed on the normalized query (it sets keepPreviousData itself)",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("useQuery({ queryKey: qk.widgets(org, q), placeholderData: keepPreviousData });", "const list = useKeysetList(orpc.widgets.page, q);"),
+		},
+		(v) => v.F3.verdict === "PASS" && v.F6.verdict === "PASS",
+	);
+	drive(
+		"...and F6 still fires on a `useKeysetList` surface with no dim",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("useQuery({ queryKey: qk.widgets(org, q), placeholderData: keepPreviousData });", "const list = useKeysetList(orpc.widgets.page, q);")
+				.replace('isPlaceholderData ? "opacity-60" : ""', '""'),
+		},
+		(v) => v.F6.verdict === "FAIL",
+	);
+	drive(
+		"...and F3 still fires when `useKeysetList` is handed something other than the normalized query",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace("useQuery({ queryKey: qk.widgets(org, q), placeholderData: keepPreviousData });", "const list = useKeysetList(orpc.widgets.page, {});"),
+		},
+		(v) => v.F3.verdict === "FAIL",
 	);
 	drive(
 		"F6 fires without keepPreviousData",
@@ -1652,6 +2338,134 @@ export function positiveControl() {
 		},
 		(v) => v.F6.verdict === "PASS",
 	);
+
+	// ── THE LIST STANDARD (#7482), every rule in both directions ──────────────────────────────
+	//
+	// Each mutation plants exactly one defect into the clean fixture and must surface as exactly the
+	// rule it is about; each negative form beside it is a shape the rule must NOT read. The ledger
+	// controls then prove the gate: a declared finding passes, and every way a declaration can stop
+	// being true fails.
+	const LIST = "apps/console/components/widgets-list.tsx";
+	const LEDGER = "apps/console/list-standard/widgets.json";
+	const listText = clean.readFile(LIST);
+	/** @param {object} overrides @param {typeof LIST_STANDARD_CEILINGS} [ceilings] */
+	const listScan = (overrides, ceilings = LIST_STANDARD_CEILINGS) => scan(fixtureIo(overrides), {}, {}, NO_FLOORS, ceilings).problems;
+	/** @param {string} what @param {object} overrides @param {RegExp} expect */
+	const listFires = (what, overrides, expect) => {
+		const got = listScan(overrides);
+		if (!got.some((p) => expect.test(p))) problems.push(`${what}: expected ${expect}, got ${got.join(" | ") || "no problems"}`);
+	};
+	/** @param {string} what @param {object} overrides */
+	const listQuiet = (what, overrides) => {
+		const got = listScan(overrides);
+		if (got.length > 0) problems.push(`${what}: expected no problems, got ${got.join(" | ")}`);
+	};
+	const withFooter = (extra) => listText.replace("\t\t<ListFooter list={list} />", `\t\t<ListFooter list={list} />\n${extra}`);
+
+	listFires("count-pill fires on a planted SectionHeading count", { [LIST]: withFooter('<SectionHeading title="W" count={list.rows.length} />') }, /widgets-list\.tsx: 1 `count-pill`/);
+	listFires(
+		"count-pill fires on a raw CountPill in a module with NO list and NO filter store (tree-wide)",
+		{ "apps/console/components/unrelated-card.tsx": "export function UnrelatedCard({ n }) { return <CountPill count={n} />; }" },
+		/unrelated-card\.tsx: 1 `count-pill`/,
+	);
+	listQuiet("count-pill does not read a child's `count` passed into a toolbar prop", { [LIST]: withFooter("<PageToolbar actions={<Badge count={n} />} />") });
+	listFires("count-prose fires on \"Showing {n} of {m}\"", { [LIST]: withFooter("<p>Showing {list.rows.length} of {total}</p>") }, /widgets-list\.tsx: 2 `count-prose`/);
+	listFires("count-prose fires on \"{n} total\"", { [LIST]: withFooter("<p>{n} total</p>") }, /widgets-list\.tsx: 1 `count-prose`/);
+	listQuiet("count-prose does not read \"Showing it again\" or a `total=` prop", { [LIST]: withFooter('<p>Showing it again</p><Pager page={p}\n\ttotal={n} />') });
+	listFires(
+		"page-slice fires on client page arithmetic",
+		{ [LIST]: withFooter("{list.rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(String)}") },
+		/widgets-list\.tsx: 1 `page-slice`/,
+	);
+	listFires(
+		"render-window fires on `.slice(0, <state>)`",
+		{ [LIST]: listText.replace("\tconst list =", "\tconst [shown, setShown] = useState(20);\n\tconst visible = rows.slice(0, shown);\n\tconst list =") },
+		/widgets-list\.tsx: 1 `render-window`/,
+	);
+	listQuiet("render-window does not read a constant preview `.slice(0, PREVIEW)`", { [LIST]: listText.replace("\tconst list =", "\tconst preview = rows.slice(0, PREVIEW);\n\tconst list =") });
+	listFires("page-url fires on a `pageFromUrl(` call", { [LIST]: listText.replace("\tconst list =", "\tconst page = pageFromUrl(searchParams);\n\tconst list =") }, /widgets-list\.tsx: 1 `page-url`/);
+	listFires("grown-limit fires on a limit grown in client state", { [LIST]: listText.replace("\tconst list =", "\tconst more = () => setLimit(limit + 50);\n\tconst list =") }, /widgets-list\.tsx: 1 `grown-limit`/);
+	listFires(
+		"client-table fires on a client-mode DataTable in a module with no filter bar (the widened census)",
+		{ "apps/console/components/ledger-table.tsx": "export function LedgerTable({ rows }) { return <DataTable columns={c} data={rows} />; }" },
+		/ledger-table\.tsx: 1 `client-table`/,
+	);
+	listQuiet(
+		"client-table does not read a server-mode DataTable",
+		{ "apps/console/components/ledger-table.tsx": "export function LedgerTable() { const list = useKeysetList(orpc.widgets.page, {}); return <DataTable columns={c} keyset={list} />; }" },
+	);
+	listFires(
+		"keyset-contract fires on a hand-rolled infinite query",
+		{ "apps/console/components/feed.tsx": "export function Feed() { const q = useInfiniteQuery(opts); return null; }" },
+		/feed\.tsx: 1 `keyset-contract`/,
+	);
+	listFires(
+		"keyset-contract fires on a hand-rolled sentinel, generic form included",
+		{ "apps/console/components/feed.tsx": "export function Feed() { const ref = useInfiniteScrollSentinel<HTMLDivElement>({}); return null; }" },
+		/feed\.tsx: 1 `keyset-contract`/,
+	);
+	listFires("keyset-contract fires on a keyset list with no footer", { [LIST]: listText.replace("\t\t<ListFooter list={list} />\n", "") }, /widgets-list\.tsx: 1 `keyset-contract`/);
+	listFires(
+		"keyset-contract fires on a filter surface that never pages through useKeysetList",
+		{ [LIST]: listText.replace("useKeysetList(orpc.widgets.page, query)", "useWidgetsQuery(query)") },
+		/store:useWidgetFilters: 1 `keyset-contract`/,
+	);
+	listFires(
+		"keyset-builder fires when the procedure reads through no keyset builder",
+		{ "apps/console/lib/rpc/procedures/widgets.ts": "export const widgetsRouter = { page: query.handler(() => listWidgets()) };" },
+		/widgets-list\.tsx: 1 `keyset-builder`/,
+	);
+	listFires(
+		"keyset-builder fires when the builder returns no nextCursor",
+		{ "apps/console/lib/queries/widgets.ts": "export async function queryWidgetsPage(orgId, query) {\n\treturn { rows: [], facets: { kinds: [] } };\n}" },
+		/widgets-list\.tsx: 1 `keyset-builder`/,
+	);
+
+	// The ledger, both directions.
+	const pill = { [LIST]: withFooter('<SectionHeading title="W" count={list.rows.length} />') };
+	const debtRow = (findings, extra = {}) =>
+		JSON.stringify({ kind: "debt", owner: LIST_STANDARD_OWNERS[0], why: "the control", findings, ...extra });
+	listQuiet("a DECLARED count-pill passes", { ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }) });
+	listFires(
+		"a SECOND pill in a module whose ledger declares one fails",
+		{ [LIST]: withFooter('<SectionHeading title="W" count={a} /><SectionHeading title="V" count={b} />'), [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }) },
+		/2 `count-pill` site\(s\), but .* declare\(s\) 1/,
+	);
+	listFires("a declaration that OUTLIVED its finding fails", { [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }) }, /and 0 remain/);
+	listFires(
+		"a declaration naming a subject that does not exist fails",
+		{ ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 }, "apps/console/components/gone.tsx": { "count-pill": 1 } }) },
+		/which is not a module or filter surface in this tree/,
+	);
+	listFires("debt owned by an issue outside the LST set fails", { ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }, { owner: "#1" }) }, /is not one of the list standard's LST issues/);
+	listFires(
+		"a `content` decision cannot excuse a paging rule",
+		{
+			[LIST]: withFooter("{list.rows.slice(page * PAGE_SIZE).map(String)}"),
+			[LEDGER]: JSON.stringify({ kind: "content", decided: "x", decision: "x", findings: { [LIST]: { "page-slice": 1 } } }),
+		},
+		/a `content` decision cannot excuse `page-slice`/,
+	);
+	listFires(
+		"a `bounded` decision cannot excuse a count",
+		{ ...pill, [LEDGER]: JSON.stringify({ kind: "bounded", decided: "x", decision: "x", bound: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
+		/a `bounded` decision cannot excuse `count-pill`/,
+	);
+	listQuiet(
+		"a `content` decision excuses a count that is the content",
+		{ ...pill, [LEDGER]: JSON.stringify({ kind: "content", decided: "x", decision: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
+	);
+	{
+		const over = listScan(
+			{ ...pill, [LEDGER]: JSON.stringify({ kind: "content", decided: "x", decision: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
+			{ bounded: 0, content: 0 },
+		);
+		if (!over.some((p) => /above the ceiling of 0/.test(p))) problems.push(`a decision file above its ceiling did not fail: ${over.join(" | ")}`);
+	}
+	listFires("a ledger file that is not JSON fails", { ...pill, [LEDGER]: "{ nope" }, /does not parse as JSON/);
+	listFires("a ledger kind outside the three fails", { ...pill, [LEDGER]: JSON.stringify({ kind: "maybe", findings: {} }) }, /`kind` is `debt`, `bounded` or `content`/);
+	listFires("a ledger rule outside the set fails", { ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1, "count-pils": 1 } }) }, /which is not a list-standard rule/);
+	listFires("a missing list primitive is a broken read", { "apps/console/components/list/list-footer.tsx": null }, /list-footer\.tsx` was not read/);
 
 	// A comment must never satisfy a predicate. `use-settings-filters.ts` names `useFilterUrlSync`
 	// in its own header three times, so without comment stripping seven surfaces pass F2 on prose.
@@ -1735,7 +2549,7 @@ export function positiveControl() {
 		}
 	};
 	refuses("an empty store directory", { [STORE]: null }, /no filter surfaces found/);
-	refuses("a store nobody reads", { [CLIENT]: null }, /nothing outside its own module names it/);
+	refuses("a store nobody reads", { [CLIENT]: null, "apps/console/components/widgets-list.tsx": null }, /nothing outside its own module names it/);
 	refuses("no facet-bearing builder", { "apps/console/lib/queries/widgets.ts": null }, /no facet-bearing server builder/);
 	refuses(
 		"a builder the F7 test does not drive",
@@ -1908,7 +2722,10 @@ function main() {
 			console.error(`\n${problems.length} control(s) broken.`);
 			process.exit(1);
 		}
-		console.log("ok   - check-filter-standard: every F1–F6 matcher fires in both directions, every vacuity floor refuses, and the route join emits only RUBRIC.md's declared N/A reason.");
+		console.log(
+			"ok   - check-filter-standard: every F1–F6 matcher and every list-standard rule fires in both directions, the " +
+				"per-surface ledger gates both ways, every vacuity floor refuses, and the route join emits only RUBRIC.md's declared N/A reason.",
+		);
 		return;
 	}
 
@@ -1933,6 +2750,14 @@ function main() {
 					driven: [...scanned.driven].sort(),
 					undriven: Object.keys(F7_UNDRIVEN).sort(),
 					perSurface: scanned.perSurface,
+					// The list standard (#7482): measured site counts per (subject, rule), the census of
+					// list modules, and the ledger that declares them.
+					listStandard: {
+						census: scanned.list.census,
+						findings: Object.fromEntries([...scanned.list.findings].map(([subject, rules]) => [subject, Object.fromEntries(rules)])),
+						keysetBuilders: [...scanned.keysetBuilders].sort(),
+						ledger: scanned.ledger.entries,
+					},
 					problems: scanned.problems,
 				},
 				null,
@@ -1971,6 +2796,15 @@ function main() {
 			"  gate are the answer to greening it by DELETING a surface. `apps/console/scripts/audit-report.mjs`\n" +
 			"  still joins the same verdicts to the route set for `ui-conformance-baseline.json`, which is now a\n" +
 			"  per-route RECORD of a thing already enforced rather than the only place it was noticed.",
+	);
+	const kinds = { debt: 0, bounded: 0, content: 0 };
+	for (const e of scanned.ledger.entries) kinds[/** @type {"debt"|"bounded"|"content"} */ (e.kind)] += 1;
+	const sites = [...scanned.list.findings.values()].reduce((n, rules) => n + [...rules.values()].reduce((a, b) => a + b, 0), 0);
+	console.log(
+		`  LIST STANDARD (#7482): ${sites} count/paging site(s) across ${scanned.list.findings.size} subject(s), every one ` +
+			`declared in ${LIST_LEDGER_DIR}/ — ${kinds.debt} debt file(s) owned by LST issues, ${kinds.bounded}/${LIST_STANDARD_CEILINGS.bounded} ` +
+			`bounded, ${kinds.content}/${LIST_STANDARD_CEILINGS.content} content; ${scanned.keysetBuilders.size} keyset builder(s). ` +
+			"F5 is gated there, not by `FILTER_STANDARD_DEBT`.",
 	);
 	const declared = Object.entries(FILTER_STANDARD_DEBT);
 	if (declared.length > 0) {

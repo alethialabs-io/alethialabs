@@ -49,6 +49,7 @@ const CAPABILITY_ORDER: Record<InstanceCapability, number> = {
 	advancedAlerting: 6,
 	byoRunners: 7,
 	managedPools: 8,
+	agentPolicy: 9,
 };
 
 /** Whether a reported capability name is one this build knows. */

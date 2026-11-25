@@ -1,0 +1,143 @@
+---
+title: Cluster access
+description: How Alethia hands out short-lived kubeconfigs without a cloud login, what each access tier allows, how long a credential lasts, how to revoke it, and what Alethia records.
+---
+
+Alethia gives you a kubeconfig for a cluster it deployed without giving you a login to the cloud
+account. A runner in your organization makes a short-lived credential and seals it so that only the
+machine that asked can open it. To get one, see
+[Get a kubeconfig](/guides/get-a-kubeconfig).
+
+<Mermaid chart={`
+sequenceDiagram
+  participant You as CLI or browser
+  participant CP as Alethia control plane
+  participant R as Runner (your organization)
+  participant K as Cluster
+  You->>CP: request: cluster, tier, lifetime, one-time public key
+  CP->>CP: check your permission, write an audit record
+  CP->>R: mint job
+  R->>K: create or check the credential
+  R->>CP: credential sealed to your one-time key
+  You->>CP: collect (once)
+  CP-->>You: sealed credential, then deletes its copy
+  You->>You: open it with the one-time private key
+`} />
+
+## How it works
+
+1. The CLI or your browser makes a one-time key pair and sends the public key with the request.
+2. The control plane checks your permission for the tier and writes an audit record.
+3. A runner in your organization takes the mint job and gets the credential from the cloud or the
+   cluster.
+4. The runner seals the credential to your one-time public key and sends back only the sealed copy.
+5. Your machine collects the sealed copy once and opens it. The control plane deletes its copy when
+   it is collected, or 10 minutes after the request.
+
+The control plane never sees the credential in plaintext and never stores it.
+
+## Access tiers
+
+Each tier is a separate permission, and a request gets exactly the tier it asks for.
+
+| Tier | Who can get it | Identity in the cluster |
+| --- | --- | --- |
+| Read-only (the default) | Roles with `cluster:access_readonly`: owners, admins and operators | The `alethia-view` ServiceAccount in `alethia-system`, bound to the `alethia:view` ClusterRole |
+| Admin (`--admin`) | Roles with `cluster:access_admin`: owners and admins. People only, never a service token | The cloud's own admin credential for the cluster. On Hetzner, an admin certificate from the Talos API |
+
+Viewers get neither tier. A custom role can hold either permission. See
+[Roles & permissions](/concepts/access-control/roles-and-permissions).
+
+### What read-only allows
+
+`alethia:view` grants only `get`, `list` and `watch`. It is the built-in Kubernetes `view` role
+written out rule by rule, plus nodes, namespaces and events. It does not aggregate from `view`, so a
+role that someone aggregates into `view` cannot widen it.
+
+| API group | Resources |
+| --- | --- |
+| core | pods and their logs and status, services, endpoints, configmaps, persistent volume claims, replication controllers, service accounts, bindings, events, limit ranges, resource quotas, namespaces, nodes |
+| `apps` | deployments, replica sets, stateful sets, daemon sets (with `scale` and `status`), controller revisions |
+| `batch`, `autoscaling`, `policy` | jobs, cron jobs, horizontal pod autoscalers, pod disruption budgets, with `status` |
+| `networking.k8s.io`, `discovery.k8s.io`, `events.k8s.io`, `extensions` | ingresses, network policies, endpoint slices, events, and the legacy `extensions` objects |
+
+It cannot read Secrets (so not the ArgoCD admin password), custom resources such as ArgoCD
+`Application` objects, or RBAC objects. It cannot `exec`, `attach`, `port-forward` or `proxy`, and
+it cannot change anything.
+
+## How long a credential lasts
+
+`--ttl` sets the lifetime, from `15m` to `8h`, default `1h`. For an admin credential it is a ceiling:
+the cloud decides the real lifetime, and the CLI prints it.
+
+| Cloud | Read-only | Admin |
+| --- | --- | --- |
+| AWS | The TTL | 14 minutes. An exec kubeconfig gets a new token when it expires. |
+| GCP | The TTL | About 1 hour |
+| Azure | The TTL | About 60 to 90 minutes |
+| Hetzner | The TTL | About 1 hour (the cluster's admin certificate) |
+
+Alethia refuses an admin credential that would last longer than 8 hours. A Hetzner cluster deployed
+before the 1-hour certificate keeps a 24-hour one, so its admin requests are refused until its next
+deploy. That deploy restarts no nodes.
+
+## Exec and static kubeconfigs
+
+An **exec** kubeconfig (the default on AWS, GCP and Azure) holds no credential. It runs
+`alethia cluster token`, which mints a new one when the old one expires, so `kubectl` keeps working
+and each new token checks your permission again. A copied file is useless without a signed-in CLI.
+
+A **static** kubeconfig (`--static`, and always on Hetzner) holds the credential itself. It needs
+only `kubectl`, works for anyone who has the file, and stops at expiry.
+
+`alethia cluster token` caches each token until 60 seconds before it expires, so only the first
+`kubectl` call per token waits for a runner. The cache is in the CLI's configuration directory
+(`kubecache`, mode `0700`, files `0600`):
+
+| OS | Cache directory |
+| --- | --- |
+| Linux | `~/.config/alethia/kubecache` |
+| macOS | `~/Library/Application Support/alethia/kubecache` |
+| Windows | `%AppData%\alethia\kubecache` |
+
+A machine that never ran `alethia cluster kubeconfig`, such as a CI runner, has none of your
+choices: it mints read-only, 1-hour tokens in its active organization. A mint can only be collected
+by the session or service token that requested it.
+
+## Revoke access
+
+A short lifetime is the main control. The others:
+
+- **Remove the person** from the organization, or give them a role without `cluster:access_*`.
+  They cannot get a new credential. A static file or a cached token works until it expires.
+- **Revoke every read-only credential for a cluster** by deleting the ServiceAccount, with admin
+  access: `kubectl -n alethia-system delete serviceaccount alethia-view`. Every token it issued stops
+  at once. The next read-only request creates it again.
+- **End access from one machine** with `alethia logout`. It deletes the session and the whole token
+  cache. A static file is not in the cache, so it keeps working until it expires.
+
+Admin credentials cannot be revoked through Alethia. They end at their real expiry.
+
+## What Alethia records
+
+Alethia writes an audit record before it returns a credential: one for the request and one for the
+collection. Each holds who asked and from which IP address, the cluster, tier, shape and requested
+TTL, the client (CLI or console), and the service token's ID if one was used. It never holds the
+credential. Refused requests appear in [Activity](/guides/access/activity-log).
+
+Every user maps to the same identity inside the cluster, so the cluster's own audit log cannot tell
+your users apart. Alethia's records can.
+
+## What it does not do
+
+- It does not proxy traffic. `kubectl` must reach the cluster's endpoint itself.
+- It does not issue a kubeconfig for environments on a shared cluster, or for clouds other than AWS,
+  GCP, Azure and Hetzner.
+- It does not give a service token admin access.
+
+## Related
+
+- [Get a kubeconfig](/guides/get-a-kubeconfig)
+- [Troubleshoot cluster access](/troubleshooting/cluster-access)
+- [Runners](/concepts/runner)
+- [Security](/concepts/security)

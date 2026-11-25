@@ -3,8 +3,6 @@ title: OpenTofu State Management
 description: How OpenTofu state is stored in S3-compatible object storage, organized by environment, and shared across runner executions.
 ---
 
-# OpenTofu State Management
-
 OpenTofu tracks the real-world resources it manages in a **state file**. Alethia never hands a runner an
 object-storage key. Instead, **every** provisioning job reaches state through the Console **state proxy**
 using OpenTofu's built-in `http` backend, and the Console persists the bytes to S3-compatible object

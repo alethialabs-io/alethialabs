@@ -3,8 +3,6 @@ title: Sign-in
 description: Fix sign-in codes that do not arrive, expire, or are refused, sign-up refusals, and `alethia login` failures.
 ---
 
-# Troubleshoot sign-in
-
 ## Sign-in codes in the console
 
 The email path sends a 6-digit code. The code is valid for 10 minutes. For how the flow works, see
@@ -41,7 +39,7 @@ resend. It shows **Resend in** with a countdown.
 
 **Fix:** wait a moment and try again. If it keeps failing, sign in with GitHub, Google, GitLab, or
 Bitbucket instead. On a self-hosted console, check the email settings in
-[Email](/guides/self-hosting/email).
+[Email](/self-host/email).
 
 ### The form asks you to sign up instead of showing a code screen
 
@@ -56,7 +54,7 @@ instead of a code.
 the code to the server log instead, on a line that starts with `[email] no provider configured`.
 
 **Fix:** read the code from the console's log, or set up an email provider. See
-[Email](/guides/self-hosting/email).
+[Email](/self-host/email).
 
 ## Sign-up refusals
 

@@ -48,6 +48,23 @@ APP_URL="$(val PUBLIC_APP_URL)"; APP_URL="${APP_URL:-https://alethialabs.io}"
 SERVER_TYPE="$(val HCLOUD_SERVER_TYPE)"; SERVER_TYPE="${SERVER_TYPE:-cax21}"
 PUBLIC_PHONE="$(val ALETHIA_PUBLIC_PHONE)"
 [ -n "$PUBLIC_PHONE" ] || { echo "::error::ALETHIA_PUBLIC_PHONE is required for the production company-information surface."; exit 1; }
+# Instance secrets docker-compose.yml references as `${NAME:?…}` (#6803). `emit` writes an absent
+# vault key as an empty value, which compose would refuse on the box after the images are built;
+# refusing here, and in the preflight through deploy/prod/required-vault-keys.txt, says so first.
+# Only presence is checked; no value is printed.
+REQ_DB_PASSWORD="$(val ALETHIA_DB_PASSWORD)"
+[ -n "$REQ_DB_PASSWORD" ] || { echo "::error::ALETHIA_DB_PASSWORD is required: docker-compose.yml refuses to render without it."; exit 1; }
+REQ_APP_DB_PASSWORD="$(val ALETHIA_APP_DB_PASSWORD)"
+[ -n "$REQ_APP_DB_PASSWORD" ] || { echo "::error::ALETHIA_APP_DB_PASSWORD is required: docker-compose.yml refuses to render without it."; exit 1; }
+REQ_CRED_ENCRYPTION_KEY="$(val ALETHIA_CRED_ENCRYPTION_KEY)"
+[ -n "$REQ_CRED_ENCRYPTION_KEY" ] || { echo "::error::ALETHIA_CRED_ENCRYPTION_KEY is required: docker-compose.yml refuses to render without it."; exit 1; }
+REQ_OPENFGA_DB_PASSWORD="$(val OPENFGA_DB_PASSWORD)"
+[ -n "$REQ_OPENFGA_DB_PASSWORD" ] || { echo "::error::OPENFGA_DB_PASSWORD is required: docker-compose.yml refuses to render without it."; exit 1; }
+REQ_STORAGE_ACCESS_KEY_ID="$(val ALETHIA_STORAGE_ACCESS_KEY_ID)"
+[ -n "$REQ_STORAGE_ACCESS_KEY_ID" ] || { echo "::error::ALETHIA_STORAGE_ACCESS_KEY_ID is required: docker-compose.yml refuses to render without it."; exit 1; }
+REQ_STORAGE_SECRET_ACCESS_KEY="$(val ALETHIA_STORAGE_SECRET_ACCESS_KEY)"
+[ -n "$REQ_STORAGE_SECRET_ACCESS_KEY" ] || { echo "::error::ALETHIA_STORAGE_SECRET_ACCESS_KEY is required: docker-compose.yml refuses to render without it."; exit 1; }
+unset REQ_DB_PASSWORD REQ_APP_DB_PASSWORD REQ_CRED_ENCRYPTION_KEY REQ_OPENFGA_DB_PASSWORD REQ_STORAGE_ACCESS_KEY_ID REQ_STORAGE_SECRET_ACCESS_KEY
 # The transport, chosen in the VAULT so switching between SES and an SMTP relay is a vault edit and
 # a redeploy, not a PR (infra/email-ses-account/README.md, "Rollback"). Unset means ses: hosted
 # production sends from the alethia-email account. Hosted production accepts only ses and smtp;
@@ -64,6 +81,16 @@ EMAIL_PROVIDER_JSON="$json" bash "$(dirname "$0")/check-email-provider-keys.sh"
 # Not a secret. The default is the events topic infra/email-ses-account creates; its checks.tftest.hcl
 # pins the same literal. Emitted whichever transport is selected, so the webhook is ready before
 # the subscription exists.
+# The SALES provider (apps/console/lib/billing/provider/select.ts). The console FAILS CLOSED on it:
+# unset or unknown means no provider, and billing goes dark even with Stripe keys present. So it is
+# defaulted HERE, to stripe — production's provider until the Paddle go-live switch — and a vault value
+# (stripe | paddle) overrides it. Anything else is refused before the .env is written, because a typo
+# would silently take billing down on deploy.
+SALES_PROVIDER="$(val BILLING_PROVIDER)"; SALES_PROVIDER="${SALES_PROVIDER:-stripe}"
+case "$SALES_PROVIDER" in
+  stripe|paddle) ;;
+  *) echo "::error::BILLING_PROVIDER must be stripe or paddle (got '$SALES_PROVIDER')."; exit 1 ;;
+esac
 SES_TOPIC_ARNS="$(val ALETHIA_SES_EVENTS_TOPIC_ARNS)"
 SES_TOPIC_ARNS="${SES_TOPIC_ARNS:-arn:aws:sns:eu-central-1:604925221417:alethia-ses-events}"
 
@@ -243,6 +270,14 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   emit ALETHIA_AI_OPENAI_TRANSFER
   emit ALETHIA_AI_OPENAI_RETENTION
   emit ALETHIA_AI_OPENAI_NO_TRAINING
+  # The free-AI kill switch and the free tier's platform-wide daily ceiling (apps/console/lib/abuse/,
+  # docs/ops/incident-response-runbook.md §7.2). Written ONLY when the vault holds a non-empty value,
+  # so an absent key stays absent from the box's .env and the console's own default applies: not
+  # paused, and the ceiling in lib/abuse/limits.ts. (An empty value also reads as the default today —
+  # isFreeAiSwitchedOff and parseAbuseLimitOverride both ignore it — but absent does not depend on
+  # that staying true.) Optional, so NOT in deploy/prod/required-vault-keys.txt.
+  [ -z "$(val ALETHIA_FREE_AI_PAUSED)" ] || emit ALETHIA_FREE_AI_PAUSED
+  [ -z "$(val ALETHIA_FREE_AI_GLOBAL_DAILY_CREDITS)" ] || emit ALETHIA_FREE_AI_GLOBAL_DAILY_CREDITS
   emit STRIPE_SECRET_KEY
   emit STRIPE_WEBHOOK_SECRET
   emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
@@ -259,6 +294,21 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   # so tax stays off. Set STRIPE_TAX_ENABLED=true in the vault ONLY after the Stripe
   # account's Tax origin + registrations are configured, else Checkout errors on session create.
   emit STRIPE_TAX_ENABLED
+  # The sales provider, validated above (defaults to stripe). Existing subscriptions keep following
+  # their own row's provider whatever this says.
+  echo "BILLING_PROVIDER=$SALES_PROVIDER"
+  # Paddle Billing (merchant of record). Emitted empty until the vault holds them; an empty
+  # PADDLE_API_KEY means Paddle is not configured (lib/billing/paddle/config.ts). When set, the key
+  # prefix, PADDLE_ENVIRONMENT and the client token must agree or the console refuses the config.
+  emit PADDLE_ENVIRONMENT
+  emit PADDLE_API_KEY
+  emit PADDLE_WEBHOOK_SECRET
+  emit NEXT_PUBLIC_PADDLE_CLIENT_TOKEN
+  emit PADDLE_PRICE_TEAM
+  emit PADDLE_PRICE_AI_PLUS
+  emit PADDLE_PRICE_AI_MAX
+  emit PADDLE_PRODUCT_RUNNER_MINUTES
+  emit PADDLE_PRODUCT_AI_CREDITS
   # Transactional email: the vault-selected transport (ses unless the vault says smtp; validated
   # above). Both transports' keys are emitted so the two stay one vault edit apart. The SES ones
   # are the alethia-email account's (infra/email-ses-account); the SMTP ones are empty unless the

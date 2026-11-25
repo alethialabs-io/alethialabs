@@ -38,6 +38,7 @@ package e2e
 // performed would be claiming the one thing it cannot do.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -112,6 +113,38 @@ type CLIDemoRun struct {
 	// Set by cliDemoCertZoneFrom from the SAME acmCertConfig the seeded path's applyToSnapshot
 	// writes, so the two paths ask for the same zone and the same name.
 	CertZone *CLIDemoCertZone
+	// Admin performs the steps a person takes in the org while the demo runs (#7454): listing the
+	// run's environment on the token for automatic deploys, and approving the destroy. Set by
+	// ResolveCLIDemoRun; nil on a run that drives no beat needing one, and a beat that does need it
+	// fails rather than skipping the step.
+	Admin CLIDemoAdmin
+	// ApprovalID is the approval the destroy beat requested, captured from its exit-9 error
+	// envelope (`error.operation.id`). Kept for the log and the assertions that read it back.
+	ApprovalID string
+}
+
+// CLIDemoAdmin is what a person in the demo's org does while the run is in flight (#7454). Both
+// steps are ones the service token must not be able to take for itself: a token that could list its
+// own environments would deploy anywhere without anyone, and one that could approve its own destroy
+// would make the approval meaningless. So neither is a CLI beat; the harness takes them as the org's
+// owner, through scripts/cli-demo-approval.mts, against the product's own code.
+type CLIDemoAdmin interface {
+	// AutoApproveEnvironment lists environment envName of project projectID in the seeded token's
+	// auto_approve_environment_ids, so the token's deploy to it runs without an approval (D2).
+	AutoApproveEnvironment(ctx context.Context, projectID, envName string) error
+	// Approve decides approval approvalID as a person in a console session, typing confirmEnvName
+	// as the destroy confirmation, through the engine the console's decideApplyApproval calls.
+	Approve(ctx context.Context, approvalID, confirmEnvName string) error
+}
+
+// CLIDemoApproval is the second half of a beat the control plane holds for a person's approval.
+type CLIDemoApproval struct {
+	// Rerun is the same operation, run again once the approval is decided. The CLI's approval
+	// request is idempotent on plan, operation and credential, so the rerun gets the approved
+	// approval back and queues the job with it.
+	Rerun func(r *CLIDemoRun) []string
+	// ConfirmName is what the approver types to confirm: for a destroy, the environment's name.
+	ConfirmName func(r *CLIDemoRun) string
 }
 
 // CLIDemoCertZone is what the `dns-cert` beat puts into the run's environment.
@@ -207,6 +240,17 @@ type CLIDemoBeat struct {
 	// backstop (lib/reconcile/converge.ts). A person on a real console never waits: the status
 	// route settles it in the same request.
 	AwaitEnvSettled bool
+	// OrgAdmin, when set, runs after the beat and its After have succeeded: a step a PERSON takes in
+	// the org that the demo's credential must not take for itself (#7454). The `project-env` beat uses
+	// it to list the new environment on the token for automatic deploys (decision D2). It goes through
+	// the run's CLIDemoAdmin, never through the CLI.
+	OrgAdmin func(ctx context.Context, r *CLIDemoRun) error
+	// Approval, when set, says the control plane holds this beat for a person's approval (#7454).
+	// Args must then be the `--no-wait --output json` form, which requests the approval and exits 9;
+	// the driver captures the approval id, has the run's CLIDemoAdmin approve it, and runs
+	// Approval.Rerun, which finds the approved approval and queues the job. A first run that exits 0
+	// fails the beat: it would mean the job was queued without an approval.
+	Approval *CLIDemoApproval
 	// Skip, when set and returning a non-empty sentence, withholds the beat on THIS run and logs the
 	// sentence. It is for a beat whose input is itself optional — `dns-cert` exists only on a run that
 	// proves the certificate. It never withholds a beat from the pre-spend checks: those build every
@@ -307,12 +351,16 @@ var CLIDemoBeats = []CLIDemoBeat{
 		ReadBack: func(r *CLIDemoRun) []string {
 			return []string{"project", "env", "list", "--project", r.ProjectID, "--output", "json", "--no-input"}
 		},
-		After: assertRunTaggedEnv,
+		After:    assertRunTaggedEnv,
+		OrgAdmin: cliDemoAutoApproveRunEnv,
 		Why: "the environment carries the RUN TAG, through the same input a person uses to name one " +
 			"(#5095). The cluster is named `<project>-<environment name>`, and `project create --stage " +
 			"development` names the default environment `development`, which carries no run tag. A " +
 			"cluster without the tag defeats the run-scoped sweep (`cluster=<project>-<env>`) and the " +
-			"in-process teardown, which derive the name from the same CLIDemoRun fields.",
+			"in-process teardown, which derive the name from the same CLIDemoRun fields. Once it exists, " +
+			"the org's owner lists it on the token for automatic deploys (#7454, decision D2): the " +
+			"environment is `development`, never production, and without the listing the `apply` beat " +
+			"is refused 403 approval_required.",
 	},
 	{
 		StepID: "classify",
@@ -504,13 +552,19 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "apply",
 		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
+			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--latest-plan", "--no-wait", "--no-input"}
 		},
 		After:           captureApplyJobID,
 		AwaitEnvSettled: true,
 		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a " +
 			"seeded row. --runner-id is REQUIRED: without it the CLI calls selectRunner(), which prompts, " +
-			"and a prompt in CI hangs until the context kills it and reports as an unreachable command.",
+			"and a prompt in CI hangs until the context kills it and reports as an unreachable command. " +
+			"--latest-plan deploys the plan the `plan` beat made: a deploy applies a reviewed plan, and " +
+			"without a plan reference the CLI would preview again first, whose PLAN job id would be the " +
+			"first id in the output instead of the DEPLOY's. --no-wait: the deploy is automatic only " +
+			"because the `project-env` beat's owner step listed the environment on the token (#7454). " +
+			"If that listing did not take, the deploy needs an approval nobody will give, and --no-wait " +
+			"exits 9 at once instead of waiting out the approval's expiry.",
 	},
 	{
 		StepID: "jobs-logs",
@@ -558,11 +612,21 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "destroy",
 		Phase:  CLIDemoTeardown,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait", "--no-input"}
+			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--no-wait", "--output", "json", "--no-input"}
+		},
+		Approval: &CLIDemoApproval{
+			Rerun: func(r *CLIDemoRun) []string {
+				return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait", "--no-input"}
+			},
+			ConfirmName: func(r *CLIDemoRun) string { return r.EnvName },
 		},
 		Timeout:         30 * time.Minute,
 		AwaitEnvSettled: true,
-		Why:             "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
+		Why: "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan " +
+			"reaper would otherwise find. A service token's destroy always needs a person's approval (table " +
+			"4.2, #7454), so the beat runs the way a pipeline would: `--no-wait` requests the approval and " +
+			"exits 9 with its id in `error.operation.id`, the org's owner approves it in a console session, " +
+			"and the same destroy with `--wait` finds the approved approval and queues.",
 	},
 }
 
@@ -583,6 +647,16 @@ func t2ClusterTarget(project, env string, cliDemo *CLIDemoRun) (string, string) 
 		return cliDemo.Project, cliDemo.EnvName
 	}
 	return project, env
+}
+
+// cliDemoAutoApproveRunEnv is the `project-env` beat's owner step: the environment the beat just
+// added is listed on the token for automatic deploys (#7454, decision D2).
+func cliDemoAutoApproveRunEnv(ctx context.Context, r *CLIDemoRun) error {
+	if r.Admin == nil {
+		return fmt.Errorf("the run has no CLIDemoAdmin, so nobody can list environment %q on the token. "+
+			"The `apply` beat would be refused 403 approval_required; ResolveCLIDemoRun sets it", r.EnvName)
+	}
+	return r.Admin.AutoApproveEnvironment(ctx, r.ProjectID, r.EnvName)
 }
 
 // cliDemoManifestPath is where this run's `alethia.yaml` lives.
@@ -1105,6 +1179,18 @@ func ValidateCLIDemoBeats() error {
 		}
 		if b.Args == nil {
 			problems = append(problems, fmt.Sprintf("beat %q has no Args — it would perform nothing", b.StepID))
+		}
+		// An approval beat's second half (#7454). Without a Rerun the approval is given and nothing
+		// queues the job; without a ConfirmName a destroy's approval is refused for want of the typed
+		// environment name. And the driver's approval branch does not run OrgAdmin, so a beat that
+		// carried both would silently skip the owner step.
+		if a := b.Approval; a != nil {
+			if a.Rerun == nil || a.ConfirmName == nil {
+				problems = append(problems, fmt.Sprintf("beat %q has an Approval with no Rerun or no ConfirmName", b.StepID))
+			}
+			if b.OrgAdmin != nil {
+				problems = append(problems, fmt.Sprintf("beat %q has both an Approval and an OrgAdmin — the approval branch would not run the OrgAdmin", b.StepID))
+			}
 		}
 		// A beat with no phase is silently dropped by every DriveCLIDemoPhase call — defined,
 		// counted by the cross-check, and never executed. That is the exact shape this tier exists

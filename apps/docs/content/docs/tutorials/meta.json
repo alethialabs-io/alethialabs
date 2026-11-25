@@ -1,7 +1,6 @@
 {
 	"title": "Tutorials",
 	"icon": "GraduationCap",
-	"root": true,
 	"pages": [
 		"index",
 		"online-boutique",

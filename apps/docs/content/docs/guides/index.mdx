@@ -1,54 +1,44 @@
 ---
 title: How-to guides
-description: Task-focused instructions for connecting accounts, designing projects, running jobs, administering access, and self-hosting Alethia.
+description: Find the guide for the task in front of you, grouped by setting up, deploying and operating, and administering Alethia.
 ---
 
-# How-to guides
-
-Each guide does one task. It assumes you already know what you want to do. If you are new to
-Alethia, start with [Get started](/get-started) or a [tutorial](/tutorials).
+Each guide does one task, and assumes you know what you want to do. New to Alethia? Start with
+[Get started](/get-started) or a [tutorial](/tutorials).
 
 ## Set up
 
-<Cards>
-  <Card title="Connect a cloud or Git account" href="/guides/connectors">
-    Connect AWS, GCP, Azure, Hetzner, Git providers, and chart repositories.
-  </Card>
-  <Card title="Design a project" href="/guides/design-project">
-    Use the canvas to add a cluster, networking, databases, services, and your own charts or IaC.
-  </Card>
-  <Card title="Runners" href="/guides/runners">
-    Register and manage the runners that execute your jobs, including runners you operate.
-  </Card>
-</Cards>
+| Task | Guide |
+| --- | --- |
+| Connect a cloud account | [AWS](/guides/connectors/aws), [GCP](/guides/connectors/gcp), [Azure](/guides/connectors/azure), [Hetzner](/guides/connectors/hetzner) |
+| Connect GitHub, GitLab or Bitbucket | [Connect a Git provider](/guides/connectors/git-providers) |
+| Use your own DNS, secrets, registry or observability tool | [Connect a tool](/guides/connectors/pluggable) |
+| Add, re-verify or disconnect a cloud account | [Manage connections](/guides/connectors/managing-connections) |
+| Add a runner | [Add and manage runners](/guides/runners) |
+| Run a runner on your own host | [Run your own runner](/guides/runners/self-operated) |
+| Keep a warm pool of runners (self-hosted) | [Run a warm pool](/guides/fleet-pools) |
+| Design a project on the canvas | [Design a project](/guides/design-project) |
 
-## Operate
+## Deploy and operate
 
-<Cards>
-  <Card title="Jobs" href="/guides/jobs">
-    Plan, apply, and inspect jobs, and read their logs.
-  </Card>
-  <Card title="Clusters" href="/guides/clusters">
-    See provisioned Kubernetes clusters, open ArgoCD, and get a kubeconfig.
-  </Card>
-  <Card title="Get a kubeconfig" href="/guides/get-a-kubeconfig">
-    Get a short-lived kubeconfig through Alethia, without a cloud login of your own.
-  </Card>
-  <Card title="Alerts" href="/guides/alerts">
-    Route platform events to Slack, Teams, Discord, PagerDuty, webhook, and email channels.
-  </Card>
-  <Card title="Assistant" href="/guides/assistant">
-    Ask the assistant about your infrastructure, and connect external agents over MCP.
-  </Card>
-</Cards>
+| Task | Guide |
+| --- | --- |
+| Find a project, a job or your usage | [Find your way around the console](/guides/dashboard) |
+| Plan, deploy or destroy an environment | [Plan and deploy from the console](/guides/jobs/plan-and-apply) |
+| Find a job and read its log | [Find a job](/guides/jobs), [Read a job](/guides/jobs/job-detail) |
+| Check a cluster's health | [Find and open a cluster](/guides/clusters) |
+| Reach a cluster with `kubectl` | [Get a kubeconfig](/guides/get-a-kubeconfig) |
+| Get notified when something happens | [Set up alerts](/guides/alerts) |
+| Ask about your infrastructure | [Ask the assistant](/guides/assistant) |
+| Let Claude, Cursor or another agent read Alethia | [Connect an MCP client](/guides/assistant/mcp) |
 
 ## Administer
 
-<Cards>
-  <Card title="Organizations & access" href="/guides/access/organizations">
-    Invite members, form teams, define roles and grants, and set up SSO.
-  </Card>
-  <Card title="Self-hosting" href="/guides/self-hosting">
-    Run Alethia on your own infrastructure.
-  </Card>
-</Cards>
+| Task | Guide |
+| --- | --- |
+| Work with others in an organization | [Create and switch organizations](/guides/access/organizations), [Invite members](/guides/access/members-and-invitations) |
+| Give people exactly the access they need | [Grant access](/guides/access/access-portal), [Create a custom role](/guides/access/custom-roles), [Create teams](/guides/access/teams) |
+| Sign in through your identity provider | [Set up single sign-on](/guides/access/sso) |
+| See who did what | [Read the activity log](/guides/access/activity-log) |
+| Label resources from one controlled list | [Classify resources](/guides/classification) |
+| Run Alethia on your own infrastructure | [Self-host](/self-host) |

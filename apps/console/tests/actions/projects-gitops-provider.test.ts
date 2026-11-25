@@ -14,6 +14,11 @@ vi.mock("@/lib/db", () => ({
 	getServiceDb: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The reviewed-plan read is not this file's subject: every deploy here names a plan that resolves.
+vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/plan-binding")>()),
+	resolveReviewedPlan: vi.fn(async () => ({ planJobId: "plan-1", planSha256: "c".repeat(64) })),
+}));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
@@ -177,7 +182,8 @@ function withRepoAndAddons(appsRepo: string, addons: Rows, envStatus = "ACTIVE",
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1" } as never);
+	// A person at the console (`authorize` resolves the cookie session): table 4.2 needs no approval.
+	vi.mocked(authorize).mockResolvedValue({ userId: "user-1", orgId: "org-1", credential: "session" } as never);
 	vi.mocked(requireOwner).mockResolvedValue("user-1" as never);
 	vi.mocked(assertUsageAllowed).mockResolvedValue(undefined as never);
 });
@@ -189,7 +195,7 @@ describe("provisionProject — GitOps add-ons need an apps repo on GitHub", () =
 	])("refuses a deploy with a GitOps add-on and its apps repo at %s, and queues nothing", async (repo, name) => {
 		const { valuesSpy } = setupDb(withRepoAndAddons(repo, [addonRow("loki", "gitops")]), new Map([[jobs, [{ id: "job-x" }]]]));
 
-		await expect(provisionProject("p1")).rejects.toThrow(
+		await expect(provisionProject("p1", "plan-1")).rejects.toThrow(
 			new RegExp(`apps repository is on ${name}.*Switch the GitOps add-on loki to Managed delivery`),
 		);
 		expect(valuesSpy.mock.calls.some((c) => c[0] === jobs)).toBe(false);
@@ -202,7 +208,7 @@ describe("provisionProject — GitOps add-ons need an apps repo on GitHub", () =
 			new Map([[jobs, [{ id: "job-gh" }]]]),
 		);
 
-		await expect(provisionProject("p1")).resolves.toEqual({ jobId: "job-gh" });
+		await expect(provisionProject("p1", "plan-1")).resolves.toEqual({ jobId: "job-gh" });
 		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DEPLOY" });
 	});
 
@@ -211,7 +217,7 @@ describe("provisionProject — GitOps add-ons need an apps repo on GitHub", () =
 		async (repo) => {
 			const { valuesSpy } = setupDb(withRepoAndAddons(repo, [addonRow("loki", "managed")]), new Map([[jobs, [{ id: "job-m" }]]]));
 
-			await expect(provisionProject("p1")).resolves.toEqual({ jobId: "job-m" });
+			await expect(provisionProject("p1", "plan-1")).resolves.toEqual({ jobId: "job-m" });
 			expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DEPLOY" });
 		},
 	);

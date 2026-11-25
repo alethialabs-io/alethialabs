@@ -1,110 +1,107 @@
 ---
-title: AWS Connector
-description: Keyless, issuer-direct IAM role — an IAM OIDC provider trusting the Alethia issuer, set up in AWS CloudShell or with OpenTofu.
+title: Connect an AWS account
+description: Connect an AWS account with a keyless IAM role that trusts the Alethia OIDC issuer, from AWS CloudShell, a Terraform module, or the CLI.
 ---
 
-# AWS Connector
+Connect an AWS account so that Alethia can provision into it. Alethia stores only a role ARN. It
+signs in with a short-lived token, never with an access key.
 
-Connecting AWS registers a **cloud identity** (`cloud_identities`) that is **keyless and issuer-direct**: your account registers an **IAM OIDC provider** that trusts
-Alethia's OIDC issuer, plus an IAM role Alethia assumes via **`AssumeRoleWithWebIdentity`** — no access keys, no
-external id, and no trust in an Alethia AWS account. This is the same model GCP and Azure use. See
-[Security Architecture](/concepts/security) for the full model.
+## Before you begin
 
-<Callout type="info">
-**Is this safe?** You create the trust entirely in **your own** AWS account — Alethia never sees a key.
-It signs in with a short-lived token (≤10 min) that AWS verifies and swaps for a ~1-hour credential. The
-only thing Alethia stores is the **role ARN** (a public identifier). **Revoke anytime** by deleting the
-IAM role (and its OIDC provider).
-</Callout>
+- You can create IAM roles, policies and identity providers in the AWS account.
+- Your Alethia role can manage connections (`manage_identities`).
+- An AWS account can have one IAM OIDC provider for each issuer URL. If you connected this account
+  before, the setup reuses the existing provider.
 
-## Setup Methods
+## Steps
 
-Two equivalent, keyless paths — the **AWS CloudShell** script (nothing to install) or the **OpenTofu**
-module. Both create the same IAM OIDC provider + `AlethiaProvisionerRole` in your account.
+The **AWS CLI / CloudShell** and **Terraform / IaC** tabs create the same resources.
 
-<Tabs items={["AWS CLI / CloudShell", "OpenTofu"]}>
+<Tabs items={["AWS CLI / CloudShell", "Terraform / IaC"]}>
   <Tab value="AWS CLI / CloudShell">
     <Steps>
 
-    ### Open AWS CloudShell
-    Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home) — the `aws` CLI is
-    preinstalled and already authenticated. (Or run the script locally with a configured `aws` CLI.)
+    ### Open the connect sheet
+    In the console, open **Connectors**, select **Amazon Web Services**, then select **Connect**.
 
-    ### Run the setup script
-    Paste the one-liner from the connect sheet — `curl -sO …/alethia-aws-setup.sh && bash alethia-aws-setup.sh`.
-    It creates the **IAM OIDC provider** for the Alethia issuer + `AlethiaProvisionerRole` (whose trust
-    allows **only** `sts:AssumeRoleWithWebIdentity` from that provider, pinned to audience
-    `sts.amazonaws.com` and subject `alethia-connector`), attaches the five least-privilege policies, and
-    prints `role_arn`. Self-hosters pass their issuer as the first argument.
+    ### Run the setup in AWS CloudShell
+    Select **Open CloudShell** and paste the command from the sheet. The `aws` CLI in CloudShell is
+    already signed in. To run it on your own machine, select **Download script**. A self-hosted
+    console passes its own issuer URL as the script's first argument.
 
-    ### Copy Role ARN
-    Copy the `role_arn` the script prints and paste it into the form, then click "Connect."
+    ### Paste the role ARN it prints
+    Paste the ARN that the script prints into **IAM Role ARN**, then select **Connect**. You can
+    paste the whole output: the field keeps only the ARN.
 
     </Steps>
   </Tab>
-  <Tab value="OpenTofu">
+  <Tab value="Terraform / IaC">
     <Steps>
 
-    ### Apply the OpenTofu module
-    Download the module ("Download module" in the connect sheet) and run `tofu apply`. It creates the
-    IAM OIDC provider + role that trust the Alethia issuer. **No variables are required** — the defaults pin
-    the issuer, audience (`sts.amazonaws.com`), and subject (`alethia-connector`). Self-hosters override
-    `issuer_url` to point at their own console.
+    ### Open the connect sheet
+    In the console, open **Connectors**, select **Amazon Web Services**, select **Connect**, then
+    choose **Terraform / IaC**.
 
-    ### Copy Role ARN
-    Copy the `role_arn` output from OpenTofu.
+    ### Apply the module
+    Select **Download module** and apply it with `tofu apply` or `terraform apply`. It needs no
+    variables. A self-hosted console sets `issuer_url` to its own issuer.
 
-    ### Paste into Alethia
-    Paste into the form and click "Connect."
+    ### Paste the role_arn output
+    Paste the `role_arn` output into **IAM Role ARN**, then select **Connect**.
 
     </Steps>
   </Tab>
 </Tabs>
 
-<Callout type="info">
-One IAM OIDC provider per issuer URL is allowed per AWS account, so connect an account **once**. To reconnect
-after deleting the role, re-run the script (it reuses the existing provider) or remove the provider first.
-</Callout>
+To connect from a terminal, run `alethia connector aws`. By default it deploys the `AlethiaConnect`
+CloudFormation stack with your local `aws` CLI. `--script` runs the setup script instead, and
+`--role-arn <arn>` submits a role you already made. See
+[`alethia connector aws`](/reference/cli/connector#alethia-connector-aws).
 
-## Verification
+## What the setup creates
 
-After submitting, Alethia verifies the cloud identity **instantly, server-side** (no runner):
+| Resource | Purpose |
+| --- | --- |
+| An IAM OIDC provider for the Alethia issuer | The trust root for Alethia in your account. |
+| `AlethiaProvisionerRole` | Trusts only `sts:AssumeRoleWithWebIdentity` from that provider, for audience `sts.amazonaws.com` and subject `alethia-connector`. No external ID. |
+| Five policies: `AlethiaProvisionerRole-ComputeNet`, `-ComputeScale`, `-Data`, `-Edge` and `-IAM` | Name the exact actions the templates use, instead of `AdministratorAccess`. |
 
-1. The console mints a short-lived assertion and calls `sts:AssumeRoleWithWebIdentity` on your role
-2. Calls `sts:GetCallerIdentity` to confirm the assumed identity (proof of access)
-3. Runs a small capability probe (representative reads) → the cloud identity is `Connected`, or `Degraded`
-   when provisioning permissions are missing, or `Disconnected` when auth fails
+### IAM role permissions
 
-If verification fails, the error message explains what went wrong (e.g., trust policy misconfiguration,
-missing permissions). Existing resources (VPCs, subnets, …) are discovered separately by the
-server-side [asset inventory](/guides/connectors/health-and-inventory), not during this probe.
+The role can manage EC2 and VPC networking, EKS, RDS (Aurora), ElastiCache, Route 53, ACM,
+Secrets Manager, DynamoDB, SQS, SNS, ECR, S3, KMS, CloudWatch Logs, Kinesis Firehose, EventBridge,
+Application Auto Scaling, and the IAM roles of the in-cluster controllers. A project uses only the
+services it needs.
 
-## IAM Role Permissions
+The `-IAM` policy denies attaching `AdministratorAccess`, `PowerUserAccess` or `IAMFullAccess` to
+anything. It limits `iam:PassRole` to the provisioned services, and denies `organizations:*`,
+`account:*` and billing actions. So the role cannot give itself admin rights. The full scope is in
+[Security](/concepts/security#aws-keyless-issuer-direct-iam-role).
 
-What the role may *do* is independent of *who may assume it* (the OIDC trust above) — a separate axis.
+## Check that it worked
 
-**Exactly what Alethia provisions in your account** (feature-gated — a given Project uses a subset): EC2/VPC
-(subnets, NAT, route tables, security groups, VPC endpoints), EKS (cluster, managed node groups, add-ons, the
-IRSA OIDC provider + controller roles), RDS (Aurora), ElastiCache (Redis/Valkey), Route 53, ACM, Secrets
-Manager, DynamoDB, SQS/SNS, ECR, S3, KMS envelope keys, CloudWatch Logs + Kinesis Firehose, EventBridge
-(Karpenter), Application Auto Scaling, and the in-cluster controller IAM roles (external-dns, AWS Load
-Balancer Controller, EBS CSI, Karpenter).
+### Verification
 
-<Callout type="info">
-**Least-privilege by default — no account admin, fully action-enumerated.** The setup attaches **five scoped
-policies** instead of `AdministratorAccess`: `…-ComputeNet`, `…-ComputeScale`, `…-Data`, `…-Edge` — the
-data-plane, each listing the **specific `ec2:`/`eks:`/`rds:`/… actions** the templates issue (not
-`service:*`; split into net/scale to fit AWS's 6144-char managed-policy limit) — plus an action-enumerated
-`…-IAM` policy. The IAM policy lets the templates create the EKS/IRSA roles they need but **explicitly
-denies** attaching `AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess` to anything, scopes `PassRole` to
-the provisioned services, and denies all `organizations:*`/`account:*`/billing — so the role **cannot
-escalate to admin**. Reads stay `Describe*`/`Get*`/`List*` so a template/module bump doesn't break a real
-apply. A defence-in-depth **permissions boundary** on the created roles is the next hardening increment. The
-OIDC trust is independent of all this.
-</Callout>
+When you select **Connect**, the console checks the connection at once. No runner is involved. It
+assumes the role, calls `sts:GetCallerIdentity`, and runs a few read calls. The account then shows
+one of these states:
 
-## What's Stored
+| State | Meaning |
+| --- | --- |
+| **Connected** | Alethia can assume the role and has the permissions it checks for. |
+| **Limited permissions** | Alethia can assume the role, but some permissions are missing. They are listed. |
+| **Verification failed** | AWS refused the assume. The reason is shown. |
 
-Only the **Role ARN** (`arn:aws:iam::123456789012:role/AlethiaProvisionerRole`) is stored. No access keys,
-secret keys, session tokens, or external id are ever persisted — every credential is a short-lived assertion
-minted at call time.
+To fix a failed check, see [Troubleshoot: connect a cloud](/troubleshooting/connect#aws).
+
+## Stop Alethia's access
+
+Delete `AlethiaProvisionerRole`, and its OIDC provider if nothing else uses it. To also remove the
+account from Alethia, see
+[Disconnect an account](/guides/connectors/managing-connections#disconnect-an-account).
+
+## Related
+
+- [Manage connections](/guides/connectors/managing-connections): add a second account, re-verify, rename, disconnect.
+- [Connection health and inventory](/concepts/connection-health): how Alethia re-checks the connection and lists your resources.
+- [Security](/concepts/security): the keyless model for every cloud.

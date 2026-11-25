@@ -1,86 +1,85 @@
 ---
-title: Hetzner Connector
-description: Scoped, project-scoped API token — encrypted at rest, decrypted only on the runner. Provisions a self-managed Talos Linux Kubernetes cluster on cheap Hetzner VMs.
+title: Connect a Hetzner Cloud project
+description: Connect a Hetzner Cloud project with a scoped, encrypted, revocable API token. Alethia provisions a self-managed Talos Linux Kubernetes cluster on it.
 ---
 
-# Hetzner Connector
+Connect a Hetzner Cloud project so that Alethia can provision into it. Hetzner Cloud has no OIDC
+provider and no role-assumption API, so Hetzner is the one supported cloud that is not keyless: it
+connects with an API token that is scoped to one project, encrypted at rest, and revocable at any
+time.
 
-Connecting Hetzner Cloud registers a **cloud identity** (`cloud_identities`) that is **token-based**. Unlike AWS, GCP, and Azure — which are
-**keyless** (Alethia federates into a role you grant via short-lived, minted OIDC assertions) —
-Hetzner Cloud offers **no OIDC or workload-identity federation**. Its only auth primitive is a
-**project-scoped API token**. So Alethia connects with a token you create, **encrypted at rest
-(AES-GCM)** and **decrypted only on the runner** at provision time — never written into a project
-snapshot. This is the best-available model for a cloud without federation. See
-[Security Architecture](/concepts/security) for the full model.
+## Before you begin
 
-<Callout type="info">
-**Is this safe?** The token is stored **encrypted** (AES-256-GCM) and is only ever decrypted on the
-runner during a provisioning job — it never appears in a job's config snapshot. A Hetzner token is
-scoped to a **single Hetzner project** (the tightest boundary Hetzner offers). **Revoke anytime** by
-deleting the token in the Hetzner Cloud Console — that instantly cuts Alethia's access.
-</Callout>
+- You have a Hetzner Cloud project for Alethia. A token reaches everything in its project, so use a
+  project that does not already hold infrastructure you value.
+- Your Alethia role can manage connections (`manage_identities`).
 
-## What Hetzner provisions
+## What Alethia provisions on Hetzner
 
-Hetzner Cloud has no managed Kubernetes or managed data services. Instead, Alethia provisions a
-**self-managed [Talos Linux](https://www.talos.dev/) Kubernetes cluster** on Hetzner's inexpensive
-VMs (ARM `CAX` or x86 `CX`/`CPX`/`CCX`), with Cilium networking and the Hetzner CSI driver for block
-storage. Data services (Postgres, cache, queue) that would be managed cloud resources on a
-hyperscaler run **in-cluster via Helm** — CloudNativePG (Postgres), Valkey (cache), and RabbitMQ
-(queue) — deployed through ArgoCD. See
-[Health &amp; Inventory](/guides/connectors/health-and-inventory) for how cloud identities are probed.
+Hetzner Cloud has no managed Kubernetes and no managed data services. Alethia provisions a
+self-managed [Talos Linux](https://www.talos.dev/) Kubernetes cluster on Hetzner servers (ARM `CAX`,
+or x86 `CX`, `CPX` and `CCX`), with Cilium networking and the Hetzner CSI driver for volumes.
+Databases, caches and queues run in the cluster through ArgoCD: CloudNativePG for PostgreSQL, Valkey
+for caches, and RabbitMQ for queues.
 
-## Setup
+## Steps
 
-<Tabs items={["Managed (Alethia stores the token)", "Self-hosted runner (store nothing)"]}>
-  <Tab value="Managed (Alethia stores the token)">
-    <Steps>
+<Steps>
 
-    ### Create a project-scoped API token
-    In the [Hetzner Cloud Console](https://console.hetzner.cloud/), open your project, then
-    **Security → API Tokens → Generate API token**. Give it **Read &amp; Write** permission —
-    provisioning creates servers, networks, and volumes. The token is scoped to just that one
-    project.
+### Create a project-scoped API token
+In the [Hetzner Cloud Console](https://console.hetzner.cloud/), open the project, then
+**Security → API Tokens → Generate API token**. Give it **Read & Write** permission, because
+provisioning creates servers, networks and volumes.
 
-    ### Paste into Alethia
-    Paste the token into the Alethia connect sheet and click **Connect**. Alethia encrypts it at rest
-    (AES-GCM) and verifies it immediately against the Hetzner Cloud API.
+### Paste the token
+In Alethia, open **Connectors**, select **Hetzner Cloud**, then select **Connect**. Paste the token
+into **API Token**.
 
-    </Steps>
-  </Tab>
-  <Tab value="Self-hosted runner (store nothing)">
-    <Steps>
+### Add Object Storage keys (optional)
+To provision storage buckets, open **Object Storage keys (optional)** and paste an S3 access key
+and secret key. Hetzner has no API that makes these keys: generate them in the Hetzner Console
+under S3 credentials. Give both keys or neither.
 
-    ### Run a self-hosted runner
-    If you operate your own runner, set **`HCLOUD_TOKEN`** in the runner's own environment. Alethia
-    then stores **no token at all** — the runner supplies it directly at provision time. This is the
-    zero-storage path for federation-less clouds.
+### Connect
+Select **Connect**.
 
-    ### Connect
-    Mark the cloud identity self-managed; provisioning jobs claimed by your runner use its environment's
-    `HCLOUD_TOKEN` and Alethia never persists a credential.
+</Steps>
 
-    </Steps>
-  </Tab>
-</Tabs>
+To connect from a terminal, run `alethia connector hetzner --token-stdin` and pipe the token in. A
+`--token` flag also works, but it lands in your shell history. Add `--s3-access-key` and
+`--s3-secret-key` for buckets. See [Connector commands](/reference/cli/connector).
 
-## Verification
+### With a self-operated runner
 
-After you submit, Alethia verifies the cloud identity **instantly, server-side** (no runner): it decrypts
-the stored token and calls a cheap authenticated Hetzner Cloud API endpoint
-(`GET https://api.hetzner.cloud/v1/locations`).
+A runner you operate can read the token from `HCLOUD_TOKEN` in its own environment, so that
+Alethia does not store a token. See [Self-operated runners](/guides/runners/self-operated).
 
-- `200` → the cloud identity is **Connected**
-- `401` / `403` → the token was rejected (bad or revoked) → **Disconnected**
+## How the token is kept
 
-On success, Alethia also syncs the project's **regions** (used for placement) into the asset
-[inventory](/guides/connectors/health-and-inventory). If verification fails, the error explains what
-went wrong.
+The console encrypts the token with AES-256-GCM before it stores it, and never returns it. The
+console decrypts it to check the connection, and when a runner claims a job, to hand it to that
+runner. It is never written into a project's configuration snapshot.
 
-## What's Stored
+## Check that it worked
 
-- **Managed:** only your **encrypted API token** (AES-256-GCM), decrypted solely on the runner at
-  provision time — never in a project snapshot.
-- **Self-hosted runner:** **nothing** — the runner carries `HCLOUD_TOKEN` in its own environment.
+### Verification
 
-Rotate or revoke the token in the Hetzner Cloud Console at any time to cut access.
+When you select **Connect**, the console calls the Hetzner Cloud API
+(`GET /v1/locations`) with the token. No runner is involved.
+
+| Result | State |
+| --- | --- |
+| `200` | **Connected**. Alethia also syncs the project's locations, which placement uses. |
+| `401` or `403` | **Verification failed**: the token is wrong or was revoked. |
+
+To fix a failed check, see [Troubleshoot: connect a cloud](/troubleshooting/connect#hetzner).
+
+## Stop Alethia's access
+
+Delete the token in the Hetzner Cloud Console. Alethia's access ends at once.
+
+## Related
+
+- [Manage connections](/guides/connectors/managing-connections): re-verify, rename, disconnect.
+- [Connection health and inventory](/concepts/connection-health): how Alethia re-checks the connection.
+- [Security](/concepts/security): how Alethia handles credentials.

@@ -1,111 +1,101 @@
 ---
-title: Clusters
-description: Find a cluster in the clusters table, open its record, and get its endpoint, ArgoCD link and a kubeconfig.
+title: Find and open a cluster
+description: Find a cluster in the clusters table, read its status, open its record, and get its endpoint, ArgoCD link and a kubeconfig.
 ---
 
-# Clusters
+Find a cluster that Alethia deployed, check its health, and get what you need to reach it.
 
-The **Clusters** page lists every cluster that your organization manages. Open it at
-`/{org}/~/clusters`. A project has its own **Clusters** page too, at `/{org}/{project}/clusters`,
-which lists only that project's clusters.
+## Before you begin
 
-A cluster appears in the list when an environment's first deploy succeeds. It stays there until
-the environment is destroyed. Clusters with a run in progress, and clusters that need attention,
-are in the list too, with a status that says so.
+- At least one environment has deployed. A cluster appears when an environment's first deploy
+  succeeds, and stays until the environment is destroyed.
+- Your role can view clusters.
 
-## Find a cluster
+## Steps
 
-Each row of the table is one cluster. A project with three environments has three rows.
+<Steps>
+
+### Open Clusters
+Select **Clusters** in the sidebar for every cluster in the organization, or **Clusters** inside a
+project for that project's clusters. Each row is one environment's cluster.
+
+### Narrow the list
+Use the filter bar: **Search** (environment, project or cluster name), **Cloud**, **Region**, and
+the status chips **Needs attention**, **In progress**, **Healthy** and **Unverified**. **Reset**
+clears them. The filters and page number are in the page URL, so you can share the view. The list
+updates by itself when a cluster changes.
+
+### Open the record
+Select a row. The cluster's record opens in a side panel, and its URL opens the same record.
+
+</Steps>
+
+## Read the table
 
 | Column | What it shows |
-|--------|---------------|
-| **Environment** | The environment's name, with the cluster's name in the cloud under it. Click the name to open the cluster's record. |
-| **Project** | The project, as a link to it. A project's own **Clusters** page does not show this column. |
-| **Status** | The cluster's status (see [Statuses](#statuses)). When something failed, a second line says what, for example **Last run failed** or **Deleted outside Alethia**. It links to the environment's newest run. |
-| **Cloud** | The cloud and region, with the Kubernetes version under them. |
-| **Components** | How many of the cluster's components are healthy, for example `3 / 4 healthy`. The components are the control plane and the cluster's databases and caches. |
-| **Last observed** | When Alethia last saw the control plane, or **Never**. |
-
-The table shows 20 rows on each page. To narrow the list, use the filter bar above the table:
-
-- **Search** matches the environment, project or cluster name.
-- **Cloud** selects one or more clouds.
-- The status chips select **Needs attention**, **In progress**, **Healthy** or **Unverified**.
-- **Region** selects one or more regions.
-
-The count beside each option is the number of clusters in scope that it matches, before any other
-filter applies. **Reset** clears every filter. The filters and the page number are in the page's
-address, so you can share a link to a filtered list.
-
-The list updates by itself when a cluster or its environment changes. You do not need to reload
-the page.
+| --- | --- |
+| **Environment** | The environment, with the cluster's name in the cloud under it |
+| **Project** | The project. Hidden on a project's own page. |
+| **Status** | See [Statuses](#statuses). A second line says what failed, such as **Last run failed** or **Deleted outside Alethia**, and links to the newest run. |
+| **Cloud** | Cloud, region and Kubernetes version |
+| **Components** | Healthy components out of all, such as `3 / 4 healthy`: the control plane, databases and caches |
+| **Last observed** | When Alethia last saw the control plane, or **Never** |
 
 ### Statuses
 
-Alethia derives a cluster's status from the control plane, the cluster's databases and caches, and
-the environment's current run. The status is never fixed text.
+The status comes from the control plane, the databases and caches, and the environment's current run.
 
-| Status | Meaning | Status filter |
-|--------|---------|---------------|
+| Status | Meaning | Filter |
+| --- | --- | --- |
 | **Active** | Every component is healthy. | Healthy |
-| **Queued**, **Deploying**, **Destroying** | A run on the environment is in progress. | In progress |
-| **Reconciling** | A component is changing. When the control plane itself is changing, the status is its own state, for example **Updating**. | In progress |
+| **Queued**, **Deploying**, **Destroying** | A run is in progress. | In progress |
+| **Reconciling** | A component is changing. A changing control plane shows its own state, such as **Updating**. | In progress |
 | **Degraded** | A database or cache failed. | Needs attention |
 | **Unreachable** | A probe could not reach the control plane. | Needs attention |
-| **Missing** | A drift scan or a probe found the cluster deleted outside Alethia. | Needs attention |
-| **Unverified** | Nothing has confirmed the control plane recently, so Alethia does not show it as healthy. | Unverified |
+| **Missing** | A drift scan or probe found the cluster deleted outside Alethia. | Needs attention |
+| **Unverified** | Nothing confirmed the control plane recently. | Unverified |
 
-A cluster whose last run failed is under **Needs attention** too, even when its status is
-**Active**.
+A cluster whose last run failed is under **Needs attention**, even when it is **Active**.
 
-## Open a cluster's record
+## Use the record
 
-Click a row, or the environment name, to open the cluster's record in a panel at the side of the
-page. The record's title is the environment and the project, and its subtitle is the cloud, the
-region and the Kubernetes version. The open record is in the page's address too, so a link opens
-the same cluster.
+- **Status**: the result, the healthy components, when and how the control plane was last seen (a
+  probe or the last deploy), and how long a current run has taken. **Details** shows what the cloud
+  answered to a failed probe.
+- **Components**: the control plane (EKS, GKE, AKS, or `k8s` on Hetzner), each database and cache,
+  and the DNS domain, each with its status and an endpoint to copy.
+- **Cluster access**: the API endpoint, the kubeconfig commands and the download. Shown only when
+  the cluster has an API endpoint.
+- **ArgoCD**: the ArgoCD address, a button that opens it, and the command that reads the admin
+  password.
 
-The record has these parts:
+At the bottom, **Open project**, **Open Architecture** and **View last run** take you to the project,
+the environment on the canvas, and the newest run.
 
-- **Status.** The overall result, the healthy-component count, and when the control plane was last
-  observed and by what: a liveness probe or the last successful deploy. A run in progress shows how
-  long it has run. When a probe could not reach the control plane, **Details** shows what the cloud
-  answered.
-- **Resolve the missing cluster.** This part appears only for a cluster found deleted outside
-  Alethia, when no run is in progress. Nothing changes until you choose one of these:
-  - **Redeploy** and **Tear down** open the environment on the board, where its Deploy and Destroy
-    run.
-  - **Mark as destroyed** records the environment and its cluster as destroyed. It does not call the
-    cloud and does not start a job. Check for leftover cloud resources yourself, and remove them in
-    the cloud account. The environment's history stays, and you can deploy it again later.
-- **Components.** The control plane (EKS, GKE, AKS, ACK, or `k8s` on Hetzner), each database and
-  cache, and the DNS domain. Each component has its own status, and its endpoint has a copy button.
-- **Cluster access.** The API server endpoint, the kubeconfig commands, and the
-  [kubeconfig download](#download-a-kubeconfig). This part appears only when the cluster has an API
-  endpoint.
-- **ArgoCD.** The ArgoCD dashboard's address, a button that opens it in a new tab, and the command
-  that reads the admin password.
+### Resolve a missing cluster
 
-At the bottom of the record, **Open project** opens the project, **Open Architecture** opens the
-environment on the board, and **View last run** opens the environment's newest run.
+For a **Missing** cluster with no run in progress, the record offers three choices. Nothing changes
+until you pick one.
+
+- **Redeploy** or **Tear down** opens the environment on the canvas, where you deploy or destroy it.
+- **Mark as destroyed** records the environment and cluster as destroyed. It calls no cloud and starts
+  no job, so remove leftover resources in the cloud account yourself. The history stays, and you can
+  deploy again later.
 
 ## Get a kubeconfig
 
-The record's **Cluster access** part shows each way to get a kubeconfig that the cluster supports:
-a command that Alethia runs for you, the cloud's own command, and a download.
+**Cluster access** lists each way the cluster supports:
 
-### kubeconfig commands
+- `alethia cluster kubeconfig <cluster-name>`: a runner mints a short-lived kubeconfig, so you need
+  no cloud login. Works on AWS, GCP, Azure and Hetzner. See [Get a kubeconfig](/guides/get-a-kubeconfig).
+- The cloud's own command, under **Or, with access to the cloud account**: runs under your own cloud
+  login. AWS, GCP and Azure only.
+- **Download kubeconfig (1h, read-only)**: a static, read-only file that expires after an hour. Only
+  people with `cluster:access_readonly` see it.
 
-The first command in **Cluster access** is `alethia cluster kubeconfig <cluster-name>`. It gets a
-short-lived kubeconfig that a runner mints for you, so you do not need a cloud login of your own.
-It works on AWS, GCP, Azure and Hetzner. See
-[Get a kubeconfig for your cluster](/guides/get-a-kubeconfig).
+The cloud commands, filled in from the cluster's last successful deploy:
 
-On AWS, GCP and Azure, the record also shows the cloud's own command, under
-**Or, with access to the cloud account**. That command runs under your own cloud login. The
-command per cloud:
-
-<Tabs items={["AWS", "GCP", "Azure", "Hetzner"]}>
+<Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
     ```bash
     aws eks update-kubeconfig --name {cluster-name} --region {region}
@@ -116,76 +106,45 @@ command per cloud:
     gcloud container clusters get-credentials {cluster-name} --region {region} --project {gcp-project-id}
     ```
 
-    A zonal cluster gets `--zone {zone}` instead of `--region {region}`.
+    A zonal cluster uses `--zone {zone}` instead of `--region {region}`.
   </Tab>
   <Tab value="Azure">
     ```bash
     az aks get-credentials --resource-group {resource-group} --name {cluster-name}
     ```
   </Tab>
-  <Tab value="Hetzner">
-    Hetzner has no cloud CLI command for a kubeconfig. Use
-    [`alethia cluster kubeconfig`](/guides/get-a-kubeconfig) instead: your runner mints a
-    short-lived kubeconfig for you.
-  </Tab>
 </Tabs>
 
-Alethia builds each command from the values that the cluster's last successful deploy recorded.
-When a value that the cloud's command needs is not recorded, the record shows only the
-`alethia cluster kubeconfig` command. When Alethia has no command for a cluster, a note replaces
-the commands and says why. `alethia cluster get` prints the same commands in its **Kubeconfig**
-row. See
+When a value the cloud command needs was not recorded, only the `alethia` command is shown. When
+there is no command at all, a note says why. `alethia cluster get` prints the same commands. See
 [Accessing a cluster with kubectl](/reference/cli/clusters#accessing-a-cluster-with-kubectl).
 
-The ArgoCD admin-password command is a `kubectl` command, so it needs a kubeconfig first. It reads
-a Secret, so a read-only kubeconfig cannot run it. Use the admin tier of
-`alethia cluster kubeconfig`, or the cloud's own command.
+The ArgoCD password command reads a Secret, so a read-only kubeconfig cannot run it. Use
+`alethia cluster kubeconfig --admin` or the cloud's own command.
 
 ### Download a kubeconfig
 
-**Download kubeconfig (1h, read-only)** is the last item in **Cluster access**. Only people with
-the `cluster:access_readonly` permission see it. The file is a static, read-only kubeconfig that
-expires after 1 hour. For more about the file and its limits, see
-[From the console](/guides/get-a-kubeconfig#from-the-console).
+Select **Download kubeconfig (1h, read-only)**. The record shows **A runner is minting it.**, and
+after 20 seconds **Still waiting for a runner to mint it.** with a link to the runners; with no runner
+online, it cannot finish. The browser then saves the file. **Cancel**, or closing the record, stops the wait, and a kubeconfig finished
+after that expires unread. Details, including private endpoints, are in
+[Get a kubeconfig](/guides/get-a-kubeconfig#get-a-kubeconfig-from-the-console).
 
-1. Click **Download kubeconfig (1h, read-only)**.
+## What every cluster has
 
-   A runner mints the kubeconfig. While you wait, the record shows **A runner is minting it.** and
-   the time when the request expires. The record checks again each time a job changes, and when you
-   come back to the browser tab.
+ArgoCD installs ArgoCD itself, External DNS, the External Secrets Operator, Metrics Server and a
+storage class (GP3 EBS, Persistent Disk or Managed Disk). On AWS it also installs the AWS Load
+Balancer Controller and Karpenter. See [GitOps with ArgoCD](/concepts/gitops-argocd).
 
-2. Wait for the browser to save the file.
+The names, endpoints and ArgoCD address come from the OpenTofu outputs of the last successful deploy.
 
-   The record shows the file's name and when the kubeconfig expires.
+## Check that it worked
 
-If the wait takes longer than 20 seconds, the record shows **Still waiting for a runner to mint
-it.** and a link to the runners. If no runner is online, the request cannot finish.
+The record shows the cluster's status and components, and `kubectl` with the kubeconfig lists the
+cluster's nodes.
 
-To stop waiting, click **Cancel**. The wait stops at once, and the button is ready to use again.
-Closing the record also stops the wait. If the runner finishes the kubeconfig after you stop, the
-kubeconfig expires on the server and nobody reads it.
+## Related
 
-When the cluster's API endpoint is private, the record says that the kubeconfig works only from a
-network that can reach the endpoint, for example over a VPN or through a bastion.
-
-When a cluster has not finished provisioning, the record shows a note in place of the button.
-
-## Pre-Installed Components
-
-Every cluster comes with these components installed via ArgoCD (see [GitOps & ArgoCD](/concepts/gitops-argocd)):
-
-| Component | Purpose |
-|-----------|---------|
-| **ArgoCD** | GitOps continuous delivery |
-| **AWS Load Balancer Controller** | Ingress via ALB/NLB (AWS) |
-| **External DNS** | Automatic DNS record sync |
-| **External Secrets Operator** | Cloud secrets → Kubernetes Secrets |
-| **Karpenter** | Just-in-time node provisioning (AWS) |
-| **Metrics Server** | CPU/memory metrics for HPA |
-| **Storage Class** | GP3 EBS / Persistent Disk / Managed Disk |
-
-## Where the values come from
-
-When a deploy succeeds, Alethia reads the OpenTofu outputs and records the cluster's name,
-endpoint and ArgoCD address, and the endpoints of its databases and caches. The table and the
-record show those values.
+- [Get a kubeconfig](/guides/get-a-kubeconfig)
+- [Cluster commands](/reference/cli/clusters)
+- [Troubleshoot cluster access](/troubleshooting/cluster-access)

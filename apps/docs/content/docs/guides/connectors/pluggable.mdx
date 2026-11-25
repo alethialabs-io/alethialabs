@@ -1,74 +1,81 @@
 ---
-title: Pluggable Connectors
-description: Bring your own DNS, secrets, registry, chart repository, and observability tools via API-key connectors.
+title: Connect a DNS, secrets, registry or observability tool
+description: Connect Cloudflare, HashiCorp Vault, Docker Hub, Datadog and other tools with an API key, so a project uses them instead of the cloud's own service.
 ---
 
-# Pluggable Connectors
+Connect a tool you already run, so that a project uses it instead of the cloud's own service. For
+example, Cloudflare instead of Route 53, or Vault instead of AWS Secrets Manager. These connectors
+sign in with an API key or token.
 
-Beyond cloud and Git, Alethia supports **pluggable per-category connectors** that let a Project mix in the tools you already use instead of the cloud-native default — Cloudflare for DNS, HashiCorp Vault for secrets, Docker Hub for a registry, a private Helm or OCI source for charts, and Datadog / Grafana Cloud for observability.
+## Before you begin
 
-These connectors authenticate with an **API key / token** (`auth_method = api_key`) rather than cloud federation or OAuth.
+- Your role can manage connections (`manage_identities`).
+- You have an API credential for the tool, with the permission listed below.
 
-## Categories and providers
+## Providers
 
-| Category | Cloud-native default | Pluggable provider | Credential fields |
-|----------|----------------------|--------------------|-------------------|
-| **DNS** | Route 53 / Cloud DNS / Azure DNS | **Cloudflare** | API token |
-| **Secrets** | Secrets Manager / Secret Manager / Key Vault | **HashiCorp Vault** | Address, token |
-| **Registry** | ECR / Artifact Registry / ACR | **Docker Hub** | Username, access token |
-| **Chart repositories** | — (public charts need no credential) | **[GitHub Container Registry, Docker Hub, GitLab, Scaleway, generic OCI, HTTPS](/guides/connectors/chart-repositories)** | Username, password / token |
-| **Observability** | — (none) | **Datadog** | API key, app key |
-| **Observability** | — | **Grafana Cloud** | Instance ID, API token |
+| Group | Provider | Credential | Settings |
+| --- | --- | --- | --- |
+| **DNS** | Cloudflare | API Token (Zone:DNS:Edit) | Zone ID, Proxy records through Cloudflare |
+| **Secrets** | HashiCorp Vault | Vault Address, Vault Token | KV Mount Path, KV Version |
+| **Secrets** | Generic (Vault-compatible) | Endpoint Address, API Token | KV Mount Path, KV Version |
+| **Secrets** | Doppler | API Token | Project, Config |
+| **Secrets** | Infisical | Machine Identity Client ID and Client Secret | Host, Workspace ID, Project Slug, Environment, Folder Path |
+| **Secrets** | 1Password | Service Account Token | Vault UUID |
+| **Registries** | Docker Hub | Username, Access Token | Namespace / Organization |
+| **Registries** | GitHub Container Registry | Username, Personal Access Token | — |
+| **Registries** | GitHub Enterprise Container Registry | Username, Personal Access Token | Registry URL |
+| **Registries** | GitLab Container Registry | Username, Token | Registry URL |
+| **Registries** | Quay, Harbor, Generic Registry | Username, password or token | Registry URL |
+| **Registries** | DigitalOcean Container Registry | API Token | — |
+| **Registries** | Scaleway Container Registry | Secret Key | Registry URL |
+| **Observability** | Datadog | API Key, Application Key | Datadog Site |
+| **Observability** | Grafana Cloud | Instance ID / Username, API Token | Remote Write URL |
 
-The catalog is data-driven — each provider is one row in the `connectors` table, seeded from a single manifest (`packages/core/categories/catalog.json`). See [Connectors Architecture](/concepts/connectors) for how this works end to end.
+Private Helm chart sources are a separate group: see
+[Chart repositories](/guides/connectors/chart-repositories). Cloud registries and secret managers in
+another cloud account are listed as **Coming soon**; see
+[Cross-account secret managers](/guides/connectors/cross-account-secret-managers).
 
-## Connecting a provider
+## Steps
 
-1. Open **Connectors**, pick the provider card, and choose **Connect**.
-2. Fill in the API credential — the form fields are generated from the provider's credential specification.
-3. Alethia runs a lightweight **verification ping** against the provider's API (e.g. Cloudflare's token-verify endpoint, Vault's token lookup, Docker Hub login, Datadog's key-validate endpoint). A verified credential turns the card green; an unverified one is still saved so you can retry.
+<Steps>
 
-## How credentials are stored
+### Connect the provider
+Open **Connectors**, find the provider, and select **Connect**.
 
-Secret fields (tokens, passwords) are **encrypted at rest** with AES-256-GCM before being written to the `connector_credentials` table; non-secret fields (a Vault address, a Docker Hub username) are stored in clear. The encryption key comes from `ALETHIA_CRED_ENCRYPTION_KEY` (see [Configuration](/guides/self-hosting/configuration)).
+### Enter the credential
+Fill in the fields from the table. Alethia encrypts secret fields with AES-256-GCM. It stores
+non-secret fields, such as a Vault address or a username, as they are.
 
-<Callout type="info">
-Secrets are **never** placed in a Project's `config_snapshot`. They are decrypted and attached to a job only at **claim time**, then injected into the runner's OpenTofu variables in memory — preserving the [zero-credential model](/concepts/security).
-</Callout>
+### Check the credential
+Alethia calls the provider's API to check the credential, for example Cloudflare's token check or
+a Docker Hub sign-in. A credential that fails the check is still saved, so you can fix it and try
+again.
 
-## Using a connector in a Project
+### Use it in a project
+On the canvas, pick the provider for the component:
+[DNS](/guides/design-project/dns), [Secrets](/guides/design-project/secrets),
+[Container registry](/guides/design-project/container-registry) or
+[Observability](/guides/design-project/observability).
 
-Once connected, pick the provider per component in the [Project designer](/guides/design-project):
+</Steps>
 
-- [DNS & WAF](/guides/design-project/dns) — choose **Cloudflare** instead of cloud-native DNS.
-- [Secrets](/guides/design-project/secrets) — choose **Vault**.
-- [Container Registry](/guides/design-project/container-registry) — choose **Docker Hub**.
-- [Chart repositories](/guides/connectors/chart-repositories) — add one per environment so Alethia can read your private charts.
-- [Observability](/guides/design-project/observability) — choose **Datadog / Grafana Cloud**.
+When the project deploys, the runner adds the provider's module to the plan and leaves out the
+cloud's own resource for that component. Observability has no cloud default, so it only adds.
 
-At provision time the runner composes the chosen provider's module into the plan and **skips** the cloud-native resource for that category.
+## How the credential reaches the runner
 
-### Chart repositories
+Secret fields are never written into a project's configuration snapshot. The console decrypts them
+only when a runner claims a job that needs them, and hands them to that runner. A self-hosted
+console sets the encryption key in `ALETHIA_CRED_ENCRYPTION_KEY`; see
+[Configuration](/self-host/configuration).
 
-A chart repository works differently from the categories above: it provisions nothing. It tells Alethia which credential to use when ArgoCD pulls a Helm chart from a private repository.
+## Check that it worked
 
-1. Connect the provider under **Chart Repos** on the Connectors page.
-2. On the Project canvas, add a **Chart repository** component (**Add → DevOps → Chart repository**) and pick the connected provider. Providers that serve a single fixed host — GitHub Container Registry, Docker Hub — need nothing more. For a self-hosted or generic registry, give the bare registry host (`registry.acme.io`, no scheme and no path); for an HTTPS Helm repository, give the full `https://` URL.
-3. Deploy. Before it syncs any chart, the runner writes an ArgoCD **repository credential** for that repository. ArgoCD matches a chart to a credential by URL prefix, so the host you enter must match the host your charts are addressed by.
+The card reads **Connected**, and the provider appears as a choice in the component on the canvas.
 
-You need one only for a **private** repository. Public charts, including everything in the add-on marketplace, pull without a credential.
+## Related
 
-To use a private chart, attach it with **Add → Bring your own Helm chart**, choose **OCI registry**, and give the whole reference including the chart name (`oci://ghcr.io/acme/payments`) plus a chart version (`*` for the latest). The dialog tells you whether a chart repository on the environment covers that host.
-
-A chart pulled from an OCI registry is scanned exactly like one in a Git repository, and the same credential authenticates both the safety scan and ArgoCD's deploy-time pull. See [Chart repositories](/guides/connectors/chart-repositories) for the full provider list and how a chart's host is matched to a credential.
-
-## Adding a new provider
-
-Pluggable connectors are an open-ended catalog. Adding a sixth provider takes four steps and **no** changes to routes, the runner core, or the form engine:
-
-1. Add a row to `packages/core/categories/catalog.json` (category, slug, auth_method, icon, credential + provider_config fields). Set `icon_url` to a path under `packages/assets/static` — the convention is `/icons/<slug>/<slug>-32x32.png` — after committing the file there, or to `null` if no mark ships for the provider. `null` renders a monogram tile and issues no request; a path with no file behind it is rejected in step 4.
-2. Add a `CategoryProvider` Go impl under `packages/core/categories/` (its `Tfvars`/`Validate` behavior).
-3. Add the OpenTofu module under `infra/templates/categories/<category>/<slug>/`. A chart-repo provider has no module — it implements `RepoCred` instead, and must also get a host rule in `apps/console/lib/connectors/helm-registry-hosts.ts` so the console resolves the same credential URL the Go provider seeds.
-4. Run `pnpm -F console gen:connectors` to regenerate the registry + catalog seed. It fails, naming the connector, if any `icon_url` does not resolve to a committed file under `packages/assets/static`.
-
-See [Connectors Architecture](/concepts/connectors) for the contract details.
+- [Connectors](/concepts/connectors): how the catalog and credential storage work.
+- [Manage connections](/guides/connectors/managing-connections)

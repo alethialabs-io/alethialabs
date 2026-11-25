@@ -24,9 +24,11 @@ vi.mock("@/lib/authz/actor-context", () => ({
 	runWithActor: vi.fn((_actor: unknown, fn: () => unknown) => fn()),
 }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
-vi.mock("@/lib/authz/guard", () => ({
+vi.mock("@/lib/authz/guard", async (importOriginal) => ({
 	ensureCliOrgAccess: vi.fn(),
 	assertMintingProfileStillMember: vi.fn(),
+	// Real: the service token's limit is attached to the actor the actions run as.
+	withServiceTokenCeiling: (await importOriginal<typeof import("@/lib/authz/guard")>()).withServiceTokenCeiling,
 }));
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
@@ -80,7 +82,16 @@ function post(body: Record<string, unknown>) {
 /** Makes the verified token a device login (no pin) or a service token pinned to `org-1`. */
 function callerIs(kind: "device_login" | "service_token") {
 	vi.mocked(verifyCliToken).mockResolvedValue({
-		payload: kind === "service_token" ? { sub: "user-1", service_token_org_id: "org-1" } : { sub: "user-1" },
+		payload:
+			kind === "service_token"
+				? {
+						sub: "user-1",
+						service_token_org_id: "org-1",
+						service_token_id: "st-1",
+						service_token_scopes: ["read", "design", "plan", "apply", "destroy"],
+						service_token_project_ids: null,
+					}
+				: { sub: "user-1" },
 		error: null,
 	} as never);
 }
@@ -119,7 +130,15 @@ describe("POST /api/jobs — the credential kind bound on the actor", () => {
 		const res = await post({ job_type, configuration_id: PROJECT_ID });
 		expect(res.status).toBe(201);
 		expect(runWithActor).toHaveBeenCalledWith(
-			{ userId: "user-1", orgId: "org-1", credential: "service_token" },
+			{
+				userId: "user-1",
+				orgId: "org-1",
+				credential: "service_token",
+				// The token's limit rides on the actor, so every decision the action asks is held to it.
+				ceiling: { scopes: ["read", "design", "plan", "apply", "destroy"], projectIds: null },
+				// Which token: an approval is bound to it, and its automatic-deploy list is read by it.
+				credentialRef: "st-1",
+			},
 			expect.any(Function),
 		);
 	});

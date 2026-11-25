@@ -1,211 +1,107 @@
 ---
-title: Alerts
-description: Route platform events to Slack, Teams, Discord, PagerDuty, webhook, and email channels. Chat channels authenticate with a pasted incoming-webhook URL (PagerDuty with a routing key) — no OAuth.
+title: Set up alerts
+description: Send platform events to Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat, PagerDuty, a webhook or email, with policies that choose what fires.
 ---
 
-# Alerts
+Get notified when a deploy fails, a runner goes offline, or someone changes a role. A **channel** is
+where a notification goes. A **policy** chooses which events go to which channels. Every
+notification is logged as a **delivery** under **Activity**.
 
-Alerting turns platform activity into notifications. A **policy** decides *what* fires, a **channel**
-decides *where it goes*, and every routed event is recorded as a **delivery**. Find it under
-**Dashboard → Alerts**, organised into **Policies · Channels · Activity**.
+## Before you begin
 
-## How alerting works
-
-<Mermaid chart={`
-flowchart LR
-  E["event fires<br/>deploy fails · action denied · cloud-identity token breaks"] --> P["policies match<br/>event + conditions"]
-  P --> C["route to channels"]
-  C --> D["delivery<br/>attempted now, retried on failure, logged in Activity"]
-`} />
-
-- **Events** are emitted by the platform as things happen — you don't wire anything up.
-- **Policies** watch a chosen set of events and route matches to channels.
-- **Channels** are destinations — Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat, a generic webhook, PagerDuty, or email.
-- **Deliveries** are the audit trail: what fired, where it went, and whether it succeeded.
-
-## Policies
-
-A policy is a set of events plus the channels they route to. Under **Alerts → Policies**:
-
-1. **Create a policy** — click **New policy** to open the guided form. It starts blank; give it a
-   name and description.
-2. **Pick events** from the catalog, grouped by category (see below). A policy can watch one event or many.
-3. **Set conditions** — an optional **scope** filter, a **minimum severity**, and a **dedup/throttle
-   window** (collapse repeats of the same event into one notification for N seconds).
-4. **Route to channels** — toggle which channels this policy notifies; one policy can fan out to several,
-   and one channel can serve many policies.
-5. **Enable** it. Disabled policies keep their config but fire nothing.
-
-## What you can alert on
-
-Events are grouped into categories. Most (~35) are **live** today; the rest are configurable now but inert
-until their emitter ships (the UI tags these "soon").
-
-| Category | Example events | Status |
-| --- | --- | --- |
-| **Deploy & drift** | deploy started / succeeded / failed, destroy requested / completed | Live · drift *soon* |
-| **Policy (PDP)** | action denied, sensitive action allowed, role permissions changed | Live · policy-override *soon* |
-| **Access & roles (RBAC)** | grant added / revoked, role created / changed / deleted | Live |
-| **Members** | member invited / joined / removed | Live · suspended *soon* |
-| **Cloud identities** | identity connected / revoked, credential failed | Live · rotation *soon* |
-| **Cost** | budget threshold, spend spike, overage started | Live · spike / overage *soon* |
-| **Workers & runners** | worker unhealthy (runner offline) | Live · stalled / exhausted *soon* |
-| **Authentication** | SSO sign-in failed, new-device sign-in, sign-in blocked | *Soon* |
-| **Platform health** | background loop degraded / recovered | Live |
-| **Support** | case opened / replied / resolved / reopened / closed | Live · assignment *soon* |
-
-## Free vs Business+
-
-Alerting itself is in the open-source core. The split is by **event kind**:
-
-- **Operational events are free** — deploys, destroys, members, cloud-identity connect/revoke, connector
-  health, and runner health. These work in the community build with no license.
-- **Security & governance events require Business+** (the `advancedAlerting` entitlement) — PDP **policy
-  denials / sensitive actions**, and **access-control changes** (grant added/revoked, role
-  created/changed/deleted). Without the entitlement these patterns are visible but won't deliver.
-
-## Severity
-
-Every event carries a severity — **info**, **warning**, or **critical** — surfaced in the channel payload
-(e.g. a Slack colour/emoji, or a field your webhook consumer can route on). A policy's **minimum severity**
-condition drops anything below the chosen level.
+- Your organization is on the Pro or Enterprise plan. On other plans, the Alerts card on the overview
+  says that alerting needs Pro. Security and access events (see [Events](#events)) need Enterprise.
+- Your role can manage alerts.
+- On a self-hosted console, `ALETHIA_CRED_ENCRYPTION_KEY` is set (a stable 32-byte base64 value,
+  for example from `openssl rand -base64 32`). Every channel except email stores a secret, and
+  without the key those channels are disabled. A console with pluggable connectors already has it.
 
 ## Channels
 
-<Callout type="info">
-  There is no Alethia-hosted Slack/Teams app and no OAuth. A chat channel is just an **incoming-webhook
-  URL** you create in your own Slack or RocketChat workspace and paste in. Alethia signs (where applicable) and POSTs to that
-  URL — nothing more.
-</Callout>
+Add the channels first, so that a policy has somewhere to send.
 
-### Prerequisite: the encryption key
+1. Open **Alerts → Channels** and select **Add channel**.
+2. Pick the transport and give the channel a name.
+3. Paste the destination from the table. The sheet's **Where to find this** says where the
+   service shows it.
+4. Select **Add channel**. Alethia sends a sample event to check the destination, and adds the channel
+   only when it arrives.
 
-Every channel except email stores a **secret** — a webhook URL for the chat and generic-webhook transports,
-or a routing key for PagerDuty. That secret *is* the credential (anyone holding it can post to your
-destination), so Alethia encrypts it at rest. That requires an encryption key:
+| Transport | You paste | Where it comes from |
+| --- | --- | --- |
+| Slack | Payload URL | Slack: Apps → Incoming Webhooks → Add to a channel |
+| Microsoft Teams | Payload URL | The channel's Workflows or Incoming Webhook connector |
+| Discord | Payload URL | Channel → Edit → Integrations → Webhooks → New Webhook |
+| Google Chat | Payload URL | The space's Apps & integrations → Webhooks |
+| Mattermost | Payload URL | Integrations → Incoming Webhooks → Add |
+| Rocket.Chat | Payload URL | Admin → Integrations → New → Incoming Webhook |
+| Webhook | Payload URL, and an optional signing secret | Any HTTPS endpoint you run |
+| PagerDuty | Routing key | The Integration Key of an Events API v2 integration |
+| Email | Recipients, separated by commas | — |
 
-```bash
-# 32-byte base64 key — set once, keep it stable across restarts
-openssl rand -base64 32
-```
+There is no Alethia app to install in Slack or Teams, and no OAuth. A payload URL or routing key
+is a secret: anyone who has it can post to your channel. Alethia encrypts it. If one leaks, replace
+it in the service.
 
-Set it in your environment and restart:
+**Webhook.** Alethia POSTs JSON `{ channel, event, sent_at }`. With a signing secret, each request
+carries `X-Alethia-Signature: sha256=<HMAC-SHA256 of the body>`. Compute the HMAC over the raw body
+and compare. A webhook needs no third-party account, so it is the quickest way to test alerting.
 
-```bash
-ALETHIA_CRED_ENCRYPTION_KEY=<the value from above>
-```
+**Email** needs no secret and no encryption key. It is sent through Amazon SES (see
+[Email](/self-host/email)). Without SES, the email is written to the server log instead.
 
-Until it's set, secret-bearing channels are **disabled in the UI** (the channel dialog tells you so). The
-same key protects `api_key` connector credentials, so a configured deployment already has it. **Email
-channels need no key** — recipients aren't secret.
+To check a channel later, select **Verify** (or **Re-verify**) on it. A check writes no delivery to
+**Activity**. Deleting a channel keeps its delivery history.
 
-### Add a channel
+## Policies
 
-In the console, open **Alerts → Channels → New channel**, pick a type, and follow the matching steps. Use
-**Test** afterwards to send a synthetic event before any policy routes real alerts to it.
+1. Open **Alerts → Policies** and select **New policy**.
+2. Give it a **Name**, such as `Production deploy failures`, and an optional description.
+3. Under **Events**, pick one or more events.
+4. Set the conditions, all optional:
+   - **Minimum severity**: drop events below `info`, `warning` or `critical`.
+   - **Scope filters**: limit to some **Projects**, **Job types**, **Resource types** or **Actions**.
+   - **Throttle & grouping**: **Notify at most once per** a time window, so repeats of the same
+     event become one notification.
+5. Under **Routing**, turn on the channels to notify. A policy can notify several channels, and a
+   channel can serve several policies.
+6. Select **Create policy**.
 
-<Tabs items={["Webhook", "Slack", "RocketChat", "Email"]}>
-  <Tab value="Webhook">
-    The generic escape hatch — delivers to any HTTPS endpoint you control. No third-party account, so it's
-    also the easiest way to test alerting end to end (point it at your own service, or a throwaway
-    request-bin / `ngrok` URL).
+A disabled policy keeps its settings and sends nothing.
 
-    <Steps>
+### Events
 
-    ### Endpoint URL
-    Paste the HTTPS URL that should receive the POST. The body is JSON: `{ channel, event, sent_at }`.
+Events come from the platform as things happen. You do not wire them up. Every event has a severity,
+which the message shows, for example as a Slack emoji, or as a field that a webhook can route on.
 
-    ### Signing secret (optional)
-    If you set one, Alethia signs each request:
+| Category | Events that fire today | Listed as soon |
+| --- | --- | --- |
+| Deploy & drift | Deploy started, succeeded or failed; job cancelled; destroy requested or completed; possible orphaned resources; auto-teardown gave up; cluster missing; environment status conflict | Drift detected |
+| Policy (PDP) | Action denied, sensitive action allowed, role permissions changed | Policy overridden |
+| Access & roles (RBAC) | Grant added or revoked; role created, changed or deleted; SSO provider updated or removed | — |
+| Members | Member invited, joined or removed | Member suspended |
+| Cloud identities | Identity connected or revoked; credential expiring or failed | Credentials rotated |
+| Cost | Budget threshold crossed | Spend spike, overage started |
+| Workers & runners | Worker unhealthy (a runner went offline) | Worker stalled, runner minutes exhausted |
+| Authentication | — | SSO sign-in failed, new-device sign-in, sign-in blocked |
+| Platform health | Background loop degraded or recovered, and other platform warnings | — |
+| Support | Case opened, replied, resolved, reopened or closed | Case assigned |
 
-    ```
-    X-Alethia-Signature: sha256=HMAC-SHA256(secret, body)
-    ```
-
-    Recompute the HMAC over the raw body on your side and compare — the outbound mirror of how Alethia
-    verifies inbound Stripe webhooks.
-
-    ### Test
-    Click **Test**. Your endpoint should receive one POST with a `Test alert from Alethia` payload.
-
-    </Steps>
-  </Tab>
-
-  <Tab value="Slack">
-    Slack delivery uses an **Incoming Webhook** — a per-channel URL Slack issues. No bot token, no OAuth,
-    no Alethia Slack app to install.
-
-    <Steps>
-
-    ### Create the incoming webhook
-    In Slack, add the **Incoming Webhooks** app (or create a Slack app and enable the *Incoming Webhooks*
-    feature), choose the channel to post into, and copy the generated URL — it looks like
-    `https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXX`. See
-    [Slack's docs](https://api.slack.com/messaging/webhooks).
-
-    ### Paste it
-    **New channel → Slack**, paste the webhook URL, name it, and save. Alethia POSTs a Block Kit message
-    (severity emoji + title + context) to that URL.
-
-    ### Test
-    Click **Test** — a message should appear in the chosen Slack channel.
-
-    </Steps>
-
-    <Callout type="warn">
-      The webhook URL is a bearer secret — treat it like a password. Anyone with it can post to that
-      channel. Rotate it in Slack if it leaks.
-    </Callout>
-  </Tab>
-
-  <Tab value="RocketChat">
-    Same model as Slack — a self-hosted **Incoming Webhook**.
-
-    <Steps>
-
-    ### Create the incoming webhook
-    In RocketChat: **Admin → Integrations → New → Incoming**. Enable it, pick the target channel, and copy
-    the generated webhook URL.
-
-    ### Paste it
-    **New channel → RocketChat**, paste the URL, and save. Alethia POSTs `{ text, attachments }` (severity
-    drives the attachment colour).
-
-    ### Test
-    Click **Test** — a message should land in the RocketChat channel.
-
-    </Steps>
-  </Tab>
-
-  <Tab value="Email">
-    Email needs no webhook and no encryption key — just recipients.
-
-    <Steps>
-
-    ### Recipients
-    **New channel → Email**, enter one or more addresses (comma-separated), and save.
-
-    ### Delivery
-    Email is sent through **AWS SES** (see [Self-hosting → Email](/guides/self-hosting/email)). If SES isn't
-    configured, alert emails are **logged to the server console** instead — so you can try alerting with no
-    mail setup.
-
-    ### Test
-    Click **Test** — recipients receive a `Test alert from Alethia` email (or it's logged if SES is unset).
-
-    </Steps>
-  </Tab>
-</Tabs>
-
-<Callout type="info">
-  Alethia ships nine transports — Slack, Microsoft Teams, Discord, Google Chat, Mattermost, Rocket.Chat, a
-  generic webhook, PagerDuty, and email. Each is a single sender file behind the same `ChannelSender`
-  interface, so adding another (Opsgenie, …) needs no schema change.
-</Callout>
+Events marked soon can be chosen now, and start to fire when they ship. The **Policy (PDP)** and
+**Access & roles** events need the Enterprise plan: on Pro you can pick them, but nothing is sent.
 
 ## Activity
 
-Every routed event becomes a row under **Alerts → Activity**: the event, the channel, status, attempts, and
-any error. Status moves **pending → sent**, or **failed → dead** once it exhausts its retries. A background
-sweeper retries failed deliveries with backoff, so a briefly-unreachable endpoint recovers on its own — no
-cron to configure. (A channel's **Test** button writes no Activity row; it just probes the destination.)
+**Alerts → Activity** lists every notification: the event, the channel, the status, the attempts and
+any error. A delivery goes from `pending` to `sent`. One that fails is `failed`, and Alethia retries
+it with backoff. After the last retry it is `dead`. You do not need to schedule the retries.
+
+## Check that it worked
+
+Trigger an event that a policy watches, such as a plan that you cancel. A `sent` row appears under
+**Activity**, and the message arrives in the channel.
+
+## Related
+
+- [Notification email setup](/self-host/email)
+- [Organizations](/guides/access/organizations)

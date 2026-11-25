@@ -1,102 +1,110 @@
 ---
-title: Runners
-description: Registering, monitoring, and managing Runner execution agents.
+title: Add and manage runners
+description: Deploy a runner into your AWS account or register one you run anywhere, then watch its status, update it, and remove it.
 ---
 
-# Runners
+Add a runner, the agent that runs your jobs, and keep it healthy. Every plan, deploy and scan runs
+on a runner. How a runner works is in [Runner](/concepts/runner).
 
-Runners are the execution agents that run OpenTofu (the `tofu` binary) on behalf of users. The Runners page manages their lifecycle. Every runner sits on a two-axis taxonomy — **operator** (`managed` | `self`) × **provisioning** (`deployed` | `registered`, for `self` only). For how Runners work internally, see the [Runner Agent](/concepts/runner) documentation.
+## Before you begin
 
-## Runners Page
+- Your organization runs its own runners. The **Runners** item appears in the sidebar only then; the
+  page is still at `/{org}/~/runners`.
+- To deploy a runner, you have a verified AWS [connection](/guides/connectors/aws) and a runner
+  that is already online to run the deploy.
 
-A two-column layout: the left column stacks the warm **Pools** (managed-fleet, self-managed operators only) and the **Versions** changelog; the right column is a filterable, paginated grid of runner cards.
+## Choose the kind of runner
 
-### Filter Bar
+| Kind | Where it runs | How it is added | Updates | Billing |
+| --- | --- | --- | --- | --- |
+| **Managed** | Alethia's Hetzner servers | A [warm pool](/guides/fleet-pools) creates and removes it | The pool replaces it with a new version | By the hours it is provisioned |
+| **Self · Deployed** | One ECS Fargate task in your AWS account | **Add runner → Deploy to a cloud** | **Update all** rolls it in place | Your AWS bill |
+| **Self · Registered** | Any host you run, on any cloud or on premises | **Add runner → Register your own** | You replace the binary or image | Not billed by Alethia |
 
-Follows the console filter standard: a name search plus chip and facet filters.
+A deployed runner is AWS only, because the runner template exists only for AWS. This limits where
+the runner runs, not what it provisions: a registered runner in any place provisions every cloud
+Alethia supports. A deployed runner is one task that does not scale with the queue. Only managed
+runners scale. See [Scaling](/concepts/runner/scaling).
 
-- **Search** — filter by Runner name
-- **Cloud** — supported providers (or "Any")
-- **Status** chips — Online, Offline, Draining
-- **Operator** chips — Managed, Self · Deployed, Self · Registered
-- **Region** and **Version** facet popovers
+## Add a runner
 
-### Runner Cards
+<Tabs items={["Deploy to a cloud", "Register your own"]}>
+  <Tab value="Deploy to a cloud">
+    <Steps>
 
-Each runner renders as a card (grayscale — status reads through a badge dot + mono label, never colour):
+    ### Open the dialog
+    On **Runners**, select **Add runner**, then **Deploy to a cloud**.
 
-| Field | Description |
-|-------|-------------|
-| Name | Runner name, with a star if it's the default runner |
-| Status | Badge: ONLINE, OFFLINE, DRAINING — plus in-flight lifecycle states PROVISIONING, UPDATING, DESTROYING while a job acts on the runner |
-| Operator | Badge: `Managed`, `Self · Deployed`, or `Self · Registered` |
-| Cloud | Supported provider icons (or "Any") |
-| Region | Deployment location — shown for **managed** runners |
-| Version | Runner release version (click to view release notes; an "update available" badge appears when outdated) |
-| Provisioned / Last seen | Managed runners show provisioned hours; self runners show time since last heartbeat |
-| Active job | The in-flight job (if any), linking to the job detail — QUEUED, CLAIMED, or PROCESSING |
-| Actions | Default-runner star toggle; **Destroy** (self · deployed with cloud resources) or **Remove** (registered runners) |
+    ### Pick the account
+    Choose the AWS **Cloud account** and the region. Only verified AWS accounts are listed.
 
-### Versions Panel & Updates
+    ### Deploy
+    Select **Deploy runner**. An online runner runs a `DEPLOY_RUNNER` job, which creates the ECS task
+    definition, IAM roles, a CloudWatch log group and security groups. After about two minutes, the
+    new runner shows **Online**.
 
-The **Versions** panel (left column) shows the latest release, a changelog of recent releases, and — when runners are behind the latest version — an **"Update all"** button that queues `UPDATE_RUNNER` jobs for the runners it can roll in place (deployed runners with a stored token). Runners it can't roll are flagged as needing a re-deploy.
+    </Steps>
 
-## Adding a Runner
-
-Click **Add runner** to open a sheet that chooses between two paths — **Deploy to a cloud** or **Register your own**:
-
-<Tabs items={["Deploy (Self · Deployed)", "Register (Self · Registered)"]}>
-  <Tab value="Deploy (Self · Deployed)">
-    Provisions a Runner into your **AWS** account automatically (an existing runner runs OpenTofu to stand it up — ECS Fargate via `infra/templates/runner/aws`). This is a `self`-operated, `deployed` runner:
-
-    1. Select an AWS cloud identity and region
-    2. Click Deploy → queues a `DEPLOY_RUNNER` job
-    3. The job provisions: ECS task definition, IAM roles, CloudWatch log group, security groups
-    4. After ~2 minutes, the Runner appears as ONLINE
-
-    **This path is AWS only.** The account picker lists verified AWS identities alone, because `infra/templates/runner/` holds one template. A deploy into GCP, Azure or Hetzner is refused when you queue it — in this form and in `alethia runner deploy`. Use **Register your own** for those clouds; a registered Runner provisions every cloud Alethia supports, wherever it runs.
-
-    A deployed Runner is one always-on ECS Fargate task (`desired_count = 1` in `infra/templates/runner/aws/main.tf`); it does not scale with the queue. Only the managed fleet scales — see [Warm-pool scaling](/concepts/runner/scaling).
+    From the CLI, use `alethia runner deploy`. It refuses any cloud other than AWS, as the console does.
   </Tab>
-  <Tab value="Register (Self · Registered)">
-    For bringing your own Runner — your own IaC (OpenTofu/Terraform), or just `alethia runner start` — on infrastructure you control, on **any** cloud. This creates a `self`-operated, `registered` runner:
+  <Tab value="Register your own">
+    <Steps>
 
-    1. Enter a name for the Runner
-    2. Click Register → generates a `runner_id` and `runner_token`
-    3. Copy the credentials (shown once, never stored in plaintext)
-    4. Set the environment variables on your machine and run the Runner binary
+    ### Open the dialog
+    On **Runners**, select **Add runner**, then **Register your own**.
 
-    See [Self-Operated Runners](/guides/runners/self-operated) for full setup instructions.
+    ### Name it
+    Enter the **Runner name** and select **Register runner**.
+
+    ### Save the credentials
+    Copy the **Runner ID** and **Runner Token**. The token is shown once and cannot be recovered. If
+    you lose it, register the runner again.
+
+    ### Start the runner
+    Set the credentials as environment variables on your host and start the runner. See
+    [Self-operated runners](/guides/runners/self-operated).
+
+    </Steps>
   </Tab>
 </Tabs>
 
-<Callout type="info">
-**Managed** runners are a third category: Alethia operates them in the platform account and bills them by provisioned hours (online time, via the `runner_usage_sessions` ledger). The managed fleet is driven by the **in-app scaler** (`apps/console/lib/fleet/`) — a 60s loop that sizes per-provider warm pools by queue depth and converges them through the **Hetzner VM fleet** (`FLEET_PROVIDER=hcloud`), whose cloud-init self-registers a per-cloud runner image via `ALETHIA_RUNNER_BOOTSTRAP_TOKEN`. (The legacy AWS ECS + Lambda scaler is retired.) Managed runners don't appear under "Add Runner" — you opt into the fleet rather than registering or deploying them yourself.
-</Callout>
+## Watch your runners
 
-<Callout type="warn">
-The runner token is shown **only once** at registration. If lost, the Runner must be re-registered. See [Authentication Flows](/concepts/authentication) for how token verification works.
-</Callout>
+Filter the runner cards by name, **Cloud**, status (**Online**, **Offline**, **Draining**), operator
+(**Managed**, **Self · Deployed**, **Self · Registered**), **Region** and **Version**. The page
+updates by itself.
 
-## Status Indicators
+| Status | Meaning |
+| --- | --- |
+| **Online** | Ready for jobs. The runner holds a connection to the console that refreshes about every 10 seconds. |
+| **Draining** | Finishes its current job and takes no new ones. |
+| **Offline** | The connection dropped, or nothing was heard for 45 seconds. Its jobs go back in the queue. |
 
-Status is determined by heartbeat recency:
+While a job acts on a runner, its card shows **Provisioning…**, **Updating…** or **Destroying…**.
+Each card also shows the runner's operator, its clouds (or **Any**), the region for a managed runner,
+its version, its active job, and its provisioned hours or when it was last seen.
 
-| Status | Meaning | Heartbeat |
-|--------|---------|-----------|
-| **ONLINE** | Ready to accept jobs | Seen within the last 45 seconds (runners heartbeat ~every 10s) |
-| **DRAINING** | Finishing current job, not accepting new ones | Sent with DRAINING flag |
-| **OFFLINE** | Missed heartbeat, jobs will be requeued | No heartbeat for > 45 seconds (the sweep flips stale ONLINE or DRAINING runners to OFFLINE) |
+## Update runners
 
-## Live Updates
+Each runner reports its version. Select a version on a card to read its release notes; an outdated
+runner shows that an update is available. The **Versions** panel shows the **Latest release** and a
+**Changelog**. When runners are behind, **Update all** queues an `UPDATE_RUNNER` job for each
+deployed runner that can be updated in place. Runners it cannot update are marked as needing a new
+deploy. Managed runners are replaced by their pool.
 
-The Runners page polls every 10 seconds while the tab is focused (TanStack Query pauses the interval in the background), so heartbeat-driven ONLINE/OFFLINE changes, new registrations, and job assignments surface on the next poll.
+## Set a default or remove a runner
 
-## Version Tracking
+- **Set as default** marks the runner that a job uses when you pick none. **Clear default** undoes it.
+- **Destroy** tears down a deployed runner's cloud resources through a `DESTROY_RUNNER` job. You
+  choose which runner runs the destroy.
+- **Remove** deletes a registered runner, so it is no longer given jobs.
 
-Each Runner reports its version on heartbeat. The page shows:
-- Current version per Runner
-- Latest available version (from the `runner_releases` table)
-- A **Release Notes** popover showing the changelog for each version
+## Check that it worked
 
-When a new Runner release is published via the CI pipeline, existing runners are rolled onto the new image via `UPDATE_RUNNER` jobs — ECS force-new-deployment for self·deployed AWS runners; VM replacement for the managed Hetzner fleet.
+The new runner's card shows **Online**. Queue a plan: its job page shows the runner that claimed it.
+
+## Related
+
+- [Self-operated runners](/guides/runners/self-operated)
+- [Run a warm pool of runners](/guides/fleet-pools)
+- [Authentication](/concepts/authentication): how the runner token is checked.

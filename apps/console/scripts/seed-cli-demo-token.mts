@@ -36,6 +36,12 @@
 // org-settings action in the console — so the seed performs it, the same way it performs the other
 // org setup a person would have done in the browser.
 //
+// THE TOKEN IS MINTED WITH NO AUTOMATIC-DEPLOY ENVIRONMENTS (#7454). Table 4.2 lets a service token
+// deploy without an approval only to an environment it lists in `auto_approve_environment_ids`, and the
+// run's environment does not exist yet: the demo's `env add` beat creates it. So the harness lists it
+// after that beat, through scripts/cli-demo-approval.mts, which also approves the destroy. Neither is
+// done here, and neither is a flag on the token that skips the check.
+//
 // Usage:
 //   tsx scripts/seed-cli-demo-token.mts --out /tmp/cli-demo.json --e2e-run e2e-<run_id>-<attempt>
 

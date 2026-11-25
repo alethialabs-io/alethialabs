@@ -13,7 +13,7 @@ export function providerLabel(slug: string): string {
 
 /**
  * Why a project on `provider` cannot be planned or deployed on this deployment, or `null` when it
- * can. `offered` is the server's list of offered clouds (`overview.projects`), never a list written
+ * can. `offered` is the server's list of offered clouds (`overview.projects.summary`), never a list written
  * here: the same list decides what a plan or a deploy is refused for.
  *
  * A project with no cloud account has no cloud to refuse, so it answers `null`.

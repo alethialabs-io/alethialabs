@@ -3,44 +3,17 @@
 
 import { baseOptions, linkItems } from "@/lib/layout.shared";
 import { source } from "@/lib/source";
-import { getSection } from "@/lib/source/navigation";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import type { ReactNode } from "react";
 
+/**
+ * The docs shell: ONE sidebar over the whole page tree. No section is a `root` folder, so there is
+ * no tab switcher. Opening a section used to hide every other section from the sidebar, which made
+ * the docs feel like ten separate sites. The order and the groups live in content/docs/meta.json.
+ */
 export default function Layout({ children }: { children: ReactNode }) {
-	const base = baseOptions();
-
 	return (
-		<DocsLayout
-			{...base}
-			tree={source.getPageTree()}
-			links={linkItems}
-			sidebar={{
-				tabs: {
-					transform(option, node) {
-						const meta = source.getNodeMeta(node);
-						if (!meta || !node.icon) return option;
-						const color = `var(--${getSection(meta.path)}-color, var(--color-fd-foreground))`;
-
-						return {
-							...option,
-							icon: (
-								<div
-									className="[&_svg]:size-full rounded-lg size-full text-(--tab-color) max-md:bg-(--tab-color)/10 max-md:border max-md:p-1.5"
-									style={
-										{
-											"--tab-color": color,
-										} as object
-									}
-								>
-									{node.icon}
-								</div>
-							),
-						};
-					},
-				},
-			}}
-		>
+		<DocsLayout {...baseOptions()} tree={source.getPageTree()} links={linkItems}>
 			{children}
 		</DocsLayout>
 	);

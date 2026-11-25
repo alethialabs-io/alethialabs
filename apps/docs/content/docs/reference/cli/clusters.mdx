@@ -3,8 +3,6 @@ title: Cluster Commands
 description: List the Kubernetes clusters your projects run on, and inspect one — status, sizing, cost, the kubeconfig command and ArgoCD access.
 ---
 
-# Cluster Commands
-
 A cluster is what a project environment runs on. You do not create one here: provisioning an
 environment creates it, and this group reads it back. The command is `alethia cluster` (singular)
 with a `clusters` alias, so both forms work interchangeably.
@@ -153,7 +151,7 @@ alethia cluster kubeconfig api-backend-production --no-input
 |-------|----------|---------|-------------|
 | `[selector]` | No — at a terminal | The picker | The same selector as `cluster get`: a project name, a cluster name or a cluster id. Omit it at a terminal and the CLI asks which cluster. |
 | `--admin` | No | Off (read-only) | Get the admin tier. Needs the `cluster:access_admin` permission, which owners and admins hold. Without it, the tier is read-only, which needs `cluster:access_readonly` (owners, admins and operators). |
-| `--ttl` | No | `1h` | The credential's lifetime, from `15m` to `8h`, in whole seconds (`90m` and `2h30m` work). An admin credential's real lifetime is set by the cloud. See [the lifetime table](/guides/get-a-kubeconfig#choose-how-long-the-credential-lasts). |
+| `--ttl` | No | `1h` | The credential's lifetime, from `15m` to `8h`, in whole seconds (`90m` and `2h30m` work). An admin credential's real lifetime is set by the cloud. See [the lifetime table](/concepts/cluster-access#how-long-a-credential-lasts). |
 | `--static` | No | Off (exec) | Write a kubeconfig that holds the credential itself and stops working when it expires. Hetzner always gets this shape. |
 | `--merge` | No | On | Merge into the first file in `$KUBECONFIG`, or into `~/.kube/config`, and make the context current. |
 | `--out` | No | None | Write a standalone kubeconfig to this file, with mode `0600`, instead of merging. `-` writes it to stdout. |
@@ -240,7 +238,7 @@ runner's reason. A request that no runner picked up before it expired exits `11`
 After the request is accepted, the CLI polls until the mint is ready, failed or expired. It waits
 up to 10 minutes, the server's window, and gives up a minute after that on its own clock. A failed
 mint prints the runner's reason, which is always one of a fixed set of sentences. For each message
-and what to do, see [Troubleshoot](/guides/get-a-kubeconfig#troubleshoot).
+and what to do, see [Troubleshoot cluster access](/troubleshooting/cluster-access).
 
 The command refuses a credential that is not the tier and shape it asked for, one sealed for
 another request or cluster, and one that has already expired.

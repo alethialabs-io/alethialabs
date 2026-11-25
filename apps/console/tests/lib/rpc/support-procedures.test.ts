@@ -5,7 +5,8 @@
 //
 // Mocked boundary: the PDP guard, the tiered support scope and the two query builders. Real: the
 // procedures, the `query` base (its refusal mapping and actor binding) and oRPC's input validation.
-// Pinned: the bucket reaches the builder as the lifecycle filter; a case the caller cannot see is a
+// Pinned: the bucket reaches the builder as the lifecycle filter, and search / severity / type reach
+// it as they were sent (#7396); a case the caller cannot see is a
 // typed NOT_FOUND (not an empty value, not a 500); a malformed id never reaches the database; a PDP
 // refusal is a typed FORBIDDEN; and the case read WRITES nothing (it used to stamp the watermark).
 
@@ -14,9 +15,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { authorizeQuiet, listCasesForOwner, getCaseWithThread, tx } = vi.hoisted(() => ({
+const { authorizeQuiet, queryCasesPage, getCaseWithThread, tx } = vi.hoisted(() => ({
 	authorizeQuiet: vi.fn(),
-	listCasesForOwner: vi.fn(),
+	queryCasesPage: vi.fn(),
 	getCaseWithThread: vi.fn(),
 	// The scoped transaction: any write on it fails the test.
 	tx: {
@@ -34,7 +35,7 @@ vi.mock("@/lib/support/scope", () => ({
 }));
 vi.mock("@/lib/queries/support", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/lib/queries/support")>()),
-	listCasesForOwner,
+	queryCasesPage,
 	getCaseWithThread,
 }));
 
@@ -49,7 +50,7 @@ const client = createRouterClient(supportRouter, { context: { actor: ACTOR } });
 beforeEach(() => {
 	vi.clearAllMocks();
 	authorizeQuiet.mockResolvedValue(ACTOR);
-	listCasesForOwner.mockResolvedValue([]);
+	queryCasesPage.mockResolvedValue({ rows: [], facets: null });
 });
 
 describe("support.cases", () => {
@@ -61,29 +62,51 @@ describe("support.cases", () => {
 		await client.cases({ bucket });
 		expect(authorizeQuiet).toHaveBeenCalledWith("view", { type: "support_case" });
 		// No cursor is the first page — one page, never the whole list (#7389).
-		expect(listCasesForOwner).toHaveBeenCalledWith(tx, ACTOR.userId, filter, {
-			cursor: undefined,
-			limit: CASE_PAGE_SIZE,
-		});
+		expect(queryCasesPage).toHaveBeenCalledWith(
+			tx,
+			ACTOR.userId,
+			{ ...filter, search: undefined, severity: undefined, type: undefined },
+			{ cursor: undefined, limit: CASE_PAGE_SIZE },
+		);
+	});
+
+	it("passes search, severity and type through to the builder (#7396)", async () => {
+		await client.cases({ bucket: "active", search: "registry", severity: ["urgent"], type: ["billing"] });
+		expect(queryCasesPage).toHaveBeenCalledWith(
+			tx,
+			ACTOR.userId,
+			{ status: "active", search: "registry", severity: ["urgent"], type: ["billing"] },
+			{ cursor: undefined, limit: CASE_PAGE_SIZE },
+		);
+	});
+
+	it("refuses an over-long search before reading", async () => {
+		await expect(client.cases({ bucket: "all", search: "x".repeat(201) })).rejects.toBeInstanceOf(ORPCError);
+		expect(queryCasesPage).not.toHaveBeenCalled();
 	});
 
 	it("passes a cursor through to the builder as the page's keyset position", async () => {
 		const cursor = { at: "2026-11-20T10:00:00.123Z", id: CASE };
 		await client.cases({ bucket: "all", cursor });
-		expect(listCasesForOwner).toHaveBeenCalledWith(tx, ACTOR.userId, {}, { cursor, limit: CASE_PAGE_SIZE });
+		expect(queryCasesPage).toHaveBeenCalledWith(
+			tx,
+			ACTOR.userId,
+			{ search: undefined, severity: undefined, type: undefined },
+			{ cursor, limit: CASE_PAGE_SIZE },
+		);
 	});
 
 	it("refuses a malformed cursor before reading", async () => {
 		await expect(
 			client.cases({ bucket: "all", cursor: { at: "yesterday", id: "nope" } }),
 		).rejects.toBeInstanceOf(ORPCError);
-		expect(listCasesForOwner).not.toHaveBeenCalled();
+		expect(queryCasesPage).not.toHaveBeenCalled();
 	});
 
 	it("refuses an unknown bucket before reading", async () => {
 		// @ts-expect-error — the point is a value the input type does not allow
 		await expect(client.cases({ bucket: "everything" })).rejects.toBeInstanceOf(ORPCError);
-		expect(listCasesForOwner).not.toHaveBeenCalled();
+		expect(queryCasesPage).not.toHaveBeenCalled();
 	});
 
 	it("a PDP refusal is a typed FORBIDDEN, not a 500", async () => {

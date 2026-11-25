@@ -5,7 +5,13 @@
 # and the app database (Postgres) so a fresh checkout runs with zero manual
 # setup:
 #
-#   cp .env.example .env && docker compose up -d
+#   scripts/dev-env.sh && docker compose up -d
+#
+# Every instance secret is required and has no default here: each one is referenced as
+# `${NAME:?…}`, so a missing or empty value stops compose before any container starts,
+# naming the variable. scripts/dev-env.sh (local development) and deploy/install.sh (a
+# self-hosted box) generate them into .env from deploy/selfhost/secrets.manifest. The
+# hosted deploy shares this file; scripts/ci/deploy-console-assemble-env.sh writes its .env.
 #
 # The console + runner (run on the host for now, or added here in later phases)
 # auto-create their buckets on first use — no `aws s3 mb` required. The console
@@ -28,7 +34,11 @@ services:
       - "${ALETHIA_STORAGE_PORT:-8333}:8333" # S3 API
     volumes:
       - seaweedfs-data:/data
-      - ./deploy/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    # The S3 identity is rendered from the two storage keys in .env (configs: seaweedfs-identity
+    # below), so the store and every client read the same pair of values from .env.
+    configs:
+      - source: seaweedfs-identity
+        target: /etc/seaweedfs/s3.json
     # No compose file here declared any resource limit; on a laptop OrbStack's cap hid
     # that, and on a server nothing did. These are the datastores — bounded workloads
     # with predictable footprints (measured: seaweedfs ~95 MiB, postgres ~30 MiB).
@@ -48,7 +58,7 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: "${ALETHIA_DB_USER:-alethia}"
-      POSTGRES_PASSWORD: "${ALETHIA_DB_PASSWORD:-alethia-dev-secret}"
+      POSTGRES_PASSWORD: "${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}"
       POSTGRES_DB: "${ALETHIA_DB_NAME:-alethia}"
     # Host port defaults to 5433 to avoid colliding with a host-native Postgres
     # (e.g. Homebrew postgresql on 5432). Container still listens on 5432.
@@ -73,7 +83,7 @@ services:
     image: sosedoff/pgweb:latest
     profiles: ["tools"]
     environment:
-      PGWEB_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}?sslmode=disable"
+      PGWEB_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}?sslmode=disable"
     ports:
       - "${ALETHIA_PGWEB_PORT:-8081}:8081"
     depends_on:
@@ -91,8 +101,8 @@ services:
       dockerfile: apps/console/Dockerfile
       target: migrate
     environment:
-      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
-      ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}"
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DB_PASSWORD: "${ALETHIA_APP_DB_PASSWORD:?ALETHIA_APP_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}"
       # So a migration failure reports to PostHog Error Tracking (scripts/migrate.mjs) — the migrate
       # one-shot isn't the Next app, so it's otherwise invisible on any dashboard. No-ops when unset.
       NEXT_PUBLIC_POSTHOG_KEY: "${NEXT_PUBLIC_POSTHOG_KEY:-}"
@@ -112,7 +122,7 @@ services:
     profiles: ["enterprise"]
     environment:
       POSTGRES_USER: openfga
-      POSTGRES_PASSWORD: "${OPENFGA_DB_PASSWORD:-openfga-dev-secret}"
+      POSTGRES_PASSWORD: "${OPENFGA_DB_PASSWORD:?OPENFGA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}"
       POSTGRES_DB: openfga
     volumes:
       - openfga-data:/var/lib/postgresql/data
@@ -131,7 +141,7 @@ services:
     command: migrate
     environment:
       OPENFGA_DATASTORE_ENGINE: postgres
-      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:?OPENFGA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@openfga-db:5432/openfga?sslmode=disable"
     depends_on:
       openfga-db:
         condition: service_healthy
@@ -143,7 +153,7 @@ services:
     command: run
     environment:
       OPENFGA_DATASTORE_ENGINE: postgres
-      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:-openfga-dev-secret}@openfga-db:5432/openfga?sslmode=disable"
+      OPENFGA_DATASTORE_URI: "postgres://openfga:${OPENFGA_DB_PASSWORD:?OPENFGA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@openfga-db:5432/openfga?sslmode=disable"
     ports:
       - "${OPENFGA_HTTP_PORT:-8082}:8080" # HTTP API (8082 host to avoid pgweb's 8081)
     depends_on:
@@ -165,11 +175,11 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
-      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
-      ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:-alethia-app-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_APP_DATABASE_URL: "postgres://alethia_app:${ALETHIA_APP_DB_PASSWORD:?ALETHIA_APP_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
       # AES-256-GCM key for api_key connector secrets (connector_credentials).
-      ALETHIA_CRED_ENCRYPTION_KEY: "${ALETHIA_CRED_ENCRYPTION_KEY:-/MkbZwf3J4Wv++DQILEGzBChaVvow+x7U1fv5f9HZpU=}"
+      ALETHIA_CRED_ENCRYPTION_KEY: "${ALETHIA_CRED_ENCRYPTION_KEY:?ALETHIA_CRED_ENCRYPTION_KEY is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}"
       # OpenFGA (Enterprise engine). Empty unless set in .env → OpenFGA disabled,
       # community PostgresRbacPDP stays the engine. Set both to enable.
       OPENFGA_API_URL: "${OPENFGA_API_URL-}"
@@ -239,7 +249,7 @@ services:
       # Internal service URLs (like `app`): staff read the shared service DB cross-tenant
       # (RLS-bypass) and presign attachment downloads from the same object store. The staff
       # allowlist + NEXT_PUBLIC_CONSOLE_URL come from .env (env_file above).
-      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:-alethia-dev-secret}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
       ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
     depends_on:
       postgres:
@@ -306,3 +316,10 @@ volumes:
   caddy-data:
   caddy-config:
   redis-data:
+
+configs:
+  # The bundled object store's identity. Both keys are required instance secrets, generated per
+  # install (deploy/selfhost/secrets.manifest).
+  seaweedfs-identity:
+    content: |
+      {"identities":[{"name":"alethia","credentials":[{"accessKey":"${ALETHIA_STORAGE_ACCESS_KEY_ID:?ALETHIA_STORAGE_ACCESS_KEY_ID is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}","secretKey":"${ALETHIA_STORAGE_SECRET_ACCESS_KEY:?ALETHIA_STORAGE_SECRET_ACCESS_KEY is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}"}],"actions":["Admin","Read","Write","List","Tagging"]}]}

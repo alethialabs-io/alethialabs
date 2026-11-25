@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -20,8 +21,8 @@ import (
 // after the grace window a SIGKILL. A tofu killed outright never pushes its state, and the resources
 // it already created exist in no state file.
 //
-// These drive the real TofuCLI.Apply (NewTofuCLI's wiring, terraform-exec's process handling) over a
-// stand-in `tofu` script found through the lookPath seam. The script records "state pushed" from its
+// These drive the real TofuCLI.Apply (NewTofuCLI's wiring, runStateWriting's process handling) over
+// a stand-in `tofu` script found through the lookPath seam. The script records "state pushed" from its
 // SIGINT trap, which is exactly the window the console's state route must also admit.
 
 // interruptibleTofuScript is a stand-in `tofu`. On `apply` it installs `trap`, signals it is running, and
@@ -112,6 +113,32 @@ func TestApply_CancelInterruptsTofuSoItPushesState(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed >= 30*time.Second {
 		t.Fatalf("tofu exited only after %s — that is the SIGKILL escalation, not the interrupt", elapsed)
+	}
+}
+
+// The window the #7290 orphan came back through on Linux CI: the cancel lands while tofu is still
+// being started. terraform-exec checked ctx.Err() right after cmd.Start() and returned
+// context.Canceled WITHOUT waiting, while the os/exec watcher had already sent the SIGINT — so
+// Apply reported CANCELLED with tofu still running its shutdown, and its state push would then hit
+// a released lock. The hook cancels at exactly that point; Apply must still return only after the
+// tofu process has exited (ProcessState is set by Wait, and only by Wait).
+func TestApply_CancelWhileTofuIsStartingStillWaitsForIt(t *testing.T) {
+	t.Setenv("ALETHIA_CANCEL_GRACE_SECONDS", "30")
+	cli, _, _ := newFakeTofuCLI(t, `exit 1`)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	var started *exec.Cmd
+	startedHook = func(c *exec.Cmd) { started = c; cancel() }
+
+	err := cli.Apply(ctx, "plan.out")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled Apply should surface context.Canceled; got %v", err)
+	}
+	if started == nil {
+		t.Fatal("tofu was never started")
+	}
+	if started.ProcessState == nil {
+		t.Fatal("Apply returned while tofu was still running — its state push would hit a released lock")
 	}
 }
 

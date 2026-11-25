@@ -4,11 +4,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/spf13/cobra"
@@ -25,19 +30,33 @@ var (
 	projectApplyWait       waitFlags
 	// projectApplyYes is the --yes opt-in: deploy without being asked (and with --no-input).
 	projectApplyYes bool
+	// projectApplyNoWait is --no-wait: when the deploy needs a person's approval, print where to
+	// give it and exit 9 instead of waiting.
+	projectApplyNoWait bool
 )
 
 // projectDeployLong is the help of `project deploy`. The deprecated `project apply` shows it too.
 const projectDeployLong = `Queue a DEPLOY job that creates or updates one environment of a project in your cloud account.
 
-Use it after "alethia project preview" has shown you the changes. It asks before it queues
-anything; pass --yes to skip the question, which a script or an agent must. The job runs on a
-runner: add --wait to stay until it finishes, and --timeout to bound that wait. The job id is in
-the result either way.
+A deploy applies a reviewed plan. Without --plan-job-id or --latest-plan it makes that plan
+first: it queues a preview of the environment, waits for it to finish, prints what it would
+change, and then asks before it deploys exactly that plan. A preview that does not succeed stops
+the command with a non-zero exit, and nothing is deployed. Pass --yes to skip the question,
+which a script or an agent must.
 
-Nothing has to be copied out of another command's output: --project and --runner take a NAME,
-and --latest-plan deploys the project's own most recent preview. --dry-run checks every input
-and prints the request without sending it.
+To deploy a preview you already read, pass --latest-plan (the project's most recent preview) or
+--plan-job-id. The DEPLOY job runs on a runner: add --wait to stay until it finishes, and
+--timeout to bound each wait. The job id is in the result either way.
+
+A deploy from the CLI needs a person's approval of the plan it applies. The control plane says
+so when the deploy is sent; the command then asks for an approval, prints the console page where
+a person approves it and the plan digest that page must show, and waits for the decision before
+it queues the deploy. --no-wait (and agent mode) prints the page and exits 9 instead; run the
+same deploy with --plan-job-id once the plan is approved. A rejected approval exits 5, an expired
+or superseded one 7.
+
+Nothing has to be copied out of another command's output: --project and --runner take a NAME.
+--dry-run checks every input and prints the request without sending anything.
 
 To create and deploy a whole project from an alethia.yaml file, use "alethia apply" instead.`
 
@@ -106,19 +125,144 @@ func runProjectDeploy(cmd *cobra.Command, confirmFirst bool) error {
 	if err != nil {
 		return err
 	}
-	announceResolvedJob(planJob, "applying")
-	params.PlanJobID = planJob.ID
 
 	dryRun := cmdmeta.DryRunRequested(cmd)
-	if confirmFirst && !dryRun && !projectApplyYes {
-		if !canPromptForm() {
-			return errDeployRequiresYes
+	asks := confirmFirst && !dryRun && !projectApplyYes
+	// Refused before anything is queued: a preview nobody can confirm would be spent for nothing.
+	if asks && !canPromptForm() {
+		return errDeployRequiresYes
+	}
+
+	p := printerFor(cmd)
+	switch {
+	case planJob.ID == "" && dryRun:
+		p.Note("A real run first queues a preview of this environment, waits for it, and deploys that plan.")
+	case planJob.ID == "":
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		planJob, err = previewBeforeDeploy(ctx, p, client, params, projectApplyWait.Timeout)
+		stop()
+		if err != nil {
+			return err
 		}
-		if !confirm("Deploy this project environment?", deployDescription(params, projectApplyProjectRef, projectApplyEnv)) {
-			return nil
+	default:
+		announceResolvedJob(planJob, "applying")
+	}
+	params.PlanJobID = planJob.ID
+
+	if asks && !confirm("Deploy this project environment?", deployDescription(params, projectApplyProjectRef, projectApplyEnv)) {
+		return nil
+	}
+	return finishProjectJob(cmd, client, projectJobRun{
+		Params: params, Wait: projectApplyWait, DryRun: dryRun,
+		Approval: &projectJobApproval{
+			Client:    client,
+			Operation: api.ApprovalOperationDeploy,
+			PlanJobID: func() (string, error) { return params.PlanJobID, nil },
+			Wait: approvalWait{
+				NoWait:  projectApplyNoWait,
+				Timeout: projectApplyWait.Timeout,
+				Rerun:   "run " + deployRerun(params, projectApplyProjectRef, projectApplyEnv),
+			},
+		},
+	})
+}
+
+// deployRerun is the command that deploys exactly this plan once it is approved: the same project
+// and environment, the plan named, and --yes because it was already reviewed.
+func deployRerun(params api.QueueJobParams, projectRef, env string) string {
+	project := projectRef
+	if project == "" {
+		project = params.ConfigurationID
+	}
+	line := "alethia project deploy --project " + project
+	if env != "" {
+		line += " --env " + env
+	}
+	return line + " --plan-job-id " + params.PlanJobID + " --yes"
+}
+
+// previewBeforeDeploy makes the reviewed plan a deploy applies when the caller named none: it
+// queues a PLAN job for the same project, environment and runner as the deploy, waits for it to
+// finish (bounded by timeout when it is set), and prints what it would change on stderr. It returns
+// the plan to deploy. A plan that does not succeed is an error that names the job, and its class
+// is the wait's (failed, timed out, interrupted), so the exit code says which.
+func previewBeforeDeploy(ctx context.Context, p *Printer, c projectJobClient, deploy api.QueueJobParams, timeout time.Duration) (jobRef, error) {
+	params := deploy
+	params.JobType = string(types.JobTypePlan)
+	params.PlanJobID = ""
+	p.Note("A deploy applies a reviewed plan, so this previews the environment first.")
+	resp, err := c.QueueJobFull(params)
+	if err != nil {
+		return jobRef{}, err
+	}
+	entries := queuedJobEntries(resp, params.JobType)
+	if len(entries) == 0 {
+		return jobRef{}, clierr.New(clierr.CodeInternal,
+			"the control plane accepted the preview and named no job, so there is no plan to deploy")
+	}
+	plan := entries[0]
+	announceQueuedJob(p, c, &plan)
+	job, err := awaitJob(ctx, c, plan.ID, waitOptions{Timeout: timeout, JobType: params.JobType, Progress: p})
+	if err != nil {
+		return jobRef{}, fmt.Errorf("the preview this deploy would apply (PLAN job %s) did not finish successfully, so nothing was deployed: %w", plan.ID, err)
+	}
+	writePlanSummary(p, job)
+	return jobRef{ID: plan.ID}, nil
+}
+
+// writePlanSummary prints a finished plan on stderr for the person about to confirm it: the job
+// card `alethia jobs get` shows (verify verdict and cost estimate included), then how many
+// resources it would create, update, replace and delete. Under json nothing is written, because the
+// deploy's result is the one document a program reads.
+func writePlanSummary(p *Printer, job *api.ProvisionJob) {
+	if p.Format == ui.FormatJSON {
+		return
+	}
+	_ = renderJob(p.Err, ui.FormatTable, job)
+	if changes := planChangeSummary(job.ExecutionMetadata); changes != "" {
+		fmt.Fprintln(p.Err, changes)
+	}
+}
+
+// planChangeSummary counts the resource changes a plan job recorded
+// (execution_metadata.plan_result.resource_changes, tofu's own plan JSON) the way the console's plan
+// review counts them: create, update, replace (a delete and a create together) and delete, with
+// no-op and read actions left out. It returns "" when the job recorded no plan result.
+func planChangeSummary(meta *map[string]interface{}) string {
+	if meta == nil {
+		return ""
+	}
+	result, ok := (*meta)["plan_result"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	changes, ok := result["resource_changes"].([]interface{})
+	if !ok {
+		return ""
+	}
+	var create, update, replace, del int
+	for _, rc := range changes {
+		entry, _ := rc.(map[string]interface{})
+		change, _ := entry["change"].(map[string]interface{})
+		actions, _ := change["actions"].([]interface{})
+		has := map[string]bool{}
+		for _, a := range actions {
+			if s, ok := a.(string); ok {
+				has[s] = true
+			}
+		}
+		switch {
+		case has["create"] && has["delete"]:
+			replace++
+		case has["create"]:
+			create++
+		case has["update"]:
+			update++
+		case has["delete"]:
+			del++
 		}
 	}
-	return finishProjectJob(cmd, client, projectJobRun{Params: params, Wait: projectApplyWait, DryRun: dryRun})
+	return fmt.Sprintf("Plan: %d to create, %d to update, %d to replace, %d to delete.", create, update, replace, del)
 }
 
 // deployDescription says what a deploy is about to do, for the confirmation: which project, which
@@ -132,7 +276,7 @@ func deployDescription(params api.QueueJobParams, projectRef, env string) string
 	if env != "" {
 		where = "environment " + env
 	}
-	plan := "It runs its own plan first."
+	plan := "It previews the environment first and applies that plan."
 	if params.PlanJobID != "" {
 		plan = "It applies plan job " + params.PlanJobID + "."
 	}
@@ -148,19 +292,12 @@ func deployDescription(params api.QueueJobParams, projectRef, env string) string
 // you and did not say which is the failure resolveProjectName records: a silent pass-through
 // that reads as success.
 //
-// An empty ref (neither input given) is the untouched behaviour and the common one: the DEPLOY
-// runs its own plan. That default is deliberately NOT "resolve the latest PLAN anyway", and the
-// reason is measured rather than stylistic — `plan_job_id` is not a hint, it is a MODE:
-//
-//   - the runner refuses a DEPLOY whose plan job is not SUCCESS, and refuses it again when the
-//     configuration hash moved since (apps/runner/internal/agent/runner.go), so a silently
-//     attached plan turns a working apply into a failing one;
-//   - the console's build-then-deploy routing is gated on `!planJobId`
-//     (apps/console/app/server/actions/projects.ts), so attaching one silently stops chaining
-//     the BUILD for repo-sourced services on an ACTIVE environment.
-//
-// Both of those are what `--plan-job-id` is FOR when a caller asks for it, and neither is
-// something to hand a caller who did not.
+// An empty ref (neither input given) means "make the plan now": runProjectDeploy then queues a
+// preview, waits for it and deploys that one (previewBeforeDeploy). It is deliberately NOT "resolve
+// the latest PLAN anyway": the most recent preview may be of an older design, or still running,
+// and a deploy applies exactly the plan the person was shown. The control plane refuses a DEPLOY
+// that names no plan, or one whose plan is no longer current, so the plan a deploy names is always
+// one that was read for it.
 //
 // THE `--type PLAN` NARROWING IS THE POINT, not a detail. "The project's most recent job" is as
 // likely to be the DEPLOY that followed the plan as the plan itself, and applying a DEPLOY job's
@@ -224,6 +361,7 @@ func registerDeployFlags(cmd *cobra.Command) {
 	addProjectWaitFlags(cmd, &projectApplyWait)
 	addDryRunFlag(cmd)
 	cmd.Flags().BoolVarP(&projectApplyYes, "yes", "y", false, "Deploy without being asked first (required with --no-input)")
+	addApprovalNoWaitFlag(cmd, &projectApplyNoWait)
 }
 
 func init() {

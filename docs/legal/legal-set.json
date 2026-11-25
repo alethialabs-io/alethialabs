@@ -9,9 +9,9 @@
 			"source": "apps/marketing/app/terms/page.tsx",
 			"status": "current",
 			"sealed": true,
-			"version": "2026-08-24",
-			"displayedDate": "2026-08-12",
-			"contentHash": "154044e64831a16ac461e94b51eee0428f9f58bf2f73b70deb780251a4558286",
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": "a49ffc8ddddf0f71883bb506b34266818b9cc996383c1ffded529a277eb020d6",
 			"owner": "LEG-L2"
 		},
 		{
@@ -22,9 +22,9 @@
 			"source": "apps/marketing/app/privacy/page.tsx",
 			"status": "current",
 			"sealed": true,
-			"version": "2026-11-21",
-			"displayedDate": "2026-11-21",
-			"contentHash": "103f7ff7669fedeffa2a5336e5227670706987e4b112fa1a094cf2c560597de0",
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": "e2f514c86f06738f5d9c7fe8cb6d0c4e245ab1b62de0c9a3d97e5eeee9e6df06",
 			"owner": "LEG-L1"
 		},
 		{
@@ -139,10 +139,23 @@
 			"source": "apps/marketing/app/ai-transparency/page.tsx",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-24",
-			"displayedDate": "2026-08-24",
+			"version": "2026-11-23",
+			"displayedDate": "2026-11-23",
 			"contentHash": null,
 			"owner": "LEG-L4"
+		},
+		{
+			"id": "refunds",
+			"title": "Refund policy",
+			"kind": "public-page",
+			"route": "/refunds",
+			"source": "apps/marketing/app/refunds/page.tsx",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": null,
+			"owner": "LEG-L2"
 		},
 		{
 			"id": "consumer-rights",
@@ -152,9 +165,9 @@
 			"source": "apps/marketing/app/consumer-rights/page.tsx",
 			"status": "current",
 			"sealed": true,
-			"version": "2026-11-23",
-			"displayedDate": "2026-11-23",
-			"contentHash": "1d57baabd0e9fa3710f4b806b4590aad30a77d5b49a6b6a7e551ca532b243e1b",
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": "eba08cf79c27a3609d2f4144f1f5234d11516b077c2538397692bcdfc4e9d3fb",
 			"owner": "LEG-L1"
 		},
 		{
@@ -217,10 +230,24 @@
 			"source": "docs/legal/PAID_MARKETS.md",
 			"status": "current",
 			"sealed": false,
-			"version": "2026-08-24",
-			"displayedDate": "2026-08-24",
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
 			"contentHash": null,
 			"owner": "REL-L4"
+		},
+		{
+			"id": "nra-file-formats",
+			"title": "NRA VAT e-filing file formats",
+			"kind": "internal-record",
+			"route": null,
+			"source": "docs/legal/NRA_FILE_FORMATS.md",
+			"status": "current",
+			"sealed": false,
+			"version": "2026-11-24",
+			"displayedDate": "2026-11-24",
+			"contentHash": null,
+			"owner": null,
+			"ownerNote": "Written by board issue #7457 (the NRA filing generator). No LEG unit audits it; the generator's tests (packages/nra/tests/) hold the field layout to it, and the accountant reviews it before the first filing."
 		},
 		{
 			"id": "tax-market-preconditions",
@@ -529,7 +556,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/RECORDS_OF_PROCESSING.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -542,7 +569,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/DPIA.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -555,7 +582,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/RETENTION_SCHEDULE.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -568,7 +595,7 @@
 			"kind": "internal-record",
 			"route": null,
 			"source": "docs/legal/AI_ACT_POSITION.md",
-			"status": "planned",
+			"status": "draft",
 			"sealed": false,
 			"version": null,
 			"displayedDate": null,
@@ -782,7 +809,7 @@
 			"document": "privacy",
 			"kind": "subprocessor",
 			"status": "tied",
-			"quote": "Paid plans are billed through <strong>Stripe</strong>, which acts as our payment processor.",
+			"quote": "Subscriptions started before card sales moved to Paddle are billed through <strong>Stripe</strong>, which acts as our payment processor for them.",
 			"evidence": [
 				{
 					"path": "packages/legal/src/processing.ts",
@@ -796,7 +823,7 @@
 				}
 			],
 			"owner": "LEG-L1",
-			"verifiedOn": "2026-11-17"
+			"verifiedOn": "2026-11-24"
 		},
 		{
 			"id": "terms.not-vat-registered",
@@ -851,7 +878,7 @@
 			"document": "terms-acceptance",
 			"kind": "consent",
 			"status": "tied",
-			"quote": "> I have read and accept the Terms of Service (version 2026-08-24).",
+			"quote": "> I have read and accept the Terms of Service (version 2026-11-24).",
 			"evidence": [
 				{
 					"path": "packages/legal/src/documents.ts",
@@ -870,12 +897,12 @@
 				},
 				{
 					"path": "packages/legal/src/documents.ts",
-					"pattern": "id: \"terms\",\\s*title: \"Terms of Service\",(?:\\s*//[^\\n]*)*\\s*version: \"2026-08-24\",",
-					"shows": "The Terms of Service are sealed at version 2026-08-24, the version the example prints."
+					"pattern": "id: \"terms\",\\s*title: \"Terms of Service\",(?:\\s*//[^\\n]*)*\\s*version: \"2026-11-24\",",
+					"shows": "The Terms of Service are sealed at version 2026-11-24, the version the example prints."
 				}
 			],
 			"owner": "LEG-L5",
-			"verifiedOn": "2026-11-21"
+			"verifiedOn": "2026-11-24"
 		},
 		{
 			"id": "terms-acceptance.privacy-notice-not-accepted",
@@ -1040,30 +1067,42 @@
 			"verifiedOn": "2026-11-22"
 		},
 		{
-			"id": "privacy.card-fields-stripe-hosted",
+			"id": "privacy.card-fields-paddle-checkout",
+			"document": "privacy",
+			"kind": "subprocessor",
+			"status": "outside-repo",
+			"quote": "Card details are entered directly into Paddle’s checkout and are never received or stored by Alethia",
+			"evidence": [
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"paddle\",(?:(?!\\n\\t\\},)[\\s\\S])*?role: \"independent-controller\"",
+					"shows": "Paddle is in the processing register as an independent controller that resells as merchant of record, not as our processor."
+				},
+				{
+					"path": "packages/legal/src/mor-markets.ts",
+					"pattern": "MOR_MARKETS: readonly MorMarketCell\\[\\] = \\[\\];",
+					"shows": "No merchant-of-record market is open yet, so the page describes how card sales WILL be sold; no card sale reaches Paddle today."
+				}
+			],
+			"requires": "The Paddle checkout itself (paddle-billing plan, lane L4: a server-created transaction opened by id in Paddle.js, whose card fields Paddle hosts). Re-tie this claim to that code when it lands; until MOR_MARKETS opens, no card sale reaches Paddle.",
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-24"
+		},
+		{
+			"id": "privacy.paddle-independent-controller",
 			"document": "privacy",
 			"kind": "subprocessor",
 			"status": "tied",
-			"quote": "the payment fields are Stripe-hosted, so card numbers do not pass through our systems",
+			"quote": "sold by our reseller <strong>Paddle</strong> (Paddle.com Market Ltd, or Paddle.com Inc. for buyers in the United States), which is the merchant of record.",
 			"evidence": [
 				{
-					"path": "apps/console/components/billing/payment-form.tsx",
-					"pattern": "<PaymentElement />",
-					"shows": "The card form is Stripe's Payment Element, which Stripe.js mounts in its own frame."
-				},
-				{
-					"path": "apps/console/components/billing/stripe-elements.tsx",
-					"pattern": "import \\{ Elements \\} from \"@stripe/react-stripe-js\";",
-					"shows": "The payment forms are wrapped in Stripe Elements."
-				},
-				{
-					"path": "apps/console/app/server/actions/billing.ts",
-					"pattern": "checkout\\.sessions\\.create\\(",
-					"shows": "The purchase path uses a Stripe Checkout session, a page Stripe serves."
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"paddle\",(?:(?!\\n\\t\\},)[\\s\\S])*?role: \"independent-controller\"",
+					"shows": "Paddle is in the processing register as an independent controller that resells as merchant of record, not as our processor."
 				}
 			],
 			"owner": "LEG-L1",
-			"verifiedOn": "2026-11-22"
+			"verifiedOn": "2026-11-24"
 		},
 		{
 			"id": "privacy.analytics-internal-ids",
@@ -1570,6 +1609,27 @@
 			"verifiedOn": "2026-11-22"
 		},
 		{
+			"id": "refunds.not-on-sale",
+			"document": "refunds",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "has not yet opened paid plans in any country",
+			"evidence": [
+				{
+					"path": "packages/legal/src/paid-markets.ts",
+					"pattern": "PAID_MARKETS: readonly PaidMarketCell\\[\\] = \\[\\];",
+					"shows": "No market is open."
+				},
+				{
+					"path": "apps/marketing/app/refunds/page.tsx",
+					"pattern": "const onSale = PAID_MARKETS\\.length > 0;",
+					"shows": "The sentence is shown only while no paid market exists."
+				}
+			],
+			"owner": "LEG-L2",
+			"verifiedOn": "2026-11-24"
+		},
+		{
 			"id": "consumer-rights.no-consumer-market",
 			"document": "consumer-rights",
 			"kind": "commerce",
@@ -1827,25 +1887,51 @@
 			],
 			"owner": "LEG-L1",
 			"verifiedOn": "2026-11-22"
-		}
-	],
-	"findings": [
+		},
 		{
-			"id": "terms.displayed-date-behind-sealed-version",
+			"id": "terms.paddle-reseller",
 			"document": "terms",
-			"quote": "<LegalShell title=\"Terms of Service\" lastUpdated=\"August 12, 2026\">",
-			"says": "The page tells the reader the Terms were last updated on August 12, 2026.",
-			"actually": "The sealed version is 2026-08-24: sections 5 and 13 were changed on that date and the version was bumped for it. The date on the page was not moved, so a reader who accepts version 2026-08-24 is shown a date twelve days older.",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "which is the merchant of record for those orders.",
 			"evidence": [
 				{
-					"path": "packages/legal/src/documents.ts",
-					"pattern": "id: \"terms\",(?:(?!\\n\\t\\},)[\\s\\S])*?version: \"2026-08-24\"",
-					"shows": "The registry's version for the Terms."
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"paddle\",(?:(?!\\n\\t\\},)[\\s\\S])*?role: \"independent-controller\"",
+					"shows": "Paddle is in the processing register as an independent controller that resells as merchant of record, not as our processor."
+				},
+				{
+					"path": "packages/legal/src/mor-markets.ts",
+					"pattern": "MOR_MARKETS: readonly MorMarketCell\\[\\] = \\[\\];",
+					"shows": "No merchant-of-record market is open yet, so the page describes how card sales WILL be sold; no card sale reaches Paddle today."
 				}
 			],
 			"owner": "LEG-L2",
-			"foundOn": "2026-11-17"
+			"verifiedOn": "2026-11-24"
 		},
+		{
+			"id": "consumer-rights.paddle-seller",
+			"document": "consumer-rights",
+			"kind": "commerce",
+			"status": "tied",
+			"quote": "United States), our reseller and merchant of record.",
+			"evidence": [
+				{
+					"path": "packages/legal/src/processing.ts",
+					"pattern": "id: \"paddle\",(?:(?!\\n\\t\\},)[\\s\\S])*?role: \"independent-controller\"",
+					"shows": "Paddle is in the processing register as an independent controller that resells as merchant of record, not as our processor."
+				},
+				{
+					"path": "packages/legal/src/mor-markets.ts",
+					"pattern": "MOR_MARKETS: readonly MorMarketCell\\[\\] = \\[\\];",
+					"shows": "No merchant-of-record market is open yet, so the page describes how card sales WILL be sold; no card sale reaches Paddle today."
+				}
+			],
+			"owner": "LEG-L1",
+			"verifiedOn": "2026-11-24"
+		}
+	],
+	"findings": [
 		{
 			"id": "tax.art-97a-statement-incomplete",
 			"document": "tax-market-preconditions",

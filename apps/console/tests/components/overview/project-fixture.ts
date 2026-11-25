@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { ProjectListItem } from "@/app/server/actions/projects";
-import type { OverviewProjects } from "@/lib/rpc/procedures/overview";
+import type { ProjectsPage } from "@/lib/queries/projects";
+import type { OverviewProjectsSummary } from "@/lib/rpc/procedures/overview";
 
 /**
  * A complete overview grid row for tests: an AWS project named `name`, with a default environment
@@ -38,14 +39,26 @@ export function makeProject(id: string, name: string, overrides: Partial<Project
 }
 
 /**
- * The grid read's answer (`overview.projects`) for `projects`: AWS connected, the four offered
- * clouds, a viewer who may create a project. Override any field per case.
+ * One page of the grid's walk (`overview.projects.page`) holding `rows`: the LAST page unless a
+ * `nextCursor` is given, and a first page (facets, `universeEmpty`) unless overridden.
  */
-export function makeGrid(projects: ProjectListItem[], overrides: Partial<OverviewProjects> = {}): OverviewProjects {
+export function makePage(rows: ProjectListItem[], overrides: Partial<ProjectsPage> = {}): ProjectsPage {
 	return {
-		projects,
+		rows,
+		nextCursor: null,
 		facets: { clouds: [], repos: [] },
-		total: projects.length,
+		universeEmpty: rows.length === 0,
+		...overrides,
+	};
+}
+
+/**
+ * The grid's summary (`overview.projects.summary`): AWS connected, the four offered clouds, a viewer
+ * who may create a project. Override any field per case.
+ */
+export function makeSummary(overrides: Partial<OverviewProjectsSummary> = {}): OverviewProjectsSummary {
+	return {
+		projectCount: 1,
 		connectedProviders: ["aws"],
 		offeredClouds: ["aws", "gcp", "azure", "hetzner"],
 		canCreate: true,

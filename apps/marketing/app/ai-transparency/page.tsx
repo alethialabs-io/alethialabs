@@ -23,12 +23,14 @@ export const metadata: Metadata = {
  * The provider evidence is deliberately NOT rendered from the runtime env here. This page is
  * statically built on the marketing site, which has no access to the console's configuration — and
  * a page that silently showed nothing when the env was absent would read as "no third party
- * involved". The console shows the live per-provider record; this states the commitments that hold
- * whenever the assistant is available at all.
+ * involved". It states the commitments that hold whenever the assistant is available at all.
+ *
+ * docs/legal/AI_ACT_POSITION.md is the internal record this page has to agree with; its §7 lists
+ * each statement below and the code it rests on. Change the two together.
  */
 export default function AiTransparencyPage() {
 	return (
-		<LegalShell title="AI transparency" lastUpdated="August 24, 2026">
+		<LegalShell title="AI transparency" lastUpdated="November 23, 2026">
 			<p>
 				Alethia includes an AI assistant. This page says what it is, what it gets
 				wrong, and what happens to what you send it. If you never use it, none of
@@ -39,7 +41,7 @@ export default function AiTransparencyPage() {
 			<p>
 				The assistant is an AI system, not a person, and its answers are
 				generated. Where it produces text, a plan, or a configuration, that
-				output is generated too and is labelled as such in the product.
+				output is generated too.
 			</p>
 
 			<h2>What it can get wrong</h2>
@@ -60,15 +62,16 @@ export default function AiTransparencyPage() {
 				</li>
 				<li>
 					It <strong>cannot see your cloud credentials</strong>, and never
-					receives them. Alethia holds no long-lived cloud keys at all.
+					receives them.
 				</li>
 			</ul>
 
 			<h2>It proposes; it does not apply</h2>
 			<p>
-				The assistant cannot change your infrastructure on its own. Everything it
-				drafts goes through the same review and approval as a change you made by
-				hand, and the same verification gate runs on it either way. That limit is
+				Alethia&apos;s assistant cannot change your infrastructure on its own.
+				When it proposes a plan or a deploy, nothing runs until you approve it,
+				and the same verification gate runs on it as on a change you made by
+				hand. That limit is
 				the reason this is not a high-risk AI system: it decides nothing about a
 				person — not access to services, employment, credit, education or
 				justice. It drafts infrastructure configuration that a human approves.
@@ -79,27 +82,60 @@ export default function AiTransparencyPage() {
 				assessment is redone before it ships, not after.
 			</p>
 
+			<h2>Agents you connect yourself</h2>
+			<p>
+				You can also point your own AI agent at Alethia, through the MCP server
+				or the CLI. That agent is yours, not ours, and it acts with the
+				credential you give it. Over MCP it can only read today. Second-person
+				approval for applies made by connected agents is part of the beta
+				programme; until it ships, an agent acts within the deploy and destroy
+				permissions of the account or token it uses. Give an agent a credential
+				with no more permission than you would give a colleague you have not
+				met.
+			</p>
+
 			<h2>Who provides the model, and what happens to what you send</h2>
 			<p>
-				The assistant runs on models from third-party providers. Your prompt can
-				contain your infrastructure, your code, and whatever you pasted into it,
-				so before any of that is sent to a provider we record four things: the
+				The assistant runs on models from a third-party provider. On the hosted
+				service that is Anthropic, in the United States; it is listed on the{" "}
+				<Link href="/legal/subprocessors">subprocessors</Link> page. A
+				self-hosted Alethia may use a different provider under its own
+				agreements.
+			</p>
+			<p>
+				Your prompt can contain your infrastructure, your code, and whatever you
+				pasted into it. For each provider we record four things: the
 				data-processing agreement in force, the transfer mechanism where
-				processing happens outside the EEA, how long the provider keeps it, and
-				the commitment that it is not used to train their models.
+				processing happens outside the EEA, how long the provider keeps what it
+				receives, and its commitment not to use it to train its models.{" "}
+				<strong>
+					Until all four are recorded, conversations with the assistant are
+					switched off.
+				</strong>{" "}
+				Not warned about — off.
+			</p>
+
+			<h2>When you import a repository</h2>
+			<p>
+				To suggest the infrastructure a repository needs, Alethia reads some of
+				its files and sends their text to the same model provider: package
+				manifests, Dockerfiles, compose and Kubernetes files, CI configuration,
+				and environment templates such as <code>.env.example</code>. It does not
+				run any of the code. These files can contain names, email addresses,
+				and — by mistake — real secrets, so check a template before you import.
 			</p>
 			<p>
-				<strong>Until all four are recorded, the assistant is switched off.</strong>{" "}
-				Not warned about — off. The live record for this deployment, naming each
-				provider and its evidence, is shown in the console under AI settings.
-				Providers are listed there rather than here because a self-hosted Alethia
-				may use different ones under its own agreements.
+				The import does not yet check the four records above before it sends
+				the files; the conversations do. We are adding the same check to the
+				import.
 			</p>
+
+			<h2>What we do not do with it</h2>
 			<p>
-				Prompts and responses are not used to train any model, and they are not
-				sent to our product analytics. See the{" "}
-				<Link href="/legal/subprocessors">subprocessors</Link> page for the
-				vendors involved in the service generally.
+				We do not use your prompts, your files or the responses to train any
+				model, and we do not send them to our product analytics. The
+				provider&apos;s own commitment not to train on them is one of the four
+				records above.
 			</p>
 
 			<h2>If it gets something wrong</h2>

@@ -119,6 +119,8 @@ interface World {
 	finalizeDelayMs: number;
 	mismatchLog: unknown[];
 	toolActors: string[];
+	/** The credential and credential ref each tool call ran as (`kind:ref`). */
+	toolCredentials: string[];
 	throwInTools: boolean;
 	throwInStream: boolean;
 	/** The resolver answers an actor of ANOTHER user (a resolver bug the route must not trust). */
@@ -132,6 +134,10 @@ interface World {
 	aiConfigured: boolean;
 	/** The user's explicit model pick is selectable. */
 	pickSelectable: boolean;
+	/** The org's agent kill switch (org_agent_policy.agent_access_enabled), as the tool guard reads it. */
+	agentAccessEnabled: boolean;
+	/** The orgs the kill switch was read for, one entry per read. */
+	policyReads: string[];
 }
 
 const world = vi.hoisted(
@@ -154,6 +160,7 @@ const world = vi.hoisted(
 		finalizeDelayMs: 5,
 		mismatchLog: [],
 		toolActors: [],
+		toolCredentials: [],
 		throwInTools: false,
 		throwInStream: false,
 		foreignActor: false,
@@ -163,6 +170,8 @@ const world = vi.hoisted(
 		heartbeatThrows: false,
 		aiConfigured: true,
 		pickSelectable: false,
+		agentAccessEnabled: true,
+		policyReads: [],
 	}),
 );
 
@@ -228,6 +237,7 @@ vi.mock("@/lib/ai/tools", async () => {
 				execute: async () => {
 					const actor = getInjectedActor();
 					world.toolActors.push(actor?.orgId ?? "none");
+					world.toolCredentials.push(`${actor?.credential ?? "none"}:${actor?.credentialRef ?? "none"}`);
 					return { projects: [] };
 				},
 			}),
@@ -246,6 +256,11 @@ vi.mock("@/lib/db", async () => {
 	/** The bound parameters of a WHERE clause. */
 	const params = (cond: Parameters<PgDialect["sqlToQuery"]>[0]): unknown[] => dialect.sqlToQuery(cond).params;
 	return {
+		// The kill switch's read (lib/agent/kill-switch.ts): readAgentPolicy is faked below.
+		withActorScope: async (actor: { orgId: string }, fn: (tx: object) => Promise<unknown>) => {
+			world.policyReads.push(actor.orgId);
+			return fn({});
+		},
 		getServiceDb: () => ({
 			select: () => ({
 				from: (table: unknown) => ({
@@ -266,6 +281,11 @@ vi.mock("@/lib/db", async () => {
 		}),
 	};
 });
+
+vi.mock("@/lib/approvals/context", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/approvals/context")>()),
+	readAgentPolicy: async () => ({ agentAccessEnabled: world.agentAccessEnabled }),
+}));
 
 vi.mock("@/lib/observability/log", () => {
 	const l = {
@@ -605,9 +625,11 @@ type Script =
 interface ModelScript {
 	scripts: Script[];
 	prompts: unknown[];
+	/** The names of the tools each call was offered. */
+	toolNames: string[][];
 }
 
-const model = vi.hoisted((): ModelScript => ({ scripts: [], prompts: [] }));
+const model = vi.hoisted((): ModelScript => ({ scripts: [], prompts: [], toolNames: [] }));
 
 vi.mock("@/lib/config/ai", async () => {
 	const { MockLanguageModelV3: Mock, simulateReadableStream: sim } = await import("ai/test");
@@ -616,6 +638,7 @@ vi.mock("@/lib/config/ai", async () => {
 		modelId: "test-model",
 		doStream: async (options) => {
 			model.prompts.push(options.prompt);
+			model.toolNames.push((options.tools ?? []).map((t) => t.name));
 			const next = model.scripts.shift();
 			const script: Script = next ?? speakParts("ok");
 			return { stream: typeof script === "function" ? script(options) : sim({ chunks: script }) };
@@ -891,6 +914,7 @@ beforeEach(() => {
 	world.finalizeDelayMs = 5;
 	world.mismatchLog = [];
 	world.toolActors = [];
+	world.toolCredentials = [];
 	world.throwInTools = false;
 	world.throwInStream = false;
 	world.foreignActor = false;
@@ -900,8 +924,11 @@ beforeEach(() => {
 	world.heartbeatThrows = false;
 	world.aiConfigured = true;
 	world.pickSelectable = false;
+	world.agentAccessEnabled = true;
+	world.policyReads = [];
 	model.scripts = [];
 	model.prompts = [];
+	model.toolNames = [];
 });
 
 afterEach(() => {
@@ -1007,6 +1034,38 @@ describe("the billing org (§6.1, case 3)", () => {
 		expect(claims()[0]).toMatchObject({ attemptNo: 2, billingOrgId: ORG_A, state: "answered" });
 		expect(holdList().map((h) => h.orgId)).toEqual([ORG_A]);
 		expect(world.toolActors).toEqual([ORG_A]);
+	});
+
+	it("the model's tools run as the in-product agent (agent_in_app), bound to the conversation", async () => {
+		model.scripts.push(callParts("list_projects", "r1", {}), speakParts("none"));
+		await chunksOf(await postOrg(body([userMsg("u1", "list my projects")], { turnId: "u1", baseRevision: 1 })));
+		expect(world.toolActors).toEqual([ORG_A]);
+		expect(world.toolCredentials).toEqual([`agent_in_app:${THREAD}`]);
+	});
+
+	it("with the org's agent access off, a read tool is refused, the client tool is not offered, and the prompt says why (#7477)", async () => {
+		world.agentAccessEnabled = false;
+		model.scripts.push(callParts("list_projects", "r1", {}), speakParts("Agent access is off."));
+		await chunksOf(await postOrg(body([userMsg("u1", "list my projects")], { turnId: "u1", baseRevision: 1 })));
+		// The read never ran: its body records every actor it ran as.
+		expect(world.toolActors).toEqual([]);
+		// The switch was read for the billing org: once as the turn started, once before the call.
+		expect(world.policyReads).toEqual([ORG_A, ORG_A]);
+		expect(model.toolNames[0]).toEqual(["list_projects"]);
+		expect(promptText(0)).toContain("Agent access is turned off for this organization");
+		// The second model call saw the refusal as the tool's result.
+		expect(promptText(1)).toContain("agent_access_disabled");
+		const stored = threads().get(THREAD)?.messages.at(-1);
+		const parts = stored?.parts ?? [];
+		expect(parts.some((p) => p.type === "tool-list_projects" && "output" in p && JSON.stringify(p.output).includes("agent_access_disabled"))).toBe(true);
+	});
+
+	it("with the org's agent access on, the same read runs as before", async () => {
+		model.scripts.push(callParts("list_projects", "r1", {}), speakParts("none"));
+		await chunksOf(await postOrg(body([userMsg("u1", "list my projects")], { turnId: "u1", baseRevision: 1 })));
+		expect(world.toolActors).toEqual([ORG_A]);
+		expect(model.toolNames[0]).toEqual(["list_projects", "propose_operation"]);
+		expect(promptText(0)).not.toContain("Agent access is turned off");
 	});
 
 	it("a caller who left the pinned org: 403 org-forbidden before the hold", async () => {

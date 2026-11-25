@@ -9,7 +9,7 @@ import { FieldHelp } from "@repo/ui/field-help";
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { ConnectSheetShell, MethodTabs, Step, StoredNote } from "@/components/connectors/connection-ui";
-import { connectorAssetUrl } from "@/components/connectors/connector-assets";
+import { useConnectorAssets } from "@/components/connectors/connector-assets";
 import { ConnectForm } from "@/components/cloud-connect/connect-form";
 import {
 	type AzureConnectValues,
@@ -68,7 +68,8 @@ export function AzureConnection({ session }: { session: ConnectSession }) {
 	const { form } = flow.wizard;
 	const subscriptionId = useWatch({ control: form.control, name: "subscriptionId" }) ?? "";
 
-	const scriptUrl = connectorAssetUrl("alethia-azure-setup.sh");
+	const { assetUrl } = useConnectorAssets();
+	const scriptUrl = assetUrl("alethia-azure-setup.sh");
 	// No platform app id — the script creates a managed identity in the customer's subscription and
 	// prints its client id, which the form collects.
 	const cloudShellCmd = commandWith(

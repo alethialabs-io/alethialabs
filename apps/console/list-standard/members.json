@@ -1,0 +1,16 @@
+{
+	"kind": "debt",
+	"owner": "#7490",
+	"lane": "LST-8",
+	"why": "Every member and invite is shipped to the browser and offset-paged by a client-mode DataTable (20 rows, `?page=`), with a filtered-count pill.",
+	"findings": {
+		"apps/console/components/settings/members/members-table.tsx": {
+			"count-pill": 1,
+			"page-url": 1,
+			"client-table": 1
+		},
+		"store:useMembersFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

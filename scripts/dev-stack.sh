@@ -19,10 +19,8 @@ OPENFGA_URL="http://localhost:8082"
 URL_FILE=/tmp/alethia-cf-url.txt
 LOCK=/tmp/alethia-dev-stack.lock
 
-if [[ ! -f .env ]]; then
-  echo "✗ no .env found — run: cp .env.example .env" >&2
-  exit 1
-fi
+# Create .env, or fill any instance secret it lacks, from deploy/selfhost/secrets.manifest.
+bash scripts/dev-env.sh
 
 # ── single stack across windows ──
 if ! mkdir "$LOCK" 2>/dev/null; then

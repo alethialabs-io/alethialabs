@@ -6,12 +6,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/agent"
+	"github.com/alethialabs-io/alethialabs/apps/runner/internal/config"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/obs"
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 )
@@ -112,6 +114,10 @@ func main() {
 
 	fmt.Printf("runner %s\n", version.Version)
 
+	if !startupConfigUsable(os.Getenv, os.Stderr) {
+		os.Exit(1)
+	}
+
 	if cfg.AlethiaURL == "" {
 		fmt.Fprintln(os.Stderr, "Error: ALETHIA_WEB_ORIGIN is required (set it to your Alethia control-plane URL).")
 		os.Exit(1)
@@ -182,6 +188,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Supervisor error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// startupConfigUsable runs the self-hosted start-up configuration check (internal/config says when
+// it applies) and reports whether the runner may boot. On a refusal it writes the error, which names
+// every value that is not usable and never the value, to stderr.
+func startupConfigUsable(getenv func(string) string, stderr io.Writer) bool {
+	if err := config.Check(getenv); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return false
+	}
+	return true
 }
 
 // runnerSlots reads ALETHIA_RUNNER_SLOTS (concurrent jobs per runner). Defaults to 1

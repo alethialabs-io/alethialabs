@@ -38,6 +38,27 @@ tkDvuMhjlvbDtS5V
 -----END CERTIFICATE-----
 `
 
+func TestStartupConfigUsable(t *testing.T) {
+	var stderr strings.Builder
+	// Not declared self-managed: the check does not apply and the runner boots as before.
+	if !startupConfigUsable(func(string) string { return "" }, &stderr) || stderr.Len() != 0 {
+		t.Fatalf("an undeclared runner was refused: %q", stderr.String())
+	}
+	// Declared self-managed with nothing set: refused, naming the variables.
+	selfManaged := func(k string) string {
+		if k == "ALETHIA_DEPLOYMENT_MODE" {
+			return "self-managed"
+		}
+		return ""
+	}
+	if startupConfigUsable(selfManaged, &stderr) {
+		t.Fatal("a self-managed runner with no configuration was allowed to boot")
+	}
+	if !strings.Contains(stderr.String(), "ALETHIA_WEB_ORIGIN is not set") {
+		t.Fatalf("the refusal does not name ALETHIA_WEB_ORIGIN: %q", stderr.String())
+	}
+}
+
 func TestRunnerSlots(t *testing.T) {
 	cases := []struct {
 		val  string

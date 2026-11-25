@@ -1,19 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The apply-authorization seam: the one question asked wherever a job that applies or destroys
-// infrastructure is queued, and the vocabulary that question is asked in.
+// The apply-authorization question: asked wherever a job that applies or destroys infrastructure is
+// queued, and the vocabulary it is asked in.
 //
-// THIS FILE DECIDES NOTHING YET. `requireApplyAuthorization` below allows every call, so placing
-// it changed no behaviour. What this file fixes is WHERE the question is asked and WHAT it is
-// told, so the rule can arrive later without editing a queueing site. Which files queue such a
-// job, and which of them ask, is held by tests/lib/approvals/apply-authorization.test.ts.
-//
-// Runtime-dependency-free on purpose (its imports are types): app/server/actions/projects.ts
-// imports it, and more than fifty test files load that module behind their own mocks.
+// `requireApplyAuthorization` below is the queue gate. It answers table 4.2 of the agent-surface spec
+// (lib/approvals/policy.ts): a person at the console needs nothing beyond the PDP verb; a CLI login, a
+// connected agent or a service token needs a person's approval, bound to the reviewed plan and used
+// once (lib/approvals/gate.ts). Which files queue such a job, and that each of them asks, is held by
+// tests/lib/approvals/apply-authorization.test.ts.
 
 import type { Actor } from "@/lib/authz/types";
-import type { Tx } from "@/lib/db";
+import type { Db, Tx } from "@/lib/db";
+import { authorizeApply } from "./gate";
+
+export {
+	APPLY_REFUSAL_CODES,
+	ApplyAuthorizationError,
+	type ApplyRefusalCode,
+} from "./refusal";
 
 /** The two operations that need the question asked. A plan never does. */
 export const APPLY_OPERATIONS = ["deploy", "destroy"] as const;
@@ -93,53 +98,26 @@ export interface ApplyAuthorization {
 	approvalId: string | null;
 }
 
-/** Why an apply or a destroy was refused, for a client to branch on without reading the message. */
-export const APPLY_REFUSAL_CODES = [
-	"approval_required",
-	"approval_invalid",
-	"not_permitted",
-] as const;
-
-/** One of {@link APPLY_REFUSAL_CODES}. */
-export type ApplyRefusalCode = (typeof APPLY_REFUSAL_CODES)[number];
-
 /**
- * The refusal {@link requireApplyAuthorization} throws. Typed so the two edges that queue for a
- * caller can answer it as a refusal rather than a fault: `refusalAsValue`
- * (app/server/actions/projects.ts) returns its message, and `POST /api/jobs` answers 403 with
- * `code`. Its message is shown to the user, so it is a sentence for a person.
- */
-export class ApplyAuthorizationError extends Error {
-	/** The machine-readable reason. */
-	readonly code: ApplyRefusalCode;
-
-	/** Builds the refusal from its reason and the sentence to show. */
-	constructor(code: ApplyRefusalCode, message: string) {
-		super(message);
-		this.name = "ApplyAuthorizationError";
-		this.code = code;
-	}
-}
-
-/**
- * May this apply or destroy be queued? Called once for every job a queueing site inserts, INSIDE
- * the transaction that inserted it and before anything else is written for it, so a refusal
- * (an {@link ApplyAuthorizationError}) rolls the job back and nothing is left queued.
+ * May this apply or destroy be queued? Called once for every job a queueing site inserts, after the
+ * insert and before anything else is written for it. A refusal is an `ApplyAuthorizationError`; inside
+ * a transaction it rolls the job back, so nothing is left queued.
  *
- * It is handed the transaction and the inserted job's id so that whatever it later has to record
- * against that job commits or rolls back with the job. `approvalId` is the approval the caller
- * presents, when it has one.
+ * - An actor is answered by table 4.2 (lib/approvals/policy.ts). Where the table asks for an approval,
+ *   `approvalId` must name one that a person approved, that has not expired or been used, that the
+ *   same credential requested for this org, project, environment and operation, and whose plan digest
+ *   is still the environment's current one (lib/approvals/binding.ts). It is consumed here, and the
+ *   job records it (`jobs.approval_id`).
+ * - A system origin is allowed the one operation it names (lib/approvals/gate.ts), with no approval.
  *
- * TODAY IT ALLOWS EVERYTHING and reads none of its arguments: every call answers
- * `{ approvalId: null }`, whoever asks and whatever is presented. A caller that passes an
- * `approvalId` is therefore not yet checked against it.
+ * Answers the approval the job consumed, or null when it needed none.
  */
 export async function requireApplyAuthorization(
-	_tx: Tx,
-	_requester: ApplyRequester,
-	_operation: ApplyOperation,
-	_target: ApplyTarget,
-	_approvalId?: string | null,
+	db: Db | Tx,
+	requester: ApplyRequester,
+	operation: ApplyOperation,
+	target: ApplyTarget,
+	approvalId?: string | null,
 ): Promise<ApplyAuthorization> {
-	return { approvalId: null };
+	return authorizeApply(db, requester, operation, target, approvalId);
 }

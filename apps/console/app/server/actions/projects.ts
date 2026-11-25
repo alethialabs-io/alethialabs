@@ -34,6 +34,11 @@ import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import type { Actor } from "@/lib/authz/types";
 import { ApplyAuthorizationError, requireApplyAuthorization } from "@/lib/approvals/types";
+import {
+	configurationHashOf,
+	PlanBindingError,
+	resolveReviewedPlan,
+} from "@/lib/approvals/plan-binding";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
 import { assertRunnerInOrg } from "@/lib/authz/runner-org";
 import { getServiceDb, type Tx, withActorScope, withScope } from "@/lib/db";
@@ -163,7 +168,6 @@ import {
 	normalizeEnvironmentName,
 } from "@/lib/validations/names";
 import { slugify } from "@/lib/utils/slugify";
-import { repoLabel } from "@/lib/repos/repo-label";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 
 /**
@@ -2307,7 +2311,8 @@ export type QueueJobResult<T extends object> = ({ ok: true } & T) | ProjectRefus
  *
  * Exactly five types are refusals, each already written as a sentence for a person:
  *   · `ApplyAuthorizationError` — the apply or destroy was not authorized for this caller
- *     (lib/approvals/types.ts; nothing throws it while that module allows every call);
+ *     (lib/approvals/types.ts): a credential that needs a person's approval presented none, or one
+ *     that does not cover this job;
  *   · {@link JobRefusalError} — the deploy-time gates (no cloud account, a dangling binding, a WAF
  *     the cloud cannot provide, a Hetzner node name, no network selected, an unscanned IaC source…);
  *   · `EnvStateConflictError` — a job is already in flight on the environment; the same request
@@ -2325,6 +2330,7 @@ async function refusalAsValue<T extends object>(
 	} catch (err) {
 		if (
 			err instanceof ApplyAuthorizationError ||
+			err instanceof PlanBindingError ||
 			err instanceof JobRefusalError ||
 			err instanceof EnvStateConflictError ||
 			err instanceof UsageLimitError ||
@@ -2555,6 +2561,9 @@ export async function planProject(
 					initiated_by: "user",
 					job_type: "PLAN",
 					config_snapshot: configSnapshot,
+					// What a deploy of this plan compares against to know the plan is still current
+					// (lib/approvals/plan-binding.ts); the runner compares it again before applying.
+					configuration_hash: configurationHashOf(configSnapshot),
 					status: "QUEUED",
 					// New trace root for this provisioning operation (enqueue → claim → runner).
 					traceparent: newTraceparent(),
@@ -2701,14 +2710,19 @@ function keyedDeployResult(
 }
 
 /**
- * Queues a DEPLOY job (or, for a redeploy with repo-sourced services, the BUILD that chains it).
+ * Queues the DEPLOY of a reviewed plan: `planJobId` names a PLAN job of this environment, and the
+ * DEPLOY applies exactly that plan (decision M23). The plan must be current — succeeded, planned from
+ * the configuration this deploy would apply, nothing run on the environment since — and carry a plan
+ * digest; otherwise a {@link PlanBindingError} says to plan again (lib/approvals/plan-binding.ts). The
+ * DEPLOY carries the plan's digest, and the runner applies the saved plan only when it matches.
+ *
  * `approvalKey` makes it at most once per key, as in {@link planProject} (#5797): a repeated
  * approval of one deploy proposal returns the job it already queued and applies nothing twice.
  *
  * `approvalKey` and `approvalId` are different things. The key only makes a repeated call return
  * the same job. `approvalId` names the approval the caller presents for this deploy, and is
- * handed to `requireApplyAuthorization` with every job this queues — the DEPLOY, or the BUILD
- * that will chain it. A job a key already queued is returned as it is and is not asked about again.
+ * handed to `requireApplyAuthorization` with the DEPLOY. A job a key already queued is returned as
+ * it is and is not asked about again.
  */
 export async function provisionProject(
 	projectId: string,
@@ -2748,86 +2762,22 @@ export async function provisionProject(
 	assertIacSourceQueueable(iacSource, "deploy");
 	assertGitopsDeliveryQueueable(configSnapshot);
 
-	// W2 build-then-deploy: redeploying an ACTIVE environment that has repo-sourced
-	// services queues the BUILD first — the status route persists the digests and chains
-	// the DEPLOY (builds.ts), so the deploy renders real images instead of skipping
-	// unbuilt services. First-time provisioning (infra not up) deploys infra directly —
-	// the in-cluster build has nowhere to run until the cluster exists. A gated
-	// plan→apply (planJobId) never reroutes: it must apply exactly the reviewed plan.
-	if (
-		!planJobId &&
-		environment.status === "ACTIVE" &&
-		hasRepoSourcedServices(configSnapshot)
-	) {
-		const result = await withScope(
-			{ ownerId: owner, orgId: actor.orgId },
-			async (tx) => {
-				const job = await insertJobOnce(
-					tx,
-					signedJob({
-						user_id: owner,
-						org_id: actor.orgId,
-						project_id: projectId,
-						environment_id: environment.id,
-						cloud_identity_id: identity.id,
-						initiated_by: "user",
-						job_type: "BUILD",
-						config_snapshot: configSnapshot,
-						status: "QUEUED",
-						traceparent: newTraceparent(),
-						...(runnerId ? { assigned_runner_id: runnerId } : {}),
-					}),
-					key,
-				);
-				// A concurrent approval of the same proposal committed first: its job IS this one.
-				if (!job.created) return keyedDeployResult(job.id, job.jobType);
-
-				await requireApplyAuthorization(
-					tx,
-					{ kind: "actor", actor },
-					"deploy",
-					{
-						orgId: actor.orgId,
-						projectId,
-						environmentId: environment.id,
-						jobId: job.id,
-					},
-					approvalId,
-				);
-
-				await enqueueEnvTransition(
-					tx,
-					environment.id,
-					"enqueueDeploy",
-					job.id,
-					{
-						orgId: actor.orgId,
-						projectId,
-					},
-				);
-
-				await tx.insert(auditLog).values({
-					project_id: projectId,
-					user_id: owner,
-					action: "PROVISIONED",
-					changes: {
-						job_id: job.id,
-						environment_id: environment.id,
-						job_type: "BUILD",
-					},
-				});
-
-				return { jobId: job.id, jobType: "BUILD" as const };
-			},
-		);
-
-		notifyScaler();
-		return result;
-	}
+	// The configuration this deploy would apply now; a named plan is current only when it was
+	// planned from exactly this (lib/approvals/plan-binding.ts).
+	const configurationHash = configurationHashOf(configSnapshot);
 
 	const result = await withScope(
 		{ ownerId: owner, orgId: actor.orgId },
 		async (tx) => {
+			// Decision M23: a deploy someone asks for applies a current reviewed plan of this
+			// environment. Resolved in the transaction that inserts the DEPLOY, so the plan read and
+			// the "nothing ran since" read see the same state the insert commits against.
+			const plan = await resolveReviewedPlan(tx, {
+				projectId,
+				environmentId: environment.id,
+				planJobId,
+				configurationHash,
+			});
 			const job = await insertJobOnce(
 				tx,
 				signedJob({
@@ -2839,10 +2789,14 @@ export async function provisionProject(
 					initiated_by: "user",
 					job_type: "DEPLOY",
 					config_snapshot: configSnapshot,
+					// The runner applies the plan file of `plan_job_id` only when it hashes to
+					// `plan_sha256`, and re-checks `configuration_hash` against the plan's.
+					configuration_hash: configurationHash,
+					plan_job_id: plan.planJobId,
+					plan_sha256: plan.planSha256,
 					status: "QUEUED",
 					// New trace root for this provisioning operation (enqueue → claim → runner).
 					traceparent: newTraceparent(),
-					...(planJobId ? { plan_job_id: planJobId } : {}),
 					...(runnerId ? { assigned_runner_id: runnerId } : {}),
 				}),
 				key,
@@ -2859,7 +2813,7 @@ export async function provisionProject(
 					projectId,
 					environmentId: environment.id,
 					jobId: job.id,
-					...(planJobId ? { planJobId } : {}),
+					planJobId: plan.planJobId,
 				},
 				approvalId,
 			);
@@ -4079,7 +4033,8 @@ export async function getProjects(): Promise<ProjectWithProvider[]> {
 }
 
 // ============================================================
-// Faceted project list — server-side search / filter / sort for the org overview grid.
+// The org overview grid's row shape. Its reader is `queryProjectsPage` (lib/queries/projects.ts),
+// one keyset page at a time.
 // ============================================================
 
 /** A source repo attached to a project, with a short `owner/repo` display label. */
@@ -4102,191 +4057,3 @@ export type ProjectListItem = ProjectWithProvider & {
 	/** When the default environment was last deployed (null = never provisioned). */
 	last_deployed_at: Date | null;
 };
-
-/** Server-side query for the overview grid. All fields optional; empty = no filter. */
-export interface ProjectListQuery {
-	/** Case-insensitive substring match on the project name. */
-	q?: string;
-	/** Keep projects whose cloud provider is in this set (OR). */
-	clouds?: string[];
-	/** Keep projects that use any of these source-repo URLs (OR). */
-	repos?: string[];
-	/** `activity` = default-env `updated_at` desc (default); `name` = A→Z. */
-	sort?: "activity" | "name";
-}
-
-/** A cloud facet option with its count over the unfiltered org universe. */
-export interface CloudFacet {
-	value: string;
-	count: number;
-}
-
-/** A repository facet option (url + display label) with its unfiltered count. */
-export interface RepoFacet extends ProjectRepoRef {
-	count: number;
-}
-
-/** The filtered/sorted grid rows plus the full (unfiltered) facet universe — with counts
- * so the filter bar's options show how many projects each matches (the console filter
- * standard: counts over the universe, options never disappear as you select them). */
-export interface ProjectListResult {
-	projects: ProjectListItem[];
-	facets: { clouds: CloudFacet[]; repos: RepoFacet[] };
-}
-
-/**
- * The org's projects for the overview grid, searched/filtered/sorted server-side. Returns the
- * matching rows plus `facets` (every cloud + repository across the org, regardless of the active
- * filter) so the filter popover always lists the full set of options. Favorites-first ordering is
- * applied client-side (favorites live in the browser), so this only sorts by activity or name.
- */
-export async function queryProjects(
-	query: ProjectListQuery = {},
-): Promise<ProjectListResult> {
-	const actor = await authorize("view", { type: "project" });
-	return withActorScope(actor, async (tx) => {
-		const rows = await tx
-			.select(projectSelect())
-			.from(projects)
-			.leftJoin(
-				cloudIdentities,
-				eq(projects.cloud_identity_id, cloudIdentities.id),
-			)
-			.leftJoin(
-				projectEnvironments,
-				and(
-					eq(projectEnvironments.project_id, projects.id),
-					eq(projectEnvironments.is_default, true),
-				),
-			)
-			.orderBy(desc(projects.created_at));
-		const base = rows.map(toProject);
-
-		// Attach each project's distinct source repos (a project may aggregate several, and the
-		// same repo can recur across environments / scan paths — dedupe by URL).
-		const ids = base.map((p) => p.id);
-		const repoRows = ids.length
-			? await tx
-					.selectDistinct({
-						project_id: projectSourceRepos.project_id,
-						repo_url: projectSourceRepos.repo_url,
-					})
-					.from(projectSourceRepos)
-					.where(inArray(projectSourceRepos.project_id, ids))
-			: [];
-		const repoMap = new Map<string, ProjectRepoRef[]>();
-		for (const r of repoRows) {
-			if (!r.project_id) continue;
-			const list = repoMap.get(r.project_id) ?? [];
-			list.push({ url: r.repo_url, label: repoLabel(r.repo_url) });
-			repoMap.set(r.project_id, list);
-		}
-		// Default-environment rollup for the card: environment count + last-deploy time (all envs),
-		// and the configured services / installed add-ons of the DEFAULT env only. All counted in
-		// memory (mirrors the repo attach above) — the project set is already fully loaded.
-		const defaultEnvIds = base
-			.map((p) => p.default_environment_id)
-			.filter((id): id is string => Boolean(id));
-
-		const envRows = ids.length
-			? await tx
-					.select({
-						project_id: projectEnvironments.project_id,
-						last_deployed_at: projectEnvironments.last_deployed_at,
-					})
-					.from(projectEnvironments)
-					.where(inArray(projectEnvironments.project_id, ids))
-			: [];
-		const envCount = new Map<string, number>();
-		const lastDeployed = new Map<string, Date>();
-		for (const r of envRows) {
-			if (!r.project_id) continue;
-			envCount.set(r.project_id, (envCount.get(r.project_id) ?? 0) + 1);
-			if (r.last_deployed_at) {
-				const cur = lastDeployed.get(r.project_id);
-				if (!cur || r.last_deployed_at > cur)
-					lastDeployed.set(r.project_id, r.last_deployed_at);
-			}
-		}
-
-		const serviceRows = defaultEnvIds.length
-			? await tx
-					.select({ project_id: projectServices.project_id })
-					.from(projectServices)
-					.where(inArray(projectServices.environment_id, defaultEnvIds))
-			: [];
-		const serviceCount = new Map<string, number>();
-		for (const r of serviceRows) {
-			if (!r.project_id) continue;
-			serviceCount.set(r.project_id, (serviceCount.get(r.project_id) ?? 0) + 1);
-		}
-
-		const addonRows = defaultEnvIds.length
-			? await tx
-					.select({ project_id: projectAddons.project_id })
-					.from(projectAddons)
-					.where(inArray(projectAddons.environment_id, defaultEnvIds))
-			: [];
-		const addonCount = new Map<string, number>();
-		for (const r of addonRows) {
-			if (!r.project_id) continue;
-			addonCount.set(r.project_id, (addonCount.get(r.project_id) ?? 0) + 1);
-		}
-
-		const items: ProjectListItem[] = base.map((p) => ({
-			...p,
-			repositories: repoMap.get(p.id) ?? [],
-			services_count: serviceCount.get(p.id) ?? 0,
-			addons_count: addonCount.get(p.id) ?? 0,
-			environments_count: envCount.get(p.id) ?? 0,
-			last_deployed_at: lastDeployed.get(p.id) ?? null,
-		}));
-
-		// Facets: the full universe of clouds + repos across the org (never narrowed by
-		// filters), each with the count of projects it matches. A project's repositories are
-		// already distinct by URL, so one increment per (project, repo) = projects-per-repo.
-		const cloudCount = new Map<string, number>();
-		const repoFacet = new Map<string, RepoFacet>();
-		for (const p of items) {
-			if (p.cloud_provider)
-				cloudCount.set(
-					p.cloud_provider,
-					(cloudCount.get(p.cloud_provider) ?? 0) + 1,
-				);
-			for (const r of p.repositories) {
-				const cur = repoFacet.get(r.url);
-				if (cur) cur.count += 1;
-				else repoFacet.set(r.url, { ...r, count: 1 });
-			}
-		}
-		const facets = {
-			clouds: [...cloudCount.entries()]
-				.map(([value, count]) => ({ value, count }))
-				.sort((a, b) => a.value.localeCompare(b.value)),
-			repos: [...repoFacet.values()].sort((a, b) =>
-				a.label.localeCompare(b.label),
-			),
-		};
-
-		// Filter.
-		const q = query.q?.trim().toLowerCase();
-		const clouds = query.clouds?.length ? new Set(query.clouds) : null;
-		const repos = query.repos?.length ? new Set(query.repos) : null;
-		const filtered = items.filter((p) => {
-			if (q && !p.project_name.toLowerCase().includes(q)) return false;
-			if (clouds && !(p.cloud_provider && clouds.has(p.cloud_provider)))
-				return false;
-			if (repos && !p.repositories.some((r) => repos.has(r.url))) return false;
-			return true;
-		});
-
-		// Sort (favorites float client-side atop this order).
-		filtered.sort((a, b) =>
-			query.sort === "name"
-				? a.project_name.localeCompare(b.project_name)
-				: new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-		);
-
-		return { projects: filtered, facets };
-	});
-}

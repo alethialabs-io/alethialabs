@@ -27,7 +27,9 @@ import "server-only";
 // After the org gate, the route's own check, `reserveTurn`, `prepare`, the model stream and its tools
 // run inside `runWithActor`, so every nested `currentActor()` resolves the billing org, not the
 // session's. The project check (`projectVisible`) runs between them, outside `runWithActor`: it is
-// handed the resolved actor as an argument and reads no ambient one.
+// handed the resolved actor as an argument and reads no ambient one. The model's stream, and so every
+// tool it calls, runs under that actor relabelled `agent_in_app` (lib/agent/in-app-credential.ts):
+// the same person and org, with the credential table 4.2 of the agent-surface spec answers for an agent.
 
 import {
 	type AsyncIterableStream,
@@ -82,6 +84,8 @@ import {
 	turnRefusal,
 	TURN_REFUSAL_STATUS,
 } from "./turn-claims";
+import { inAppAgentActor } from "./in-app-credential";
+import { AGENT_ACCESS_DISABLED_SYSTEM, guardAgentTools } from "./kill-switch";
 import { pendingClientToolCalls, type TurnRequest } from "./turn-key";
 
 /** The transient part the stream opens with, once the turn is accepted (ADR 0003 §5.1 step 9). */
@@ -609,8 +613,17 @@ async function streamAcceptedTurn<R>(
 		const continued = turn.kind === "continue" ? turn.modelInput.at(-1) : undefined;
 		const answerId = continued?.id ?? generateId();
 
+		// The model's tools act as the in-product agent, not as the person (agent surface §4.6). Bound
+		// around the whole stream, so every tool call and subagent the model starts reads it from
+		// `currentActor()`; a deploy or destroy it asks for then needs a person's approval (table 4.2).
+		const toolActor = inAppAgentActor(actor, turn.threadId);
+		// The org's kill switch (#7477): while agent access is off every tool the model calls is refused,
+		// reads included, and the prompt says so. Read here and again before each tool call.
+		const guarded = await guardAgentTools(prepared.tools, toolActor);
+		const system = guarded.disabledAtStart ? `${prepared.system}\n\n${AGENT_ACCESS_DISABLED_SYSTEM}` : prepared.system;
+
 		const stream = createUIMessageStream({
-			execute: async ({ writer }) => {
+			execute: ({ writer }) => runWithActor(toolActor, async () => {
 				startHeartbeat();
 				writer.write({
 					type: TURN_ACCEPTED_PART,
@@ -624,10 +637,10 @@ async function streamAcceptedTurn<R>(
 					model: base.model,
 					// Our own system prompt (cached) is intentionally a system message; user turns are never
 					// system-role, so this is not a prompt-injection surface.
-					messages: [cachedSystemMessage(prepared.system), ...modelMessages],
+					messages: [cachedSystemMessage(system), ...modelMessages],
 					allowSystemInMessages: true,
 					abortSignal,
-					tools: prepared.tools,
+					tools: guarded.tools,
 					stopWhen: stepCountIs(8),
 					providerOptions: thinkEveryStep ? thinkingOptions(base) : undefined,
 					prepareStep: ({ stepNumber }) => {
@@ -710,7 +723,7 @@ async function streamAcceptedTurn<R>(
 						sessionId: turn.threadId,
 						input: uiMessagesToAiInput(turn.modelInput),
 						outputChoices: textToAiOutput(answerText(answer)),
-						tools: Object.keys(prepared.tools),
+						tools: Object.keys(guarded.tools),
 						latencyMs: Date.now() - startedAt,
 						...(error === "provider-error" ? { isError: true, error } : {}),
 					},
@@ -726,7 +739,7 @@ async function streamAcceptedTurn<R>(
 					});
 				}
 				writer.write({ type: "finish" });
-			},
+			}),
 			// A throw inside `execute` after the stream registered (the heartbeat may be running) ends
 			// the attempt as C7 — or C6 partial, when model output had already streamed.
 			onError: (error) => {

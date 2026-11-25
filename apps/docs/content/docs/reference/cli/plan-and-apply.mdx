@@ -3,8 +3,6 @@ title: Plan & Apply
 description: Describe a project in alethia.yaml, preview the changes with plan, and create and deploy it with apply.
 ---
 
-# Plan & Apply
-
 One file describes a project; two commands take it from a file to a running cluster. Nothing has
 to be copied out of another command's output: the cloud account is named by its **label**, the
 runner by its **name**, and every environment by the name the file gives it.
@@ -123,29 +121,76 @@ neither.
 
 ### Waiting for the deploys
 
-`apply` queues one deploy for each environment, in file order, and waits for each one before it
-queues the next. The first environment owns the cluster, so the others cannot be deployed before it.
+`apply` deploys each environment in file order, and waits for each one before it starts the next.
+The first environment owns the cluster, so the others cannot be deployed before it.
 
-- `--no-wait` queues the first deploys and returns. Every job is named in the result.
-  `--wait=false` means the same.
-- `--timeout` sets how long the whole wait may take, for example `--timeout 45m`. When the time
-  passes, `apply` stops waiting and exits `12`. The deploy that is running keeps running. The error
-  names its job, the command that follows it, and the environments that were not deployed yet.
-  Run `alethia apply` again when that deploy has finished.
-- Press Ctrl+C to stop waiting. The deploy keeps running and `apply` exits `130`.
-
-A deploy can wait on a person. When a deploy is held until someone approves it, `apply` says so
-and prints the console page where the job is approved:
+A deploy applies a reviewed plan. So for each environment `apply` first queues a preview (a PLAN
+job), waits for it, and prints how many resources it would create, update, replace and delete. The
+deploy then applies exactly that plan. A preview that fails stops the run with exit `13`, and that
+environment is not deployed.
 
 ```
-⚠ DEPLOY job 4f3c2b1a-… is waiting for a person to approve it. It does not start until someone approves it at https://alethialabs.io/acme/~/jobs/4f3c2b1a-…
+▸ Previewing prod (job 2b7e91c0-…); a deploy applies a reviewed plan
+  prod Plan: 14 to create, 0 to update, 0 to replace, 0 to delete.
+▸ Deploying prod (job 4f3c2b1a-…)
 ```
 
-While it waits, `apply` continues by itself as soon as the job is approved. With `--no-wait` it
-returns, and the result marks the job with `awaiting_approval` and `approval_url`.
+- `--no-wait` returns once the deploys are queued. It still waits for each preview, because a
+  deploy needs its plan. Every job is named in the result. `--wait=false` means the same.
+- `--timeout` sets how long the whole run may take, previews included, for example
+  `--timeout 45m`. When the time passes, `apply` stops waiting and exits `12`. The job that is
+  running keeps running. The error names its job, the command that follows it, and the
+  environments that were not deployed yet. Run `alethia apply` again when that job has finished.
+- Press Ctrl+C to stop waiting. The job keeps running and `apply` exits `130`.
 
 A deploy that stays queued for two minutes because no runner has claimed it is also reported, with
 the command that shows which runners are online.
+
+### When a deploy needs a person's approval
+
+A deploy or a destroy started from the CLI needs a person's approval of the plan it applies. This is
+true for a device sign-in and for a service token, because the control plane cannot tell a person at
+a terminal from an agent in the same shell. A person clicking deploy in the console needs no
+separate approval: the click is the approval.
+
+When the control plane answers that a deploy needs an approval, `apply` asks for one, prints the
+console page where a person approves it, and waits:
+
+```
+⚠ This deploy needs a person's approval. Approve it at https://alethialabs.io/approvals/6b21d8f4-… — the page must show plan 2b7e91c0-… with a digest starting a1b2c3d4.
+Waiting for approval 6b21d8f4-… to be decided (expires 2026-12-01T10:00:00Z)...
+```
+
+The approval page shows the same eight digest characters. Check that they match before you approve:
+that is how you know you approve the plan the command showed you. Once it is approved, `apply`
+queues the deploy with the approval and carries on.
+
+- **Rejected:** `apply` exits `5` and nothing is deployed.
+- **Expired, or superseded** by a newer plan or a change to the environment: `apply` exits `7`. Run
+  it again to ask for a new approval.
+- **`--no-wait`, or agent mode:** `apply` asks for every environment's approval, waits for none,
+  and exits `9`. The error names each approval page, and the `alethia project deploy` command that
+  deploys each plan once it is approved.
+
+One approval covers one plan of one environment, once. It cannot be reused for a later plan.
+
+## `alethia approve`
+
+Open the console page where a person approves a deploy or a destroy that the CLI asked for.
+
+```bash
+alethia approve 6b21d8f4-0c5e-4a93-9f27-3d81b6e5c704                # opens the page in your browser
+alethia approve 6b21d8f4-0c5e-4a93-9f27-3d81b6e5c704 --no-browser   # prints the page, to send to whoever approves
+```
+
+| Argument or flag | Required | Description |
+|---|---|---|
+| `[approval-id]` | No | The approval id the deploy or destroy printed. Omit it on a terminal and you are asked for it. |
+| `--no-browser` | No | Print the page instead of opening it. |
+
+`approve` never approves anything. It sends nothing to the control plane, so neither a stored CLI
+credential nor an agent that holds one can approve its own request. The decision is made only in a
+signed-in console session.
 
 ### Exit codes of `apply`
 
@@ -154,9 +199,11 @@ the command that shows which runners are online.
 | `0` | Done. Without `--no-wait`, every deploy finished. |
 | `1` | The file does not exist or is not valid. |
 | `2` | The file cannot be applied as written. This is the code `alethia plan` gives the same file; see [Exit codes](#exit-codes). |
-| `9` | Nobody could confirm, and `--yes` was not passed. |
-| `12` | `--timeout` passed. The deploy is still running. |
-| `13` | A deploy finished and failed, or was cancelled. `alethia jobs logs` with the job's id shows why. |
+| `5` | A person rejected the approval a deploy asked for. |
+| `7` | The approval expired, or a newer plan or change superseded it. |
+| `9` | Nobody could confirm and `--yes` was not passed, or a deploy is waiting for a person's approval and the command did not wait. |
+| `12` | `--timeout` passed. The preview or the deploy is still running. |
+| `13` | A preview or a deploy finished and failed, or was cancelled. `alethia jobs logs` with the job's id shows why. |
 | `130` | You stopped the wait with Ctrl+C. |
 
 Any other code is one of the CLI's general exit codes: for example `4` when you are not signed
@@ -317,7 +364,7 @@ project's cloud is refused, whether you name it or pick it: it would never claim
 | Runner       | Runner to deploy with, by NAME or id. Omitted: the only online runner that takes this cloud's jobs, or asked on a terminal | `--runner`           |
 | Environments | Only deploy these environments (repeatable; default: every environment in the file)                                        | `--env`              |
 | Confirm      | Apply without asking (required with --no-input)                                                                            | `--yes`              |
-| Wait         | Queue the deploys and return instead of waiting for them                                                                   | `--no-wait`          |
+| Wait         | Queue the deploys and return instead of waiting for them or for a person's approval (exits 9 when one is needed)           | `--no-wait`          |
 | Timeout      | Stop waiting after this long, for example 30m (the deploys keep running; exits 12). Omitted or 0: wait without a limit     | `--timeout`          |
 
 `--wait` is the flag every command that queues a job has. `apply` waits by default, so it is on
@@ -582,18 +629,18 @@ With the manifest already present, an account connected and a runner available, 
 
 {/* fieldspec: alethia up */}
 
-| Field         | What it is                                                                                       | Set without the form |
-| ------------- | ------------------------------------------------------------------------------------------------ | -------------------- |
-| Manifest      | The alethia.yaml to apply, written when it does not exist yet                                    | `--file`             |
-| Project name  | Name for a project this authors (asked for on a terminal when the file is missing)               | `--project`          |
-| Region        | Cloud region for a project this authors                                                          | `--region`           |
-| Cloud account | Cloud account to link, by its LABEL or its id                                                    | `--cloud-account`    |
-| Stage         | Stage for the environment this authors                                                           | `--stage`            |
-| Machine type  | Machine type for the cluster nodes, e.g. t3.xlarge (needs a cloud account; not with --node-size) | `--instance-type`    |
-| Node size     | Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)  | `--node-size`        |
-| Runner        | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal    | `--runner`           |
-| Confirm       | Apply without asking (required with --no-input)                                                  | `--yes`              |
-| Wait          | Queue the deploys and return instead of waiting for them                                         | `--no-wait`          |
+| Field         | What it is                                                                                                       | Set without the form |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- | -------------------- |
+| Manifest      | The alethia.yaml to apply, written when it does not exist yet                                                    | `--file`             |
+| Project name  | Name for a project this authors (asked for on a terminal when the file is missing)                               | `--project`          |
+| Region        | Cloud region for a project this authors                                                                          | `--region`           |
+| Cloud account | Cloud account to link, by its LABEL or its id                                                                    | `--cloud-account`    |
+| Stage         | Stage for the environment this authors                                                                           | `--stage`            |
+| Machine type  | Machine type for the cluster nodes, e.g. t3.xlarge (needs a cloud account; not with --node-size)                 | `--instance-type`    |
+| Node size     | Node size as vCPUxGiB, e.g. 4x16, mapped to the nearest machine type (not with --instance-type)                  | `--node-size`        |
+| Runner        | Runner to deploy with, by NAME or id. Omitted: the only online runner, or asked on a terminal                    | `--runner`           |
+| Confirm       | Apply without asking (required with --no-input)                                                                  | `--yes`              |
+| Wait          | Queue the deploys and return instead of waiting for them or for a person's approval (exits 9 when one is needed) | `--no-wait`          |
 
 Scripted, `up` writes a single environment at `--stage`; on a terminal it asks for the whole matrix.
 [`alethia project env add`](/reference/cli/project) is how a second environment arrives later.
@@ -806,14 +853,15 @@ so `plan` shows no change for it and `apply` never clears it.
 commands. They are described on the [project page](/reference/cli/project):
 
 - `alethia project preview` queues the OpenTofu plan of one environment.
-- `alethia project deploy` deploys one environment, and can deploy the plan you reviewed.
+- `alethia project deploy` deploys one environment from a reviewed plan: the one you name, or a
+  preview it makes and shows you first.
 - `alethia project destroy` tears one environment down.
 
 ## `alethia project destroy`
 
 Queue a DESTROY job for one environment. The Runner runs `tofu destroy` and tears down every
 resource of that environment; the console guide's
-[destroy workflow](/guides/jobs/plan-and-apply#destroy-workflow) says what is kept and what is lost.
+[destroy workflow](/guides/jobs/plan-and-apply#destroy-an-environment) says what is kept and what is lost.
 `alethia apply` never does this: removing an environment from `alethia.yaml` leaves it running.
 
 ```bash
@@ -823,6 +871,12 @@ alethia project destroy --project boutique --env prod --cascade --wait   # prod 
 
 The flags, the confirmation and the result are on the
 [project page](/reference/cli/project).
+
+A destroy from the CLI needs a person's approval too, given against the plan the environment's
+current state was deployed from. It is asked for, shown and waited for the same way as a deploy's
+(see [When a deploy needs a person's approval](#when-a-deploy-needs-a-persons-approval)). With
+`--no-wait` the command exits `9` with the page; run the same destroy again once it is approved. A
+`--cascade` destroy cannot be approved this way: start it from the console.
 
 ### Destroying an environment that other environments run on
 

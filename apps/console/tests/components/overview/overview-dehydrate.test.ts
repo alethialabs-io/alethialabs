@@ -18,24 +18,28 @@ describe("the overview page's dehydrate filter", () => {
 		// Plain arrays: the cache cares about the key's VALUE, not the typed payload.
 		const usage: unknown[] = [...orpc.overview.usage.queryKey()];
 		const alerts: unknown[] = [...orpc.overview.alerts.queryKey()];
-		// The project grid's read, for the address's search and filters (#6817).
+		// The project grid's first keyset page (an INFINITE key: the address's query, never a cursor)
+		// and its summary (#6817, LST-4 #7486).
 		const grid: unknown[] = [
-			...orpc.overview.projects.queryKey({ input: { q: "", clouds: [], repos: [], sort: "activity" } }),
+			["overview", "projects", "page"],
+			{ input: { q: "", clouds: [], repos: [], sort: "activity" }, type: "infinite" },
 		];
+		const gridSummary: unknown[] = [...orpc.overview.projects.summary.queryKey()];
 		const recentJobs: unknown[] = [...orpc.workspace.recentJobs.queryKey()];
 		const projects: unknown[] = [...orpc.workspace.projects.queryKey()];
 		const context: unknown[] = [...orpc.workspace.context.queryKey()];
 		client.setQueryData(usage, { plan: "team" });
 		client.setQueryData(alerts, { alerting: true, deliveries: [] });
-		client.setQueryData(grid, { projects: [] });
+		client.setQueryData(grid, { pages: [{ rows: [], nextCursor: null, facets: null, universeEmpty: true }], pageParams: [null] });
+		client.setQueryData(gridSummary, { projectCount: 0 });
 		client.setQueryData(recentJobs, []);
 		client.setQueryData(projects, []);
 		client.setQueryData(context, {});
 
 		const keys = dehydrate(client, { shouldDehydrateQuery: isOverviewPageRead }).queries.map((q) => q.queryKey);
 
-		expect(keys).toHaveLength(4);
-		expect(keys).toEqual(expect.arrayContaining([usage, alerts, grid, recentJobs]));
+		expect(keys).toHaveLength(5);
+		expect(keys).toEqual(expect.arrayContaining([usage, alerts, grid, gridSummary, recentJobs]));
 	});
 
 	it("does not hand down a read that has not settled — the job feed included", () => {

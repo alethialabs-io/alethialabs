@@ -1,68 +1,59 @@
 ---
-title: Knowledge base
-description: Pin custom instructions and named knowledge documents so every chat in a workspace inherits them — alongside the live facts Elench derives on its own.
+title: Give the assistant standing knowledge
+description: Pin instructions and named knowledge documents to a workspace, so every chat in it starts with them.
 ---
 
-# Knowledge base
+Tell Elench once how to behave and what to know, so you do not repeat it in every chat. What you pin
+goes into every chat in the current [workspace](/guides/assistant/workspaces).
 
-The **Knowledge** panel (in the rail) is where you tell Elench how to behave and what it should always
-know for the current [workspace](/guides/assistant/workspaces). Everything here rides the system prompt
-of **every chat in that scope**, so the first answer is already grounded — you don't repeat yourself
-each conversation.
+## Before you begin
 
-It has three parts.
+- The assistant is open in the workspace you want: the organization, or a project.
 
-## Custom instructions
-
-A free-text field for *how* Elench should act here. Examples:
-
-> This is production — always require approval before an apply, and never propose destroy.
-
-> Prefer Hetzner for non-prod. Our region is `eu-central-1` unless a project says otherwise.
-
-Instructions save on blur and apply to every chat in the workspace.
-
-## Knowledge documents
-
-The knowledge itself is a **list of named documents**, not one blob — so each is titled, sized, and
-removable on its own, and Elench can tell you *which* document it drew on.
+## Steps
 
 <Steps>
 
+### Open the knowledge panel
+Expand the assistant and open **Knowledge** in the rail.
+
+### Write instructions
+Under **Instructions**, write how Elench should act here, for example:
+
+> This is production. Always require approval before an apply, and never propose a destroy.
+
+Instructions save when you leave the field.
+
 ### Add a document
+Select **Add knowledge**, give it a title such as *Runbook: production deploys*, write the body, and
+select **Save document**. It appears in the list with its size and when it was last edited.
 
-Click **Add knowledge**, give it a title (e.g. *Runbook: production deploys*), and write the body.
-
-### Save it
-
-**Save document** persists it to the workspace. It appears in the list with its size and when it was
-last edited.
-
-### Edit or remove
-
-Hover a document for **edit** and **delete**. Deleting it drops it from every future chat immediately.
+### Edit or delete a document
+Hover over a document to edit or delete it. A deleted document leaves every future chat at once.
 
 </Steps>
 
-Because knowledge rides **every** turn's prompt, its size is a real cost — a **capacity meter** shows
-how much of the budget (50,000 characters) you've used. Keep documents tight and factual: conventions,
-owners, on-call, runbooks, gotchas — the things Elench can't work out on its own.
+Elench can tell you which document it drew on, because each one has its own title.
 
-## Already known (auto-derived)
+## Keep it short
 
-Inside a **project** workspace, the panel also shows an **Already known** section: the live facts Elench
-derives from your account on every turn — the project's identity and region, its environments and their
-status, and its recent jobs and outcomes. You don't need to write any of this down; it's read fresh each
-time. The section makes it obvious what's *already* grounded versus what's worth pinning by hand.
+Instructions and documents go with every message, so their size costs on every turn. A meter shows how
+much of the 50,000-character limit you use. Write what Elench cannot work out for itself: conventions,
+owners, on-call, runbooks and known problems.
 
-<Callout type="info">
-  The organization workspace has no auto-derived section — it's the general assistant, grounded by the
-  org-wide instructions and documents you pin, plus the tools it can call on demand.
-</Callout>
+## What Elench already knows
 
-## How it reaches the model
+In a project workspace, the panel shows **Already known**: the live facts Elench reads on every turn.
+These are the project's identity and region, its environments and their status, and its recent jobs.
+Do not pin these. The organization workspace has no such section: its chats use what you pin and the
+tools Elench calls.
 
-Under the hood, a scope's instructions and documents are the `agent_context` row for that
-`(organization, project)` pair; they're assembled — org first, project second, then the derived facts —
-into the cached system prompt for each turn. The [agent runtime](/concepts/elench/agent-runtime) covers the
-prompt assembly and the tenant-isolation guards.
+## Check that it worked
+
+Start a new chat in the workspace and ask Elench to restate your instructions. It quotes them, and
+names any document it uses.
+
+## Related
+
+- [Use a workspace](/guides/assistant/workspaces)
+- [Agent runtime](/concepts/elench/agent-runtime): how the prompt is put together.

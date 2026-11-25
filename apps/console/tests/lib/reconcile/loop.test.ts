@@ -8,6 +8,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(() => ({})) }));
+vi.mock("@/lib/billing/factura/sweeper", () => ({
+	runFacturaSweep: vi.fn(async () => ({ retried: 0, issued: 0, alerted: 0, pdfsRendered: 0, failures: 0 })),
+}));
 vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async () => ({ converged: 0, candidates: 0 })) }));
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
@@ -22,6 +25,9 @@ vi.mock("@/lib/rate-limit", () => ({
 vi.mock("@/lib/elench/drafts-sweep", () => ({
 	sweepElenchDrafts: vi.fn(async () => ({ settled: 0, settleFailed: 0, discardedDeleted: 0, staleDeleted: 0 })),
 }));
+vi.mock("@/lib/reconcile/state-locks", () => ({
+	releaseCancelledStateLocks: vi.fn(async () => ({ jobs: 0, released: 0 })),
+}));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -35,6 +41,7 @@ import {
 } from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
@@ -44,6 +51,7 @@ import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/g
 import { __resetHeartbeats, getHeartbeats } from "@/lib/reconcile/heartbeat";
 import { startReconcileLoop, tick } from "@/lib/reconcile/loop";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
+import { releaseCancelledStateLocks } from "@/lib/reconcile/state-locks";
 
 const G = globalThis as unknown as { __alethiaReconcileLoop?: unknown };
 const ORIGINAL_URL = process.env.ALETHIA_DATABASE_URL;
@@ -81,6 +89,37 @@ describe("startReconcileLoop — guards", () => {
 	});
 });
 
+describe("tick — the фактура sweep (#7369)", () => {
+	const ORIGINAL_KEY = process.env.STRIPE_SECRET_KEY;
+	afterEach(() => {
+		if (ORIGINAL_KEY === undefined) delete process.env.STRIPE_SECRET_KEY;
+		else process.env.STRIPE_SECRET_KEY = ORIGINAL_KEY;
+	});
+
+	it("never runs on a console without Stripe configured", async () => {
+		delete process.env.STRIPE_SECRET_KEY;
+		await tick(new Date());
+		expect(runFacturaSweep).not.toHaveBeenCalled();
+		expect(getHeartbeats().map((h) => h.task)).not.toContain("factura-sweep");
+	});
+
+	it("runs under its own heartbeat when Stripe is configured, then waits an hour", async () => {
+		process.env.STRIPE_SECRET_KEY = "sk_test_loop";
+		// `runTask` stamps lastRunAt from the wall clock, so the ticks are offsets from now.
+		const t0 = new Date();
+		await tick(t0);
+		expect(runFacturaSweep).toHaveBeenCalledTimes(1);
+		expect(runFacturaSweep).toHaveBeenCalledWith(t0);
+		expect(getHeartbeats().map((h) => h.task)).toContain("factura-sweep");
+
+		vi.mocked(runFacturaSweep).mockClear();
+		await tick(new Date(t0.getTime() + 30 * 60_000));
+		expect(runFacturaSweep).not.toHaveBeenCalled();
+		await tick(new Date(t0.getTime() + 61 * 60_000));
+		expect(runFacturaSweep).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("tick — fan-out", () => {
 	it("runs every reconciler on a fresh (all-due) tick", async () => {
 		await tick(new Date());
@@ -95,6 +134,7 @@ describe("tick — fan-out", () => {
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
 		expect(sweepExpiredRateLimitBuckets).toHaveBeenCalledTimes(1);
 		expect(sweepElenchDrafts).toHaveBeenCalledTimes(1);
+		expect(releaseCancelledStateLocks).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -110,6 +150,7 @@ describe("tick — fan-out", () => {
 			"probe-schedule",
 			"rate-limit-sweep",
 			"release-ai-holds",
+			"release-cancelled-state-locks",
 		]);
 	});
 
@@ -134,6 +175,8 @@ describe("tick — fan-out", () => {
 		expect(reapExpiredEphemeralEnvs).toHaveBeenCalledTimes(1);
 		// The mint sweep is hot (1m) too: an uncollected ciphertext must not outlive its window by more.
 		expect(sweepExpiredKubeconfigMints).toHaveBeenCalledTimes(1);
+		// So is the cancelled-lock release (1m): its gap is added to the drain window a DESTROY waits.
+		expect(releaseCancelledStateLocks).toHaveBeenCalledTimes(1);
 		expect(sweepProbeSchedule).not.toHaveBeenCalled();
 		expect(sweepDriftSchedule).not.toHaveBeenCalled();
 		// The rate-limit sweep (5m) only bounds dead rows, so it is not hot.

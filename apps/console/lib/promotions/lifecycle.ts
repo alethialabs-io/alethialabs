@@ -26,6 +26,8 @@
 // tests/lib/promotions/lifecycle-import.test.ts holds that line.
 
 import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { planDigestOf } from "@/lib/approvals/plan-binding";
+import { requireApplyAuthorization } from "@/lib/approvals/types";
 import { signedJob } from "@/lib/db/signed-job";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getPreviousEnvironmentCost } from "@/lib/cost/previous-environment-cost";
@@ -329,6 +331,23 @@ async function applyGateDecision(
 ): Promise<void> {
 	const now = new Date();
 	if (evaluation.overall === "pass") {
+		// The DEPLOY applies the candidate plan and that plan only: it carries the plan's digest, and
+		// the runner applies the saved plan file only when it hashes to it. A plan with no recorded
+		// digest cannot be applied that way, so the promotion stops here and says how to continue.
+		const planSha256 = planDigestOf(planJob);
+		if (!planSha256) {
+			await db
+				.update(environmentPromotions)
+				.set({
+					status: "BLOCKED",
+					gate_evaluations: evaluation,
+					error_message:
+						"The candidate plan has no recorded plan digest, so it cannot be deployed as reviewed. Promote again to make a new plan.",
+					updated_at: now,
+				})
+				.where(eq(environmentPromotions.id, promotion.id));
+			return;
+		}
 		// Move the target env to QUEUED through the CAS FIRST (lib/db/env-status.ts). This runs on the
 		// service DB from a runner-callback chain (advancePromotionOnPlan) — NOT a transaction — so on a
 		// lost race (the env moved out of a deployable state under the promotion) we must not insert an
@@ -355,10 +374,21 @@ async function applyGateDecision(
 				job_type: "DEPLOY",
 				initiated_by: "user",
 				config_snapshot: planJob.config_snapshot,
+				// The plan's own snapshot, so the plan's configuration hash is this DEPLOY's too.
+				configuration_hash: planJob.configuration_hash,
 				plan_job_id: planJob.id,
+				plan_sha256: planSha256,
 				status: "QUEUED",
 			}))
 			.returning({ id: jobs.id });
+		// The promotion's gates (its approvals among them) passed for this exact plan.
+		await requireApplyAuthorization(db, { kind: "system", origin: "promotion" }, "deploy", {
+			orgId: promotion.org_id ?? promotion.user_id,
+			projectId: promotion.project_id,
+			environmentId: promotion.target_environment_id,
+			jobId: job.id,
+			planJobId: planJob.id,
+		});
 		await db
 			.update(environmentPromotions)
 			.set({ status: "DEPLOYING", deploy_job_id: job.id, gate_evaluations: evaluation, updated_at: now })

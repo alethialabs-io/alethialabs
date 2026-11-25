@@ -158,9 +158,11 @@ describe("the OpenAPI document is well-formed", () => {
 });
 
 describe("the OpenAPI document is honest about authentication", () => {
-	it("states that service tokens hold every scope and narrower ones are refused", () => {
+	it("states that a service token carries the limit it was minted with, and is refused outside it", () => {
+		expect(doc.info.description).toContain("the scopes and the project list it was minted with");
 		expect(doc.info.description).toContain("all five scopes over every project");
-		expect(doc.info.description).toContain("narrow_tokens_unavailable");
+		expect(doc.info.description).toContain('error: "insufficient_scope"');
+		expect(doc.info.description).not.toContain("narrow_tokens_unavailable");
 	});
 
 	it("derives each operation's scopes from the scope ceiling", () => {

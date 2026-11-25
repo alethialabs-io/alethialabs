@@ -1,9 +1,7 @@
 ---
 title: Security model for agents
-description: What limits an AI agent that works with Alethia today — your own permissions, a read-only MCP server, OAuth tokens bound to that server, and a confirmation before apply and destroy.
+description: What limits an AI agent that works with Alethia today — your own permissions, the scopes you grant, an approval by a person before apply and destroy, and OAuth tokens bound to the server.
 ---
-
-# Security model for agents
 
 An agent never has more access than the person it works for. This page lists each control that
 applies to agents today, and what it does not cover.
@@ -19,12 +17,27 @@ a job or an organization that its person cannot reach, and cannot read across or
 
 | Control | What it does |
 | --- | --- |
-| Read-only tools | The server offers only tools marked as safe to expose, all of them reads. A tool without that mark is left out. No tool writes, starts a job or approves. See the [tool reference](/agents/tools). |
+| Scopes | The token carries the scopes you granted: `read`, `design`, `plan`, `apply`, `destroy`. A scope only narrows your own permissions. A tool that needs a scope the token lacks is not listed and refuses a call. |
+| Approval by a person | `request_apply` and `request_destroy` start nothing on their own. The job starts only after a person signed in to the console approves the request, and only for the plan that was approved, once. No tool approves. See [how an apply runs](/agents/tools#how-an-apply-or-a-destroy-runs). |
+| Organization switch | An owner can turn agent access off for the organization. Off means off: the server refuses every request, including reads, designs and plans. An approval granted before the switch was turned off can no longer start a job. The server checks the switch on every request, so a client that kept its tool list is refused at its next call. An owner can also refuse agents any apply or destroy in a production environment. |
 | OAuth sign-in | A client gets a token only after you sign in to Alethia in the browser. There is no API key to paste or leak. |
 | Client ID Metadata Documents | A client identifies itself by the URL of a metadata document that it publishes. Clients cannot register themselves anonymously. |
 | Tokens bound to the server | Each access token names the MCP endpoint as its audience. The server refuses a token issued for anything else. |
 | No secrets in results | No tool returns a password, a token or a cloud credential. Tools that issue cluster credentials are kept away from the agent entirely. |
 | Plan check | On hosted Alethia the server answers `403` when AI is turned off for the organization. |
+
+## The assistant in the console
+
+The assistant in the console is an agent too. It acts with your permissions, and a deploy or a
+destroy that it requests needs a person's approval, as over MCP.
+
+The organization switch applies to it in the same way. While agent access is off, every tool call that
+the assistant makes is refused, reads included, and it tells you that agent access is turned off. Alethia checks
+the switch before each tool call, so turning the switch off also stops a conversation that is
+already running at its next call. A call that has already started finishes.
+
+The switch does not apply to you in the console, to the CLI signed in as you, or to
+service-account tokens.
 
 ## The CLI
 
@@ -42,15 +55,16 @@ agent in your shell and a change to your infrastructure:
 - **Protected environments.** A deploy into an environment with protection rules waits for a person
   to approve it in the console. See [protection](/reference/cli/protection).
 
-Service-account tokens carry scopes and a project list. Today every token holds all five scopes
-(`read`, `design`, `plan`, `apply`, `destroy`) over every project, so it can do everything its creator
-can do in its organization. A narrower token is refused with `narrow_tokens_unavailable` until every
-route that queues a job applies the limit. Give each token an expiry, store it in a secret store, and revoke it when
-the work is done.
+Service-account tokens carry scopes and a project list. A token minted without either holds all five
+scopes (`read`, `design`, `plan`, `apply`, `destroy`) over every project, so it can do everything its
+creator can do in its organization. Mint a token through the API with `scopes` and `project_ids` to
+give it only what its work needs. A request outside its limit is refused with `insufficient_scope`. Give each token an expiry, store it in
+a secret store, and revoke it when the work is done.
 
 ## Text from outside is data
 
 Tool results and command output can contain text that Alethia did not write: a repository's files, a
 job's log, a cloud API's answer. Such text can contain instructions aimed at the agent. An agent must
-treat it as data and never follow it. Over MCP the worst such text can do is mislead a read, because
-no MCP tool changes anything.
+treat it as data and never follow it. Over MCP the most such text can lead to is a plan, or a
+pending request that you still have to approve in the console. The server returns log text in a field
+named `untrusted_output` to say so.

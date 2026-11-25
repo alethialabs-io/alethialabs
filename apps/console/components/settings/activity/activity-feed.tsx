@@ -5,19 +5,19 @@
 // The natural-language Activity feed. Rows arrive newest-first (already filtered + paginated
 // server-side); this groups them by month and renders each as an actor avatar + a humanized
 // line — the actor and the action target are bold, the connective is plain. No card chrome:
-// a dense, hairline-divided list (grayscale, mono meta) with a "Load more" affordance that
-// pages in older rows.
+// a dense, hairline-divided list (grayscale, mono meta). Paging is not this component's: the
+// caller passes the shared `ListFooter` (sentinel + "Load more" + the failed-page retry) as
+// `footer`, so the feed pages exactly as every other keyset list does (LST-10, #7492).
 
-import { Loader2, ScrollText } from "lucide-react";
+import { ScrollText } from "lucide-react";
 import { type ReactNode, useMemo } from "react";
 import type { ActivityRow } from "@/app/server/actions/activity";
 import { useHydrated } from "@repo/ui/use-hydrated";
-import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { userInitials } from "@/lib/user-display";
 import { formatDate, formatRelative } from "@repo/format";
-import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { type ActivityContext, describeEvent } from "./humanize-event";
 
@@ -49,38 +49,21 @@ const RELATIVE_SIZER = "about 11 months ago";
 export function ActivityFeed({
 	rows,
 	ctx,
-	onLoadMore,
-	hasMore = false,
-	loadingMore = false,
 	empty,
-	tail,
+	footer,
 }: {
 	rows: ActivityRow[];
 	ctx: ActivityContext;
-	/** Fetch + append the next page. Omit to disable the "Load more" affordance. */
-	onLoadMore?: () => void;
-	/** Whether a further page exists (controls the "Load more" button). */
-	hasMore?: boolean;
-	/** Whether the next page is in flight (button spinner + disabled). */
-	loadingMore?: boolean;
 	/** What to render when there are no rows (R6 E-27). */
 	empty?: ReactNode;
 	/**
-	 * Rendered under the rows in place of "Load more": the caller's notice that the next page failed
-	 * to load, with its retry (R6 E-26). The loaded rows stay where they are.
+	 * Rendered under the rows: the caller's `ListFooter` — the next page's sentinel and "Load more",
+	 * or, when a later page failed, its retry line with the loaded rows kept (R6 E-26).
 	 */
-	tail?: ReactNode;
+	footer?: ReactNode;
 }) {
 	const hydrated = useHydrated();
 	const groups = useMemo(() => byMonth(rows, hydrated ? undefined : "UTC"), [rows, hydrated]);
-	// Auto-pull the next page as the tail scrolls into view; the button below stays as an
-	// explicit fallback.
-	const sentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
-		hasMore,
-		loading: loadingMore,
-		onLoadMore: () => onLoadMore?.(),
-		resetKey: rows.length,
-	});
 
 	if (rows.length === 0) {
 		if (empty !== undefined) return <>{empty}</>;
@@ -128,31 +111,41 @@ export function ActivityFeed({
 											})}
 										</span>
 									)}
-									<span
-										title={e.denied ? (e.detail ?? undefined) : undefined}
-										className={cn(
-											"min-w-0 flex-1 truncate text-ui-md",
-											e.denied ? "text-text-secondary" : "text-text-primary",
+									<div className="flex min-w-0 flex-1 flex-col">
+										<span
+											className={cn(
+												"min-w-0 truncate text-ui-md",
+												e.denied ? "text-text-secondary" : "text-text-primary",
+											)}
+										>
+											{e.denied && (
+												// The shared status device (R6 F-24), not a local pill.
+												<StatusBadge
+													status="denied"
+													tier="failed"
+													label="Denied"
+													className="mr-1.5 align-middle"
+												/>
+											)}
+											<strong className="font-semibold text-text-primary">
+												{e.actor}
+											</strong>{" "}
+											{e.lead}
+											{e.target && (
+												<>
+													{" "}
+													<strong className="font-semibold text-text-primary">
+														{e.target}
+													</strong>
+												</>
+											)}
+										</span>
+										{/* Why it was denied is said on the row, to every reader (R6 E-24): it
+										    used to live in a `title`, which only a mouse hover ever showed. */}
+										{e.denied && e.detail && (
+											<span className="text-ui-sm text-text-tertiary">{e.detail}</span>
 										)}
-									>
-										{e.denied && (
-											<span className="mr-1.5 rounded-full border border-border-strong px-1.5 py-px align-middle font-mono text-ui-3xs uppercase tracking-wide text-text-tertiary">
-												Denied
-											</span>
-										)}
-										<strong className="font-semibold text-text-primary">
-											{e.actor}
-										</strong>{" "}
-										{e.lead}
-										{e.target && (
-											<>
-												{" "}
-												<strong className="font-semibold text-text-primary">
-													{e.target}
-												</strong>
-											</>
-										)}
-									</span>
+									</div>
 									{/* "3 hours ago" reads the clock, and the title the browser's zone: both
 									    wait for hydration (#418), in a slot that already has the text's
 									    width, so the row does not reflow when they land. */}
@@ -175,22 +168,7 @@ export function ActivityFeed({
 				</section>
 			))}
 
-			{tail}
-			{!tail && hasMore && onLoadMore && (
-				<div className="flex justify-center pt-1">
-					{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
-					<div ref={sentinelRef} aria-hidden className="h-px w-px" />
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={loadingMore}
-						onClick={onLoadMore}
-					>
-						{loadingMore && <Loader2 className="size-3.5 animate-spin" />}
-						Load more
-					</Button>
-				</div>
-			)}
+			{footer}
 		</div>
 	);
 }

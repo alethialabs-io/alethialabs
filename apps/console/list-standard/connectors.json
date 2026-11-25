@@ -1,0 +1,14 @@
+{
+	"kind": "debt",
+	"owner": "#7487",
+	"lane": "LST-5",
+	"why": "A toolbar count pill plus one pill per catalog group heading. The catalog itself is a bounded list awaiting its recorded `bounded` decision.",
+	"findings": {
+		"apps/console/components/connectors/connectors-page.tsx": {
+			"count-pill": 2
+		},
+		"store:useConnectorFilters": {
+			"keyset-contract": 1
+		}
+	}
+}

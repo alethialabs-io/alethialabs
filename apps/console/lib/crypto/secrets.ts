@@ -33,8 +33,117 @@
 // A mid-rotation mix (some rows old-kid, some new-kid, some no-kid) all decrypts correctly as long
 // as every referenced key is present in the ring — that's what makes the rotation ONLINE.
 
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import type { EncryptedSecret } from "@/types/jsonb.types";
+
+// ── Instance secrets: generated per install, never a template value ─────────────────────────────
+// Every instance secret is listed in deploy/selfhost/secrets.manifest and generated per install
+// (deploy/install.sh on a box, scripts/dev-env.sh locally). The console refuses a TEMPLATE
+// PLACEHOLDER for any of them: a `<…>` marker, or a value whose SHA-256 is one a template has
+// carried. The broader start-up check (every required value present, per runtime) is EDN-H2.
+
+/**
+ * SHA-256 of each placeholder value a template has carried for an instance secret. The same set
+ * as PLACEHOLDER_DIGESTS in deploy/selfhost/secrets.sh (a unit test holds them equal). Add to it;
+ * never remove from it.
+ */
+export const PLACEHOLDER_DIGESTS: ReadonlySet<string> = new Set([
+	"660599fcee9088125a9c926aeff66776919d35087651ad2badbce191dac83692",
+	"7e9886e3832c2875145a9fb5fc5148afa5c501e07209ca2222175df80390105c",
+	"88de4c7de8ca1ef22b59faaf1e939954caa1a74ce2570fd9296edab041c3e7dc",
+	"b35dd74e6920a52dc01f24d238c9344e066f64c6a2197edae3ac89228fec3295",
+	"bcd6860363c05e59bc10b5b81ddf32a4806d8a664953016e82db22bb6b2b8160",
+	"f8d0d021b95e78c7bb4e5be8b05b0c9cfdbb8c9d02a014528795c0461a4ca3f2",
+]);
+
+/** How an operator makes a value of each manifest generator kind by hand. */
+const GENERATOR_HINTS = {
+	hex16: "openssl rand -hex 16",
+	hex32: "openssl rand -hex 32",
+	"base64-32": "openssl rand -base64 32",
+	"rsa-2048-pem": "the rsa-2048-pem generator in deploy/selfhost/secrets.manifest",
+	"ed25519-raw": "the ed25519-raw generator in deploy/selfhost/secrets.manifest",
+	"ec-p256-pem": "the ec-p256-pem generator in deploy/selfhost/secrets.manifest",
+} as const;
+
+/**
+ * The manifest secrets the console reads from its own environment, with their manifest generator.
+ * The database passwords are not here: they reach the console only inside the connection URLs.
+ */
+export const CONSOLE_INSTANCE_SECRETS = {
+	BETTER_AUTH_SECRET: "hex32",
+	CLI_JWT_SECRET: "hex32",
+	ALETHIA_CRED_ENCRYPTION_KEY: "base64-32",
+	ALETHIA_STORAGE_ACCESS_KEY_ID: "hex16",
+	ALETHIA_STORAGE_SECRET_ACCESS_KEY: "hex32",
+	ALETHIA_SNAPSHOT_HMAC_KEY: "hex32",
+	ALETHIA_CRON_SECRET: "hex32",
+	ALETHIA_RUNNER_BOOTSTRAP_TOKEN: "hex32",
+	ALETHIA_OIDC_SIGNING_KEY: "rsa-2048-pem",
+	ALETHIA_RECEIPT_SIGNING_KEY: "ed25519-raw",
+	ALETHIA_RECEIPT_ANCHOR_KEY: "ec-p256-pem",
+	NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: "base64-32",
+	ALETHIA_STATUS_PROBE_TOKEN: "hex32",
+	RELEASE_API_SECRET: "hex32",
+	PLATFORM_PROVISION_SECRET: "hex32",
+	BREAKGLASS_ACCESS_PROXY_SECRET: "hex32",
+} as const satisfies Record<string, keyof typeof GENERATOR_HINTS>;
+
+/** A console instance-secret variable name. */
+export type ConsoleInstanceSecret = keyof typeof CONSOLE_INSTANCE_SECRETS;
+
+/** Whether `value` is a template placeholder: a `<…>` marker or a value with a known digest. */
+export function isTemplatePlaceholder(
+	value: string,
+	digests: ReadonlySet<string> = PLACEHOLDER_DIGESTS,
+): boolean {
+	if (value === "") return false;
+	if (value.startsWith("<") && value.endsWith(">")) return true;
+	return digests.has(createHash("sha256").update(value, "utf8").digest("hex"));
+}
+
+/**
+ * Why `value` is not usable for instance secret `name`, or null when it is. Empty counts only
+ * when `required`. The message names the variable and how to generate a value — never the value.
+ */
+export function instanceSecretProblem(
+	name: ConsoleInstanceSecret,
+	value: string | undefined,
+	required: boolean,
+): string | null {
+	const hint = `Generate one with: ${GENERATOR_HINTS[CONSOLE_INSTANCE_SECRETS[name]]}`;
+	const trimmed = (value ?? "").trim();
+	if (trimmed === "") return required ? `${name} is not set. ${hint}` : null;
+	if (isTemplatePlaceholder(trimmed)) {
+		return `${name} holds a template placeholder, not a value generated for this install. ${hint}`;
+	}
+	return null;
+}
+
+/** Type guard: `name` is one of CONSOLE_INSTANCE_SECRETS. */
+function isConsoleInstanceSecret(name: string): name is ConsoleInstanceSecret {
+	return Object.hasOwn(CONSOLE_INSTANCE_SECRETS, name);
+}
+
+/**
+ * The start-up check: throws one error naming every console instance secret that holds a template
+ * placeholder, and every name in `required` that is empty. Values are never part of the message.
+ */
+export function assertInstanceSecrets(
+	env: Readonly<Record<string, string | undefined>>,
+	required: readonly ConsoleInstanceSecret[] = [],
+): void {
+	const problems = Object.keys(CONSOLE_INSTANCE_SECRETS)
+		.filter(isConsoleInstanceSecret)
+		.map((name) => instanceSecretProblem(name, env[name], required.includes(name)))
+		.filter((p): p is string => p !== null);
+	if (problems.length > 0) {
+		throw new Error(
+			`Refusing to start: ${problems.join(" ")} Every instance secret is generated per install ` +
+				"(deploy/selfhost/secrets.manifest); deploy/selfhost/rotate-secret.sh replaces one on a box.",
+		);
+	}
+}
 
 const ALGO = "aes-256-gcm";
 const KEY_BYTES = 32;
@@ -90,6 +199,8 @@ function getKeyring(): Keyring {
 				"Generate one with: openssl rand -base64 32",
 		);
 	}
+	const placeholder = instanceSecretProblem("ALETHIA_CRED_ENCRYPTION_KEY", rawActive, true);
+	if (placeholder) throw new Error(placeholder);
 	const activeKey = decodeKey(rawActive, "ALETHIA_CRED_ENCRYPTION_KEY");
 	// `|| DEFAULT` (not `??`) + trim so an empty-string emit (the prod deploy emits unset vars as "")
 	// falls back to the default rather than yielding a "" kid.

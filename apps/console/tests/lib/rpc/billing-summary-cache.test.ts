@@ -29,7 +29,7 @@ vi.mock("@/lib/authz/guard", () => ({
 	authorizeQuiet: async () => ({ userId: "user-1", orgId: "org-1" }),
 	authorizeRead: async () => ({ userId: "user-1", orgId: "org-1" }),
 }));
-vi.mock("@/lib/billing/config", () => ({ isStripeConfigured: () => true }));
+vi.mock("@/lib/billing/config", () => ({ isStripeConfigured: () => true, isBillingConfigured: () => true }));
 vi.mock("@/lib/billing/queries", () => ({ getOrgBilling: async () => ({ ...billingRow }) }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => ({ subscriptions: { retrieve } }) }));
 vi.mock("@/lib/billing/sync", () => ({ mapStatus: (s: string) => s }));

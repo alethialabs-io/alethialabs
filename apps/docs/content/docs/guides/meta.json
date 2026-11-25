@@ -1,24 +1,22 @@
 {
 	"title": "How-to guides",
 	"icon": "Wrench",
-	"root": true,
 	"pages": [
 		"index",
 		"---Set up---",
 		"connectors",
-		"design-project",
 		"runners",
-		"---Operate---",
-		"jobs",
+		"fleet-pools",
+		"design-project",
+		"---Deploy and operate---",
 		"dashboard",
+		"jobs",
 		"clusters",
 		"get-a-kubeconfig",
-		"fleet-pools",
 		"alerts",
-		"classification",
 		"assistant",
 		"---Administer---",
 		"access",
-		"self-hosting"
+		"classification"
 	]
 }

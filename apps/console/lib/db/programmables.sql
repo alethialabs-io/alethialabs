@@ -2729,6 +2729,25 @@ CREATE POLICY early_access_request_insert ON public.early_access_request FOR INS
               AND vies_valid IS NULL AND vies_name IS NULL AND vies_address IS NULL
               AND vies_request_id IS NULL AND vies_checked_at IS NULL);
 
+-- ── Paddle Billing mirrors (L1) ──────────────────────────────────────────────────
+-- paddle_transaction (the Paddle transaction mirror) and usage_charge (the overage ledger) are
+-- written ONLY by the service role (the Paddle webhook, the overage sweeper), which bypasses RLS.
+-- A member may READ their own org's rows — the billing page lists them — and nothing else: an
+-- org-scoped SELECT policy (current_org, or current_owner for a personal org, as early_access_request
+-- above) and deliberately NO insert/update/delete policy, so an app-role session can neither forge a
+-- paid transaction nor rewrite or erase a charge it owes.
+ALTER TABLE public.paddle_transaction ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS paddle_transaction_select ON public.paddle_transaction;
+CREATE POLICY paddle_transaction_select ON public.paddle_transaction FOR SELECT
+  USING (organization_id = current_setting('app.current_org', true)::uuid
+         OR organization_id = current_setting('app.current_owner', true)::uuid);
+
+ALTER TABLE public.usage_charge ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS usage_charge_select ON public.usage_charge;
+CREATE POLICY usage_charge_select ON public.usage_charge FOR SELECT
+  USING (organization_id = current_setting('app.current_org', true)::uuid
+         OR organization_id = current_setting('app.current_owner', true)::uuid);
+
 -- ── Privacy operations (#2373) ────────────────────────────────────────────────────
 -- privacy_case / privacy_case_event / privacy_erasure_tombstone hold the record of who
 -- exercised a right and what was done about it. Service-role only: RLS enabled with NO
@@ -3778,6 +3797,29 @@ CREATE TRIGGER promotion_approvals_notify_change_upd
 DROP TRIGGER IF EXISTS promotion_approvals_notify_change_insdel ON public.promotion_approvals;
 CREATE TRIGGER promotion_approvals_notify_change_insdel
   AFTER INSERT OR DELETE ON public.promotion_approvals
+  FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
+
+-- apply_approvals (AGT-L5, #6862): an agent's deploy/destroy approval request was recorded, decided,
+-- used, or replaced by a newer plan. The in-conversation approval card reads it through a query the
+-- `environments` topic invalidates (IN_APP_APPROVAL_KEY, lib/query/topics.ts), so a teammate's
+-- decision reaches the requester's card without a poll. The row carries id, project_id and a NOT NULL
+-- org_id, so the promotion notifier serves it as written. Not listed: decided_at and consumed_at (they
+-- move with status), approver_session_id (moves with approver_user_id), and the request's own columns,
+-- written once. `expired` is computed at read time (lib/approvals/read.ts), not written, so no
+-- trigger can announce it; the card re-reads once at `expires_at` itself.
+DROP TRIGGER IF EXISTS apply_approvals_notify_change_upd ON public.apply_approvals;
+CREATE TRIGGER apply_approvals_notify_change_upd
+  AFTER UPDATE ON public.apply_approvals
+  FOR EACH ROW WHEN (
+    (OLD.status, OLD.approver_user_id, OLD.consumed_job_id)
+    IS DISTINCT FROM
+    (NEW.status, NEW.approver_user_id, NEW.consumed_job_id)
+  )
+  EXECUTE FUNCTION public.notify_promotion_change();
+
+DROP TRIGGER IF EXISTS apply_approvals_notify_change_insdel ON public.apply_approvals;
+CREATE TRIGGER apply_approvals_notify_change_insdel
+  AFTER INSERT OR DELETE ON public.apply_approvals
   FOR EACH ROW EXECUTE FUNCTION public.notify_promotion_change();
 
 -- environment_protection_rules: the gates the env card summarises and the rules drawer edits. Not
