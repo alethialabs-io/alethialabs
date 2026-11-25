@@ -32,12 +32,14 @@ vi.mock("drizzle-orm", async (importOriginal) => {
 const { getServiceDb } = vi.hoisted(() => ({ getServiceDb: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 
-import { ilike, inArray, isNull } from "drizzle-orm";
+import { ilike, inArray, isNull, SQL, sql } from "drizzle-orm";
 import {
 	GRANT_EFFECTS,
 	GRANT_SCOPES,
 	queryAccessGrantsPage,
 } from "@/lib/queries/access-grants";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/queries/keyset";
 
 const CREATED = new Date("2026-08-01T10:00:00.000Z");
 
@@ -95,15 +97,17 @@ describe("queryAccessGrantsPage", () => {
 				resourceType: "project",
 				resourceId: "p1",
 				createdAt: "2026-08-01T10:00:00.000Z",
+				// The instant this page was read, which "Granted … ago" is measured from.
+				asOf: expect.any(String),
 			},
 		]);
-		expect(page.resultCount).toBe(1);
-		expect(page.total).toBe(3);
-		expect(page.facets.scopes).toEqual([
+		expect(page.nextCursor).toBeNull();
+		expect(page.universeEmpty).toBe(false);
+		expect(page.facets?.scopes).toEqual([
 			{ value: "org", label: null, count: 2 },
 			{ value: "project", label: null, count: 1 },
 		]);
-		expect(page.facets.effects).toEqual([
+		expect(page.facets?.effects).toEqual([
 			{ value: "allow", label: null, count: 2 },
 			{ value: "deny", label: null, count: 1 },
 		]);
@@ -127,7 +131,7 @@ describe("queryAccessGrantsPage", () => {
 		// `permission:` prefix and is labelled with the key alone; neither is the "—" bucket. Compared as a set: the
 		// order is `localeCompare` over the labels, and where an em-dash sorts against a
 		// letter is the platform's ICU collation to decide, not this module's contract.
-		expect([...page.facets.roles].sort((a, b) => a.value.localeCompare(b.value))).toEqual(
+		expect([...(page.facets?.roles ?? [])].sort((a, b) => a.value.localeCompare(b.value))).toEqual(
 			[
 				{ value: "admin", label: "Admin", count: 1 },
 				{ value: "k8s-readers", label: "k8s-readers", count: 1 },
@@ -212,7 +216,7 @@ describe("queryAccessGrantsPage", () => {
 		);
 		const page = await queryAccessGrantsPage("org-1");
 		expect(page.rows[0].effect).toBe("allow");
-		expect(page.facets.effects).toEqual([
+		expect(page.facets?.effects).toEqual([
 			{ value: "allow", label: null, count: 1 },
 			{ value: "deny", label: null, count: 0 },
 		]);
@@ -221,5 +225,69 @@ describe("queryAccessGrantsPage", () => {
 	it("exposes the scope and effect vocabularies the filter bar renders", () => {
 		expect(GRANT_SCOPES).toEqual(["org", "project", "runner", "cloud_identity"]);
 		expect(GRANT_EFFECTS).toEqual(["allow", "deny"]);
+	});
+
+	// ── the keyset walk (LST-8 #7490) ─────────────────────────────────────────────────────
+	describe("pages on the keyset contract", () => {
+		const SAME = new Date("2026-05-01T00:00:00.000Z");
+		const dialect = new PgDialect({ casing: "snake_case" });
+		/** A chain's SQL fragments for `method`, rendered as the service db renders them. */
+		const render = (args: unknown[] | undefined) =>
+			dialect.sqlToQuery(sql.join((args ?? []).filter((a): a is SQL => a instanceof SQL), sql`, `)).sql;
+		/** Seeds result sets in await order: rows, then (first page) facets, then hydration. */
+		const seedSets = (...sets: unknown[][]) => {
+			const { db, chains } = mockChainDb(sets);
+			getServiceDb.mockReturnValue(db);
+			return chains;
+		};
+
+		it("orders newest first by the ms-truncated instant, then id, and reads limit + 1", async () => {
+			const chains = seedSets([], []);
+			await queryAccessGrantsPage("org-1", {}, { limit: 2 });
+			expect(render(chains[0]?.argsOf("orderBy"))).toBe(
+				`date_trunc('milliseconds', "grants"."created_at") desc, "grants"."id" desc`,
+			);
+			expect(chains[0]?.argsOf("limit")).toEqual([3]);
+		});
+
+		it("cuts at the limit and hands back the LAST kept row as the cursor — ties broken by id", async () => {
+			// Three rows read for a page of two: the third proves a next page exists.
+			seedSets([grantRow({ id: "cccc", createdAt: new Date("2026-05-03T00:00:00.000Z") }), grantRow({ id: "bbbb", createdAt: SAME }), grantRow({ id: "aaaa", createdAt: SAME })], []);
+			const page = await queryAccessGrantsPage("org-1", {}, { limit: 2 });
+			expect(page.rows.map((r) => r.id)).toEqual(["cccc", "bbbb"]);
+			// bbbb and aaaa share a millisecond: the cursor carries bbbb's id, so aaaa is the next
+			// page's first row rather than a row lost at the boundary.
+			expect(decodeKeysetCursor(page.nextCursor ?? "", "text")).toEqual({
+				at: "2026-05-01T00:00:00.000Z",
+				id: "bbbb",
+			});
+		});
+
+		it("says null at the end exactly — a full last page costs no empty read", async () => {
+			seedSets([grantRow({ id: "cccc", createdAt: new Date("2026-05-03T00:00:00.000Z") }), grantRow({ id: "bbbb", createdAt: SAME })], []);
+			const page = await queryAccessGrantsPage("org-1", {}, { limit: 2 });
+			expect(page.rows).toHaveLength(2);
+			expect(page.nextCursor).toBeNull();
+		});
+
+		it("applies the cursor as a row-value predicate and skips the facet pass on a later page", async () => {
+			const cursor = decodeKeysetCursor(
+				encodeKeysetCursor({ at: SAME, id: "00000000-0000-4000-8000-0000000000bb" }),
+			);
+			if (cursor === null) throw new Error("the test's cursor did not decode");
+			const chains = seedSets([]);
+			const page = await queryAccessGrantsPage("org-1", {}, { limit: 50, cursor });
+			expect(render(chains[0]?.argsOf("where"))).toContain("< ($");
+			// No facet pass: a later page walks the same universe and would count the same.
+			expect(chains.filter((c) => c.awaited)).toHaveLength(1);
+			expect(page.facets).toBeNull();
+			expect(page.universeEmpty).toBeNull();
+		});
+
+		it("says the universe is empty on a first page over nothing — a boolean, never a count", async () => {
+			seedSets([], []);
+			const page = await queryAccessGrantsPage("org-1", {});
+			expect(page.universeEmpty).toBe(true);
+		});
 	});
 });

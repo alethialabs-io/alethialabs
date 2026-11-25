@@ -5,11 +5,14 @@
 // Settings · Roles — IAM-style master/detail. A left rail (built-in + custom roles) and a
 // right detail panel (read-only permission matrix + classification). Both halves are GET reads the
 // route prefetches (#6129): `members.roleCatalog` (built-ins, entitlement, manage check) and
-// `members.roles` (custom roles, searched SERVER-SIDE). Custom roles are created/edited through the
+// `members.roles` (custom roles, searched, kind-filtered and PAGED server-side on the keyset contract
+// — `useKeysetList` + a `ListFooter` under the rail's custom bucket, LST-8 #7490). No count pill: the
+// console carries no list counts. Custom roles are created/edited through the
 // AccordionForm RoleSheet and deleted here, each through `useActionMutation`; an `access` hint
 // refreshes the page when someone else changes a role. Authoring is gated on customRoles.
 
 import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { planMeta } from "@repo/plan-catalog";
@@ -27,7 +30,10 @@ import { isForbiddenRead } from "@/components/settings/members/people-reads";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { useRoleCatalogQuery, useRolesQuery } from "@/lib/query/use-roles-query";
+import { ListFooter } from "@/components/list/list-footer";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useRoleCatalogQuery } from "@/lib/query/use-roles-query";
+import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { orpc } from "@/lib/rpc/client";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useRolesFilters } from "@/lib/stores/use-settings-filters";
@@ -44,7 +50,6 @@ import {
 	DEFAULT_ROLES_FILTERS,
 	filterBuiltins,
 	hasNoMatches,
-	noMatchesDescription,
 	normalizeRolesQuery,
 	ROLE_KIND_OPTIONS,
 	showsKind,
@@ -163,26 +168,21 @@ export function RolesManager() {
 	);
 	const searching = Boolean(query.search);
 
-	// Custom roles are filtered SERVER-SIDE by search (listRoles); the kind facet is a pure
-	// show/hide over two fixed buckets, so it never needs to reach the server.
-	// `isPlaceholderData` is the other half of the hook's `keepPreviousData`
-	// (lib/query/README.md, step 5): the rail keeps the previous search's roles while the next
-	// one loads, and the dim below is what says they are stale. Keeping them silently renders
-	// the previous answer as the current one.
-	const customQuery = useRolesQuery(query.search);
-	const {
-		data: customAll = [],
-		isFetching,
-		isPending,
-		isPlaceholderData,
-	} = customQuery;
-	const custom = showsKind(query, "custom") ? customAll : [];
-	// The role UNIVERSE — every custom role, unsearched. This is the shared base key the page
-	// prefetches, so with no search it is the same cache entry as the call above and costs no
-	// extra request. Facet hints and the empty state's "None of the N roles" count against it,
-	// never against the search result (lib/query/README.md: counts come from the unfiltered
-	// universe). `undefined` until it has loaded, and the count is then left unstated.
-	const { data: customUniverse } = useRolesQuery();
+	// Custom roles are filtered AND paged SERVER-SIDE (`queryRolesPage`): the search and the kind
+	// selection are the key, a page arrives at a time, alphabetically, and the first page carries the
+	// Kind facet counted over the UNFILTERED universe — so the hint never moves as you search.
+	// `isPlaceholderData` is the other half of the hook's `keepPreviousData` (lib/query/README.md,
+	// step 5): the rail keeps the previous search's roles while the next one loads, and the dim below
+	// is what says they are stale. Keeping them silently renders the previous answer as the current
+	// one.
+	const customList = useKeysetList(orpc.members.roles, query);
+	const { isPending, isPlaceholderData } = customList;
+	const custom = showsKind(query, "custom") ? customList.rows : NO_BUILTINS;
+	const kindCounts = useMemo(() => {
+		const byKind: Record<string, number> = {};
+		for (const o of customList.facets?.kinds ?? []) byKind[o.value] = o.count;
+		return byKind;
+	}, [customList.facets]);
 
 	// The selected role is URL state (R6 E-23): a link to a role opens on it, and a refresh keeps it.
 	// Written with `history.replaceState`, so picking a role is not a server navigation.
@@ -219,8 +219,20 @@ export function RolesManager() {
 		settled: !isPending && !isPlaceholderData,
 	});
 
+	// A linked custom role the loaded pages do not hold (a deep link to a role on page three) is read
+	// BY ID through the same builder and scope as the rail (`members.roles` with `id`), so the detail
+	// opens at once rather than falling back to the first built-in.
+	const selectedLoaded = selectedId !== "" && [...builtin, ...custom].some((r) => r.id === selectedId);
+	const selectedRead = useQuery({
+		...orpc.members.roles.queryOptions({ input: { id: selectedId || undefined } }),
+		enabled: selectedId !== "" && !selectedLoaded && !catalog.isPending,
+		retry: retryUnlessRefused,
+	});
 	const selected =
-		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
+		[...builtin, ...custom].find((r) => r.id === selectedId) ??
+		selectedRead.data?.rows.find((r) => r.id === selectedId) ??
+		builtin[0] ??
+		null;
 
 	/** Opens the role sheet empty, to author a new custom role. */
 	function openCreate() {
@@ -247,7 +259,7 @@ export function RolesManager() {
 
 	// A viewer whose `member:view` went away while the page was open: the live refetch is refused,
 	// and the page says so rather than keep a rail it may no longer read (B4).
-	if (isForbiddenRead(catalog.error) || isForbiddenRead(customQuery.error)) {
+	if (isForbiddenRead(catalog.error) || isForbiddenRead(customList.query.error)) {
 		return <RolesNoAccess />;
 	}
 	if (catalog.isPending) return <RolesSkeleton />;
@@ -266,7 +278,6 @@ export function RolesManager() {
 			<PageToolbar
 				className="mb-4"
 				description={ROLES_DESCRIPTION}
-				count={builtinList.length + custom.length}
 				actions={
 					<DisabledReason reason={createReason}>
 						<Button size="sm" onClick={openCreate}>
@@ -279,7 +290,7 @@ export function RolesManager() {
 
 			<FilterBar
 				end={
-					searching && isFetching ? (
+					searching && isPlaceholderData ? (
 						<Spinner className="size-3.5 text-text-tertiary" />
 					) : undefined
 				}
@@ -296,12 +307,8 @@ export function RolesManager() {
 					options={ROLE_KIND_OPTIONS.map((o) => ({
 						value: o.value,
 						label: o.label,
-						hint:
-							o.value === "builtin"
-								? String(builtin.length)
-								: customUniverse === undefined
-									? undefined
-									: String(customUniverse.length),
+						// From the first page's facet pass, over the unfiltered universe; unstated until it lands.
+						hint: o.value in kindCounts ? String(kindCounts[o.value]) : undefined,
 					}))}
 					value={filters.kinds}
 					onChange={(next) => set("kinds", next)}
@@ -320,11 +327,7 @@ export function RolesManager() {
 					className="border"
 					icon={<SearchX />}
 					title="No roles match"
-					description={noMatchesDescription(
-							customUniverse === undefined
-								? undefined
-								: builtin.length + customUniverse.length,
-						)}
+					description="No built-in or custom role matches these filters."
 					action={
 						<Button variant="outline" size="sm" onClick={reset}>
 							Clear filters
@@ -377,15 +380,20 @@ export function RolesManager() {
 									{searching ? "No matching custom roles." : "No custom roles yet."}
 								</div>
 							) : (
-								custom.map((r) => (
-									<RailRow
-										key={r.id}
-										name={roleDisplayName(r.name, r.builtin)}
-										count={r.permissionKeys.length}
-										active={selected?.id === r.id}
-										onClick={() => setSelectedId(r.id)}
-									/>
-								))
+								<>
+									{custom.map((r) => (
+										<RailRow
+											key={r.id}
+											name={roleDisplayName(r.name, r.builtin)}
+											count={r.permissionKeys.length}
+											active={selected?.id === r.id}
+											onClick={() => setSelectedId(r.id)}
+										/>
+									))}
+									{/* The next page of custom roles: a scroll sentinel plus an always-
+									    visible "Load more", and a retry line if a later page fails. */}
+									<ListFooter list={customList} />
+								</>
 							)}
 						</>
 					)}

@@ -90,14 +90,15 @@ function grant(id: string, effect: "allow" | "deny") {
 		resourceType: "project",
 		resourceId: "proj-1",
 		createdAt: "2026-01-01T00:00:00.000Z",
+		asOf: "2026-01-02T00:00:00.000Z",
 	};
 }
 
 /** The two-grant page `seed-filters.ts` puts behind the project's Access list. */
 const PAGE: AccessGrantsPage = {
 	rows: [grant("a", "allow"), grant("b", "deny")],
-	resultCount: 2,
-	total: 2,
+	nextCursor: null,
+	universeEmpty: false,
 	facets: {
 		scopes: [{ value: "project", label: "Project", count: 2 }],
 		roles: [{ value: "—", label: "—", count: 2 }],

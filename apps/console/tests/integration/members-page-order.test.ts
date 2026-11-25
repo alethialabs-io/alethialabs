@@ -1,62 +1,66 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Integration: the Members list comes back in ONE total order (#6298).
+// Integration: the Members list walks ONE total alphabetical keyset order, a page at a time (#6298,
+// LST-8 #7490).
 //
-// `queryMembersPage` used to read member rows and pending invitations with no ORDER BY, so the
-// order was whatever the plan produced — and the Settings › Members table pages that list 20 rows
-// at a time on the client, members first, then invitations. A re-read could move a row to another
-// page or off every page. The unit test pins the ORDER BY text; this case asks Postgres what that
-// text DOES, including the two places a string-level assertion cannot see:
+// `queryMembersPage` reads member rows and pending invitations as one list, alphabetical by what each
+// row displays (a member's name, or their email when the name is blank; an invitation's email),
+// through the codec's text mode: `lower(display) COLLATE "C"`, then the id. Each kind is read with
+// its own strictly-after-the-cursor predicate and the two are merged in memory. The unit test pins
+// the ORDER BY text and the merge over fixtures; this case asks Postgres what they DO:
 //
-//   * the sort key is case-folded — "beth" sorts after "Ada" and before "Cy";
-//   * a member with no name sorts by their email, and two identically named members are split by
-//     email, so equal display keys still come back in one order on every read.
+//   * case folding is the database's: "beth" sorts after "Ada" and before "Cy";
+//   * a member with no name sorts by their email, and interleaves with invitations by email;
+//   * two rows whose display folds to the same text are split by id, and a walk with a page smaller
+//     than the list visits every row exactly once, in the order one big page gives — which is where
+//     the in-memory merge and the SQL comparison must agree.
 
 import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { invitation, member, organization, user } from "@/lib/db/schema";
+import { decodeKeysetTextCursor } from "@/lib/queries/keyset";
 import { queryMembersPage } from "@/lib/queries/members";
 import { describeIfDb } from "./db";
 
 const ORG = randomUUID();
 const TAG = ORG.slice(0, 8);
 
-/** Seeded users, in the order the page must list them. */
+/** Seeded users; their member rows are listed by `name` (or the email when it is null). */
 const USERS = [
-	{ id: randomUUID(), name: "Ada", email: `it-6298-zz-${TAG}@example.test` },
-	{ id: randomUUID(), name: "beth", email: `it-6298-${TAG}@example.test` },
-	// No name: displayed (and sorted) by the email — "bz…", after "beth" and before "cy" under any
-	// collation (no punctuation decides it, which glibc and ICU would skip at the first level).
-	{ id: randomUUID(), name: null, email: `bzit-6298-${TAG}@example.test` },
-	// Same display name as the next row — the email breaks the tie.
-	{ id: randomUUID(), name: "Cy", email: `it-6298-a-${TAG}@example.test` },
-	{ id: randomUUID(), name: "Cy", email: `it-6298-b-${TAG}@example.test` },
+	{ id: randomUUID(), name: "Ada", email: `zz-ada-${TAG}@example.test` },
+	{ id: randomUUID(), name: "beth", email: `zz-beth-${TAG}@example.test` },
+	{ id: randomUUID(), name: null, email: `bz-${TAG}@example.test` },
+	{ id: randomUUID(), name: "Cy", email: `zz-cy1-${TAG}@example.test` },
+	{ id: randomUUID(), name: "cy", email: `zz-cy2-${TAG}@example.test` },
 ];
 
-/** Pending invitations, in the order the page must list them. */
+/** Pending invitations, listed by email. */
 const INVITES = [
-	{ id: randomUUID(), email: `amy-${TAG}@example.test`, createdAt: new Date("2026-03-01T00:00:00Z") },
-	// The same address invited twice: the older invitation first.
-	{ id: randomUUID(), email: `Bob-${TAG}@example.test`, createdAt: new Date("2026-01-01T00:00:00Z") },
-	{ id: randomUUID(), email: `bob-${TAG}@example.test`, createdAt: new Date("2026-02-01T00:00:00Z") },
-	{ id: randomUUID(), email: `zoe-${TAG}@example.test`, createdAt: new Date("2025-12-01T00:00:00Z") },
+	{ id: randomUUID(), email: `amy-${TAG}@example.test` },
+	{ id: randomUUID(), email: `cz-${TAG}@example.test` },
 ];
 
-describeIfDb("the members page lists rows in one total order (#6298)", () => {
+/** The two "cy" members fold to one sort text, so their ids decide. */
+const CY = [USERS[3], USERS[4]].map((u) => u.id);
+
+describeIfDb("the members page walks one alphabetical keyset order (#6298, #7490)", () => {
+	/** Member row id per user id, filled in by the seed. */
+	const memberOf = new Map<string, string>();
+
 	beforeAll(async () => {
 		const db = getServiceDb();
 		await db.insert(user).values(USERS);
 		await db.insert(organization).values({ id: ORG, name: `org-6298-${TAG}` });
-		// Inserted in REVERSE so the heap order is the opposite of the wanted order: a read with no
-		// ORDER BY would most likely hand them back reversed and fail the assertion below.
-		await db.insert(member).values(
-			[...USERS].reverse().map((u) => ({ organizationId: ORG, userId: u.id, role: "admin" })),
-		);
+		const rows = await db
+			.insert(member)
+			.values([...USERS].reverse().map((u) => ({ organizationId: ORG, userId: u.id, role: "admin" })))
+			.returning({ id: member.id, userId: member.userId });
+		for (const r of rows) memberOf.set(r.userId, r.id);
 		await db.insert(invitation).values(
-			[...INVITES].reverse().map((i) => ({
+			INVITES.map((i) => ({
 				...i,
 				organizationId: ORG,
 				role: "viewer",
@@ -75,19 +79,38 @@ describeIfDb("the members page lists rows in one total order (#6298)", () => {
 		await db.delete(user).where(inArray(user.id, USERS.map((u) => u.id)));
 	});
 
-	it("orders members by displayed name case-folded, then email", async () => {
+	/** The expected walk: ada, amy@…, beth, bz-…@ (no name), cy ×2 by member id, cz-…@. */
+	function expected(): string[] {
+		const m = (i: number) => memberOf.get(USERS[i].id) ?? "";
+		const cys = CY.map((u) => memberOf.get(u) ?? "").sort();
+		return [m(0), INVITES[0].id, m(1), m(2), ...cys, INVITES[1].id];
+	}
+
+	it("lists both kinds in one page, alphabetical, case folded, ties broken by id", async () => {
 		const page = await queryMembersPage(ORG, USERS[0].id);
-		expect(page.members.map((m) => m.userId)).toEqual(USERS.map((u) => u.id));
+		expect(page.rows.map((r) => r.id)).toEqual(expected());
+		expect(page.nextCursor).toBeNull();
 	});
 
-	it("orders pending invitations by email case-folded, then oldest first", async () => {
-		const page = await queryMembersPage(ORG, USERS[0].id);
-		expect(page.invitations.map((i) => i.id)).toEqual(INVITES.map((i) => i.id));
+	it("walks every row exactly once with a page of two, across the folded tie", async () => {
+		const seen: string[] = [];
+		let cursor: string | null = null;
+		for (let guard = 0; guard < 10; guard += 1) {
+			const position = cursor === null ? undefined : (decodeKeysetTextCursor(cursor) ?? undefined);
+			const page = await queryMembersPage(ORG, USERS[0].id, {}, { limit: 2, cursor: position });
+			seen.push(...page.rows.map((r) => r.id));
+			// Facets come with the first page only.
+			expect(page.facets === null).toBe(cursor !== null);
+			cursor = page.nextCursor;
+			if (cursor === null) break;
+		}
+		expect(seen).toEqual(expected());
 	});
 
-	it("keeps that order on a filtered read", async () => {
-		const page = await queryMembersPage(ORG, USERS[0].id, { search: "it-6298" });
-		// The search matches every member's email; the order is the unfiltered one, narrowed.
-		expect(page.members.map((m) => m.userId)).toEqual(USERS.map((u) => u.id));
+	it("reads one row by id — the deep link — and nothing else", async () => {
+		const page = await queryMembersPage(ORG, USERS[0].id, { id: INVITES[1].id });
+		expect(page.rows.map((r) => r.id)).toEqual([INVITES[1].id]);
+		const other = await queryMembersPage(randomUUID(), USERS[0].id, { id: INVITES[1].id });
+		expect(other.rows.some((r) => r.id === INVITES[1].id)).toBe(false);
 	});
 });

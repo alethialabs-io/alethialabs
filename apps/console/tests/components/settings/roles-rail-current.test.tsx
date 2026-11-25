@@ -30,8 +30,12 @@ vi.mock("@/lib/actions/use-action-mutation", () => ({
 }));
 vi.mock("@/lib/query/use-roles-query", () => ({
 	useRoleCatalogQuery: () => ({ data: CATALOG.current ?? undefined, error: null, isPending: false, isError: false }),
-	useRolesQuery: () => ({ data: [], isFetching: false, isPending: false, isPlaceholderData: false }),
 }));
+// The custom roles page through `useKeysetList` since LST-8 (#7490); none here.
+vi.mock("@/lib/query/use-keyset-list", async () => {
+	const { settledKeysetList } = await import("../../helpers/keyset-list");
+	return { useKeysetList: () => settledKeysetList([]) };
+});
 vi.mock("@/components/settings/enterprise-gate", () => ({ useEntitlement: () => false }));
 vi.mock("@/components/settings/upgrade/upgrade-dialog", () => ({ UpgradeDialog: () => null }));
 vi.mock("@/components/settings/roles/role-sheet", () => ({ RoleSheet: () => null }));
@@ -39,6 +43,8 @@ vi.mock("@/components/classification/classification-chips", () => ({ Classificat
 vi.mock("@/components/classification/classification-control", () => ({ ClassificationControl: () => null }));
 
 import { RolesManager } from "@/components/settings/roles/roles-manager";
+// The rail reads a deep-linked role by id through `useQuery` since LST-8 (#7490).
+import { queryWrapper } from "../../helpers/query-wrapper";
 
 /** A built-in role with `n` permission keys, so its rail row's name is `<name><n>`. */
 function role(name: string, n: number): RoleRow {
@@ -63,7 +69,7 @@ CATALOG.current = bootstrap;
 describe("the roles rail", () => {
 	it("marks the selected role's row current — and only that row", async () => {
 		window.history.replaceState(null, "", "/acme/~/settings/roles");
-		const { rerender } = render(<RolesManager />);
+		const { rerender } = render(<RolesManager />, { wrapper: queryWrapper() });
 		const owner = screen.getByRole("button", { name: "Owner3" });
 		const viewer = screen.getByRole("button", { name: "Viewer1" });
 		expect(owner).toHaveAttribute("aria-current", "true");
@@ -82,7 +88,7 @@ describe("the roles rail", () => {
 describe("Create role without the plan", () => {
 	it("is disabled and says which plan has it", () => {
 		window.history.replaceState(null, "", "/acme/~/settings/roles");
-		render(<RolesManager />);
+		render(<RolesManager />, { wrapper: queryWrapper() });
 		const create = screen.getByRole("button", { name: /create role/i });
 		expect(create).toBeDisabled();
 		expect(create).toHaveAccessibleDescription(/Custom roles are available on the .+ plan\./);
@@ -90,7 +96,7 @@ describe("Create role without the plan", () => {
 
 	it("a link naming a role opens on it", () => {
 		window.history.replaceState(null, "", "/acme/~/settings/roles?selected=role-viewer");
-		render(<RolesManager />);
+		render(<RolesManager />, { wrapper: queryWrapper() });
 		expect(screen.getByRole("button", { name: "Viewer1" })).toHaveAttribute("aria-current", "true");
 	});
 });
