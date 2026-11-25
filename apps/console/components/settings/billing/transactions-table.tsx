@@ -2,19 +2,24 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Transaction history (Billing page) — the org's recent Stripe charges (paid /
-// failed / refunded) on the shared DataTable (sortable + paginated). Read-only. The read is
-// `billing.transactions` over GET, prefetched by the route (#6127); a failed read renders as an
-// error with a retry, never as "No transactions yet".
+// Transaction history (Billing page) — EVERY Stripe charge the org has (paid / failed / refunded),
+// newest first, on the shared DataTable in server mode. Read-only. The read is
+// `billing.transactions` over GET, one keyset page at a time through Stripe's own cursor
+// (`starting_after`, mapped onto the console's opaque cursor — lib/queries/billing.ts), with the
+// first page prefetched by the route (#6127). The shared footer (scroll sentinel + "Load more")
+// fetches the next page. This used to read the newest 24 charges and page THOSE in the browser,
+// ten at a time, so charge 25 and every one after it was silently unreachable (#7493).
+//
+// A refused read (no hosted billing, no permission) is its own state; a failed first page is the
+// table's region error with a retry, never "No transactions yet"; a failed later page keeps the
+// loaded rows and says so in the footer. No count: the console carries no list counts.
 
-import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
-import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
+import { RegionRefusal, refusalOf } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { ClockText } from "@/components/settings/usage/clock-text";
-import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import type { TransactionInfo } from "@/lib/rpc/procedures/billing";
 import { formatDate, formatMoney } from "@repo/format";
@@ -84,30 +89,20 @@ const columns: ColumnDef<TransactionInfo>[] = [
 	},
 ];
 
-/** The Transaction history section: the table, or its pending / refused / failed render. */
+/** The ledger reads every charge from the first page on; the history has no filters to narrow it. */
+const NO_FILTER = {};
+
+/** The Transaction history section: every charge, paged, or its refused render. */
 export function TransactionsTable() {
-	const rows = useQuery(orpc.billing.transactions.queryOptions({ retry: retryUnlessRefused }));
-	const refusal = rows.isError ? refusalOf(rows.error) : null;
+	const list = useKeysetList(orpc.billing.transactions, NO_FILTER);
+	const refusal = list.query.isError ? refusalOf(list.query.error) : null;
 
 	return (
 		<SettingsSection title="Transaction history">
-			{rows.data !== undefined ? (
-				<DataTable
-					columns={columns}
-					data={rows.data}
-					pageSize={10}
-					emptyMessage="No transactions yet."
-				/>
-			) : refusal ? (
+			{refusal ? (
 				<RegionRefusal refusal={refusal} />
-			) : rows.isError ? (
-				<RegionError
-					title="Couldn't load transactions"
-					description="Something went wrong reading this organization's charges."
-					onRetry={() => void rows.refetch()}
-				/>
 			) : (
-				<DataTableSkeleton columns={5} rows={4} />
+				<DataTable columns={columns} keyset={list} skeletonRows={4} emptyMessage="No transactions yet." />
 			)}
 		</SettingsSection>
 	);
