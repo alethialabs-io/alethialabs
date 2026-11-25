@@ -105,7 +105,7 @@ alethia logout
 Removes the stored credential for the current control plane from both places it can be: the system
 keychain and the credentials file. It also deletes the kubeconfig credential cache, for every
 organization. After that, an exec kubeconfig from `alethia cluster kubeconfig` fails until you run
-`alethia login` again. See [Revoke access](/guides/get-a-kubeconfig#revoke-access).
+`alethia login` again. See [Revoke access](/concepts/cluster-access#revoke-access).
 
 `alethia logout` tries every removal before it reports a failure. If it cannot delete the keychain
 entry, the file or the cache, it prints the reason on stderr and exits with a non-zero status. If you
