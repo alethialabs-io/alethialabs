@@ -125,7 +125,10 @@ describe("self-approval", () => {
 		const f = setup([pending()], { differentApprover: true });
 		const result = await decideApproval(f.db, decider("session", REQUESTER), APPROVAL, { decision: "approve" }, NOW);
 		expect(result.ok).toBe(true);
-		expect(f.selects.get(orgAgentPolicy)).toBeUndefined();
+		// The row IS read now — approving re-checks the core kill switch and "keep agents off
+		// production" (decidable.ts, AGT-L2 G14) — but with no enterprise policy registered the
+		// different-approver toggle in it is not acted on, which is what the approve above shows.
+		expect(f.selects.get(orgAgentPolicy)).toBe(1);
 	});
 
 	it("is refused when the org requires a different approver and is entitled to it", async () => {

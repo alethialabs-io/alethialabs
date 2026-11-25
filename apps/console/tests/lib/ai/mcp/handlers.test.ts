@@ -57,6 +57,7 @@ function approval(status: ApprovalView["status"], over: Partial<ApprovalView> = 
 		digest_prefix: "9f3c1a7e",
 		expires_at: "2026-11-24T12:00:00.000Z",
 		decided_at: null,
+		decision_reason: null,
 		consumed_job_id: null,
 		...over,
 	};
