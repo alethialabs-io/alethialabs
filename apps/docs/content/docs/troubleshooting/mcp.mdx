@@ -1,0 +1,43 @@
+---
+title: MCP
+description: Fix an MCP client that cannot connect to the Alethia MCP server, or that is refused after sign-in.
+---
+
+Find what your client shows, then do what the block says. How to connect a client is in
+[Connect an MCP client](/guides/assistant/mcp).
+
+## 503 "MCP is not configured on this deployment"
+
+**Cause:** a self-hosted console whose `NEXT_PUBLIC_APP_URL` is not an absolute `https` URL. The server
+needs one to name itself in tokens.
+
+**Fix:** set `NEXT_PUBLIC_APP_URL` to the console's `https://` address and restart the console.
+
+## An error during sign-in that names the client
+
+**Cause:** the client cannot identify itself with a Client ID Metadata Document. The server does not
+accept anonymous dynamic client registration.
+
+**Fix:** update the client to a version that supports Client ID Metadata Documents.
+
+## 403 after sign-in
+
+**Cause:** one of three things, and the response says which: AI is turned off for the organization, an
+owner turned agent access off, or the token carries no scope the server reads.
+
+**Fix:** ask an owner to turn AI or agent access back on, or connect again and approve at least `read`.
+
+## 403 insufficient_scope on a connection that used to work
+
+**Cause:** the connection was made before Alethia added agent scopes. It holds only `openid`, `profile`
+and `email`.
+
+**Fix:** disconnect the Alethia MCP server in the client, connect it again, and approve the scopes the
+consent page asks for: `read`, `design`, `plan`, `apply`, `destroy`.
+
+## The first request after sign-in is refused
+
+**Cause:** the client speaks a 2025 revision of the MCP protocol. The server accepts only the current
+generation.
+
+**Fix:** update the client.

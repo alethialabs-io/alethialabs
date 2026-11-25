@@ -1,62 +1,73 @@
 ---
-title: Single Sign-On (SSO)
-description: Let your team sign in through your own identity provider over OIDC or SAML — Alethia as the service provider.
+title: Set up single sign-on
+description: Let members sign in through your own identity provider over OIDC or SAML, by registering the provider and verifying your email domain.
 ---
 
-<Enterprise />
+Let your members sign in through your identity provider (IdP), such as Okta, Microsoft Entra ID,
+Google Workspace, AWS IAM Identity Center, OneLogin or Ping. Alethia is the service provider: it uses
+your IdP and runs none of its own. Each organization registers its own providers, so organizations
+can use different IdPs.
 
-SSO lets members sign in through **your** identity provider (IdP) instead of (or alongside) email and social
-login. Alethia is the **Service Provider** that *consumes* your IdP — it never runs an identity provider of its
-own.
+## Before you begin
 
-You bring the IdP. Supported via standard protocols (see [OIDC](/reference/standards/oidc) and [SAML & SCIM](/reference/standards/scim-saml) for the protocol details):
+- The organization is on the Enterprise plan. On other plans, the page offers an upgrade.
+- Your role can manage SSO.
+- You can create an OIDC or SAML application in your IdP, and add a DNS record for your email domain.
+- A self-hosted console has the enterprise setup done. See [Enterprise setup](/self-host/enterprise-setup).
 
-- **[OIDC](/reference/standards/oidc)** — Okta · Microsoft Entra ID · Google Workspace · **AWS IAM Identity Center** · OneLogin · Ping · …
-- **[SAML 2.0](/reference/standards/scim-saml)** — the same IdPs over SAML.
+## Steps
 
-Under the hood SSO is the Better Auth `@better-auth/sso` plugin (shipped in the enterprise package); a provider stores either an `oidcConfig` or a `samlConfig` and can be scoped per organization (`sso_provider.organizationId`) or left instance-wide.
+<Steps>
 
-<Callout type="info">
-  There's nothing to run on Alethia's side — no Hydra, no Alethia-as-IdP. Each organization registers its own
-  provider, so different orgs can use different IdPs.
-</Callout>
+### Start the registration
+Open **Settings → Single Sign-On** and select **Register provider**.
 
-## Registering a provider
+### Choose the protocol
+Pick **OpenID Connect** or SAML. Protocol details are in [OIDC](/reference/standards/oidc) and
+[SAML and SCIM](/reference/standards/scim-saml).
 
-In **Settings → Single Sign-On → Register provider**, choose the protocol and fill in the IdP's details:
+### Enter the IdP's details
 
-<Tabs items={["OIDC", "SAML"]}>
-<Tab value="OIDC">
+| OIDC | SAML |
+| --- | --- |
+| **Issuer URL** | **IdP Entity ID (issuer)** |
+| **Client ID** and **Client secret** from the IdP's OIDC application | **IdP sign-on URL** and **Signing certificate (X.509)** from the IdP's SAML metadata |
 
-| Field | What it is |
-|---|---|
-| Provider ID | A short slug for the provider (e.g. `okta`) |
-| Email domain | The domain whose users route to this provider (e.g. `company.com`) |
-| Issuer URL | Your IdP's issuer / discovery URL |
-| Client ID / Client secret | The OIDC application credentials from your IdP |
+### Set the domain and mapping
+Enter a **Provider id**, a short slug such as `okta`, and the **Email domain** whose users sign in
+through this provider, such as `company.com`. Change **Email claim** and **Name claim** if your IdP
+uses other names.
 
-</Tab>
-<Tab value="SAML">
+### Review and register
+Check the summary and register the provider. It shows **Pending domain**.
 
-| Field | What it is |
-|---|---|
-| Provider ID | A short slug (e.g. `entra`) |
-| Email domain | The domain whose users route to this provider |
-| IdP Entity ID | Your IdP's SAML entity / issuer ID |
-| SSO URL (entry point) | The IdP's SAML sign-in endpoint |
-| X.509 certificate | The IdP's signing certificate |
+### Configure your IdP
+The provider shows the **Redirect URI** (OIDC) and the **Start URL**. Add them to your IdP application.
 
-</Tab>
-</Tabs>
+### Verify the domain
+Select **Show DNS record**, add that record to your domain's DNS, then select **Verify domain**.
+When it passes, the provider shows **Verified**, and SSO sign-in is on.
 
-## Provisioning into the organization
+</Steps>
 
-When a member signs in through SSO for the first time, Alethia **provisions** them into the organization with the
-least-privileged role. From that point they're a
-normal [member](/guides/access/members-and-invitations) — the [PDP](/concepts/access-control/architecture) authorizes
-them exactly as it would anyone else.
+## Check that it worked
 
-## Next
+Select **Test connection** on the provider. Then sign in at the **Start URL** with an account on the
+email domain.
 
-- How members are authorized once they're in: [**grants & scopes**](/guides/access/grants-and-scopes).
-- Turning SSO on for a deployment: the [**Enterprise setup runbook**](/self-host/enterprise-setup).
+The first time someone signs in through SSO, Alethia adds them to the organization with the
+least-privileged role. From then on they are an ordinary
+[member](/guides/access/members-and-invitations), and you change their access with
+[grants](/guides/access/access-portal). SCIM provisioning and deprovisioning from your IdP is not
+available yet: users are added when they first sign in.
+
+## Edit or remove a provider
+
+**Edit provider** changes the details. Leave the client secret or certificate blank to keep the
+stored one. **Remove provider** stops sign-in through it; the members' accounts and memberships stay.
+It cannot be undone.
+
+## Related
+
+- [Invite members](/guides/access/members-and-invitations)
+- [Enterprise setup](/self-host/enterprise-setup)

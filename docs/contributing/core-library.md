@@ -134,3 +134,21 @@ Uses Go's `embed` directive to ship templates inside the binary — the runner i
 //go:embed all:helm/runner
 var Assets embed.FS
 ```
+
+## Adding a pluggable connector
+
+Moved here from the user docs (`guides/connectors/pluggable`). A new provider needs no change to
+routes, the runner core or the form engine:
+
+1. Add a row to `packages/core/categories/catalog.json`: category, slug, `auth_method`, icon, and the
+   credential and provider-config fields. Set `icon_url` to a path under `packages/assets/static`
+   (the convention is `/icons/<slug>/<slug>-32x32.png`) after committing the file there, or to `null`
+   for a monogram tile. A path with no file behind it fails step 4.
+2. Add a `CategoryProvider` Go implementation under `packages/core/categories/` (`Tfvars`,
+   `Validate`).
+3. Add the OpenTofu module under `infra/templates/categories/<category>/<slug>/`. A chart-repository
+   provider has no module: it implements `RepoCred`, and needs a host rule in
+   `apps/console/lib/connectors/helm-registry-hosts.ts` so that the console resolves the same
+   credential URL as the Go provider.
+4. Run `pnpm -F console gen:connectors` to regenerate the registry and the catalog seed. It fails,
+   naming the connector, when an `icon_url` does not resolve to a committed file.
