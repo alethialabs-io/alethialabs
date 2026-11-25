@@ -25,6 +25,7 @@ const (
 	RouteOrgProjectUsage               = "/[org]/[project]/usage"
 	RouteOrg                           = "/[org]"
 	RouteOrgAlerts                     = "/[org]/~/alerts"
+	RouteOrgApprovals                  = "/[org]/~/approvals"
 	RouteOrgClusters                   = "/[org]/~/clusters"
 	RouteOrgConnectors                 = "/[org]/~/connectors"
 	RouteOrgEvidence                   = "/[org]/~/evidence"
@@ -70,6 +71,7 @@ var Routes = []string{
 	RouteOrgProjectUsage,
 	RouteOrg,
 	RouteOrgAlerts,
+	RouteOrgApprovals,
 	RouteOrgClusters,
 	RouteOrgConnectors,
 	RouteOrgEvidence,
