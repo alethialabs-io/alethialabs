@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
+import { and, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
 import type { AccessGrantRow } from "@/app/server/actions/grants";
 import { roleDisplayName } from "@/lib/authz/registry";
 import { getServiceDb } from "@/lib/db";
@@ -25,10 +25,25 @@ import {
 	searchTerm,
 	tally,
 } from "./facets";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetAfter,
+	keysetFetchLimit,
+	keysetListPage,
+	keysetOrderBy,
+	keysetPage,
+	keysetSortKey,
+} from "./keyset";
 
 // The Settings › Access grants list, filtered in SQL (the console filter standard's server
 // half). Service path with an explicit `org_id` filter — the service role bypasses RLS, so
 // the org scope is enforced here, exactly as the unfiltered `listAccessGrants()` does.
+//
+// Paged on the console's ONE contract (lib/query/README.md → "Paging"; LST-8 #7490): newest grant
+// first by `created_at` truncated to the millisecond, then the id, through the shared keyset codec
+// — the order this list always showed, now a page at a time instead of every grant in the scope.
 //
 // `AccessGrantRow` stays defined in the action module (components import it from there);
 // the import above is type-only, so it is erased and no runtime cycle exists.
@@ -73,21 +88,28 @@ export interface AccessGrantQuery {
 	effects?: string[];
 }
 
-/** Rows + the facet options behind the Access filter bar. */
-export interface AccessGrantsPage {
-	/** Grants matching the query, newest first. */
-	rows: AccessGrantRow[];
-	/** Grants matching the query. */
-	resultCount: number;
-	/** Every grant in the scope — the count pill's denominator. */
-	total: number;
-	facets: {
-		scopes: FacetOption[];
-		roles: FacetOption[];
-		/** Both effects, always. */
-		effects: FacetOption[];
-	};
+/** The facets behind the Access filter bar, over the UNFILTERED grants of the scope. */
+export interface AccessGrantFacets {
+	scopes: FacetOption[];
+	roles: FacetOption[];
+	/** Both effects, always. */
+	effects: FacetOption[];
 }
+
+/**
+ * One grant of the list. `asOf` is when the page holding it was read (ISO), the instant "Granted …
+ * ago" is computed against — carried in the payload so the server render and the hydrating client
+ * print the same string (React #418, the members page's #5377 rule).
+ */
+export interface AccessGrantListRow extends AccessGrantRow {
+	asOf: string;
+}
+
+/** One page of the Access list (`KeysetListPage`): rows, the next cursor, and first-page facets. */
+export type AccessGrantsPage = KeysetListPage<AccessGrantListRow, AccessGrantFacets>;
+
+/** A grant's keyset sort key — when it was made, truncated to the millisecond. */
+const GRANT_LISTED_AT: SQL = keysetSortKey(grants.created_at);
 
 /** The role-facet value a grant falls under — the value the Roles combobox sends back. */
 function roleKey(roleName: string | null, permissionKey: string | null): string {
@@ -123,16 +145,20 @@ function rolePredicate(values: string[]): SQL | undefined {
 }
 
 /**
- * The org's access grants for `query` — rows filtered in SQL, plus facet counts over the
- * UNFILTERED grants of the same scope (org, or one project when `projectId` is given). The
- * facet pass below is handed the scope predicates and NOTHING from the filters, which is
- * what keeps an option from disappearing the moment it is selected.
+ * One page of the org's access grants for `query`, newest first — rows filtered in SQL, plus (on the
+ * first page only) facet counts over the UNFILTERED grants of the same scope (org, or one project
+ * when `projectId` is given). The facet pass below is handed the scope predicates and NOTHING from
+ * the filters or the cursor, which is what keeps an option from disappearing the moment it is
+ * selected. A later page carries `facets: null`.
  */
 export async function queryAccessGrantsPage(
 	orgId: string,
 	query: AccessGrantQuery = {},
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<AccessGrantsPage> {
 	const db = getServiceDb();
+	const asOf = new Date().toISOString();
+	const firstPage = request.cursor === undefined;
 	const search = searchTerm(query.search);
 	const like = search ? likeTerm(search) : undefined;
 	const scopes = narrowTo(GRANT_SCOPES, query.scopes);
@@ -170,9 +196,9 @@ export async function queryAccessGrantsPage(
 			: undefined,
 	].filter((c) => c !== undefined);
 
-	const [rows, facetRows] = await Promise.all([
-		// ROWS: scope + the query's predicates. The resource joins exist so the free-text
-		// search can reach the names the Scope column shows.
+	const [fetched, facetRows] = await Promise.all([
+		// ROWS: scope + the query's predicates + the cursor, `limit + 1` of them. The resource
+		// joins exist so the free-text search can reach the names the Scope column shows.
 		db
 			.select({
 				id: grants.id,
@@ -219,21 +245,53 @@ export async function queryAccessGrantsPage(
 					eq(cloudIdentities.org_id, orgId),
 				),
 			)
-			.where(and(...scopeConditions, ...filterConditions))
-			.orderBy(desc(grants.created_at)),
-		// FACETS: the scope predicates ONLY — one light pass over every grant in the scope.
-		// It never sees `filterConditions`; that is the invariant.
-		db
-			.select({
-				effect: grants.effect,
-				resourceType: grants.resource_type,
-				roleName: role.name,
-				permissionKey: grants.permission_key,
-			})
-			.from(grants)
-			.leftJoin(role, eq(grants.role_id, role.id))
-			.where(and(...scopeConditions)),
+			.where(
+				and(
+					...scopeConditions,
+					...filterConditions,
+					keysetAfter(GRANT_LISTED_AT, grants.id, request.cursor),
+				),
+			)
+			.orderBy(...keysetOrderBy(GRANT_LISTED_AT, grants.id))
+			.limit(keysetFetchLimit(request.limit)),
+		// FACETS (first page only): the scope predicates ONLY — one light pass over every grant in
+		// the scope. It never sees `filterConditions` or the cursor; that is the invariant.
+		firstPage
+			? db
+					.select({
+						effect: grants.effect,
+						resourceType: grants.resource_type,
+						roleName: role.name,
+						permissionKey: grants.permission_key,
+					})
+					.from(grants)
+					.leftJoin(role, eq(grants.role_id, role.id))
+					.where(and(...scopeConditions))
+			: [],
 	]);
+	const cut = keysetPage(fetched, request.limit, (r) => ({ at: r.createdAt, id: r.id }));
+	const rows = cut.rows.map((r): AccessGrantListRow => ({
+		id: r.id,
+		principalType: r.principalType,
+		principalId: r.principalId,
+		// A team grant renders its team NAME here (the unfiltered `listAccessGrants` shows a
+		// truncated uuid because it never joined `team`), so the row shows what the search
+		// matched on.
+		principalLabel:
+			r.teamName ??
+			r.principalName ??
+			r.principalEmail ??
+			`${r.principalId.slice(0, 8)}…`,
+		effect: r.effect === "deny" ? "deny" : "allow",
+		roleName: r.roleName,
+		permissionKey: r.permissionKey,
+		resourceType: r.resourceType,
+		resourceId: r.resourceId,
+		createdAt: r.createdAt.toISOString(),
+		asOf,
+	}));
+	const page = { rows, nextCursor: cut.nextCursor };
+	if (!firstPage) return keysetListPage(page, null);
 
 	const scopeCounts = tally(facetRows, (r) => r.resourceType);
 	const roleCounts = tally(facetRows, (r) =>
@@ -243,32 +301,12 @@ export async function queryAccessGrantsPage(
 		r.effect === "deny" ? "deny" : "allow",
 	);
 
-	return {
-		rows: rows.map((r) => ({
-			id: r.id,
-			principalType: r.principalType,
-			principalId: r.principalId,
-			// A team grant renders its team NAME here (the unfiltered `listAccessGrants`
-			// shows a truncated uuid because it never joined `team`), so the row shows what
-			// the search matched on.
-			principalLabel:
-				r.teamName ??
-				r.principalName ??
-				r.principalEmail ??
-				`${r.principalId.slice(0, 8)}…`,
-			effect: r.effect === "deny" ? "deny" : "allow",
-			roleName: r.roleName,
-			permissionKey: r.permissionKey,
-			resourceType: r.resourceType,
-			resourceId: r.resourceId,
-			createdAt: r.createdAt.toISOString(),
-		})),
-		resultCount: rows.length,
-		total: facetRows.length,
+	return keysetListPage(page, {
 		facets: {
 			scopes: asOptions(scopeCounts),
 			roles: asOptions(roleCounts, roleLabel),
 			effects: orderedOptions(effectCounts, GRANT_EFFECTS),
 		},
-	};
+		universeEmpty: facetRows.length === 0,
+	});
 }

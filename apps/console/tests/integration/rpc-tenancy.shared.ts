@@ -971,18 +971,18 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.page": {
 		kind: "org-scoped",
 		input: {},
-		// `asOf` is the read's own instant, and the personal scope's synthesized owner is "active now".
+		// A keyset page since #7490: every row carries the read's own `asOf`, and the personal scope's
+		// synthesized owner is "active now".
 		withoutClock: (out) => {
-			const members = field(out, "members");
+			const rows = field(out, "rows");
 			return {
 				...Object(out),
-				asOf: null,
-				members: Array.isArray(members) ? members.map(withoutSynthesizedClock) : members,
+				rows: Array.isArray(rows) ? rows.map((r: unknown) => ({ ...Object(withoutSynthesizedClock(r)), asOf: null })) : rows,
 			};
 		},
 		markers: (out) => {
-			const members = field(out, "members");
-			const n = Array.isArray(members) ? members.length : -1;
+			const rows = field(out, "rows");
+			const n = Array.isArray(rows) ? rows.filter((r: unknown) => field(r, "kind") === "member").length : -1;
 			return { x: n === 3, y: n === 2 };
 		},
 	},
@@ -1018,7 +1018,8 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.roles": {
 		kind: "org-scoped",
 		input: {},
-		markers: (out, s) => ({ x: hasElement(out, "id", s.roleX), y: hasElement(out, "id", s.roleY) }),
+		// A keyset page since #7490: the seeded custom roles are among its `rows`.
+		markers: (out, s) => ({ x: hasRow(out, s.roleX), y: hasRow(out, s.roleY) }),
 	},
 	"members.roleCatalog": {
 		// The built-in viewer's distinct-user grant count IS the org's marker: U and V in X, U in Y.
@@ -1034,8 +1035,11 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.grants": {
 		kind: "org-scoped",
 		input: {},
-		// `asOf` is the read's own instant — what "Granted … ago" is computed against.
-		withoutClock: (out) => ({ ...Object(out), asOf: null }),
+		// Each row's `asOf` is the read's own instant — what "Granted … ago" is computed against.
+		withoutClock: (out) => {
+			const rows = field(out, "rows");
+			return { ...Object(out), rows: Array.isArray(rows) ? rows.map((r: unknown) => ({ ...Object(r), asOf: null })) : rows };
+		},
 		markers: (out, s) => {
 			const rows = field(out, "rows");
 			const names = (id: string) => Array.isArray(rows) && rows.some((r: unknown) => field(r, "principalId") === id);
