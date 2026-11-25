@@ -1,74 +1,56 @@
 ---
-title: Caches
-description: Redis and Valkey cache instances — node types, clustering, and multi-AZ.
+title: Add a cache
+description: Add a Redis or Valkey cache to an environment and size it by node type or by memory.
 ---
 
-The caches section configures managed in-memory cache instances. Multiple caches can be added per project.
+Add an in-memory cache to the environment. You can add as many as you need.
 
-## Fields Per Cache
+## Before you begin
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Name** | Text input | Unique per project, lowercase |
-| **Engine** | Select | `redis` or `valkey` |
-| **Node Type** | Select | Instance size with pricing shown |
-| **Nodes** | Number | 1–6 cache nodes |
-| **Multi-AZ** | Toggle | Enable automatic failover across availability zones |
+- You have a project open on the [canvas](/guides/design-project/the-canvas).
 
-## Engines
+## Steps
 
-| Engine | Description |
-|--------|-------------|
-| **Redis** | The standard in-memory data store. Supported on all three providers. |
-| **Valkey** | Open-source Redis fork (AWS only). Drop-in compatible with Redis, no licensing concerns. |
+1. Select **Add**, then **Cache** in the **Data** group.
+2. Choose the engine. The first cache is named `primary`.
 
-## Node Types by Provider
+   | Cloud | Engines |
+   | --- | --- |
+   | AWS | Redis (ElastiCache), Valkey (ElastiCache Serverless) |
+   | GCP | Redis or Valkey (Memorystore) |
+   | Azure | Redis (Azure Managed Redis) |
+   | Hetzner | Valkey, in your cluster |
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    **ElastiCache** node types:
+3. Size the cache in one of two ways:
+   - Choose a **Node type**. Each option shows its memory and an approximate monthly price per node.
+   - Or set **Memory** in GB (0.5–512). Alethia picks the nearest tier on the project's cloud, so
+     the setting survives a move to another cloud.
+4. Set **Nodes** (1–6, default 1). On Azure this field is unavailable, because Azure Managed Redis
+   is sized by its tier: use **Memory** instead.
+5. Optional: turn on **Multi-AZ** to replicate across availability zones, so a replica takes over
+   if the primary fails. This adds replica nodes to the cost.
+6. Optional: add **Allowed CIDR blocks**, extra networks that can reach the cache. The cluster
+   always can. This field is unavailable on Azure, which has no firewall rule for Managed Redis.
+7. Optional: under **Advanced**, pin an **Engine version**.
 
-    | Type | Memory | Cost (~) |
-    |------|--------|---------|
-    | cache.t3.micro | 0.5 GiB | ~$13/mo |
-    | cache.t3.small | 1.4 GiB | ~$25/mo |
-    | cache.t3.medium | 3.1 GiB | ~$50/mo |
-    | cache.r6g.large | 13.1 GiB | ~$130/mo |
-    | cache.r6g.xlarge | 26.3 GiB | ~$260/mo |
+On Hetzner, set **Storage**, the volume per Valkey node in GiB (1–512). It defaults to the memory
+size. **Node type**, **Memory** and **Multi-AZ** are not shown there.
 
-    Pricing shown next to each type is per node. Multiply by node count for total.
-  </Tab>
-  <Tab value="GCP">
-    **Memorystore** tiers:
+### Node types
 
-    | Tier | Memory | Notes |
-    |------|--------|-------|
-    | M1 | 1 GiB | Basic |
-    | M2 | 5 GiB | Standard |
-    | M3 | 16 GiB | Large |
-    | M4 | 35 GiB | Extra Large |
-  </Tab>
-  <Tab value="Azure">
-    **Azure Cache for Redis** tiers:
+| Cloud | Types (memory) | Default |
+| --- | --- | --- |
+| AWS | `cache.t3.micro` (0.5 GB), `cache.t3.small` (1.37 GB), `cache.t3.medium` (3.09 GB), `cache.r6g.large` (13.07 GB), `cache.r6g.xlarge` (26.32 GB) | `cache.t3.medium` |
+| GCP | `M1` (1 GB), `M2` (4 GB), `M3` (10 GB), `M4` (35 GB) | `M1` |
+| Azure | `Balanced_B0` (0.5 GB), `Balanced_B1` (1 GB), `Balanced_B3` (3 GB), `Balanced_B5` (6 GB), `Balanced_B10` (12 GB), `Balanced_B20` (24 GB) | `Balanced_B1` |
+| Hetzner | 1, 2 or 4 GiB | 1 GiB |
 
-    | Tier | Memory | Notes |
-    |------|--------|-------|
-    | C0 | 0.25 GiB | Basic |
-    | C1 | 1 GiB | Basic |
-    | C2 | 2.5 GiB | Standard |
-    | C3 | 6 GiB | Standard |
-    | P1 | 6 GiB | Premium (clustering, persistence) |
-  </Tab>
-</Tabs>
+## Check that it worked
 
-## Multi-AZ
+After the deploy, open the cache's **Status** tab. **Endpoints** shows the primary endpoint, and a
+reader endpoint when Multi-AZ is on. Redis and Valkey listen on port 6379.
 
-When enabled, the cache replicates data across availability zones for automatic failover. If the primary node fails, a replica in another AZ is promoted automatically. This adds ~50% to the cost (replica nodes).
+## Related
 
-## After Provisioning
-
-The cache card in project detail shows:
-- **Primary endpoint** — connection string for writes
-- **Reader endpoint** — connection string for reads (if multi-AZ)
-- **Port** — typically 6379
-- **Status** — ACTIVE, CREATING, or FAILED
+- [Add a service](/guides/design-project/services): connect a service to the cache.
+- [See the cost](/guides/design-project/cost)

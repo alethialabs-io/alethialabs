@@ -1,89 +1,73 @@
 ---
-title: Messaging
-description: Queues and topics — SQS, SNS, Pub/Sub, Service Bus configuration.
+title: Add queues and topics
+description: Add message queues, with ordered delivery if you need it, and publish/subscribe topics with their subscriptions.
 ---
 
-The messaging section configures message queues and publish/subscribe topics. Queues and topics are configured independently.
+Add queues for point-to-point messages and topics for publish/subscribe. You can add as many of
+each as you need.
 
-## Queues
+## Before you begin
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Name** | Text input | Queue name |
-| **Ordered (FIFO) delivery** | Toggle | Per-key ordering. See [What "ordered" means](#what-ordered-means) |
-| **Visibility Timeout** | Number | 0–43,200 seconds (displayed as human-readable: s/m/h) |
+- You have a project open on the [canvas](/guides/design-project/the-canvas).
+- If you want ordered delivery, your publisher can set an ordering key on every message.
 
-### What ordered means
+## Add a queue
 
-Ordered delivery means one thing on every cloud Alethia supports:
+1. Select **Add**, then **Queue** in the **Messaging** group.
+2. Set **Visibility timeout (s)**, how long a message stays hidden after a consumer reads it
+   (0–43,200, default 30).
+3. Set **Message retention**, how long an unconsumed message is kept (1–14 days, default 4).
+4. Decide on **Ordered (FIFO) delivery** now. Changing it later destroys the queue and every
+   message in it, because each cloud fixes it when the queue is created.
 
-> Messages tagged with the same ordering key are delivered to consumers in the order the service
-> received them. Messages with different keys have no relative order and are still processed
-> concurrently.
+On Hetzner, a queue is a RabbitMQ server in your cluster. Set its **Storage** in GiB (1–256); the
+other fields are not shown.
 
-Three consequences apply everywhere. Read them before you turn the toggle on.
+| Cloud | Queue | With ordered delivery |
+| --- | --- | --- |
+| AWS | SQS | A FIFO queue. The name gains `.fifo`, which counts toward the 80-character limit. Deduplication is by content. The dead-letter queue is FIFO too. |
+| GCP | A pull subscription on Pub/Sub | Message ordering on the subscription. All messages for one key must be published from one region. |
+| Azure | Service Bus queue | Sessions. They need the Standard or Premium tier: a Basic project is blocked before it deploys. |
 
-**It is per key, never a total order.** No cloud orders a whole queue. AWS orders within a message
-group, Azure within a session, and Google Cloud within an ordering key. A queue with no keys is
-unordered even with the toggle on.
+### What ordered delivery means
 
-**It is an application change, not only an infrastructure change.** Your publisher must set a key on
-every message. On Azure your consumer must also accept a session instead of receiving plain
-messages — once sessions are on, a client that sends or receives regular messages stops working.
+Messages with the same ordering key arrive in the order the service received them. Messages with
+different keys have no order between them and are still processed in parallel. A queue whose
+messages carry no key is unordered, even with the setting on.
 
-**It costs throughput, and on AWS money.** AWS charges more per request for a FIFO queue and caps it
-at 300 messages per second, or 3,000 batched. Google Cloud caps each ordering key at 1 MB/s and
-raises delivery latency. Azure gives each session to exactly one receiver at a time.
+| Cloud | The key | Cost |
+| --- | --- | --- |
+| AWS | `MessageGroupId` | A higher price per request, and at most 300 messages a second (3,000 batched) |
+| GCP | `orderingKey` | At most 1 MB/s per key, and higher latency. A redelivered message makes every later message for its key arrive again. Order is lost in a dead-letter topic. |
+| Azure | `SessionId` | One receiver holds a session at a time. A message moved back from the dead-letter queue loses its place. |
 
-<Callout type="warn">
-Changing this setting on a queue that already exists **destroys the queue and every message in
-it** — on Google Cloud, the subscription and every message it has not acknowledged. Every service
-that offers ordering makes the choice when the queue is created and never after, so Alethia has to
-replace the queue to change it. Set it when you create the queue.
-</Callout>
+On Azure, your consumer must also accept sessions. After you turn sessions on, a client that sends
+or receives plain messages stops working.
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    **SQS** (Simple Queue Service) — ordered delivery creates a FIFO queue.
-    - Order holds within a `MessageGroupId`, which your publisher sets on every send
-    - The queue name gains a `.fifo` suffix, and the 80-character name limit counts it
-    - Deduplication is content-based, so a publisher that sets only a group id can still send
-    - The dead letter queue becomes FIFO too — SQS requires it
-    - Visibility timeout: how long a message is hidden after a consumer reads it
-  </Tab>
-  <Tab value="GCP">
-    **Pub/Sub Subscriptions** (pull mode) — ordered delivery sets message ordering on the queue's subscription.
-    - Order holds within an `orderingKey`, and all messages for one key must be published from one region
-    - A redelivered message causes every later message for that key to be delivered again
-    - Order is not preserved for messages written to a dead-letter topic
-  </Tab>
-  <Tab value="Azure">
-    **Service Bus Queues** — ordered delivery enables sessions.
-    - Order holds within a `SessionId`, and one receiver holds every message for that session
-    - Sessions need the Standard or Premium tier. Alethia blocks a Basic project before it deploys
-    - Dead letter queues built-in. A message moved back from one loses its place in the session
-  </Tab>
-</Tabs>
+## Add a topic
 
-## Topics
+1. Select **Add**, then **Topic** in the **Messaging** group.
+2. Under **Subscriptions**, add each subscriber: a **Protocol** (**HTTPS**, **Queue**, **Email** or
+   **Function**) and its **Endpoint**.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Name** | Text input | Topic name |
-| **Subscriptions** | JSONB (backend) | Configured per consumer after provisioning |
+| Cloud | Topic |
+| --- | --- |
+| AWS | SNS |
+| GCP | Pub/Sub topic |
+| Azure | Service Bus topic |
+| Hetzner | NATS in your cluster |
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    **SNS** (Simple Notification Service) — fan-out messaging. Subscribers can be SQS queues, Lambda functions, HTTP endpoints, email, or SMS.
-  </Tab>
-  <Tab value="GCP">
-    **Pub/Sub Topics** — message publishing endpoint. Subscribers create pull or push subscriptions.
-  </Tab>
-  <Tab value="Azure">
-    **Service Bus Topics** — publish/subscribe messaging with subscription filters.
-  </Tab>
-</Tabs>
+On Hetzner, Alethia creates the topic but not its subscriptions: a NATS subscriber is a client that
+connects, so your application subscribes itself.
 
-## Cost
+Messaging is priced per message, so a plan cannot estimate its cost from the design.
 
-Messaging services are usage-based (per message/request), so they show $0 in the cost sidebar. Actual costs depend on message volume and size.
+## Check that it worked
+
+After the deploy, the queue's card shows its delivery mode and visibility timeout, and the topic's
+card shows its subscription count. Their **Status** tabs show the endpoints.
+
+## Related
+
+- [Add a service](/guides/design-project/services): connect a service to a queue.
+- [Troubleshoot design and GitOps](/troubleshooting/design-project#azure-refuses-an-ordered-queue)

@@ -1,0 +1,65 @@
+---
+title: ingress-nginx annotations on Traefik
+description: What Traefik's NGINX provider does with each common ingress-nginx annotation, and what replaces it in Gateway API.
+---
+
+Use this table with [Migrate from ingress-nginx](/guides/design-project/migrate-from-ingress-nginx).
+Each name drops the `nginx.ingress.kubernetes.io/` prefix.
+
+## Synopsis
+
+- **Stage 1** is what Traefik's NGINX provider does with the annotation on an Ingress.
+- **Stage 2** is what replaces it in Gateway API. A Traefik Middleware is a Traefik resource that an
+  `HTTPRoute` references with an `ExtensionRef` filter. It does not carry over to another Gateway
+  API implementation.
+
+An annotation marked as an access control is one Traefik ignores while it still serves the route.
+Replace it before you turn on **Serve NGINX-class Ingresses**.
+
+## Annotations
+
+| Annotation | Stage 1: Traefik on the Ingress | Stage 2: Gateway API |
+|------------|----------------------------------|----------------------|
+| `rewrite-target` | Supported | `URLRewrite` filter. Capture groups such as `$1` need the `ReplacePathRegex` Middleware |
+| `ssl-redirect`, `force-ssl-redirect` | Supported. A global redirect has no per-route opt-out | `RequestRedirect` filter with `scheme: https` on the HTTP listener's route |
+| `backend-protocol` | Supported, except `FCGI` and `AUTO_HTTP` | `BackendTLSPolicy` for HTTPS, a `GRPCRoute` for gRPC |
+| `proxy-body-size` | Supported | No Gateway API field. Use the `Buffering` Middleware |
+| `proxy-read-timeout`, `proxy-send-timeout`, `proxy-connect-timeout` | Supported | The route `timeouts` field exists, but Traefik does not support it. Use a Traefik `ServersTransport` |
+| `whitelist-source-range`, `allowlist-source-range` | Supported | No Gateway API field. Use the `IPAllowList` Middleware |
+| `denylist-source-range` | **Not supported. An access control: Traefik serves the route without it** | No Gateway API field. Use the `IPAllowList` Middleware with the inverse range |
+| `auth-url`, `auth-signin` | Partly supported: URL and response headers only, little variable interpolation. Scope the route to a host, or `auth-signin` can allow an open redirect | No standard field. Use the `ForwardAuth` Middleware |
+| `auth-type: basic`, `auth-secret` | Supported | No Gateway API field. Use the `BasicAuth` Middleware |
+| `enable-cors`, `cors-*` | Partly supported | The `CORS` filter exists, but Traefik does not support it. Use the `Headers` Middleware |
+| `canary`, `canary-weight` | Supported | Weighted `backendRefs` |
+| `canary-by-header` | Supported | A separate rule with a header match |
+| `affinity: cookie`, `session-cookie-*` | Supported in persistent mode only, not `balanced` | Experimental `sessionPersistence`. Use a sticky cookie on the Traefik service |
+| `configuration-snippet`, `server-snippet` | Only a few directives, such as `add_header`, `proxy_set_header`, `rewrite` and `return`, and only when snippets are allowed | No equivalent. Use a Middleware for each behaviour |
+| `use-regex` | Supported | `RegularExpression` path match, which depends on the implementation |
+| `limit-rps`, `limit-rpm`, `limit-connections` | Supported. An over-limit request gets `429`, not `503` | No Gateway API field. Use the `RateLimit` or `InFlightReq` Middleware |
+| `limit-rate`, `limit-whitelist`, `global-rate-limit*` | **Not supported** | No Gateway API field |
+| `permanent-redirect`, `temporal-redirect` | Supported | `RequestRedirect` filter with a `statusCode` |
+| `app-root` | Supported | An `Exact /` rule with a `RequestRedirect` filter |
+| `ssl-passthrough` | Supported | A `TLSRoute` on a listener with `tls.mode: Passthrough` |
+| `upstream-vhost` | Supported | `URLRewrite` with `hostname` |
+| `custom-headers` | Supported | `RequestHeaderModifier` or `ResponseHeaderModifier` filter |
+| `mirror-*` | **Not supported** | `RequestMirror` filter, which Traefik does not support |
+| `enable-modsecurity`, `enable-owasp-core-rules`, `modsecurity-*` | **Not supported. An access control: Traefik serves the route without it** | No equivalent |
+| `enable-opentelemetry`, `opentracing` | **Not supported** | Configure tracing on Traefik itself |
+| `auth-tls-match-cn` | **Not supported. An access control: Traefik serves the route without it** | No equivalent |
+| `auth-tls-error-page` | **Not supported** | No equivalent |
+| `proxy-redirect-from`, `proxy-redirect-to` | **Not supported** | No equivalent |
+
+## Other differences in Stage 1
+
+- Traefik balances load round-robin only. The `load-balance: ewma` setting and IP-hash balancing
+  have no effect.
+- The NGINX provider has no leader election. With more than one replica, each replica writes the
+  Ingress status.
+- Request buffering is off by default in Traefik, and on by default in NGINX.
+- Traefik keeps trailing slashes as they arrive.
+
+## Sources
+
+- [Traefik NGINX provider reference](https://doc.traefik.io/traefik/reference/routing-configuration/kubernetes/ingress-nginx/)
+- [ingress-nginx annotation reference](https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/)
+- [Gateway API HTTPRoute reference](https://gateway-api.sigs.k8s.io/reference/api-types/httproute/)
