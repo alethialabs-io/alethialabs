@@ -12,6 +12,7 @@ import { buildMcpServer } from "@/lib/ai/mcp/server";
 import { parseSurfaceQuery } from "@/lib/ai/mcp/surface";
 import { AGENT_SCOPES } from "@/lib/approvals/types";
 import { auth, mcpResourceUrl } from "@/lib/auth";
+import { PROTECTED_RESOURCE_METADATA_PREFIX } from "@/lib/auth/mcp-resource";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
 
@@ -25,7 +26,8 @@ export const runtime = "nodejs";
  * request runs as — the person, bound as `agent_oauth`, held to the token's scopes, the consent
  * grant's organization and projects, and the URL's `?project=` pin, and refused while the
  * organization's agent access is off — and runWithActor binds it, so every tool enforces the
- * person's grants under that ceiling with no new authority.
+ * person's grants under that ceiling with no new authority. The grant is read on every request, so
+ * disconnecting it answers the next request 401 although the JWT itself would still verify.
  *
  * The server (lib/ai/mcp/server.ts) lists the 19 declared external tools, including the writes:
  * `apply_design_patch`, `create_project`, `scan_repo`, `plan`, `request_apply`, `request_destroy` and
@@ -51,11 +53,31 @@ function jsonError(status: number, error: string, headers: Record<string, string
  */
 const INSUFFICIENT_SCOPE_MESSAGE = `This connection was authorized without any Alethia agent scope, so it can use no tools. Disconnect this MCP server in your client, then connect it again and approve the agent scopes it asks for: ${AGENT_SCOPES.join(", ")}. Approve at least read; each scope only narrows what your role allows.`;
 
-/** The response for a token that resolved into no actor. */
-function refusalResponse(reason: McpActorRefusal): Response {
+/**
+ * The RFC 6750 §3.1 `invalid_token` challenge for a token that verified but no longer binds to a
+ * consent, with the RFC 9728 metadata pointer the library's own 401 carries, so a client restarts
+ * authorization instead of retrying the same token.
+ */
+function invalidTokenChallenge(resource: string): Record<string, string> {
+	const url = new URL(resource);
+	const metadata = `${url.origin}${PROTECTED_RESOURCE_METADATA_PREFIX}${url.pathname.replace(/\/$/, "")}`;
+	return { "www-authenticate": `Bearer error="invalid_token", resource_metadata="${metadata}"` };
+}
+
+/** The response for a token that resolved into no actor; `resource` is the MCP resource URL. */
+function refusalResponse(reason: McpActorRefusal, resource: string): Response {
 	switch (reason) {
 		case "no_subject":
 			return jsonError(401, "Access token carries no subject.");
+		case "no_client":
+			return jsonError(401, "Access token names no client.", invalidTokenChallenge(resource));
+		case "grant_revoked":
+			// A disconnect binds the next request, whatever lifetime the access token has left.
+			return jsonError(
+				401,
+				"This connection was disconnected. Connect this MCP server again in your client.",
+				invalidTokenChallenge(resource),
+			);
 		case "insufficient_scope":
 			// RFC 6750 §3.1: a client may step up by asking for the scope again. Connections made before
 			// the agent scopes existed hold only OIDC scopes, so the body names the fix for a person.
@@ -63,9 +85,9 @@ function refusalResponse(reason: McpActorRefusal): Response {
 				"www-authenticate": `Bearer error="insufficient_scope", scope="${AGENT_SCOPES.join(" ")}"`,
 			});
 		case "org_not_permitted":
-			return jsonError(403, "The organization this connection was granted in is not one you belong to. Reconnect.");
+			return jsonError(403, "The organization this connection was granted in is not one you are an active member of. Reconnect.");
 		case "project_not_permitted":
-			return jsonError(403, "This connection was not granted the project the URL names.");
+			return jsonError(403, "This connection was not granted the project the URL names, or any project.");
 		case "agent_access_disabled":
 			return jsonError(
 				403,
@@ -100,8 +122,9 @@ const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (req, acc
 	const surface = parseSurfaceQuery(new URL(req.url).searchParams);
 	if (!surface.ok) return jsonError(400, surface.error);
 
+	const resource = mcpResourceUrl ?? req.url;
 	const resolved = await resolveMcpActor(accessTokenClaims, surface.query.projectId);
-	if (!resolved.ok) return refusalResponse(resolved.reason);
+	if (!resolved.ok) return refusalResponse(resolved.reason, resource);
 	const { actor } = resolved;
 
 	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
@@ -109,7 +132,7 @@ const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (req, acc
 		return jsonError(403, "AI features require an active plan. Upgrade to use the connector.");
 	}
 
-	const appOrigin = appOriginOf(mcpResourceUrl ?? req.url);
+	const appOrigin = appOriginOf(resource);
 	// One server per request: what it lists depends on this request's token and URL.
 	const handler = createMcpHandler(
 		() => buildMcpServer({ actor, query: surface.query, appOrigin }),

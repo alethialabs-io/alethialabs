@@ -6,38 +6,37 @@
 // scopes and the grant's project list ∩ the URL's `?project=` pin — and refused outright while the
 // organization's agent access (the kill switch) is off.
 //
+// The grant is read on EVERY request (lib/agents/grant-binding.ts), so a disconnect binds the very
+// next request: the access token is a JWT that stays verifiable until it expires, and only this read
+// knows it was withdrawn.
+//
 // The ceiling is applied by the PDP that `getPdp` returns (lib/authz/scope-ceiling.ts), so every tool
 // the server lists, and every in-app read a declared read answers through, is held to it; the MCP server also checks each
 // declared tool's scope before it runs (lib/ai/mcp/server.ts).
 
 import "server-only";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { type GrantBinding, readGrantBinding } from "@/lib/agents/grant-binding";
 import { readAgentPolicy } from "@/lib/approvals/context";
 import type { AgentScope } from "@/lib/approvals/types";
 import { ceilingFromAccessTokenClaims } from "@/lib/auth/mcp-scopes";
 import { getActiveScope } from "@/lib/auth/scope";
 import { actorWithCredential } from "@/lib/authz/actor-credential";
 import type { Actor, ResolvedScope } from "@/lib/authz/types";
-import { getServiceDb, withScope } from "@/lib/db";
-import { agentOauthGrants } from "@/lib/db/schema";
-
-/** What a person's MCP consent narrowed the agent to (`agent_oauth_grants`). */
-export interface AgentGrant {
-	orgId: string;
-	scopes: readonly AgentScope[];
-	/** Null: every project in the org. */
-	projectIds: readonly string[] | null;
-}
+import { withScope } from "@/lib/db";
 
 /** Why a token was not resolved into an actor. */
 export type McpActorRefusal =
 	/** The token names no person. */
 	| "no_subject"
+	/** The token names no OAuth client, so no consent grant can be read for it. */
+	| "no_client"
+	/** Every consent grant the person gave this client is revoked: the connection was disconnected. */
+	| "grant_revoked"
 	/** The token carries no agent scope this server reads, or none the grant leaves. */
 	| "insufficient_scope"
-	/** The grant's organization is not one the person belongs to any more. */
+	/** The grant names no organization, or one the person is not an active member of any more. */
 	| "org_not_permitted"
-	/** The URL pins a project the grant does not cover. */
+	/** The URL pins a project the grant does not cover, or the grant covers no project at all. */
 	| "project_not_permitted"
 	/** The organization's agent access is turned off. */
 	| "agent_access_disabled";
@@ -47,8 +46,8 @@ export type McpActorResolution = { ok: true; actor: Actor } | { ok: false; reaso
 
 /** What resolving reads, so tests can stand each one in. */
 export interface McpActorDeps {
-	/** The person's live grant to OAuth client `clientId`, or null when there is none. */
-	readGrant(userId: string, clientId: string): Promise<AgentGrant | null>;
+	/** The person's grant to OAuth client `clientId`: live, all revoked, or never written. */
+	readGrant(userId: string, clientId: string): Promise<GrantBinding>;
 	/** The person's tenancy scope, preferring `orgId` when it is given. */
 	resolveScope(userId: string, orgId?: string): Promise<ResolvedScope>;
 	/** False while the organization's agent kill switch is off. */
@@ -57,27 +56,7 @@ export interface McpActorDeps {
 
 /** The default reads. */
 export const defaultMcpActorDeps: McpActorDeps = {
-	readGrant: async (userId, clientId) => {
-		// Read before any actor exists, so through the service connection; the verified token's own
-		// subject and client are the predicate, and a revoked grant is never read.
-		const [row] = await getServiceDb()
-			.select({
-				org_id: agentOauthGrants.org_id,
-				scopes: agentOauthGrants.scopes,
-				project_ids: agentOauthGrants.project_ids,
-			})
-			.from(agentOauthGrants)
-			.where(
-				and(
-					eq(agentOauthGrants.user_id, userId),
-					eq(agentOauthGrants.client_id, clientId),
-					isNull(agentOauthGrants.revoked_at),
-				),
-			)
-			.orderBy(desc(agentOauthGrants.updated_at))
-			.limit(1);
-		return row ? { orgId: row.org_id, scopes: row.scopes, projectIds: row.project_ids } : null;
-	},
+	readGrant: readGrantBinding,
 	resolveScope: getActiveScope,
 	agentAccessEnabled: async (scope) =>
 		(await withScope({ ownerId: scope.userId, orgId: scope.orgId }, (tx) => readAgentPolicy(tx, scope.orgId)))
@@ -94,9 +73,15 @@ export function clientIdFromClaims(claims: { azp?: unknown; client_id?: unknown 
 
 /**
  * Resolves verified access-token `claims` into the actor the MCP request runs as, with `projectPin`
- * the URL's `?project=` value. Fails closed at every step: a token with no subject or no readable
- * agent scope, a grant whose organization the person has left, a pin outside the grant, or an
- * organization whose agent access is off, yields no actor.
+ * the URL's `?project=` value. Fails closed at every step: a token with no subject, no readable agent
+ * scope or no client; a client whose every grant is revoked; a live grant with no organization, an
+ * organization the person is not an active member of, or no project; a pin outside the grant; or an
+ * organization whose agent access is off — each yields no actor.
+ *
+ * With a live grant the actor acts in the grant's organization ONLY (never the person's default),
+ * with the token's scopes narrowed to the grant's and its projects to the grant's list. With no grant
+ * row at all (a token from before consent grants) it acts as before: the person's resolved org, the
+ * token's scopes, every project.
  *
  * The actor is bound as `agent_oauth`, with the OAuth client as its credential reference, so an
  * approval one client requested can be used by that client only (lib/approvals/gate.ts).
@@ -108,26 +93,42 @@ export async function resolveMcpActor(
 ): Promise<McpActorResolution> {
 	const subject = claims.sub;
 	if (typeof subject !== "string" || subject.length === 0) return { ok: false, reason: "no_subject" };
-	const tokenCeiling = ceilingFromAccessTokenClaims(claims);
-	if (!tokenCeiling) return { ok: false, reason: "insufficient_scope" };
-
+	// The token's own ceiling, read once: no agent scope is a refusal before any grant is read.
+	const ceiling = ceilingFromAccessTokenClaims(claims, null);
+	if (!ceiling) return { ok: false, reason: "insufficient_scope" };
+	// Every access token the provider issues names its client (`azp`); one that does not cannot be
+	// matched to a grant, and "no grant" is the widest answer there is, so it is a refusal.
 	const clientId = clientIdFromClaims(claims);
-	const grant = clientId ? await deps.readGrant(subject, clientId) : null;
+	if (!clientId) return { ok: false, reason: "no_client" };
+
+	const binding = await deps.readGrant(subject, clientId);
+	if (binding.kind === "revoked") return { ok: false, reason: "grant_revoked" };
 
 	let scope: ResolvedScope;
-	let scopes: readonly AgentScope[] = tokenCeiling.scopes;
-	let projectIds: readonly string[] | null = tokenCeiling.projectIds;
-	if (grant) {
+	let grantScopes: readonly AgentScope[] | null = null;
+	let grantProjects: readonly string[] | null = null;
+	if (binding.kind === "live") {
+		const { grant } = binding;
+		if (grant.orgId.length === 0) return { ok: false, reason: "org_not_permitted" };
+		if (grant.projectIds !== null && grant.projectIds.length === 0) {
+			return { ok: false, reason: "project_not_permitted" };
+		}
 		scope = await deps.resolveScope(subject, grant.orgId);
-		// The scope resolver treats its org as a preference and falls back to another org; a grant
-		// names one org, so anything else is a refusal, not a fallback (see resolveNamedOrgScope).
+		// The scope resolver treats its org as a preference and falls back to another org (or the
+		// personal one) when the person is not an active member; a grant names one org, so anything
+		// else is a refusal, not a fallback.
 		if (scope.orgId !== grant.orgId) return { ok: false, reason: "org_not_permitted" };
-		scopes = scopes.filter((s) => grant.scopes.includes(s));
-		if (scopes.length === 0) return { ok: false, reason: "insufficient_scope" };
-		projectIds = grant.projectIds;
+		grantScopes = grant.scopes;
+		grantProjects = grant.projectIds;
 	} else {
 		scope = await deps.resolveScope(subject);
 	}
+
+	const allowed = grantScopes;
+	const scopes = allowed === null ? ceiling.scopes : ceiling.scopes.filter((s) => allowed.includes(s));
+	if (scopes.length === 0) return { ok: false, reason: "insufficient_scope" };
+	// The grant's projects (never empty: refused above), or every project when there is no grant.
+	let projectIds: readonly string[] | null = grantProjects === null ? null : [...grantProjects];
 
 	if (projectPin !== null) {
 		if (projectIds !== null && !projectIds.includes(projectPin)) {
@@ -139,7 +140,7 @@ export async function resolveMcpActor(
 	const actor: Actor = {
 		...actorWithCredential(scope, "agent_oauth"),
 		ceiling: { scopes, projectIds },
-		...(clientId ? { credentialRef: clientId } : {}),
+		credentialRef: clientId,
 	};
 	if (!(await deps.agentAccessEnabled(actor))) return { ok: false, reason: "agent_access_disabled" };
 	return { ok: true, actor };
