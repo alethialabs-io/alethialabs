@@ -16,9 +16,9 @@
 # It prints; it never writes. Regenerating this file over a red run is how a ratchet becomes
 # a rubber stamp — read the diff and only accept lines your change actually moved.
 version: 1
-routes: 42
+routes: 43
 redirectOnly: 4
-real: 38
+real: 39
 predicates:
   S1:
     fail: []
@@ -107,6 +107,7 @@ predicates:
       - /[org]/~/settings/roles: does-not-call-not-found
       - /[org]/~/settings/sso: does-not-call-not-found
       - /[org]/~/settings/teams: does-not-call-not-found
+      - /[org]/~/settings/tokens: does-not-call-not-found
       - /[org]/~/settings: does-not-call-not-found
       - /[org]/~/support/abuse: does-not-call-not-found
       - /[org]/~/support/ask: does-not-call-not-found

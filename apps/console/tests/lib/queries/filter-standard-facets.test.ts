@@ -75,6 +75,7 @@ import {
 	queryAlertPoliciesPage,
 } from "@/lib/queries/alerts-lists";
 import { queryApprovalsPage } from "@/lib/queries/approvals";
+import { queryServiceTokensPage } from "@/lib/queries/service-tokens";
 import { queryMembersPage } from "@/lib/queries/members";
 import { queryRolesPage } from "@/lib/queries/roles";
 import { queryTeamsPage } from "@/lib/queries/teams";
@@ -163,6 +164,13 @@ const DRIVEN: Record<string, Driver> = {
 				credential: ["agent_oauth"],
 			}, { limit: 50 }),
 		unfiltered: () => queryApprovalsPage(getServiceDb(), ORG, ["project-in-scope"], {}, { limit: 50 }),
+	},
+	// AGT-L2-U3: the service tokens list, scoped to the org alone.
+	queryServiceTokensPage: {
+		module: "@/lib/queries/service-tokens",
+		filtered: () =>
+			queryServiceTokensPage(ORG, { search: `${NEEDLE}-token`, status: ["active"] }, { limit: 50 }),
+		unfiltered: () => queryServiceTokensPage(ORG, {}, { limit: 50 }),
 	},
 };
 
