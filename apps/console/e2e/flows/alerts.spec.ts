@@ -56,9 +56,23 @@ const sections = (page: Page) => ({
 	activity: page.locator("#activity"),
 });
 
-/** The result count beside a section heading — where the filter standard puts it. */
+/**
+ * A count pill anywhere in a section. #7489 removed the three that sat beside the section headings
+ * (no count pills anywhere, no "N of M" prose), so every use of this asserts it is ABSENT — and
+ * only after something in the same section has been asserted PRESENT, because an absence check
+ * over a section that never rendered passes while measuring nothing.
+ */
 const countPill = (section: ReturnType<typeof sections>["channels"]) =>
 	section.locator("[data-slot='count-pill']");
+
+/**
+ * The delivery ledger's data rows. The ledger draws no count (#7489), so the rows ARE the answer
+ * to "how many deliveries does this view show". `DataTable` renders through `@repo/ui/table`,
+ * whose body and rows carry `data-slot="table-body"` / `data-slot="table-row"`; the ledger is the
+ * only table in `#activity`. `toHaveCount` retries, so it waits out a filter's refetch.
+ */
+const ledgerRows = (activity: ReturnType<typeof sections>["activity"]) =>
+	activity.locator("[data-slot='table-body'] [data-slot='table-row']");
 
 /** Opens the Alerts hub (optionally with filter params) and waits for the surface. */
 async function gotoAlerts(page: Page, org: string, query = ""): Promise<void> {
@@ -79,12 +93,17 @@ test.describe("Alerts — the hub", () => {
 		}
 	});
 
-	test("each section heading carries a Docs link and a count pill", async ({ team }) => {
+	// #7489 removed the three heading count pills (maintainer ruling: no count pills anywhere).
+	// Each heading is asserted PRESENT before its pill is asserted absent.
+	test("each section heading carries a Docs link and no count pill", async ({ team }) => {
 		await gotoAlerts(team.page, team.orgSlug!);
 		await expect(team.page.getByRole("link", { name: "Docs" })).toHaveCount(3);
 		const s = sections(team.page);
 		for (const section of [s.policies, s.channels, s.activity]) {
-			await expect(countPill(section)).toHaveCount(1);
+			const heading = section.locator("[data-slot='section-heading']");
+			await expect(heading).toHaveCount(1);
+			await expect(heading.getByRole("link", { name: "Docs" })).toBeVisible();
+			await expect(countPill(section)).toHaveCount(0);
 		}
 	});
 
@@ -127,11 +146,17 @@ test.describe("Alerts — empty states, through EmptyState", () => {
 		).toBeVisible();
 	});
 
-	test("an empty universe leaves both count pills reading 0", async ({ team }) => {
+	// An empty universe used to read "0" in both heading pills; #7489 removed them, so the empty
+	// state is the whole answer. The EmptyState is asserted first so the absence is not vacuous.
+	test("an empty universe draws no count beside either heading, only the EmptyState", async ({
+		team,
+	}) => {
 		await gotoAlerts(team.page, team.orgSlug!);
 		const s = sections(team.page);
-		await expect(countPill(s.channels)).toHaveText("0");
-		await expect(countPill(s.policies)).toHaveText("0");
+		for (const section of [s.channels, s.policies]) {
+			await expect(section.locator("[data-slot='empty']")).toBeVisible();
+			await expect(countPill(section)).toHaveCount(0);
+		}
 	});
 
 	// #4968 (F10, #4939) moved the ledger's empty state from the table's muted row into the shared
@@ -454,7 +479,6 @@ test.describe("Alerts — the channel filter store (channel*)", () => {
 		const { channels } = sections(team.page);
 		await expect(channels.getByRole("option")).toHaveCount(1);
 		await expect(channels.getByRole("option", { name: pausedOne })).toBeVisible();
-		await expect(countPill(channels)).toHaveText("1");
 	});
 
 	// The invariant the whole facet pass exists for: counts are tallied over the UNFILTERED
@@ -479,7 +503,12 @@ test.describe("Alerts — the channel filter store (channel*)", () => {
 		await expect(channels.locator("[data-slot='empty']")).toBeVisible();
 		await expect(channels.getByText("No channels match")).toBeVisible();
 		await expect(channels.getByRole("button", { name: "Reset filters" })).toBeVisible();
-		await expect(countPill(channels)).toHaveText("0");
+		await expect(channels.getByRole("option")).toHaveCount(0);
+		// The description says nothing matched without sizing the universe: #7489 removed the
+		// "None of the N channels" copy with the pills. Exact, so a number creeping back reds here.
+		await expect(
+			channels.getByText("No channel matches these filters.", { exact: true }),
+		).toBeVisible();
 	});
 });
 
@@ -700,7 +729,6 @@ test.describe("Alerts — the policy filter store (policy*)", () => {
 		const { policies } = sections(team.page);
 		await expect(policies.getByRole("option")).toHaveCount(1);
 		await expect(policies.getByRole("option", { name: offPolicy })).toBeVisible();
-		await expect(countPill(policies)).toHaveText("1");
 	});
 
 	test("the status facet keeps its unfiltered counts while `off` is selected", async ({
@@ -715,14 +743,19 @@ test.describe("Alerts — the policy filter store (policy*)", () => {
 	test("the three stores are independent: a policy filter leaves the channel rail alone", async ({
 		team,
 	}) => {
+		const channelName = `e2e-independent-${Date.now()}`;
 		await seedChannel(
 			{ userId: team.userId!, orgId: team.orgId! },
-			{ type: "email", name: `e2e-independent-${Date.now()}`, verified: true },
+			{ type: "email", name: channelName, verified: true },
 		);
 		await gotoAlerts(team.page, team.orgSlug!, "?policyStatus=off");
 		const s = sections(team.page);
-		await expect(countPill(s.policies)).toHaveText("1");
-		await expect(countPill(s.channels)).toHaveText("1");
+		// The policy rail is narrowed to the one paused policy; the channel rail, under its own
+		// `channel*` store, still shows its whole (one-row) universe.
+		await expect(s.policies.getByRole("option")).toHaveCount(1);
+		await expect(s.policies.getByRole("option", { name: offPolicy })).toBeVisible();
+		await expect(s.channels.getByRole("option")).toHaveCount(1);
+		await expect(s.channels.getByRole("option", { name: channelName })).toBeVisible();
 	});
 });
 
@@ -744,14 +777,15 @@ test.describe("Alerts — the delivery ledger and its activity* filters", () => 
 		});
 	});
 
-	test("the ledger lists the seeded deliveries and the count pill agrees", async ({
+	test("the ledger lists the seeded deliveries, one row each, and draws no count", async ({
 		team,
 	}) => {
 		await gotoAlerts(team.page, team.orgSlug!);
 		const { activity } = sections(team.page);
 		await expect(activity.getByText("e2e delivered event")).toBeVisible();
 		await expect(activity.getByText("e2e failed event")).toBeVisible();
-		await expect(countPill(activity)).toHaveText("2");
+		await expect(ledgerRows(activity)).toHaveCount(2);
+		await expect(countPill(activity)).toHaveCount(0);
 	});
 
 	test("a failed delivery carries its last error into the Event cell", async ({
@@ -768,7 +802,7 @@ test.describe("Alerts — the delivery ledger and its activity* filters", () => 
 		await activity.getByRole("button", { name: "Failed 1" }).click();
 		await expect(activity.getByText("e2e failed event")).toBeVisible();
 		await expect(activity.getByText("e2e delivered event")).toBeHidden();
-		await expect(countPill(activity)).toHaveText("1");
+		await expect(ledgerRows(activity)).toHaveCount(1);
 	});
 
 	test("an `activityStatus` deep link arrives filtered, chips still unfiltered", async ({
@@ -778,7 +812,7 @@ test.describe("Alerts — the delivery ledger and its activity* filters", () => 
 		const { activity } = sections(team.page);
 		await expect(activity.getByText("e2e delivered event")).toBeVisible();
 		await expect(activity.getByText("e2e failed event")).toBeHidden();
-		await expect(countPill(activity)).toHaveText("1");
+		await expect(ledgerRows(activity)).toHaveCount(1);
 		// Both options keep their universe counts, so the selection can be undone.
 		await expect(activity.getByRole("button", { name: "Sent 1" })).toBeVisible();
 		await expect(activity.getByRole("button", { name: "Failed 1" })).toBeVisible();
