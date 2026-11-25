@@ -16,7 +16,7 @@ import { withScope } from "@/lib/db";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import type { Actor, Entitlements } from "@/lib/authz/types";
 import { deploymentMode } from "@/lib/billing/config";
-import { isBillingActive } from "@/lib/billing/plan";
+import { entitlementStatus, isBillingActive } from "@/lib/billing/plan";
 import { getServiceDb } from "@/lib/db";
 import {
 	cloudIdentities,
@@ -87,6 +87,8 @@ export async function readWorkspaceContext(actor: Actor): Promise<WorkspaceConte
 			role: member.role,
 			plan: organizationBilling.plan,
 			status: organizationBilling.status,
+			billingProvider: organizationBilling.billingProvider,
+			currentPeriodStart: organizationBilling.currentPeriodStart,
 		})
 		.from(member)
 		.innerJoin(organization, eq(member.organizationId, organization.id))
@@ -104,7 +106,18 @@ export async function readWorkspaceContext(actor: Actor): Promise<WorkspaceConte
 					logo: r.logo,
 					role: r.role,
 					// Effective plan: the paid plan only while the subscription is live.
-					plan: r.plan && r.status && isBillingActive(r.status) ? r.plan : "community",
+					plan:
+						r.plan &&
+						r.status &&
+						isBillingActive(
+							entitlementStatus({
+								status: r.status,
+								billingProvider: r.billingProvider,
+								currentPeriodStart: r.currentPeriodStart,
+							}),
+						)
+							? r.plan
+							: "community",
 					status: r.status ?? "none",
 				}))
 			: [
