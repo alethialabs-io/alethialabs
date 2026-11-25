@@ -229,8 +229,9 @@ the spec declares `{ tag: "@needs:stripe" }`. In CI a tagged spec on a leg that 
 red, never a skip. See `apps/console/e2e/README.md` → *Capabilities*.
 
 **Which projects CI actually runs — check before citing "covered by e2e".**
-`playwright.config.ts` defines nine projects. Two run on every PR into `dev`; seven are the legs of
-the **release gate** on the promotion path; one is nightly-only.
+`playwright.config.ts` defines nine projects. Two run on every PR into `dev` that touches the
+console, and `qa` on every such PR that touches what it measures; seven are the legs of the
+**release gate** on the promotion path; one is nightly-only.
 
 | project | per-PR job (`ci.yml`) | release-gate leg | elsewhere |
 |---|---|---|---|
@@ -239,7 +240,7 @@ the **release gate** on the promotion path; one is nightly-only.
 | `elench-ai` | `E2E (browser · Elench AI journeys · scripted model)` — `elench-ux.spec.ts` folded in (#2875) | `Release gate (elench-ai)` | — |
 | `canvas` | — | `Release gate (canvas)` | — |
 | `console` | — | `Release gate (console)` | — |
-| `qa` | — | `Release gate (qa)` | needs `ALETHIA_QA_E2E=1` |
+| `qa` | `E2E qa leg (release gate · affected PRs) / Release gate (qa)` — the same leg, called from `ci.yml` (#7647); required when it runs | `Release gate (qa)` | needs `ALETHIA_QA_E2E=1` |
 | `audit` | — | `Release gate (audit)` | `UI conformance audit (console · non-required)`, nightly |
 | `audit-interaction` | — | `Release gate (audit-interaction)` | the only leg that activates destructive controls |
 | `elench-live` | — | — | `e2e-ai-nightly.yml` — real model, never gating |
@@ -250,15 +251,30 @@ the **release gate** on the promotion path; one is nightly-only.
 
 Nothing runs nowhere any more — `LOCAL_ONLY_REASON` in `playwright.config.ts` is empty, and
 `assertNoDeadZone()` still reads `.github/workflows/**` on every invocation to keep that true. But
-"this is covered by e2e" still needs the **leg** named: on a `dev` PR a gate leg runs only when the
-PR carries `release-gate:run` / `release-gate:all` (since 2026-11-22 release-gate.yml does not run on
-an unlabelled dev PR at all), so an unlabelled PR's legs say nothing about the code it changed, and an exclusion justified by a suite nothing
-launched on that PR is justified by nothing. Adding one of those labels starts the legs through
+"this is covered by e2e" still needs the **leg** named: on a `dev` PR the `qa` leg runs when the
+diff is affected (below), and every other gate leg runs only when the PR carries `release-gate:run` /
+`release-gate:all` (since 2026-11-22 release-gate.yml does not run on an unlabelled dev PR at all),
+so an unlabelled PR's other legs say nothing about the code it changed, and an exclusion justified by
+a suite nothing launched on that PR is justified by nothing. Adding one of those labels starts the legs through
 `release-gate-label.yml`, so they report as `Gate by label / Release gate (<leg>)`. The bare
 `Release gate (<leg>)` name comes only from release-gate.yml's own runs: a push to a labelled PR, a
 promotion, or a dispatch. Since #7654, release-gate.yml no longer triggers on `labeled`, because a
 label's skipped run superseded a passing run on the same sha and kept a release PR unmergeable.
 `check-required-checks.mjs` fails if it triggers on `labeled` again.
+
+**The `qa` leg runs on the PR that can break it (#7647).** Promotions #7554 and #7608 were both
+blocked by qa regressions from dev PRs that changed console behaviour and left specs stale; the leg
+ran only at promotion, so the PR that broke the spec never saw it. `ci.yml`'s `e2e-qa-leg` job now
+calls `release-gate.yml` (`workflow_call`, input `ci_legs: qa`) — the same `legs` picker, the same
+`gate` job, the same ratchet against the same `gate-baseline.json`; nothing about the leg is copied.
+
+| question | answer |
+|---|---|
+| when does it run | `detect-changes.outputs.qa_leg`: a `dev` PR (not a promotion, not a Mergify `mergify/merge-queue/*` build, not a fork) whose diff touches the `qa_leg` paths in `ci.yml` — the console's `app/`, `components/`, `lib/`, `hooks/`, `types/`, `emails/`, `public/`, `scripts/`, `e2e/` and build config, `ee/`, every workspace package the console depends on, the lockfile, and the leg's seams — and is not prose-only |
+| is it required | **yes, when it runs.** It is a `needs:` of `CI required`: a skip passes the aggregator, a ratchet regression fails it, and a call that reports success without the `legs` job having decided to run (a vacuous green) also fails it |
+| what it costs | one shard (the leg's single matrix entry), ~10 runner-minutes per run (release-gate runs of 2026-11-25); `ci.yml`'s cancel-in-progress cancels it on a re-push |
+| what it does not do | run in the merge queue — each PR already ran it on its own head, so two UI PRs that pass alone and break each other are caught at the promotion's own qa leg, not in the queue |
+| when it is red | the spec went stale because the PR changed behaviour: repair the spec (or the product) in the same PR, or re-record the entry the change legitimately moved (`apps/console/e2e/README.md`). The report and traces are the `release-gate-qa` artifact on the `CI` run. A Dependabot PR gets no repo secrets, so the leg's capability guard fails on the empty Stripe key — push an empty commit from a maintainer account to re-run it with secrets |
 
 **A gate leg passes by ratchet, and the ledger's bar is: no `failed` entry, and every `{fixme}` cites an open issue.** Each leg fails
 on regression against `apps/console/e2e/gate-baseline.json`. That ledger once recorded 94 `failed`
@@ -269,7 +285,7 @@ places:
 
 | rule | enforced by | where it runs |
 |---|---|---|
-| a recorded `passed` still passes; a test the ledger does not know passes; a recorded `failed` that now passes is moved out of the ledger; a skip is recorded as a `{fixme}` or a `{skip}` | `scripts/e2e-ratchet.mjs`, the `Ratchet` step of each `Release gate (<leg>)` | every leg that runs: every promotion PR and dispatch, and a `dev` PR only as above |
+| a recorded `passed` still passes; a test the ledger does not know passes; a recorded `failed` that now passes is moved out of the ledger; a skip is recorded as a `{fixme}` or a `{skip}` | `scripts/e2e-ratchet.mjs`, the `Ratchet` step of each `Release gate (<leg>)` | every leg that runs: every promotion PR and dispatch, a `dev` PR carrying a `release-gate:*` label, and — for `qa` only — every affected `dev` PR (#7647) |
 | the ledger holds **no `failed` entry** | the ``Zero `failed` entries in gate-baseline.json`` step of `Gate ledger — zero failed, every fixme cites an open issue` in `ci.yml` (moved from `release-gate.yml` on 2026-11-22) | every PR into any branch, and every `ci.yml` dispatch |
 | every `{fixme}` cites exactly one issue, and that issue is **OPEN** (an unreadable state is red, never skipped) | `scripts/check-gate-fixme-issues.mjs` | the same `Gate ledger` job, on a promotion PR, a dispatch, or a `dev` PR that changes the ledger or the code that reads its fixmes. `gate-fixme-currency.yml` schedules a daily run too, but a schedule runs from the DEFAULT branch (`main`) and that workflow has not reached `main` yet, so as of 2026-10-04 it has never run |
 

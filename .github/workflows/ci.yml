@@ -197,6 +197,7 @@ jobs:
       infra: ${{ steps.plan.outputs.infra }}
       harness: ${{ steps.plan.outputs.harness }}
       console_images: ${{ steps.plan.outputs.console_images }}
+      qa_leg: ${{ steps.plan.outputs.qa_leg }}
       selective: ${{ steps.plan.outputs.selective }}
       skip_unaffected: ${{ steps.plan.outputs.skip_unaffected }}
       ts_filter: ${{ steps.plan.outputs.ts_filter }}
@@ -268,6 +269,58 @@ jobs:
               - 'apps/cli/**'
               - 'packages/core/**'
               - 'go.work*'
+              - '.github/workflows/ci.yml'
+            # `qa_leg` — what release-gate.yml's `qa` leg measures, for `e2e-qa-leg` (#7647). The
+            # console's UI and server code (the leg boots `next build` + `next start` from it and
+            # drives the browser through it), its e2e specs and harness, its build scripts and
+            # migrations, every workspace package apps/console/package.json depends on (by
+            # DIRECTORY — `@repo/x` lives at `packages/x`, see the `console` note above), the lockfile,
+            # and the leg's own seams (release-gate.yml's SEAMS list). NOT apps/console/docs,
+            # apps/console/tests (vitest) or the ledgers at the console root, which no leg reads.
+            # `.github/workflows/ci.yml` is here so an edit to the caller job self-tests. A diff of
+            # ONLY prose (`outside.not_prose == false`) never runs it — see the `plan` step.
+            qa_leg:
+              - 'apps/console/app/**'
+              - 'apps/console/components/**'
+              - 'apps/console/lib/**'
+              - 'apps/console/hooks/**'
+              - 'apps/console/types/**'
+              - 'apps/console/emails/**'
+              - 'apps/console/public/**'
+              - 'apps/console/scripts/**'
+              - 'apps/console/e2e/**'
+              - 'apps/console/playwright.config.ts'
+              - 'apps/console/next.config.ts'
+              - 'apps/console/proxy.ts'
+              - 'apps/console/instrumentation.ts'
+              - 'apps/console/package.json'
+              - 'apps/console/tsconfig*.json'
+              - 'apps/console/postcss.config.mjs'
+              - 'ee/**'
+              - 'packages/assets/**'
+              - 'packages/brand/**'
+              - 'packages/cloud-catalog/**'
+              - 'packages/email/**'
+              - 'packages/enterprise-api/**'
+              - 'packages/format/**'
+              - 'packages/legal/**'
+              - 'packages/nra/**'
+              - 'packages/org-slug/**'
+              - 'packages/plan-catalog/**'
+              - 'packages/platform/**'
+              - 'packages/privacy/**'
+              - 'packages/support/**'
+              - 'packages/ui/**'
+              - 'packages/workload-identity/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'patches/**'
+              - 'scripts/e2e-ratchet.mjs'
+              - 'scripts/lib/console-routes.mjs'
+              - 'scripts/ci/playwright-install.sh'
+              - 'scripts/sync-public-assets.mjs'
+              - '.github/workflows/release-gate.yml'
               - '.github/workflows/ci.yml'
             # Informational surfaces (job outputs, for anything that wants to key on them).
             ts:
@@ -438,6 +491,8 @@ jobs:
           F_HARNESS: ${{ steps.filter.outputs.harness }}
           F_TS_ROOT: ${{ steps.filter.outputs.ts_root }}
           F_CONSOLE_IMAGES: ${{ steps.filter.outputs.console_images }}
+          F_QA_LEG: ${{ steps.filter.outputs.qa_leg }}
+          HEAD_FORK: ${{ github.event.pull_request.head.repo.fork }}
           O_NOT_PROSE: ${{ steps.outside.outputs.not_prose }}
           O_NOT_GO_FREE: ${{ steps.outside.outputs.not_go_free }}
           O_NOT_GO_CLI_ONLY: ${{ steps.outside.outputs.not_go_cli_only }}
@@ -488,6 +543,16 @@ jobs:
           ts_skip=false
           if [ "$skip" = true ] && [ "$(b "${O_NOT_PROSE:-true}")" = false ]; then ts_skip=true; fi
           out ts_skip "$ts_skip"
+
+          # The qa release-gate leg on a PR (#7647): a selective (dev, non-queue) PR whose diff hits
+          # `qa_leg` and is not prose-only. A fork PR is excluded: it gets no repo secrets, so the
+          # leg's `stripe` capability guard would fail on a variable its author cannot supply.
+          qa_leg=false
+          if [ "$selective" = true ] && [ "$(b "${F_QA_LEG:-}")" = true ] \
+            && [ "$(b "${O_NOT_PROSE:-true}")" = true ] && [ "${HEAD_FORK:-false}" != true ]; then
+            qa_leg=true
+          fi
+          out qa_leg "$qa_leg"
 
           go_matrix='["apps/cli","apps/runner","packages/core"]'
           if [ "$skip" = true ]; then
@@ -4806,6 +4871,54 @@ jobs:
   # `if: always()` — the implicit `success()` would SKIP this job whenever a need failed, and a skipped
   # required context is exactly the not-red-not-green state this job exists to remove. On the 03:00
   # UI-audit cron most needs are skipped by their own `if:`, so this costs one idle runner there.
+  # ── THE qa RELEASE-GATE LEG, ON THE PR THAT CAN BREAK IT (#7647) ────────────────────────────────
+  #
+  # Promotions #7554 and #7608 were both blocked by qa-leg regressions (#7559, #7610) from PRs that
+  # changed console behaviour — #7399 renamed a facet and disabled "Create role", #7499 added a
+  # required env var — and left specs stale. The qa leg ran only at promotion, so the PR that broke
+  # the spec never saw it, and the next promotion inherited the red.
+  #
+  # So this job CALLS release-gate.yml (`workflow_call`) for the `qa` leg alone. Nothing about the
+  # leg is restated here: the same `legs` picker, the same `gate` job (postgres, migrations, EE
+  # build, `next build`, Playwright, `--workers=3 --retries=1`), the same scripts/e2e-ratchet.mjs
+  # against the same apps/console/e2e/gate-baseline.json. ci.yml decides only WHEN it runs.
+  #
+  # WHEN: `detect-changes.outputs.qa_leg` — a dev PR (not a promotion, which runs all seven legs in
+  # release-gate.yml's own run; not a Mergify `mergify/merge-queue/*` build, see below; not a fork,
+  # which gets no secrets) whose diff touches the `qa_leg` paths and is not prose-only. Everything
+  # else skips it, which `CI required` counts as success.
+  #
+  # REQUIRED WHEN IT RUNS: it is a `needs:` of `CI required`. A regression the ratchet reds fails the
+  # aggregator; a skip passes it. The fix for a red is the one release-gate.yml's ratchet prints —
+  # repair the spec (or the product) in the same PR, or re-record the baseline entry the change
+  # legitimately moved. TESTING.md has the procedure.
+  #
+  # NOT IN THE MERGE QUEUE. Mergify validates a batch as a `pull_request` run on a
+  # `mergify/merge-queue/*` draft PR; `selective` is false there, so `qa_leg` is false and this job
+  # skips. Each PR already ran the leg on its own head, and a second ~10-minute run per batch is the
+  # cost this skip refuses. What that gives up, stated: two UI PRs that each pass alone and break
+  # each other merge together, and the promotion's own qa leg is where that shows.
+  #
+  # COST: one shard set (the leg's one matrix entry), ~10 runner-minutes measured on release-gate
+  # runs of 2026-11-25, plus a few seconds for `legs`. ci.yml's own `concurrency`
+  # (cancel-in-progress per PR ref) cancels the nested run on a re-push, and release-gate.yml gives
+  # a called run its own `-ci-call` group so it can never cancel, or be cancelled by, that file's
+  # native run on the same PR.
+  #
+  # `pull-requests: read` because the called `legs` job requests it, and a called job may not ask
+  # for more than its caller grants. `secrets: inherit` for the leg's Stripe test key.
+  e2e-qa-leg:
+    name: E2E qa leg (release gate · affected PRs)
+    needs: [detect-changes]
+    if: needs.detect-changes.outputs.qa_leg == 'true'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/release-gate.yml
+    with:
+      ci_legs: qa
+    secrets: inherit
+
   ci-required:
     name: CI required
     if: always()
@@ -4820,6 +4933,7 @@ jobs:
       - capabilities-security
       - build-console
       - byo-users-postgres-required
+      - e2e-qa-leg
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -4833,15 +4947,23 @@ jobs:
             case "$job:$result" in
               detect-changes:success) echo "ok: $job" ;;
               detect-changes:*) echo "::error::detect-changes concluded '$result' — the affected-only plan is unknown"; bad=1 ;;
+              e2e-qa-leg:success)
+                # A called workflow whose jobs all skipped also reports success. `run` is `yes` only
+                # when release-gate.yml's `legs` job decided the leg runs (#7647).
+                if [ "$(jq -r '.["e2e-qa-leg"].outputs.run // ""' <<<"$NEEDS")" = yes ]; then
+                  echo "ok: $job"
+                else
+                  echo "::error::e2e-qa-leg succeeded but release-gate.yml's legs job never decided to run the leg — a vacuous green"; bad=1
+                fi ;;
               *:success) echo "ok: $job" ;;
               *:skipped) echo "ok: $job (skipped)" ;;
               *) echo "::error::$job concluded '$result'. Open that job for the failure; this one only aggregates."; bad=1 ;;
             esac
           done < <(jq -r 'to_entries[] | [.key, .value.result] | @tsv' <<<"$NEEDS")
-          # A parse that read nothing must not pass: ten needs are declared above.
+          # A parse that read nothing must not pass: eleven needs are declared above.
           n=$(jq 'length' <<<"$NEEDS")
-          if [ "$n" -ne 10 ]; then
-            echo "::error::expected 10 needs, read $n — this job's list and its count disagree"
+          if [ "$n" -ne 11 ]; then
+            echo "::error::expected 11 needs, read $n — this job's list and its count disagree"
             bad=1
           fi
           exit "$bad"
