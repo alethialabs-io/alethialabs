@@ -1,15 +1,20 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Exactly-once bookkeeping for the Stripe webhook. Stripe retries and can duplicate
+// Exactly-once bookkeeping for payment-provider webhooks. Providers retry and can duplicate
 // deliveries; the state upsert is idempotent, but the branded emails are not — sending
 // one per delivery would double-mail the customer. The handler claims each event id
 // before doing work and marks it done/error after, so a replay of an already-done event
 // is skipped. See app/api/webhooks/stripe/route.ts.
+//
+// Every function takes the `provider` whose event id it is: the ledger's key is
+// (provider, event_id), so the same id string under two providers is two independent claims, and
+// the advisory lock below is keyed on both so they never serialize against each other.
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { type Db, getLockDb, getServiceDb, type Tx } from "@/lib/db";
 import { stripeWebhookEvent } from "@/lib/db/schema";
+import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 
 /** Outcome of claiming an event id for processing. */
 export type ClaimResult =
@@ -19,20 +24,34 @@ export type ClaimResult =
 /** Outcome of a serialized exactly-once processing attempt (see {@link runWebhookEventExactlyOnce}). */
 export type WebhookRunOutcome = "handled" | "skipped_done";
 
+/** The ledger row for one provider's event id. */
+function eventKey(provider: BillingProviderId, eventId: string) {
+	return and(eq(stripeWebhookEvent.provider, provider), eq(stripeWebhookEvent.eventId, eventId));
+}
+
 /**
- * Claims a Stripe event id for processing. Inserts a `processing` row; if the id
+ * The advisory-lock key text for one provider's event id. `provider:eventId` — a provider id has no
+ * colon, so two different (provider, id) pairs never produce the same text.
+ */
+export function webhookEventLockKey(provider: BillingProviderId, eventId: string): string {
+	return `${provider}:${eventId}`;
+}
+
+/**
+ * Claims a provider's event id for processing. Inserts a `processing` row; if the id
  * already exists it is NOT re-claimed and the caller learns whether it was already
  * `done` (skip entirely) or left `processing`/`error` (a prior attempt crashed —
  * Stripe is retrying, so let it run again). Idempotent on the event id PK.
  */
 export async function claimWebhookEvent(
+	provider: BillingProviderId,
 	eventId: string,
 	type: string,
 ): Promise<ClaimResult> {
 	const inserted = await getServiceDb()
 		.insert(stripeWebhookEvent)
-		.values({ eventId, type, status: "processing" })
-		.onConflictDoNothing({ target: stripeWebhookEvent.eventId })
+		.values({ provider, eventId, type, status: "processing" })
+		.onConflictDoNothing({ target: [stripeWebhookEvent.provider, stripeWebhookEvent.eventId] })
 		.returning({ eventId: stripeWebhookEvent.eventId });
 
 	if (inserted.length > 0) return { claimed: true };
@@ -40,7 +59,7 @@ export async function claimWebhookEvent(
 	const [existing] = await getServiceDb()
 		.select({ status: stripeWebhookEvent.status })
 		.from(stripeWebhookEvent)
-		.where(eq(stripeWebhookEvent.eventId, eventId))
+		.where(eventKey(provider, eventId))
 		.limit(1);
 	return { claimed: false, alreadyDone: existing?.status === "done" };
 }
@@ -52,19 +71,20 @@ export async function claimWebhookEvent(
  * defaults to the service pool for standalone callers.
  */
 export async function markWebhookEventDone(
+	provider: BillingProviderId,
 	eventId: string,
 	exec: Db | Tx = getServiceDb(),
 ): Promise<void> {
 	await exec
 		.update(stripeWebhookEvent)
 		.set({ status: "done", processedAt: new Date(), error: null })
-		.where(eq(stripeWebhookEvent.eventId, eventId));
+		.where(eventKey(provider, eventId));
 }
 
 /**
- * Runs `handler` for a Stripe event EXACTLY ONCE across concurrent / retried deliveries of the
+ * Runs `handler` for a provider's event EXACTLY ONCE across concurrent / retried deliveries of the
  * same event id, then marks the row `done`. One transaction takes a per-event advisory lock
- * (`pg_advisory_xact_lock(hashtextextended(eventId, 0))`) and holds it while `handler` runs; the
+ * (`pg_advisory_xact_lock(hashtextextended('<provider>:<eventId>', 0))`) and holds it while `handler` runs; the
  * row re-read, the re-insert and the `done` mark run in that transaction, but the handler's own reads
  * and writes do not: they go through `getServiceDb()` and commit on their own. Deliveries of
  * the SAME id are serialized (different ids never block each other); the handler — which sends the
@@ -91,11 +111,13 @@ export async function markWebhookEventDone(
  * fails on that stall. So the handler must not take a lock-pool connection itself (`withPurchaseLock`
  * or a nested delivery): it would wait on the lock pool the same way.
  *
- * @param eventId Stripe event id (`evt_…`) — the PK and the advisory-lock key.
+ * @param provider Whose event id this is — half of the PK and of the advisory-lock key.
+ * @param eventId The provider's event id (`evt_…`) — the other half of both.
  * @param eventType Event type, used only to re-establish a row deleted by a racing break-glass reset.
  * @param handler The side-effecting dispatch (e.g. `() => handleStripeEvent(event)`).
  */
 export async function runWebhookEventExactlyOnce(
+	provider: BillingProviderId,
 	eventId: string,
 	eventType: string,
 	handler: () => Promise<void>,
@@ -104,13 +126,13 @@ export async function runWebhookEventExactlyOnce(
 		// Serialize concurrent deliveries of THIS event id — auto-released at commit/rollback.
 		// Different event ids hash to different keys, so they never block each other.
 		await tx.execute(
-			sql`select pg_advisory_xact_lock(hashtextextended(${eventId}, 0))`,
+			sql`select pg_advisory_xact_lock(hashtextextended(${webhookEventLockKey(provider, eventId)}, 0))`,
 		);
 
 		const [row] = await tx
 			.select({ status: stripeWebhookEvent.status })
 			.from(stripeWebhookEvent)
-			.where(eq(stripeWebhookEvent.eventId, eventId))
+			.where(eventKey(provider, eventId))
 			.limit(1);
 
 		// Won by a delivery that took the lock first (or a completed prior run) — skip, no re-email.
@@ -121,14 +143,14 @@ export async function runWebhookEventExactlyOnce(
 		if (!row) {
 			await tx
 				.insert(stripeWebhookEvent)
-				.values({ eventId, type: eventType, status: "processing" })
-				.onConflictDoNothing({ target: stripeWebhookEvent.eventId });
+				.values({ provider, eventId, type: eventType, status: "processing" })
+				.onConflictDoNothing({ target: [stripeWebhookEvent.provider, stripeWebhookEvent.eventId] });
 		}
 
 		// Run the handler while holding the lock; on success mark done in the SAME transaction so the
 		// flip and the lock release are atomic. A throw here rolls back the mark and propagates.
 		await handler();
-		await markWebhookEventDone(eventId, tx);
+		await markWebhookEventDone(provider, eventId, tx);
 		return "handled";
 	});
 }
@@ -139,24 +161,28 @@ export async function runWebhookEventExactlyOnce(
  * row. Deletes it (rather than flipping status) so the subsequent claim starts clean; a no-op if the
  * id was never seen. Returns whether a row existed. Used ONLY by the audited break-glass replay path.
  */
-export async function resetWebhookEvent(eventId: string): Promise<boolean> {
+export async function resetWebhookEvent(
+	provider: BillingProviderId,
+	eventId: string,
+): Promise<boolean> {
 	const deleted = await getServiceDb()
 		.delete(stripeWebhookEvent)
-		.where(eq(stripeWebhookEvent.eventId, eventId))
+		.where(eventKey(provider, eventId))
 		.returning({ eventId: stripeWebhookEvent.eventId });
 	return deleted.length > 0;
 }
 
 /**
  * Marks a claimed event as failed (records the error, leaves it re-claimable). The
- * handler returns 500 so Stripe retries the delivery.
+ * handler returns 500 so the provider retries the delivery.
  */
 export async function markWebhookEventError(
+	provider: BillingProviderId,
 	eventId: string,
 	error: string,
 ): Promise<void> {
 	await getServiceDb()
 		.update(stripeWebhookEvent)
 		.set({ status: "error", processedAt: new Date(), error: error.slice(0, 1000) })
-		.where(eq(stripeWebhookEvent.eventId, eventId));
+		.where(eventKey(provider, eventId));
 }

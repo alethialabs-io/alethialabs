@@ -81,6 +81,9 @@ export const PROMISE_VAR = "ALETHIA_E2E_CAPABILITIES";
  */
 const REQUIRED_ENV: Record<Capability, readonly string[]> = {
 	stripe: [
+		// The sales provider fails closed (lib/billing/provider/select.ts): with it unset the console
+		// renders billing as off even with every Stripe key present.
+		"BILLING_PROVIDER",
 		"STRIPE_SECRET_KEY",
 		"STRIPE_WEBHOOK_SECRET",
 		"STRIPE_PRICE_TEAM",

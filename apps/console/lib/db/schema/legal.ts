@@ -18,8 +18,10 @@
 //     lifecycle moves forward through `state` and the withdrawal/cancellation columns record what
 //     happened rather than replacing it.
 
+import { sql } from "drizzle-orm";
 import {
 	boolean,
+	check,
 	index,
 	integer,
 	jsonb,
@@ -33,6 +35,7 @@ import type {
 	CommerceDocumentVersions,
 	LegalAcceptanceEvidence,
 } from "@/types/jsonb.types";
+import { type BillingProviderId, billingProviderSqlList } from "./billing-provider";
 import {
 	commerceOrderState,
 	legalAcceptanceContext,
@@ -189,9 +192,17 @@ export const commerceOrder = pgTable(
 		/** When access actually ends — the paid period's end, never the cancellation instant. */
 		accessEndsAt: timestamp({ withTimezone: true }),
 
+		/**
+		 * The payment provider this order was placed through. Rows written before Paddle are
+		 * Stripe's, hence the default; a Paddle writer sets `paddle` (and a Paddle id requires it).
+		 */
+		provider: text().$type<BillingProviderId>().default("stripe").notNull(),
 		/** Stripe linkage, when the order reached a payment. */
 		stripeSubscriptionId: text(),
 		stripePaymentIntentId: text(),
+		/** Paddle linkage: the checkout transaction, and the subscription it created (if any). */
+		paddleTransactionId: text(),
+		paddleSubscriptionId: text(),
 
 		placedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 		createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
@@ -201,6 +212,20 @@ export const commerceOrder = pgTable(
 		index("commerce_order_org_idx").on(t.organizationId),
 		index("commerce_order_state_idx").on(t.state),
 		index("commerce_order_subscription_idx").on(t.stripeSubscriptionId),
+		index("commerce_order_paddle_subscription_idx").on(t.paddleSubscriptionId),
+		check(
+			"commerce_order_provider_known",
+			sql.raw(`provider IN (${billingProviderSqlList()})`),
+		),
+		// A provider's ids only on that provider's order.
+		check(
+			"commerce_order_stripe_ids_are_stripe",
+			sql`(stripe_subscription_id IS NULL AND stripe_payment_intent_id IS NULL) OR provider = 'stripe'`,
+		),
+		check(
+			"commerce_order_paddle_ids_are_paddle",
+			sql`(paddle_transaction_id IS NULL AND paddle_subscription_id IS NULL) OR provider = 'paddle'`,
+		),
 	],
 );
 

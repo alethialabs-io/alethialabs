@@ -20,7 +20,7 @@ import { getPdp } from "@/lib/authz";
 import { getEntitlements } from "@/lib/authz/entitlements";
 import { authorize } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
-import { isStripeConfigured } from "@/lib/billing/config";
+import { isBillingConfigured } from "@/lib/billing/config";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { offeredClouds } from "@/lib/cloud-providers/availability";
 import { getServiceDb } from "@/lib/db";
@@ -106,7 +106,7 @@ export async function readOverviewUsage(actor: Actor): Promise<OverviewUsage> {
 		throw new Error("The usage read fell back from the org's billing row; refusing to render the fallback.");
 	}
 	return {
-		hosted: isStripeConfigured(),
+		hosted: isBillingConfigured(),
 		plan,
 		memberCount,
 		canInvite: collaboration.canInvite,
