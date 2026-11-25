@@ -5,16 +5,22 @@
 // plan, a deploy or a destroy may be queued. No I/O, so the whole table is a parameterised test
 // (tests/lib/approvals/policy.test.ts) and the engine (gate.ts, request.ts) reads its answer.
 //
-// | Credential                     | PLAN | DEPLOY, dev/staging          | DEPLOY, production        | DESTROY                 |
-// |--------------------------------|------|------------------------------|---------------------------|-------------------------|
-// | session                        | none | the click                    | the click                 | the click               |
-// | cli_session                    | none | approval                     | approval                  | approval                |
-// | agent_oauth, agent_in_app      | none | approval                     | approval; refused when    | approval; same refusal  |
-// |                                |      |                              | "no agents on production" | on production           |
-// | service_token                  | none | approval, or automatic when  | approval, never automatic | approval, never         |
-// |                                |      | the token lists the env (D2) |                           | automatic               |
+// | Credential                | PLAN                | DEPLOY, dev/staging          | DEPLOY, production        | DESTROY                 |
+// |---------------------------|---------------------|------------------------------|---------------------------|-------------------------|
+// | session                   | none                | the click                    | the click                 | the click               |
+// | cli_session               | none                | approval                     | approval                  | approval                |
+// | agent_oauth, agent_in_app | none; refused while | approval                     | approval; refused when    | approval; same refusal  |
+// |                           | agent access is off |                              | "no agents on production" | on production           |
+// | service_token             | none                | approval, or automatic when  | approval, never automatic | approval, never         |
+// |                           |                     | the token lists the env (D2) |                           | automatic               |
 //
-// The org's kill switch (`agent_access_enabled` off) refuses the two agent kinds everything here.
+// The org's kill switch (`agent_access_enabled` off) refuses the two agent kinds every cell here, the
+// PLAN column included, whatever approval they hold ("off means off", maintainer decision 2026-11-24,
+// #7477). It refuses them more than this table: `agentAccessRefusal` below is also what the in-product
+// agent's tool guard (lib/agent/kill-switch.ts) asks before every tool call, reads and design tools
+// included. A connected agent is refused one step earlier: the MCP route's actor check
+// (lib/ai/mcp/actor.ts) reads the same toggle and refuses the whole request, so no MCP tool runs.
+// `session`, `cli_session` and `service_token` are never refused by it.
 // A second person for a `session` click when "require a different approver" is on, and the OAuth
 // client allow-list, are the enterprise toggles (AGT-L14): the queue gate asks them through
 // enterprise-policy.ts after this table, never here. In core a session's click is its approval.
@@ -24,7 +30,7 @@ import type { EnvironmentStage } from "@/lib/db/schema/enums";
 import type { ApplyOperation } from "./types";
 
 /** True when `credential` is an agent acting for a person (`agent_oauth`, `agent_in_app`): the org's agent policy binds those. */
-function isAgentCredential(credential: CredentialKind): boolean {
+export function isAgentCredential(credential: CredentialKind): boolean {
 	return credential === "agent_oauth" || credential === "agent_in_app";
 }
 
@@ -66,12 +72,27 @@ export type Requirement =
 	| { kind: "approval" }
 	| { kind: "refused"; reason: PolicyRefusal };
 
+/**
+ * The kill switch's answer for `credential`: `agent_access_disabled` when it is an agent credential
+ * and the org turned agent access off, else null. It names no operation because it refuses all of
+ * them: every table cell, and every agent tool (lib/agent/kill-switch.ts).
+ */
+export function agentAccessRefusal(
+	credential: CredentialKind,
+	policy: Pick<AgentPolicyToggles, "agentAccessEnabled">,
+): "agent_access_disabled" | null {
+	return isAgentCredential(credential) && !policy.agentAccessEnabled ? "agent_access_disabled" : null;
+}
+
+/** The sentence every refusal by the kill switch is shown as: an apply, a plan, a read or a design tool. */
+export const AGENT_ACCESS_DISABLED_MESSAGE =
+	"Agent access is turned off for this organization. An owner can turn it back on in the organization's agent settings.";
+
 /** The answer table 4.2 gives for one credential, operation and environment stage. */
 export function applyRequirement(input: RequirementInput): Requirement {
 	const { credential, operation, stage, policy } = input;
-	if (isAgentCredential(credential) && !policy.agentAccessEnabled) {
-		return { kind: "refused", reason: "agent_access_disabled" };
-	}
+	const killed = agentAccessRefusal(credential, policy);
+	if (killed) return { kind: "refused", reason: killed };
 	if (operation === "plan") return { kind: "none" };
 	const production = stage === "production";
 	switch (credential) {
@@ -103,7 +124,7 @@ export function applyRequirement(input: RequirementInput): Requirement {
 export function policyRefusalMessage(reason: PolicyRefusal, operation: ApplyOperation): string {
 	switch (reason) {
 		case "agent_access_disabled":
-			return "Agent access is turned off for this organization. An owner can turn it back on in the organization's agent settings.";
+			return AGENT_ACCESS_DISABLED_MESSAGE;
 		case "agents_not_on_production":
 			return `This organization does not let agents ${operation} production environments. A person can ${operation} it from the console.`;
 	}
