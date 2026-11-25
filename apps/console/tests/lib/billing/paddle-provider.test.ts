@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Paddle adapter (lib/billing/paddle/provider.ts): parseWebhook verifies before it parses and
-// returns the normalized event; mode follows the KEY's prefix; the methods later lanes own refuse
-// loudly instead of pretending; the L5 usage methods are wired (their logic is tested in
-// paddle-overage*.test.ts and paddle-documents.test.ts).
+// returns the normalized event; mode follows the KEY's prefix; the L5 usage methods are wired (their
+// logic is tested in paddle-overage*.test.ts and paddle-documents.test.ts). L4's purchase, portal and
+// plan methods are driven in paddle-checkout.test.ts and paddle-subscriptions.test.ts.
 
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PaddleConfig } from "@/lib/billing/paddle/config";
-import { createPaddleProvider, PaddleNotImplementedError, PaddleSignatureError } from "@/lib/billing/paddle/provider";
+import { createPaddleProvider, PaddleSignatureError } from "@/lib/billing/paddle/provider";
 import { CATALOG, envelope, subscriptionData } from "../../fixtures/paddle-events";
 
 const SECRET = "pdl_ntfset_provider_test";
@@ -73,21 +73,6 @@ describe("createPaddleProvider() identity and mode", () => {
 		process.env.PADDLE_API_KEY = "";
 		expect(provider.mode()).toBeNull();
 		expect(provider.isConfigured()).toBe(false);
-	});
-});
-
-describe("methods later lanes own", () => {
-	it("refuse with PaddleNotImplementedError", async () => {
-		const ref = { organizationId: "o", subscriptionId: "sub_1", slot: "plan" as const };
-		const calls = [
-			provider.startPurchase({ organizationId: "o", userId: "u", item: { kind: "plan", plan: "team" }, returnUrl: "https://x.invalid" }),
-			provider.managementUrl("o", "https://x.invalid"),
-			provider.cancelAtPeriodEnd(ref),
-			provider.resume(ref),
-			provider.changePlan(ref, { kind: "plan", plan: "team" }),
-			provider.livePrices(),
-		];
-		for (const call of calls) await expect(call).rejects.toBeInstanceOf(PaddleNotImplementedError);
 	});
 });
 

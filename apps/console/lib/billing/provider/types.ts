@@ -51,6 +51,37 @@ export interface PurchaseRequest {
 	currency?: SupportedCurrency;
 	/** Absolute URL to return to when the checkout completes or is abandoned. */
 	returnUrl: string;
+	/**
+	 * Who is buying, as our own records hold it (the declaration + the address the sheet collected),
+	 * so the provider can pre-fill its checkout. A merchant of record re-collects what it needs; this
+	 * is a convenience, never the authority on tax facts.
+	 */
+	buyer?: PurchaseBuyer;
+}
+
+/** The buyer facts a provider may pre-fill checkout with. Every field is ours, never the client's. */
+export interface PurchaseBuyer {
+	email: string;
+	name?: string | null;
+	address?: {
+		countryCode: string;
+		postalCode?: string | null;
+		city?: string | null;
+		line1?: string | null;
+		line2?: string | null;
+		region?: string | null;
+	} | null;
+	/** The organization buying, when the payer declared `organization`. */
+	business?: { name: string; taxIdentifier?: string | null } | null;
+	/** The provider's own records for this org from an earlier checkout, when it has them. */
+	existing?: { customerId?: string | null; addressId?: string | null; businessId?: string | null };
+}
+
+/** The provider records a purchase start created or reused, for the org's billing row. */
+export interface PurchaseCustomerRefs {
+	customerId: string;
+	addressId: string | null;
+	businessId: string | null;
 }
 
 /**
@@ -59,7 +90,14 @@ export interface PurchaseRequest {
  * Stripe hands back a hosted-checkout URL or an embedded-element client secret.
  */
 export type PurchaseStart =
-	| { kind: "paddle_checkout"; transactionId: string; clientToken: string; environment: "sandbox" | "live" }
+	| {
+			kind: "paddle_checkout";
+			transactionId: string;
+			clientToken: string;
+			environment: "sandbox" | "live";
+			/** The customer/address/business the transaction was created for — server-side only. */
+			customer?: PurchaseCustomerRefs;
+	  }
 	| { kind: "redirect"; url: string }
 	| { kind: "client_secret"; clientSecret: string };
 

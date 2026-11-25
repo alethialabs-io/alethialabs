@@ -8,6 +8,7 @@ import { getActiveOrgSlug } from "@/app/server/actions/resolve";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { isStripeConfigured } from "@/lib/billing/config";
 import { PaidConversionNotAllowedError } from "@/lib/billing/eligibility";
+import { salesProvider } from "@/lib/billing/provider/select";
 import { getOwner } from "@/lib/auth/owner";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
@@ -62,7 +63,9 @@ export default async function StartPage({ searchParams }: StartPageProps) {
 	let checkoutUrl: string | null = null;
 	let refusal: string | null = null;
 	let termsPending = false;
-	if (isStripeConfigured()) {
+	// A Paddle instance has no hosted Checkout URL to send the visitor to: its trial is the card-less
+	// local grant offered in the console, so the billing page (the fallback below) is where it starts.
+	if (isStripeConfigured() && salesProvider() !== "paddle") {
 		try {
 			checkoutUrl = (await createCheckoutSession("team")).url;
 		} catch (err) {

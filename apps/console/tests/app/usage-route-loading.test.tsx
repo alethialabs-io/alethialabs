@@ -51,6 +51,8 @@ const selfManagedSummary: BillingSummary = {
 	seats: null,
 	memberCount: 1,
 	unitAmount: money(0, "usd"),
+	provider: "stripe",
+	pastDueGraceEndsAt: null,
 };
 
 /** Every bordered card the render draws. */

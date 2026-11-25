@@ -16,13 +16,16 @@ import { type InvoiceListFilters, listOrgInvoices } from "@/lib/billing/invoices
 import { providerDocumentsForOrg } from "@/lib/billing/provider/documents";
 import type { BillingDocument } from "@/lib/billing/provider/types";
 import { backupRankOf } from "@/lib/billing/payment-methods";
-import { getAllAiPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
+import { isManualGrantExpired, PAST_DUE_GRACE_MS } from "@/lib/billing/plan";
+import { getAllAiPrices, getAllPlanPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
+import { providerForOrg } from "@/lib/billing/provider/select";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
 import { readSubscription } from "@/lib/billing/subscription-cache";
 import { mapStatus } from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
-import { type Invoice, member, organization } from "@/lib/db/schema";
+import { type Invoice, member, type OrganizationBilling, organization } from "@/lib/db/schema";
+import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 import { type BillingPlan, type BillingStatus, type InvoiceStatus, invoiceStatus } from "@/lib/db/schema/enums";
 import { query } from "@/lib/rpc/base";
 import {
@@ -130,6 +133,17 @@ export interface BillingSummary {
 	 * conversion has no halves to keep in step.
 	 */
 	unitAmount: Money | null;
+	/**
+	 * Which provider this org's billing goes through (`providerForOrg`): its own row's, else the
+	 * instance's sales provider. Null when billing is not wired. Decides where the plan card's
+	 * "update the payment method" goes — Stripe's in-page cards, or Paddle's customer portal.
+	 */
+	provider: BillingProviderId | null;
+	/**
+	 * For a Paddle subscription that is `past_due`: the ISO instant its 7-day grace ends (O8,
+	 * `PAST_DUE_GRACE_MS`) — the paid features stay on until then. Null otherwise.
+	 */
+	pastDueGraceEndsAt: string | null;
 }
 
 /** Resolves the active org's billing state for display (read-only; any member). */
@@ -196,13 +210,30 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			// Subscription unreadable (deleted upstream) — fall back to the DB row.
 		}
 	}
+	// A Paddle row is read from the row itself, which its webhook keeps (L3): a scheduled cancellation
+	// is `cancel_effective_at`, a past-due subscription keeps its plan for the grace window, and a local
+	// card-less trial past its end has lapsed to Hobby (`isManualGrantExpired`).
+	const provider = providerForOrg(billing);
+	let pastDueGraceEndsAt: string | null = null;
+	let effectivePlan = plan;
+	if (billing && provider === "paddle") {
+		const paddle = paddleSummaryFields(billing);
+		status = paddle.status;
+		effectivePlan = paddle.plan;
+		cancelAtPeriodEnd = paddle.cancelAtPeriodEnd;
+		currentPeriodEnd = paddle.currentPeriodEnd;
+		pastDueGraceEndsAt = paddle.pastDueGraceEndsAt;
+	}
 	// No live sub price (or no sub yet) → fall back to the plan's live Stripe price, in the
 	// currency that price is denominated in. `amounts[currency]` rather than a `usd` field: the
 	// fallback used to read `LivePlanPrice.unitAmountUsd` and label it `"usd"` by hand, which is
 	// the same assumption one layer up. An org with no live sub sees the plan's base-currency
 	// price; which currency it will actually be BILLED in is settled at checkout, not here.
-	if (unitAmount === null && plan !== "community") {
-		const price = await getPlanPrice(plan);
+	if (unitAmount === null && effectivePlan !== "community") {
+		// Paddle's prices come from its pricing preview (getAllPlanPrices overlays them); Stripe's from
+		// the plan's price as before.
+		const price =
+			provider === "paddle" ? (await getAllPlanPrices())[effectivePlan] : await getPlanPrice(effectivePlan);
 		unitAmount = price.amounts[price.currency] ?? null;
 	}
 
@@ -210,7 +241,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		// Provider-neutral: is billing a surface on this instance (the sales provider is configured).
 		hosted: isBillingConfigured(),
 		hasOrg,
-		plan,
+		plan: effectivePlan,
 		status,
 		state: derivePlanState(status, cancelAtPeriodEnd),
 		currentPeriodEnd,
@@ -220,6 +251,47 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		seats: billing?.seats ?? null,
 		memberCount,
 		unitAmount,
+		provider,
+		pastDueGraceEndsAt,
+	};
+}
+
+/** The plan-card fields of a Paddle-routed billing row (pure; `now` for the grace and lapse checks). */
+export function paddleSummaryFields(
+	billing: Pick<
+		OrganizationBilling,
+		| "plan"
+		| "status"
+		| "currentPeriodStart"
+		| "currentPeriodEnd"
+		| "cancelEffectiveAt"
+		| "stripeSubscriptionId"
+		| "paddleSubscriptionId"
+	>,
+	now: Date = new Date(),
+): {
+	plan: BillingPlan;
+	status: BillingStatus;
+	cancelAtPeriodEnd: boolean;
+	currentPeriodEnd: string | null;
+	pastDueGraceEndsAt: string | null;
+} {
+	if (isManualGrantExpired(billing, now)) {
+		return { plan: "community", status: "none", cancelAtPeriodEnd: false, currentPeriodEnd: null, pastDueGraceEndsAt: null };
+	}
+	const live = billing.status === "active" || billing.status === "trialing";
+	const cancelAtPeriodEnd = live && billing.cancelEffectiveAt != null;
+	const end = cancelAtPeriodEnd ? billing.cancelEffectiveAt : live ? billing.currentPeriodEnd : null;
+	const graceEnd =
+		billing.status === "past_due" && billing.currentPeriodStart
+			? new Date(billing.currentPeriodStart.getTime() + PAST_DUE_GRACE_MS)
+			: null;
+	return {
+		plan: billing.plan,
+		status: billing.status,
+		cancelAtPeriodEnd,
+		currentPeriodEnd: end?.toISOString() ?? null,
+		pastDueGraceEndsAt: graceEnd && graceEnd.getTime() > now.getTime() ? graceEnd.toISOString() : null,
 	};
 }
 
@@ -468,7 +540,8 @@ export interface PlanHistoryEntry {
  */
 export async function getPlanHistory(): Promise<PlanHistoryEntry[]> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
-	requireHostedRead();
+	// No Stripe call below: any hosted rail (Stripe, or a Paddle sales provider) may read it.
+	if (!isBillingConfigured()) requireHostedRead();
 	if (actor.orgId === actor.userId) return [];
 
 	const [org] = await getServiceDb()
