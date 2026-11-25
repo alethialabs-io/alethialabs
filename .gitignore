@@ -100,3 +100,6 @@ apps/console/e2e/.auth/
 # on this machine included a personal document. Untracked was doing the work by accident; this
 # makes it deliberate.
 /output/
+
+# Staged npm packages (scripts/release/stage-public-packages.mjs)
+.release/
