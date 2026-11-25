@@ -32,6 +32,7 @@ import { OpenFgaPdp } from "./openfga-pdp";
 import { newOrgSetupHooks } from "./new-org-setup-hooks";
 import { orgSlugHooks } from "./org-slug-hooks";
 import { resolveActiveScope } from "./scope";
+import { ssoProviderCapPlugin } from "./sso-provider-cap";
 import {
   type EnterpriseAuthPlugin,
   SSO_PROVISIONED_ROLE,
@@ -559,6 +560,10 @@ export const register: EnterpriseEntrypoint<CoreContext, EnterpriseModule> = (
           ],
         },
       },
+
+      // The per-organization cap on identity providers (LST-9): the bound the console's
+      // unpaged SSO list is recorded against. After sso(), so its after-hook sees the row.
+      ssoProviderCapPlugin(core.db),
 
       // The enterprise modules' own plugins, after organization() and sso() so their
       // hooks see what those two wrote.
