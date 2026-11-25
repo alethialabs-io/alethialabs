@@ -1,12 +1,9 @@
 {
-	"kind": "debt",
-	"owner": "#7487",
-	"lane": "LST-5",
-	"why": "A toolbar count pill plus one pill per catalog group heading. The catalog itself is a bounded list awaiting its recorded `bounded` decision.",
+	"kind": "bounded",
+	"decided": "LST-5 (#7487), under epic #7481, which names the connectors catalog as a bounded list",
+	"decision": "The connectors board lists the product's connector catalog, one row per connector, grouped by category, with this organization's connection state on each row. It is not a list of things an organization creates: an organization adds accounts to a connector (shown inside that connector's manage sheet, never as rows), but never adds a row. So the board reads the whole catalog in one `connectors.board` read and does not page it.",
+	"bound": "The rows are the `connectors` table, which only the generated seed writes (`apps/console/lib/db/seed/connectors.generated.sql`, produced by `apps/console/scripts/gen-connectors.mjs` from `packages/core/categories/catalog.json`, 42 entries). No server action or RPC inserts into it, `readConnectorsFor` reads it through the service connection, and the board can only list fewer (a cloud that is not offered here is dropped). The catalog grows only in a reviewed diff of catalog.json.",
 	"findings": {
-		"apps/console/components/connectors/connectors-page.tsx": {
-			"count-pill": 2
-		},
 		"store:useConnectorFilters": {
 			"keyset-contract": 1
 		}
