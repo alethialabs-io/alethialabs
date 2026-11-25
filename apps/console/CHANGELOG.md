@@ -1,5 +1,21 @@
 # console
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [08f55f5]
+  - @repo/brand@0.1.1
+  - @repo/email@0.1.1
+  - @repo/format@0.1.1
+  - @repo/legal@0.1.1
+  - @repo/org-slug@0.1.1
+  - @repo/platform@0.1.1
+  - @repo/privacy@0.1.1
+  - @repo/support@0.1.1
+  - @repo/ui@0.1.1
+  - @repo/nra@0.0.2
+
 ## 0.1.1
 
 ### Patch Changes
