@@ -1122,6 +1122,15 @@ async function seedClassification(owner: Owner): Promise<void> {
  */
 export const UNSEEDABLE: ReadonlyMap<string, string> = new Map([
 	[
+		"connected-agent",
+		"a connected agent is three rows better-auth's OAuth provider writes together — an `oauth_client` registered " +
+			"from a Client ID Metadata Document, the person's `oauth_consent`, and the `agent_oauth_grants` row bound to " +
+			"that consent — and the page reads the client's verified CIMD metadata. Writing those rows by hand would " +
+			"fixture a shape the provider never produces, so a pass would measure the fixture. `settings.connected-agent." +
+			"disconnect`'s confirmation is covered by the page's component tests (connected-agents-page.test.tsx) until " +
+			"the gate can complete a real OAuth consent.",
+	],
+	[
 		"byo-chart",
 		"the registry records `byo.chart.detach` as `missing` — there is no confirmation to measure, so seeding the chart would " +
 			"establish nothing. The fixture becomes worth writing when the control gains a confirmation, and not before.",
