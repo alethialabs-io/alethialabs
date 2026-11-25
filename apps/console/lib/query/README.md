@@ -243,8 +243,8 @@ maintainer removed it on 2026-11-24, #7481). Radix `Select`s and stat-card strip
 banned from filter bars.
 
 The evidence page is the reference implementation; jobs (`getJobsPage` + `useJobsFilters`),
-runners (`getRunnersPage` + `useRunnerFilters`), and activity (`useActivityQuery`, the
-cursor-paginated infinite variant — the cursor is the `pageParam`, never part of the key)
+runners (`getRunnersPage` + `useRunnerFilters`), and activity (`queryActivityPage` +
+`useKeysetList`, the keyset-paged variant — the cursor is the `pageParam`, never part of the key)
 follow it (#578).
 
 **Every surface is on it — seventeen since the clusters and environments lists joined (#6819) —

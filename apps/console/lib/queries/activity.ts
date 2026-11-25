@@ -5,12 +5,10 @@ import "server-only";
 import {
 	and,
 	count,
-	desc,
 	eq,
 	gte,
 	ilike,
 	inArray,
-	lt,
 	lte,
 	or,
 	type SQL,
@@ -26,6 +24,16 @@ import { likeTerm } from "@/lib/db/like";
 import { authzActivityLog, projects, user } from "@/lib/db/schema";
 import { activityTimeBounds } from "@/lib/query/activity-query";
 import { asOptions, type FacetOption, orderedOptions, searchTerm } from "./facets";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetPageRequest,
+	keysetAfter,
+	keysetFetchLimit,
+	keysetListPage,
+	keysetOrderBy,
+	keysetPage,
+	keysetSortKey,
+} from "./keyset";
 
 // Settings › Activity, filtered in SQL (the console filter standard's server half). Service path
 // with an explicit `org_id` predicate: the service role bypasses RLS, so the org scope is
@@ -34,7 +42,7 @@ import { asOptions, type FacetOption, orderedOptions, searchTerm } from "./facet
 // Two kinds of read, and the difference between them is the standard:
 //
 //   * the ROWS pass takes every filter the caller sent — window, actors, event types, decision,
-//     projects, search — plus the id cursor, and returns one page of rows;
+//     projects, search — plus the keyset cursor, and returns one page of rows;
 //   * the FACET passes take the SCOPE predicates and nothing else: the org, and — on a project's
 //     own Activity page — that project (`query.projectId`). They count the User, Project and
 //     Events options over the UNFILTERED universe, so an option cannot vanish, or its count
@@ -49,6 +57,14 @@ import { asOptions, type FacetOption, orderedOptions, searchTerm } from "./facet
 // per actor / project / (type, decision), never a row per event — and they run only for the
 // FIRST page. "Load more" walks the same universe, so its counts would be identical; paying for
 // them again per page would buy nothing.
+//
+// PAGING is the console's one keyset contract (`./keyset.ts`, epic #7481 / LST-10 #7492): newest
+// first by `ts` truncated to the millisecond, the bigint id breaking ties, one opaque cursor over
+// that pair. It used to be an id-only cursor (`id < n`) with its own number-typed input; ordering
+// by the event's time instead of its insertion id is what the shared codec carries, and the id
+// tiebreak keeps the order total for the many events one request records in one millisecond.
+// The (org_id, id DESC) index no longer serves this ORDER BY: the read is bounded by the time
+// window (`ts >=`, idx_authz_activity_ts) and the org predicate, then top-N sorted.
 
 /** The Activity bar's facet options, counted over the scope's unfiltered log. */
 export interface ActivityFacets {
@@ -104,25 +120,28 @@ function countsOf(
 }
 
 /**
- * The org's Activity log for `query`: one id-descending page of rows filtered in SQL, plus — on
- * the first page only — the User, Project and Events facet counts over the scope's UNFILTERED log
- * (the facet passes are given `scopeOf()` and nothing from the query).
+ * The org's Activity log for `query`: one page of rows filtered in SQL, newest first on the shared
+ * keyset order (`ts` to the millisecond, then id), plus — on the first page only — the User,
+ * Project and Events facet counts over the scope's UNFILTERED log (the facet passes are given
+ * `scopeOf()` and nothing from the query) and whether that log holds anything at all.
  */
 export async function queryActivityPage(
 	orgId: string,
 	query: ActivityQuery = {},
-	pageSize = 50,
+	page: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
 ): Promise<ActivityPage> {
 	const db = getServiceDb();
-	const limit = query.limit ?? pageSize;
+	const { limit, cursor } = page;
 	const scope = scopeOf(orgId, query.projectId);
 	const search = searchTerm(query.search);
 	// A relative window (`within`) is resolved now, at read time (#6740).
 	const bounds = activityTimeBounds(query);
+	// The order and the cursor predicate read the SAME ms-truncated expression (keyset.ts).
+	const sortKey = keysetSortKey(authzActivityLog.ts);
 
 	const conditions: (SQL | undefined)[] = [
 		...scope,
-		query.cursor != null ? lt(authzActivityLog.id, query.cursor) : undefined,
+		keysetAfter(sortKey, authzActivityLog.id, cursor, "integer"),
 		bounds.from ? gte(authzActivityLog.ts, bounds.from) : undefined,
 		bounds.to ? lte(authzActivityLog.ts, bounds.to) : undefined,
 		query.actorIds?.length
@@ -149,32 +168,35 @@ export async function queryActivityPage(
 		);
 	}
 
-	// Fetch one extra row to detect whether a further page exists.
+	// One row past the page, which is how the last page is known exactly (`keysetFetchLimit`).
 	const rowsPass = db
 		.select(activitySelect())
 		.from(authzActivityLog)
 		.leftJoin(user, eq(authzActivityLog.actor_id, user.id))
 		.where(and(...conditions))
-		.orderBy(desc(authzActivityLog.id))
-		.limit(limit + 1);
+		.orderBy(...keysetOrderBy(sortKey, authzActivityLog.id))
+		.limit(keysetFetchLimit(limit));
 
-	const firstPage = query.cursor == null;
+	const firstPage = cursor === undefined;
 	const [rows, facets] = await Promise.all([
 		rowsPass,
 		firstPage ? queryActivityFacets(orgId, query.projectId) : Promise.resolve(null),
 	]);
 
-	const hasMore = rows.length > limit;
-	const page = hasMore ? rows.slice(0, limit) : rows;
-	const nextCursor = hasMore ? page[page.length - 1].id : null;
-
-	return {
-		rows: page.map(
-			(r): ActivityRow => ({ ...r, id: String(r.id), ts: r.ts.toISOString() }),
-		),
-		nextCursor,
-		facets,
-	};
+	const cut = keysetPage(rows, limit, (r) => ({ at: r.ts, id: r.id }));
+	return keysetListPage(
+		{
+			rows: cut.rows.map(
+				(r): ActivityRow => ({ ...r, id: String(r.id), ts: r.ts.toISOString() }),
+			),
+			nextCursor: cut.nextCursor,
+		},
+		// The decision options split the whole scope in two (allow + deny), so their counts add
+		// up to every event in it — none at all is the first-run empty state, whatever the window.
+		facets === null
+			? null
+			: { facets, universeEmpty: facets.decisions.every((o) => o.count === 0) },
+	);
 }
 
 /**
