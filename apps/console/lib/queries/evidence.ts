@@ -13,6 +13,16 @@ import {
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
+import {
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetAfter,
+	keysetFetchLimit,
+	keysetListPage,
+	keysetOrderBy,
+	keysetPage,
+	keysetSortKey,
+} from "./keyset";
 import type {
 	DriftDetail,
 	ExecutionMetadata,
@@ -27,8 +37,11 @@ import type {
 // existing tables — no new state. Per environment we surface the latest verification
 // report + signed receipt (from the most recent PLAN/DEPLOY job's elench result), the
 // current drift posture (environment_drift, incl. per-resource details), and the latest
-// security posture (environment_security); org-wide we list the active verification
-// waivers (jobs.verify_override). All service-path with an explicit org_id filter, since
+// security posture (environment_security); org-wide we read the IN-FORCE verification waivers
+// (jobs.verify_override) the posture needs. The full waiver log — expired ones included — is NOT
+// part of the roll-up: it is a list of its own, paged through the keyset contract by
+// {@link queryEvidenceWaiversPage} (#7488; it used to ride along here capped at 100 rows, so waiver
+// 101 and later were unreachable). All service-path with an explicit org_id filter, since
 // the service role bypasses RLS.
 //
 // EVIDENCE FOLLOWS PROJECT VISIBILITY. Every row belongs to a project, and the roll-up holds only
@@ -107,7 +120,7 @@ export interface EvidenceWaiver {
 	by: string;
 	/** RFC3339 expiry, or null for an open-ended waiver. */
 	expiry: string | null;
-	/** Still in force (no expiry, or expiry in the future). */
+	/** Still in force: no expiry, or one that parses and is in the future (decided in SQL, `waiverInForce`). */
 	active: boolean;
 	createdAt: string;
 }
@@ -132,8 +145,23 @@ export interface EvidenceSummary {
 	securityUnknown: number;
 }
 
+/** One row of the recorded-waivers list: a waiver, keyed by its job for the keyset contract. */
+export interface EvidenceWaiverRow extends EvidenceWaiver {
+	/** The job that carried the override (= `jobId`) — the list's keyset tiebreaker and row key. */
+	id: string;
+}
+
+/** One page of the recorded-waivers list. No facets: the list has no filter bar. */
+export type EvidenceWaiversPage = KeysetListPage<EvidenceWaiverRow, null>;
+
 export interface OrgEvidence {
 	rows: EvidenceEnvRow[];
+	/**
+	 * The waivers IN FORCE now (no expiry, or one in the future), newest first — every one, uncapped.
+	 * What the posture needs: the `waived` status facet, the drawer's per-environment list and the
+	 * `activeWaivers` counter. The bound is the waivers that are in force, which expire; the whole log
+	 * (expired included) is {@link queryEvidenceWaiversPage}'s.
+	 */
 	waivers: EvidenceWaiver[];
 	summary: EvidenceSummary;
 }
@@ -141,6 +169,113 @@ export interface OrgEvidence {
 /** `col IN (ids)`, or a predicate that matches nothing for an empty set. */
 function inIds(col: Parameters<typeof inArray>[0], ids: readonly string[]): SQL {
 	return ids.length > 0 ? inArray(col, [...ids]) : sql`false`;
+}
+
+/** The visible projects AS PROJECTS OF `orgId` — the pair every pass of the roll-up joins through. */
+function visibleProjectOf(orgId: string, projectIds: readonly string[]): SQL | undefined {
+	return and(eq(projects.org_id, orgId), inIds(projects.id, projectIds));
+}
+
+/** A waiver's `expiry` as stored: free text from the CLI, RFC3339 by contract but not by type. */
+const overrideExpiry = sql`(${jobs.verify_override} ->> 'expiry')`;
+
+/**
+ * Whether a waiver is in force NOW, decided in SQL so the roll-up can read only the in-force ones and
+ * the list can show the same verdict. No (or an empty) expiry is open-ended: in force. An expiry that
+ * does not parse as a timestamp is NOT in force (the old in-memory check read it the same way:
+ * `new Date("junk") > now` is false). `CASE`, not `AND`: Postgres does not promise to evaluate an
+ * `AND`'s operands in order, and the cast raises on a value that does not parse; a `CASE` arm runs
+ * only when its condition held. `pg_input_is_valid` is Postgres 16+; every deployment runs 17.
+ */
+const waiverInForce = sql<boolean>`(case
+	when coalesce(${overrideExpiry}, '') = '' then true
+	when pg_input_is_valid(${overrideExpiry}, 'timestamptz') then (${overrideExpiry})::timestamptz > now()
+	else false
+end)`;
+
+/**
+ * The waiver scope: jobs of `orgId` carrying an override, on a visible project — or org-level (no
+ * project AND no environment), as an org-level job is visible org-wide (the job visibility rule,
+ * #6121). Joined to `projects` (left), which this predicate reads.
+ */
+function waiverScope(orgId: string, projectIds: readonly string[]): SQL | undefined {
+	return and(
+		eq(jobs.org_id, orgId),
+		isNotNull(jobs.verify_override),
+		or(visibleProjectOf(orgId, projectIds), and(isNull(jobs.project_id), isNull(jobs.environment_id))),
+	);
+}
+
+/** The projection both waiver reads select: the override, its labels, its time and its verdict. */
+const waiverColumns = {
+	jobId: jobs.id,
+	override: jobs.verify_override,
+	projectName: projects.project_name,
+	environmentName: projectEnvironments.name,
+	createdAt: jobs.created_at,
+	active: waiverInForce,
+};
+
+/** A waiver read's row, as {@link waiverColumns} selects it. */
+interface WaiverRead {
+	jobId: string;
+	override: VerifyOverrideInput | null;
+	projectName: string | null;
+	environmentName: string | null;
+	createdAt: Date;
+	active: boolean;
+}
+
+/**
+ * Shapes a waiver read's row. The scope requires a non-null override, so `override` is never null in
+ * practice; the column is nullable in the schema, and a null one renders as an empty waiver rather
+ * than being dropped, which would shift a keyset page's row count under its cursor.
+ */
+function toWaiver(w: WaiverRead): EvidenceWaiver {
+	const o = w.override;
+	return {
+		jobId: w.jobId,
+		projectName: w.projectName,
+		environmentName: w.environmentName,
+		controls: o?.controls ?? [],
+		reason: o?.reason ?? "",
+		by: o?.by ?? "",
+		expiry: o?.expiry ? o.expiry : null,
+		active: w.active,
+		createdAt: w.createdAt.toISOString(),
+	};
+}
+
+/** The recorded-waivers list's sort key: when the override was recorded, truncated to the ms. */
+const waiverSortKey = keysetSortKey(jobs.created_at);
+
+/**
+ * The recorded-waivers list, on the console paging contract (lib/query/README.md → "Paging"; #7488):
+ * every waiver of the org the reader may see — in force or expired — newest first, the job id
+ * breaking ties, `page.limit` rows strictly after `page.cursor`. One rows pass, reading one row more
+ * than the page so the end is known exactly. No cap: waiver 101 is one "Load more" away, never cut.
+ *
+ * No facet pass, because the list has no filter bar (its `facets` is `null` on every page).
+ * `universeEmpty` on page one is the page's own answer: with no filter, an empty first page IS an
+ * empty scope, so no second read is needed to tell the two empty states apart.
+ */
+export async function queryEvidenceWaiversPage(
+	orgId: string,
+	projectIds: readonly string[],
+	page: KeysetPageRequest,
+): Promise<EvidenceWaiversPage> {
+	const fetched = await getServiceDb()
+		.select(waiverColumns)
+		.from(jobs)
+		.leftJoin(projects, eq(jobs.project_id, projects.id))
+		.leftJoin(projectEnvironments, eq(jobs.environment_id, projectEnvironments.id))
+		.where(and(waiverScope(orgId, projectIds), keysetAfter(waiverSortKey, jobs.id, page.cursor)))
+		.orderBy(...keysetOrderBy(waiverSortKey, jobs.id))
+		.limit(keysetFetchLimit(page.limit));
+	const rows: EvidenceWaiverRow[] = fetched.map((w) => ({ ...toWaiver(w), id: w.jobId }));
+	const cut = keysetPage(rows, page.limit, (w) => ({ at: w.createdAt, id: w.id }));
+	const first = page.cursor === undefined ? { facets: null, universeEmpty: cut.rows.length === 0 } : null;
+	return keysetListPage(cut, first);
 }
 
 /**
@@ -153,7 +288,7 @@ export async function queryOrgEvidence(
 ): Promise<OrgEvidence> {
 	const db = getServiceDb();
 	// The visible projects, AS PROJECTS OF THIS ORG: every pass below joins through this pair.
-	const visibleProject = and(eq(projects.org_id, orgId), inIds(projects.id, projectIds));
+	const visibleProject = visibleProjectOf(orgId, projectIds);
 	// The environments of those projects — the only environments a verify row may come from.
 	const visibleEnvironments = db
 		.select({ id: projectEnvironments.id })
@@ -230,34 +365,17 @@ export async function queryOrgEvidence(
 			.from(environmentSecurity)
 			.innerJoin(projects, eq(environmentSecurity.project_id, projects.id))
 			.where(visibleProject),
-		// Recorded verification waivers, newest first.
+		// The waivers in force now, newest first — every one (see OrgEvidence.waivers).
 		db
-			.select({
-				jobId: jobs.id,
-				override: jobs.verify_override,
-				projectName: projects.project_name,
-				environmentName: projectEnvironments.name,
-				createdAt: jobs.created_at,
-			})
+			.select(waiverColumns)
 			.from(jobs)
 			.leftJoin(projects, eq(jobs.project_id, projects.id))
 			.leftJoin(
 				projectEnvironments,
 				eq(jobs.environment_id, projectEnvironments.id),
 			)
-			.where(
-				and(
-					eq(jobs.org_id, orgId),
-					isNotNull(jobs.verify_override),
-					// A visible project's waiver, or an org-level one: no project AND no environment.
-					or(
-						visibleProject,
-						and(isNull(jobs.project_id), isNull(jobs.environment_id)),
-					),
-				),
-			)
-			.orderBy(desc(jobs.created_at))
-			.limit(100),
+			.where(and(waiverScope(orgId, projectIds), waiverInForce))
+			.orderBy(desc(jobs.created_at), desc(jobs.id)),
 	]);
 
 	// Index the latest verify + drift by environment for the row assembly.
@@ -327,26 +445,7 @@ export async function queryOrgEvidence(
 		};
 	});
 
-	const now = Date.now();
-	const waivers: EvidenceWaiver[] = waiverRows
-		.filter((w): w is typeof w & { override: VerifyOverrideInput } =>
-			Boolean(w.override),
-		)
-		.map((w) => {
-			const o = w.override;
-			const active = !o.expiry || new Date(o.expiry).getTime() > now;
-			return {
-				jobId: w.jobId,
-				projectName: w.projectName,
-				environmentName: w.environmentName,
-				controls: o.controls ?? [],
-				reason: o.reason,
-				by: o.by,
-				expiry: o.expiry ?? null,
-				active,
-				createdAt: w.createdAt.toISOString(),
-			};
-		});
+	const waivers: EvidenceWaiver[] = waiverRows.map(toWaiver);
 
 	const summary: EvidenceSummary = {
 		environments: rows.length,
@@ -359,7 +458,7 @@ export async function queryOrgEvidence(
 		inSync: rows.filter((r) => r.drift?.inSync === true).length,
 		drifted: rows.filter((r) => r.drift && !r.drift.inSync).length,
 		driftUnknown: rows.filter((r) => !r.drift).length,
-		activeWaivers: waivers.filter((w) => w.active).length,
+		activeWaivers: waivers.length,
 		criticalHighVulns: rows.reduce(
 			(n, r) =>
 				n + (r.security?.scanned ? r.security.critical + r.security.high : 0),
