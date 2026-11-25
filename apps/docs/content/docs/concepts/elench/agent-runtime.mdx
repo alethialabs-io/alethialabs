@@ -1,106 +1,77 @@
 ---
 title: Agent harness
-description: One tool registry exposed read-only to external agents, per-agent identities with isolated memory, a stateless executor, and a supervisor that delegates to a colony.
+description: How Alethia exposes one set of tools to its own assistant and to external agents over MCP — what each audience sees, how approval stays with a person, and how agent memory is kept per tenant.
 ---
 
-<Enterprise />
+Alethia defines each agent tool once and serves it to its own assistant and, read-only, to your agents
+(Claude Code, Codex, Cursor and others) over MCP. Every call is checked against your permissions, and
+no tool can approve an apply or a destroy.
 
-The harness exposes the platform's tools **once** and reuses them everywhere — the in-app agent, and the
-customer's own agents (Claude Code, Codex, Gemini) — without ever forking the tool definitions. It then
-layers scoped agent identities, isolated memory, and a supervisor on top.
+<Mermaid chart={`
+flowchart TD
+  Reg["Tool registry: each tool has an audience"] --> InApp["In-app assistant: all tools"]
+  Reg --> Ext["External projection: read-only tools"]
+  Ext --> MCP["MCP server at /api/mcp"]
+  Ops["Operation tools: plan, request_apply, request_destroy, wait_for_job, get_job_logs, cancel_job"] --> MCP
+  MCP --> Agent["Your agent"]
+  Agent -->|request_apply| Pending["Pending approval"]
+  Pending -->|person approves in the console| Deploy["Deploy queued once, for that plan"]
+`} />
 
-## Tool registry — the single source of truth
+## How it works
 
-Every agent tool is an AI-SDK `tool()` definition in `apps/console/lib/ai/tools/`, classified by
-**audience** in `registry.ts`:
+### One registry, two audiences
+
+Every tool is marked with an audience:
 
 | Audience | Who sees it |
-|---|---|
-| `in-app` | Dashboard agent only — HITL proposals, canvas-context tools, and job-queuing writes. |
-| `external` / `both` | Read-only, PDP-gated, stateless — safe to expose to a customer's agent. |
+| --- | --- |
+| In-app | Only the console's assistant: design proposals, canvas tools, and tools that queue jobs. |
+| External or both | Read-only tools that are safe for your own agents. |
 
-`buildExternalAgentTools()` is the **read-only projection** (`externalToolsOnly`, audience
-`external|both`). An anti-drift test (`assertAudienceCoverage`) fails CI if a new tool ships without an
-explicit audience, so the external surface can never silently widen.
+A test fails the build if a tool has no audience, so the external set cannot widen by accident. The
+audience decides only visibility: each tool still checks your permission when it runs.
 
-<Callout type="info">
-  Authorization is **not** re-implemented in the registry. Each tool's `execute` still resolves the
-  actor and enforces its PDP verb at call time; the audience map only decides *visibility*.
-</Callout>
+### The MCP server
 
-## The MCP surface
+The MCP server serves the external tools and six operation tools: `plan`, `request_apply`,
+`request_destroy`, `wait_for_job`, `get_job_logs` and `cancel_job`. Clients sign in with OAuth; the
+token carries the scopes you approved and is bound to the server. The full list is in the
+[tool reference](/agents/tools).
 
-The remote MCP server (`app/api/mcp/route.ts`, OAuth 2.1 via Better Auth + actor binding) serves two
-things side by side: `buildExternalAgentTools()` — so HITL proposals, canvas tools and the in-app
-job-queuing tools never reach an external agent — and the declared operation tools of the external
-contract (`lib/ai/mcp/surface.ts`) that have a handler: `plan`, `request_apply`, `request_destroy`,
-`wait_for_job`, `get_job_logs`, `cancel_job`. A single endpoint serves Claude Code, ChatGPT, Codex, and
-Gemini/Zed-via-ACP.
+Approval happens outside MCP. `request_apply` records a pending approval bound to the plan's digest
+and to the calling client, and returns a console link. A person approves it there. The agent then
+calls `request_apply` again, and only that call queues the deploy, once, for that plan, through the
+same checks every other path uses. So text an agent reads can lead at most to a pending request.
 
-<Callout type="info">
-  Approval over MCP is out of band. `request_apply` records a pending approval bound to the plan's
-  digest and the calling client, and returns a console link; a person approves it there. The agent
-  then calls `request_apply` again, and only that call — for the approved plan, once — queues the
-  deploy, through the same queue gate (`requireApplyAuthorization`) every surface uses. No tool
-  approves, so text an agent reads can lead at most to a pending request.
-</Callout>
+Evidence is readable too: `get_plan_result` returns a job's status and its [Elench](/concepts/elench)
+verdict, and `get_drift_posture` returns an environment's [drift posture](/concepts/drift). Queuing an
+audit stays in the console's assistant.
 
-### The proof surface over MCP
+### Agents and memory
 
-The evidence half of Elench is readable by an external agent, not just the dashboard:
+An agent is stored data, not a running process: a persona, a mission, a tool scope and a memory
+namespace. Each turn runs on stateless compute that loads the agent and narrows the tools to its
+scope.
 
-| Tool | Audience | Returns |
-|---|---|---|
-| `get_plan_result` | `both` | A job's status + the Elench `verify_verdict` / `verify_result` (the signed gate report). |
-| `get_drift_posture` | `both` | The latest day-2 [drift `Posture`](/concepts/elench/engine-internals) for a project environment. |
-| `audit_infrastructure` | `in-app` | Queues an `AUDIT` job over a bring-your-own plan / manifests (a job-queuing write → stays in-app). |
+Memory is kept per tenant: under the organization, or under one project in it. Every memory path is
+checked, and a path that tries to leave its namespace (`..`, an absolute path, a backslash, a null
+byte) is refused, so one tenant cannot read another's memory.
 
-So a customer's own agent can ask "is this cluster still in sync, and did the last deploy pass the gate?"
-over the MCP surface — the "keep proving it" evidence, not just the build.
+Each scope also has pinned context: custom instructions and knowledge documents, at the organization
+and project level, plus facts derived from the project. They are added to the agent's instructions
+before its first tool call. You edit them in the assistant's [knowledge panel](/guides/assistant/knowledge).
 
-## Agents are DATA, not processes
+## What it does not do
 
-A "colony of per-project agents" is realized as **durable per-tenant data on stateless compute**, not
-standing daemons (a long-lived in-context process accrues context rot). An agent is a row
-(`agent_identities`, migration `0045`): persona, mission, tool-scope, and a memory namespace. A stateless
-executor reconstructs context per turn.
+- It does not let any tool approve an apply or a destroy.
+- It does not give external agents tools that write designs or queue jobs directly, other than the
+  operation tools above.
+- It does not give an agent more than the person it acts for.
 
-Memory lives in `agent_memory`, keyed by `(namespace, path)`. The namespace is the per-tenant prefix
-(`org/{orgId}` for the organization, `org/{orgId}/project/{projectId}` for a project); the path is
-validated by the tenant-isolation guard `lib/agent/memory-path.ts`, which **rejects every traversal
-escape** (`..`, absolute paths outside the `/memories` mount, backslashes, null bytes) so one tenant can
-never read another's memory.
+## Related
 
-Alongside memory, a scope carries **pinned context** — custom instructions and named knowledge documents
-— in `agent_context`, one row per `(org_id, project_id)` (the org row keyed with a null project). Its
-`(organization, project)` shape mirrors the memory namespace 1:1. On each turn the executor layers the
-org context under the project's and appends live, auto-derived project facts, all into the cached system
-prompt — so a conversation is grounded before the first tool call. This is the same pinned knowledge that
-users edit in the [Assistant's knowledge panel](/guides/assistant/knowledge).
-
-## The stateless executor
-
-`lib/agent/executor.ts` is the deterministic core of running a turn *as* an agent:
-
-- `buildAgentSystemPrompt(identity, memorySummary?)` composes the persona + mission (+ just-in-time
-  memory) into a system prompt.
-- `scopeToolsToAgent(tools, tool_scope)` narrows the tool set to the agent's allowlist (least privilege
-  per agent — deployer / auditor / cost-optimizer roles).
-
-The agent-scoped chat route (`/api/agent/[agentId]`) loads the identity, applies these, and runs the turn
-via the AI SDK — mirroring the main agent route, tools still PDP-gated at execute time.
-
-## The supervisor / colony
-
-`lib/agent/supervisor.ts` is a deterministic, replayable orchestrator. It delegates tasks to sub-agents
-and drives them via a **Magentic-style Task / Progress ledger** (facts + plan + per-task status) with a
-**stall counter that triggers a bounded re-plan** (`stall > 2 → re-plan`). The actual sub-agent execution
-is **injected** (`SubAgentRunner`) — exactly the "AI executes, deterministic code decides" pattern, so the
-control flow is testable without a model and always terminates.
-
-<Callout type="warn">
-  **Use it where it pays.** A standing colony costs roughly 15× the tokens of a single agent and loses on
-  work over one convergent state (e.g. IaC plan/apply). The supervisor is for breadth-first **read**
-  fan-out (drift / cost / security surveys across accounts) and tenant-isolated tasks; write/converge
-  work stays on a single-threaded path.
-</Callout>
+- [Agents overview](/agents)
+- [Security model for agents](/agents/security)
+- [MCP server](/guides/assistant/mcp)
+- [Assistant](/guides/assistant)

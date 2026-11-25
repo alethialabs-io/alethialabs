@@ -195,7 +195,7 @@ flowchart TD
 > [!WARNING]
 > The **ECS roll** at the end of this workflow updates the **self-deployed / release** runner service
 >   — it is *not* how the managed fleet runs. Managed capacity comes from the in-app scaler booting
->   Hetzner VMs from the same GHCR image (see [Runner Scaling](https://alethialabs.io/docs/concepts/runner-scaling)). Publishing a
+>   Hetzner VMs from the same GHCR image (see [Runner Scaling](https://alethialabs.io/docs/concepts/runner/scaling)). Publishing a
 >   runner release makes the image available to both paths; only the self-deployed ECS service is rolled
 >   here.
 

@@ -1,0 +1,52 @@
+---
+title: Enforce chart admission
+description: Move the namespaces of an environment's bring-your-own charts from warn to enforce, so Pod Security baseline and the admission policy refuse instead of only reporting.
+---
+
+Turn on refusal in every bring-your-own chart namespace of one environment. For what the two modes do,
+see [Chart namespace admission](/concepts/chart-admission).
+
+## Before you begin
+
+- The environment has at least one [bring-your-own chart](/concepts/bring-your-own-charts).
+- Its latest deploy produced a complete admission report. If it did not, deploy again first.
+- Each chart's warnings on the **Deploy** tab are fixed. A warning names the chart, the object and the
+  field that `enforce` would refuse.
+
+## Steps
+
+1. Open **Environments**. On the environment's card, next to **BYO admission**, select **Change**.
+2. Read the report. It lists each bring-your-own namespace, its current mode, and what refusal would
+   refuse there, from the latest deploy. An object kind the deploy could not check is marked **Could
+   not be checked**.
+3. Turn on **Refuse in every BYO namespace**, confirm that you read the report, and save. The card
+   shows **Redeploy to apply**.
+4. Start a new deploy of the environment.
+
+## Check that it worked
+
+The **Deploy** tab shows each namespace that changed, for example `warn → enforce`, and the card no
+longer shows **Redeploy to apply**.
+
+Objects that already run keep running until they are replaced. From then on, Pod Security enforces
+`baseline` and the admission policy refuses.
+
+## Things to know
+
+- **The setting takes effect on the next new deploy.** A re-run, an approval-gated deploy planned
+  before the change, and a promotion of an earlier plan keep the old value.
+- **The report covers only what ran at that deploy.** A `CronJob` between runs, a workload scaled to
+  zero, and a chart attached after that deploy are not in it.
+- **To undo it,** turn the setting off and deploy again. The namespaces the setting moved, marked
+  `alethia.io/byo-admission-source=environment-setting`, go back to `warn`. A namespace that was
+  already in `enforce`, such as one made for a new chart, stays in `enforce`.
+- **A label you set with `kubectl` is kept.** If the setting had moved that namespace, also remove the
+  `alethia.io/byo-admission-source` label, or turning the setting off returns it to `warn`.
+- **It needs a runner that supports it.** An older runner deploys as before, and the **Deploy** tab
+  shows the mode each namespace really has.
+- Each change of the setting is recorded in the project's audit log.
+
+## Related
+
+- [Chart namespace admission](/concepts/chart-admission)
+- [Bring your own Helm charts](/guides/design-project/bring-your-own-charts)

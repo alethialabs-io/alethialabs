@@ -1,409 +1,130 @@
 ---
 title: Bring-your-own charts
-description: Point an add-on at a Helm chart in your own git repository — Alethia deploys it through ArgoCD under a hardened project that confines it to its own namespace, auto-syncs it, and never prunes or reverts what you change.
+description: Deploy a Helm chart from your own Git repository or OCI registry — Alethia runs it through ArgoCD in its own namespace, under a project that limits what it may create, and never prunes or reverts it.
 ---
 
-Alethia's add-on marketplace installs charts from public Helm registries. **Bring-your-own charts**
-let you install a Helm chart from **your own git repository** instead, alongside marketplace add-ons
-in the same cluster.
+A bring-your-own chart is a Helm chart from your own Git repository or OCI registry, deployed next to
+marketplace add-ons in the same cluster. It is not Alethia's code, so ArgoCD runs it under a narrow
+project: its own namespace, a short list of allowed kinds, and no pruning or self-heal.
 
-Your chart is not Alethia's code, so it runs under a deliberately narrower contract than a
-marketplace add-on. This page is that contract: what gets deployed, what your chart is allowed to
-create, what Alethia will and will not do to it afterwards, and how to remove it. To attach a chart,
-scan it, and bind its workloads, follow [Bring your own Helm charts](/guides/design-project/bring-your-own-charts).
+<Mermaid chart={`
+flowchart TD
+  Deploy["Environment deploy"] --> NS["Create the chart's namespace and set its admission rules"]
+  NS --> Cred["Repository credential for this repo only"]
+  Cred --> Proj["Hardened ArgoCD AppProject"]
+  Proj --> App["Application, auto-synced from your ref"]
+  Push["Push to the tracked ref"] --> App
+`} />
 
-<Callout type="info">
-  **A BYO chart is a Helm chart in git.** It is a different thing from
-  [bring-your-own IaC](/concepts/bring-your-own-iac), which points an environment at your own
-  **OpenTofu root module** and provisions the infrastructure itself. They can be used together;
-  neither requires the other.
-</Callout>
+To attach, scan and bind a chart, see
+[Bring your own Helm charts](/guides/design-project/bring-your-own-charts). It is separate from
+[bring-your-own IaC](/concepts/bring-your-own-iac), which provisions infrastructure from your OpenTofu.
 
-## What happens when you enable one
+## How it works
 
-Each deploy, Alethia:
+### Each deploy
 
-1. creates the destination **namespace**, because your chart is not permitted to create one itself
-   (see [What your chart may create](#what-your-chart-may-create)), and sets its admission rules
-   (see [What the namespace refuses](#what-the-namespace-refuses));
-2. registers a **repository credential** for your chart's repo, in a Secret scoped to that repo
-   alone — no BYO chart can read another's token, or the apps repo's;
-3. applies a hardened **ArgoCD AppProject** that confines the chart; and
-4. applies the **Application**, which then syncs on its own.
+On every environment deploy, Alethia:
 
-A chart from an **OCI registry** follows the same contract. The one difference is step 2: its
-credential is the one from your registry connection, not a git token. An OCI chart deployed before it
-followed this contract moves to the hardened project on its next deploy, and the **Deploy** tab says
-so: a resource the project does not permit then fails the chart's sync, and what the chart created
-earlier outside the project is left in place.
+1. creates the chart's namespace, because the chart may not create one, and sets its
+   [admission rules](/concepts/chart-admission);
+2. stores a credential for the chart's repository in a Secret scoped to that repository, so no chart
+   can read another chart's token or the apps repository's;
+3. applies the chart's ArgoCD project;
+4. applies the Application, which then syncs on its own.
 
-Nothing about this is a one-time setup. The Application is re-applied on every deploy, so a change
-to any of the above takes effect on your next deploy rather than needing the add-on removed and
-re-added.
+An OCI chart uses the credential of your registry connection instead of a Git token. Everything is
+applied again on each deploy, so a change takes effect on your next deploy.
 
-## Where your chart runs
+### Where your chart runs
 
-Each chart runs in a **namespace of its own**. If you do not choose one when you attach the chart,
-the namespace is `byo-` followed by the chart's id: a chart named `payments` runs in `byo-payments`.
+Each chart runs in a namespace of its own. If you leave the namespace blank, it is `byo-` and the
+chart's ID: a chart named `payments` runs in `byo-payments`.
 
-Some namespaces are reserved for the platform, and a chart that targets one is refused:
+A chart cannot target:
 
-- the Kubernetes system namespaces, such as `kube-system`;
-- the namespaces where the platform's own controllers and the marketplace add-ons run;
-- `default`, where the platform runs your environment's own services, with their Secrets and
-  service accounts.
+- a Kubernetes system namespace, such as `kube-system`;
+- a namespace where platform controllers or marketplace add-ons run;
+- `default`, where your environment's own services run;
+- a namespace that starts with `byo-`, unless it is the chart's own;
+- a preview namespace: the prefix set in the project's **Preview environments** settings, or anything
+  that starts with the prefix and `-`, because untrusted pull request code runs there. Alethia also
+  refuses a prefix change, or turning previews on, that would put an attached chart in a preview
+  namespace.
 
-When you attach a chart, the namespace you choose cannot start with `byo-` either, unless it is the
-chart's own: that prefix is kept for the namespace each chart gets by default. A chart you attached
-before this rule keeps its namespace, also when you attach it again without changing it. If that
-namespace is the default namespace of another chart in the same environment, that other chart keeps
-it: your chart is not deployed, and the **Deploy** tab names both and asks you to attach yours again
-with another namespace.
+A chart attached before these rules keeps its namespace, and each deploy warns about it on the
+**Deploy** tab. A chart that ran in `default` moves to its own namespace on the next deploy; what it
+created in `default` stays there, no longer managed by ArgoCD, until you delete it. Each of those
+objects carries an `argocd.argoproj.io/tracking-id` annotation that starts with `addon-<chart id>:`.
 
-### A chart that was attached in `default`
+### A push to the tracked ref deploys
 
-Before this rule, a chart attached with no namespace ran in `default`. Such a chart, and a chart
-attached with `default` itself, moves to its own namespace on the environment's next deploy:
+ArgoCD watches the chart's ref (`HEAD` by default). A commit to a tracked branch deploys on its own,
+with no Alethia deploy and no approval. So write access to that branch is deploy access to that
+namespace. To make deploys explicit, attach a tag or a full commit SHA: the cluster then changes only
+when you change the ref. A push cannot escape the project: every sync is checked against it.
 
-1. The deploy shows a warning that names the chart and its new namespace.
-2. ArgoCD deploys the chart into the new namespace, and the chart's project now permits only that
-   namespace.
-3. The chart's binding secrets are removed from `default` and created again in the new namespace.
-4. **What the chart created in `default` stays there.** Its project no longer permits `default`, so
-   ArgoCD no longer updates or deletes those resources, also when you remove the chart, and they keep
-   running in the platform's namespace until you delete them. Delete them yourself when the chart runs
-   in its new namespace. ArgoCD marked each one with an
-   `argocd.argoproj.io/tracking-id` annotation that starts with `addon-<chart id>:`.
-
-Nothing else in `default` is changed. To keep the new namespace in the chart's settings, attach the
-chart again with that namespace or one of your own.
-
-### A chart in a preview namespace
-
-A project's preview environments use the **namespace prefix** from the project's **Preview
-environments** settings. The preview namespaces are the prefix itself and every namespace that
-starts with the prefix followed by `-`. With the prefix `preview`, `preview` and `preview-api` are
-preview namespaces, and `previews` and `my-preview-1` are not.
-
-Untrusted pull request code runs in a preview namespace, so a chart cannot run in one:
-
-- When you attach a chart, a namespace in the preview namespaces is refused.
-- A change to the prefix that puts an attached chart in the preview namespaces is refused, and the
-  error names each chart and its namespace.
-- A chart that was attached in a preview namespace before these rules keeps its namespace. Each
-  deploy shows a warning on the **Deploy** tab that names the chart, its namespace and the prefix.
-- Preview environments cannot be turned on for a project while one of its charts is in a preview
-  namespace. The refusal names each chart and its namespace.
-
-To resolve the overlap, do one of these:
-
-- **Attach the chart again with another namespace.** Choose a namespace that is not the prefix and
-  does not start with the prefix followed by `-`, or leave the namespace blank to use
-  `byo-<chart id>`.
-- **Change the preview namespace prefix** to one that no attached chart's namespace matches. The
-  prefix cannot be `byo` or start with `byo-`, because every chart's own namespace starts with
-  `byo-`.
-
-## A push to the tracked ref deploys
-
-Your chart is attached at a git **ref**, and a ref is usually a branch — the default is `HEAD`.
-ArgoCD watches that ref, so **a commit to it deploys, on its own, without an Alethia deploy and
-without an approval step.** That is ordinary GitOps, and for most people it is the point: your
-chart repo is the source of truth and the cluster follows it.
-
-It is worth being deliberate about, though, because it means write access to that branch is
-effectively deploy access to that namespace.
-
-<Callout type="warn">
-  **Attach a tag or a commit SHA if you want deploys to be explicit.** The `ref` accepts any git
-  revision, so pinning it to `v1.4.2` or a full SHA means the cluster changes only when you change
-  the ref — pushing to your branch then does nothing until you do. Use a branch when you want
-  continuous delivery; use a tag or SHA when you want a release step.
-</Callout>
-
-What a push **cannot** do is escape the chart's confinement — every sync is validated against the
-same hardened project, so a new commit is held to exactly the rules in
-[What your chart may create](#what-your-chart-may-create).
-
-## Sync behaviour
-
-Your chart is deployed automatically. Two things Alethia deliberately does **not** do:
+### Sync behavior
 
 | | Marketplace add-on | Your chart |
-|---|:---:|:---:|
-| Deployed automatically | yes | **yes** |
-| Prune — delete resources no longer declared | yes | **no** |
-| Self-heal — revert changes made in the cluster | yes | **no** |
+| --- | --- | --- |
+| Deployed automatically | Yes | Yes |
+| Prune: delete resources no longer in the chart | Yes | No |
+| Self-heal: revert changes made in the cluster | Yes | No |
 
-**Prune is off, so a resource you delete from your chart keeps running.** If you remove a Deployment
-from the chart and deploy, the old Deployment is still there. This is deliberate: Alethia will not
-delete a workload of yours because your chart stopped mentioning it. To remove it, either delete it
-yourself with `kubectl`, or [disable the add-on](#removing-a-chart), which removes everything.
+**A resource you remove from the chart keeps running.** Delete it with `kubectl`, or remove the chart.
 
-**Self-heal is off, so changes you make in the cluster stick.** If you `kubectl edit` a resource
-your chart owns, ArgoCD reports the Application `OutOfSync` and leaves your change alone. That is
-what you want while debugging; it also means an `OutOfSync` BYO chart is informational, not an
-error.
+**A change you make in the cluster stays.** ArgoCD shows the Application `OutOfSync` and leaves it. A
+deploy alone does not revert it, because there is nothing new to sync. To revert it, push a commit to
+the ref, delete the edited resource so the next sync recreates it, or sync the Application in ArgoCD.
 
-To put it back, you have to give ArgoCD something to do — **a deploy on its own will not revert it**,
-because the chart is already at the revision it is meant to be at and there is nothing to sync. Any
-of these works:
+### What your chart may create
 
-- push a commit to the tracked ref, which produces a new revision to sync;
-- delete the edited resource, and the next sync recreates it from the chart;
-- sync the Application from ArgoCD directly, which reapplies the current revision.
+The project denies by default. A chart may create only these namespaced kinds, in its own namespace.
+A chart that declares any other kind fails its sync, and the result names the resource.
 
-## What your chart may create
+| Kind | API group |
+| --- | --- |
+| `Deployment`, `StatefulSet`, `DaemonSet`, `ReplicaSet` | `apps` |
+| `Job`, `CronJob` | `batch` |
+| `Pod`, `ConfigMap`, `Secret`, `PersistentVolumeClaim`, `Service` | core |
+| `Ingress` | `networking.k8s.io` |
+| `HorizontalPodAutoscaler` | `autoscaling` |
+| `PodDisruptionBudget` | `policy` |
 
-The AppProject Alethia applies is default-deny. Your chart may create the **namespaced** kinds in
-the table below, in its **own destination namespace**, and nothing else. A chart that declares any
-other kind fails its sync, and the sync result names the resource.
+The API group is part of the match: an `Ingress` from the old `extensions` group is refused.
 
-| Kind | API group | Why a chart may create it |
-|---|---|---|
-| `Deployment` | `apps` | The usual stateless workload. |
-| `StatefulSet` | `apps` | A workload with a stable identity and its own volumes. |
-| `DaemonSet` | `apps` | One pod on each node. Pod Security refuses its pods access to the node (see [Pod Security](#pod-security)). |
-| `ReplicaSet` | `apps` | What a `Deployment` manages. A chart can also declare one directly. |
-| `Job` | `batch` | Work that runs to completion, Helm hook jobs included. |
-| `CronJob` | `batch` | A `Job` on a schedule. |
-| `Pod` | core | A single pod, as a Helm test hook declares. |
-| `ConfigMap` | core | Configuration that is not secret. |
-| `Secret` | core | Your chart's own secrets. The secrets a binding gives your chart are created by the runner. |
-| `PersistentVolumeClaim` | core | A claim on storage from the cluster's storage classes. |
-| `Service` | core | A stable address for your chart's pods. |
-| `Ingress` | `networking.k8s.io` | HTTP routing through the cluster's ingress controller. |
-| `HorizontalPodAutoscaler` | `autoscaling` | Scales a workload in the namespace as its load changes. |
-| `PodDisruptionBudget` | `policy` | Limits how many pods in the namespace a node drain can evict at once. |
+Left out on purpose:
 
-The API group is part of the match. An `Ingress` from the old `extensions` group, for example, is
-not on the list.
+- **Cluster-scoped kinds**, such as `Namespace`, `ClusterRole` or `CustomResourceDefinition`.
+- **`Role`, `RoleBinding` and `ServiceAccount`.** A chart that could make its own identity could grant
+  itself more than the project allows. Charts often create a `ServiceAccount` by default: set
+  `serviceAccount.create: false` or its equivalent.
+- **Secret-sync kinds** from `external-secrets.io`. A chart reads only the secrets its
+  [bindings](/guides/design-project/bring-your-own-charts#bind-a-workload-to-your-infrastructure)
+  create. Each deploy deletes such objects that no binding accounts for, and names them.
+- **Kinds an operator serves**, such as a cert-manager `Certificate` or an ArgoCD `Application`.
+- **`Endpoints`, `EndpointSlice`, `ResourceQuota`, `LimitRange` and `NetworkPolicy`.**
 
-Some kinds are left out on purpose:
+The project also allows only your chart's repository as a source and only its namespace as a
+destination. To ask for another namespaced kind, open a support case with the kind, its API group and
+what the chart uses it for. A kind added to the list applies to every bring-your-own chart.
 
-- **No cluster-scoped resources.** No `Namespace`, `ClusterRole`, `ClusterRoleBinding`,
-  `CustomResourceDefinition`, `StorageClass`, or any other cluster-scoped kind.
-- **No `Role`, `RoleBinding` or `ServiceAccount`,** even namespaced ones. A chart that could mint
-  its own identity could grant itself more than this project allows.
-- **No secret-sync resources.** No `ExternalSecret`, `SecretStore`, `PushSecret`, or any other kind
-  from the `external-secrets.io` API groups, generators included. A chart reads only the secrets
-  its [bindings](/guides/design-project/bring-your-own-charts#bind-a-workload-to-your-infrastructure)
-  give it, and the runner creates those secrets for it. Each deploy also deletes any such object
-  in the chart's namespace that no binding accounts for, and the Deploy tab names every object it
-  deletes.
-- **No kinds that an operator serves,** such as a cert-manager `Certificate`, a Prometheus
-  `ServiceMonitor` or an ArgoCD `Application`. What such an object can make its operator do depends
-  on that operator, not on this project.
-- **No `Endpoints`, `EndpointSlice`, `ResourceQuota` or `LimitRange`.** A `Service` selects its own
-  backends, and the namespace's limits are the platform's to set.
-- **No `NetworkPolicy`.** A policy applies to every pod it selects in the namespace, and nothing
-  guarantees that the namespace holds only your chart.
+### Removing a chart
 
-Two more rules apply to every sync:
+Removing the add-on deletes its Application. ArgoCD's finalizer then deletes everything the chart
+created in its namespace, including resources that pruning would have left. The namespace stays.
 
-- **Only the repositories you declared.** The project is locked to your chart's repo, so an
-  Application cannot be re-pointed at a source you did not configure.
-- **Only its own namespace.** The project's destinations list that namespace and no other.
+## What it does not do
 
-### Asking for another kind
+- It does not let a chart create cluster-scoped resources. Split that part out, or ask for it as a
+  marketplace add-on.
+- It does not prune or self-heal your chart.
+- It does not require an approval for a push to a tracked branch.
 
-If your chart needs a namespaced kind that is not in the table, open a support case from
-**Support** in the console. Name the kind and its API group, the chart that uses it, and what the
-chart uses it for. A kind added to the list applies to every bring-your-own chart, so each
-addition is reviewed on its own. Until then, turn that part of the chart off, usually
-through a value, or apply it yourself outside the chart.
+## Related
 
-<Callout type="warn">
-  **If your chart needs a cluster-scoped resource, it cannot be a BYO chart as-is.** The usual
-  answers are to split the cluster-scoped part out and have an operator apply it once, or to request
-  the capability as a marketplace add-on. Relaxing the project for one chart would relax it for
-  every chart in the environment.
-</Callout>
-
-## What the namespace refuses
-
-The project above decides which **kinds** your chart may create. It cannot see the fields inside
-them. The namespace's admission rules do that, at two levels.
-
-### Pod Security
-
-Each namespace carries Kubernetes [Pod Security Admission](https://kubernetes.io/docs/concepts/security/pod-security-admission/)
-labels, pinned to the Kubernetes 1.33 version of the standard:
-
-| Mode | Level | Effect |
-|---|---|---|
-| `enforce` | `baseline` | A pod that breaks the level is refused. |
-| `warn` | `restricted` | A pod that breaks the level is created, with a warning. |
-| `audit` | `restricted` | A pod that breaks the level is created, and the cluster's audit log records it. |
-
-`baseline` refuses a pod that asks for access to its node: a privileged container, the node's
-network, process or IPC namespace, a `hostPath` volume, a host port, or added Linux capabilities.
-A pod that does not set any of these passes, also when it sets no security context at all. That
-is why the namespace enforces `baseline` and not `restricted`: `restricted` also requires settings
-such as `runAsNonRoot` and a seccomp profile, which many public charts leave to you.
-
-The warnings are for the `restricted` level, so your chart sees what it would have to change to
-pass it.
-
-### Admission policy
-
-A ValidatingAdmissionPolicy refuses four kinds of object in the namespace:
-
-| Refused | Why |
-|---|---|
-| A `Service` of type `LoadBalancer` or `NodePort` | It answers outside the namespace and outside the cluster, and a load balancer is billed to your cloud account. Use `ClusterIP` and an `Ingress`. |
-| A `Service` with `spec.externalIPs` | It captures traffic that the cluster's nodes receive for those addresses. |
-| A `Secret` of type `kubernetes.io/service-account-token` | It stores a service account token that never expires. Your pods already receive short-lived tokens without it. |
-| An `Ingress` annotation with `snippet` in its name | A snippet configures the ingress controller itself, which serves every namespace. |
-
-The policy needs Kubernetes 1.30 or later. Every Kubernetes version Alethia provisions supports it.
-On a cluster that does not, the deploy skips the policy and says so in its log, and Pod Security
-still applies.
-
-### Charts that were attached before these rules
-
-Refusing in a namespace where a chart already runs would refuse that chart's next pod, for example
-after a restart or a node drain. So the namespace's `alethia.io/byo-admission` label decides
-whether the rules refuse or only report:
-
-- **`enforce`**: Pod Security enforces `baseline`, and the policy refuses.
-- **`warn`**: Pod Security does not enforce beyond the cluster's own default, and the policy only
-  warns and records.
-
-<Callout type="warn">
-  **On most clouds, a `warn` namespace has no pod-level enforcement.** "The cluster's own default"
-  is `privileged` on Amazon EKS, Google GKE Standard and Azure AKS, and that level
-  refuses nothing. Only Talos clusters, which Alethia runs on Hetzner, enforce `baseline` in every
-  namespace by default. So a chart in a `warn` namespace on those three clouds runs with no Pod
-  Security refusal until its namespace is in `enforce`.
-</Callout>
-
-### How a namespace gets its mode
-
-The mode comes from the history of the charts in the namespace **in this environment**, not from
-whether the namespace exists on the cluster. On each deploy, Alethia reads each chart's ArgoCD
-Application on the cluster. A chart has run here if its Application exists, or if Alethia has ever
-read it back in a running state. That record is kept by Alethia and is never cleared, so it stays
-true when the cluster is re-provisioned and the Applications are gone, even after a drift scan finds
-nothing to read.
-
-| The namespace | Its charts | Mode |
-|---|---|---|
-| Exists, is not a bring-your-own namespace of this environment, and no chart's Application deploys into it | Any | **Refused** |
-| Already has a mode | Any | Keeps it |
-| Any | At least one has run in this environment, or moved out of `default` | `warn` |
-| Does not exist | None has run | `enforce` |
-| Is already a bring-your-own namespace of this environment | None has run | `warn` |
-
-**A chart can't take over a namespace that is not this environment's.** If the namespace exists, is
-not one of this environment's bring-your-own namespaces, and no Application of this environment
-already deploys into it, the chart is not deployed, and the **Deploy** tab says why. A chart that
-has run in another namespace is refused too: what lets a chart into such a namespace is that it
-already runs there. Alethia does not start that namespace in `enforce`, because `enforce` applies to
-the whole namespace: it would refuse the next pod of every workload that already runs there,
-workloads this environment did not put there. Taking the namespace over would also give those
-workloads access to this environment's secrets. Attach the chart again with a namespace of your own.
-A blank namespace gives the chart its own, `byo-<chart id>`.
-
-If the cluster's namespaces or a chart's Application can't be read during a deploy, the deploy
-fails before it changes anything for bring-your-own charts. No chart is refused and no label is
-changed. Deploy again.
-
-### Moving namespaces from `warn` to `enforce`
-
-A deploy does not move a namespace from `warn` to `enforce` because of what it finds there. While a
-namespace is in `warn`, each deploy checks what runs there against both levels, and the **Deploy**
-tab names the chart, the object and the field that `enforce` would refuse. Change the chart until
-the warning goes away.
-
-Then turn on refusal for the environment:
-
-1. Open **Environments**, and on the environment's card, next to **BYO admission**, select
-   **Change**. The control appears only on an environment that has a bring-your-own chart.
-2. Read the report. It lists each bring-your-own namespace, its current mode, and what refusal would
-   refuse there, from the latest deploy, with that deploy's date. A kind of object that the deploy
-   could not check is marked **Could not be checked**. You can turn refusal on only when the latest
-   deploy produced a complete report. If it did not, deploy again first. Alethia checks this when it
-   saves the setting, not only in the form.
-3. Turn on **Refuse in every BYO namespace**, confirm that you have read the report, and save. The
-   card shows **Redeploy to apply**.
-4. Start a new deploy of the environment. Each namespace that was in `warn` is relabelled `enforce`,
-   and the **Deploy** tab shows each change, for example `warn → enforce`.
-
-The report covers only the pods that were running at that deploy. A `CronJob` between runs, a
-workload scaled to zero, and a chart attached after that deploy are not in it.
-
-From then on the policy refuses, and Pod Security enforces `baseline`. A pod or an object that
-already runs keeps running until it is replaced. The setting is off for every environment until you
-turn it on. Each change of the setting is recorded in the project's audit log.
-
-**A change of the setting takes effect on the next new deploy.** A deploy uses the configuration it
-was created with. A re-run, an approval-gated deploy whose plan was made before the change, and a
-promotion of an earlier plan all keep the old value. The card shows **Redeploy to apply** until a
-deploy that carries the new value has been made.
-
-To undo it, turn the setting off and start a new deploy. The namespaces that the setting moved go
-back to `warn`. Alethia marks those namespaces with the label
-`alethia.io/byo-admission-source=environment-setting`. A namespace that was in `enforce` before the
-setting, such as one created for a new chart, does not carry it and stays in `enforce`.
-
-You can also set one namespace's label to `enforce` with `kubectl`, and a deploy keeps that value.
-If the setting had moved that namespace, also remove the `alethia.io/byo-admission-source` label.
-Otherwise turning the setting off returns it to `warn`.
-
-The setting needs a runner that supports it. An older runner deploys as before and does not apply
-it, and the **Deploy** tab then shows the mode each namespace actually has.
-
-## Removing a chart
-
-Disabling the add-on deletes its Application, and the Application carries ArgoCD's
-`resources-finalizer.argocd.argoproj.io` finalizer — so deletion **cascades to everything the chart
-created in its namespace**, including resources that prune would have left behind. The namespace
-Alethia created for it remains. ArgoCD deletes only what the chart's project permits, so resources a
-moved chart left in `default` are not deleted (see
-[A chart that was attached in `default`](#a-chart-that-was-attached-in-default)).
-
-So the two removal paths differ, and the difference is worth remembering:
-
-- **Remove a resource from the chart** → it keeps running (prune is off).
-- **Disable the add-on** → everything the chart created is deleted.
-
-## Troubleshooting
-
-**The Application is `OutOfSync` and I did not change anything.** Some charts render a value that
-differs on every render — a generated password, a timestamp, a self-signed certificate. ArgoCD
-compares each render against the cluster, so such a chart is permanently `OutOfSync`. Pin the value
-in your chart, usually through an `existingSecret`-style option, and it settles.
-
-**The Application is `Missing`.** Its resources do not exist. Check the sync result in ArgoCD: the
-most common causes are a resource the project forbids (see
-[What your chart may create](#what-your-chart-may-create)) and a chart path that does not exist at
-the configured revision.
-
-**The sync fails and names a kind that is not in the table.** Your chart declares a kind that
-bring-your-own charts can't create. Turn that part of the chart off, usually through a value, or
-[ask for the kind](#asking-for-another-kind). Charts often render a `ServiceAccount` by default;
-set the chart's `serviceAccount.create` value, or its equivalent, to `false`. If the chart was
-attached before its kind was refused, the objects of that kind it created earlier stay in place, and
-ArgoCD no longer manages them. Delete them yourself.
-
-**The sync fails and names an `ExternalSecret` or `SecretStore`.** Your chart ships its own
-secret-sync resource, which bring-your-own charts can't create. Turn that part of the chart off,
-usually through a value such as `externalSecret.enabled: false`. Then declare a binding on the
-chart's workload and point the chart at the secret the binding creates. Alethia reports such a
-chart as not synced but does not yet say why: the runner reads each Application's health and sync
-status, not the sync result that names the resource. Check that result in ArgoCD.
-
-**The sync fails with `ValidatingAdmissionPolicy 'alethia-byo-admission-enforce-…' … denied request`.**
-Your chart declares an object that the namespace refuses (see
-[Admission policy](#admission-policy)). The message names the rule. Change the value that renders
-the object, for example `service.type: ClusterIP`.
-
-**A pod is refused with `violates PodSecurity "baseline:v1.33"`.** The pod asks for access to its
-node (see [Pod Security](#pod-security)). The message names the field. Turn that part of the chart
-off, usually through a value.
-
-**The Application is `Progressing` and stays there.** ArgoCD is waiting for a workload to become
-ready. Check the pods: a pod stuck `Pending` with `Insufficient memory` or `Insufficient cpu` is
-asking for more than any node in your cluster can give it, which no amount of waiting fixes — lower
-the request or provision a larger node type.
+- [Chart namespace admission](/concepts/chart-admission)
+- [Bring your own Helm charts](/guides/design-project/bring-your-own-charts)
+- [Troubleshoot bring-your-own charts](/troubleshooting/bring-your-own-charts)
+- [GitOps and ArgoCD](/concepts/gitops-argocd)

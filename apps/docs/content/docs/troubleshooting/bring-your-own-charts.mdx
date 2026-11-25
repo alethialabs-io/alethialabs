@@ -1,0 +1,95 @@
+---
+title: Bring-your-own charts
+description: Fix a bring-your-own Helm chart that stays OutOfSync, Missing or Progressing, fails its sync on a refused kind, or has pods refused by the namespace's admission rules.
+---
+
+A bring-your-own chart is an ArgoCD Application. Start with its sync result in ArgoCD: Alethia shows
+the Application's health and sync status, but not the resource that failed. For how charts run, see
+[Bring-your-own charts](/concepts/bring-your-own-charts).
+
+## The Application is OutOfSync, and you changed nothing
+
+**Symptom:** the chart stays `OutOfSync` after every sync.
+
+**Cause:** the chart renders a value that differs on each render, such as a generated password, a
+timestamp or a self-signed certificate.
+
+**Fix:** pin the value in the chart, usually through an `existingSecret` option.
+
+## The Application is OutOfSync after a change in the cluster
+
+**Symptom:** you edited a resource with `kubectl`, and the Application shows `OutOfSync`.
+
+**Cause:** self-heal is off for bring-your-own charts, so ArgoCD leaves your change. A deploy alone
+does not revert it.
+
+**Fix:** push a commit to the tracked ref, delete the edited resource so the next sync recreates it,
+or sync the Application in ArgoCD.
+
+## The Application is Missing
+
+**Symptom:** the Application shows `Missing`.
+
+**Cause:** its resources do not exist. Usually the chart declares a kind the project refuses, or the
+chart path does not exist at the configured ref.
+
+**Fix:** read the sync result in ArgoCD. Fix the path or ref, or turn off the refused part of the chart.
+
+## The sync fails and names a kind that is not allowed
+
+**Symptom:** the sync result names a resource whose kind is not in the
+[allowed list](/concepts/bring-your-own-charts#what-your-chart-may-create).
+
+**Cause:** bring-your-own charts cannot create that kind.
+
+**Fix:** turn that part of the chart off, usually with a value. For a `ServiceAccount`, set
+`serviceAccount.create: false` or its equivalent. Or ask for the kind through a support case. If the
+chart created objects of that kind before it was refused, they stay, and ArgoCD no longer manages
+them. Delete them yourself.
+
+## The sync fails and names an ExternalSecret or SecretStore
+
+**Symptom:** the sync result names a kind from `external-secrets.io`.
+
+**Cause:** the chart ships its own secret-sync resource, which bring-your-own charts cannot create.
+
+**Fix:** turn it off, for example with `externalSecret.enabled: false`. Declare a
+[binding](/guides/design-project/bring-your-own-charts#bind-a-workload-to-your-infrastructure) on the
+chart's workload, and point the chart at the Secret the binding creates.
+
+## A ValidatingAdmissionPolicy denies the request
+
+**Symptom:** the sync fails with `ValidatingAdmissionPolicy 'alethia-byo-admission-enforce-…' …
+denied request`.
+
+**Cause:** the chart declares an object the namespace refuses, such as a `LoadBalancer` Service. See
+[Admission policy](/concepts/chart-admission#admission-policy).
+
+**Fix:** change the value that renders the object, for example `service.type: ClusterIP`.
+
+## A pod violates PodSecurity baseline
+
+**Symptom:** a pod is refused with `violates PodSecurity "baseline:v1.33"`.
+
+**Cause:** the pod asks for access to its node. The message names the field. See
+[Pod Security](/concepts/chart-admission#pod-security).
+
+**Fix:** turn that part of the chart off, usually with a value.
+
+## The Application stays Progressing
+
+**Symptom:** the Application shows `Progressing` and does not finish.
+
+**Cause:** ArgoCD waits for a workload to become ready. A pod stuck `Pending` with
+`Insufficient memory` or `Insufficient cpu` asks for more than any node can give.
+
+**Fix:** lower the pod's resource request, or provision a larger node type.
+
+## The chart is not deployed, and the Deploy tab names another chart
+
+**Symptom:** the **Deploy** tab says the chart's namespace belongs to another chart.
+
+**Cause:** the chart kept a namespace from before the namespace rules, and that namespace is another
+chart's default namespace.
+
+**Fix:** attach the chart again with another namespace, or leave it blank to use `byo-<chart id>`.

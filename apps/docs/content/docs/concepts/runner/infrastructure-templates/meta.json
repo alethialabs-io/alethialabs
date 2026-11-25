@@ -5,7 +5,6 @@
     "aws",
     "gcp",
     "azure",
-    "hetzner",
-    "argocd"
+    "hetzner"
   ]
 }

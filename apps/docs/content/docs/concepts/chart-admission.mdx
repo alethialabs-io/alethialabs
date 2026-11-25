@@ -1,0 +1,107 @@
+---
+title: Chart namespace admission
+description: What the namespace of a bring-your-own chart refuses — Pod Security levels, the admission policy, and how a namespace moves from warning to enforcing.
+---
+
+The ArgoCD project of a [bring-your-own chart](/concepts/bring-your-own-charts) decides which kinds the
+chart may create; it cannot see the fields inside them. The chart's namespace checks those fields with
+Kubernetes Pod Security Admission and a ValidatingAdmissionPolicy, in one of two modes: `enforce` or
+`warn`.
+
+<Mermaid chart={`
+flowchart TD
+  Obj["Object from the chart"] --> Kinds{"Kind allowed by the AppProject?"}
+  Kinds -->|no| SyncFail["Sync fails"]
+  Kinds -->|yes| Mode{"Namespace mode"}
+  Mode -->|enforce| Check["Pod Security baseline and the policy refuse"]
+  Mode -->|warn| Report["Warn and record only"]
+`} />
+
+## How it works
+
+### Pod Security
+
+Each namespace carries Pod Security Admission labels pinned to the Kubernetes 1.33 version of the
+standard:
+
+| Mode | Level | Effect |
+| --- | --- | --- |
+| `enforce` | `baseline` | A pod that breaks the level is refused. |
+| `warn` | `restricted` | The pod is created, with a warning. |
+| `audit` | `restricted` | The pod is created, and the cluster's audit log records it. |
+
+`baseline` refuses a pod that asks for its node: a privileged container, the node's network, process
+or IPC namespace, a `hostPath` volume, a host port, or added Linux capabilities. A pod with no security
+context passes. The namespace does not enforce `restricted`, because it also needs settings such as
+`runAsNonRoot` and a seccomp profile that many public charts leave to you. The `restricted` warnings
+show what your chart would have to change to pass it.
+
+### Admission policy
+
+The policy refuses four kinds of object in the namespace:
+
+| Refused | Why |
+| --- | --- |
+| A `Service` of type `LoadBalancer` or `NodePort` | It answers outside the cluster, and a load balancer is billed to your cloud account. Use `ClusterIP` and an `Ingress`. |
+| A `Service` with `spec.externalIPs` | It captures traffic the nodes receive for those addresses. |
+| A `Secret` of type `kubernetes.io/service-account-token` | It holds a token that never expires. Pods already get short-lived tokens. |
+| An `Ingress` annotation with `snippet` in its name | A snippet configures the ingress controller, which serves every namespace. |
+
+The policy needs Kubernetes 1.30 or later, which every version Alethia provisions has. On an older
+cluster the deploy skips the policy, says so in its log, and Pod Security still applies.
+
+### The two modes
+
+The namespace label `alethia.io/byo-admission` sets the mode:
+
+- **`enforce`**: Pod Security enforces `baseline`, and the policy refuses.
+- **`warn`**: Pod Security enforces only the cluster's own default, and the policy only warns and
+  records.
+
+<Callout type="warn">
+  On EKS, GKE Standard and AKS the cluster's default is `privileged`, which refuses nothing. So a
+  `warn` namespace there has no pod-level enforcement. Talos clusters on Hetzner enforce `baseline` in
+  every namespace by default.
+</Callout>
+
+### How a namespace gets its mode
+
+Refusing in a namespace where a chart already runs would refuse its next pod after a restart. So the
+mode comes from the history of the charts in this environment. On each deploy, Alethia reads each
+chart's Application on the cluster. A chart has run if its Application exists, or if Alethia has ever
+read it running; that record is never cleared, even when the cluster is provisioned again.
+
+| The namespace | Its charts | Mode |
+| --- | --- | --- |
+| Exists, is not a bring-your-own namespace of this environment, and no Application of this environment deploys into it | Any | Refused: the chart is not deployed |
+| Already has a mode | Any | Keeps it |
+| Any | At least one has run here, or moved out of `default` | `warn` |
+| Does not exist | None has run | `enforce` |
+| Is a bring-your-own namespace of this environment | None has run | `warn` |
+
+A chart cannot take over a namespace that is not this environment's: `enforce` would refuse the pods
+of workloads already there, and the takeover would give those workloads this environment's secrets.
+If the cluster's namespaces or a chart's Application cannot be read, the deploy fails before it
+changes anything for bring-your-own charts.
+
+### From warn to enforce
+
+A deploy never moves a namespace to `enforce` because of what it finds. While a namespace is in `warn`,
+each deploy reports on the **Deploy** tab what `enforce` would refuse: the chart, the object and the
+field. When the report is clean, turn on **Refuse in every BYO namespace** for the environment and
+deploy again. See [Enforce chart admission](/guides/design-project/enforce-chart-admission).
+
+You can also set one namespace's label to `enforce` with `kubectl`, and deploys keep it.
+
+## What it does not do
+
+- It does not enforce `restricted`. It warns about it.
+- It does not move a namespace to `enforce` on its own.
+- It does not check objects that are not running at the deploy: a `CronJob` between runs or a workload
+  scaled to zero is not in the report.
+
+## Related
+
+- [Bring-your-own charts](/concepts/bring-your-own-charts)
+- [Enforce chart admission](/guides/design-project/enforce-chart-admission)
+- [Troubleshoot bring-your-own charts](/troubleshooting/bring-your-own-charts)

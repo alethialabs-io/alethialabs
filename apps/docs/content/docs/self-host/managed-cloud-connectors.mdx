@@ -6,7 +6,7 @@ description: What a self-hosted instance needs so that users can connect AWS, GC
 Let your users connect AWS, GCP and Azure accounts with no stored key. Each instance is its own
 OpenID Connect (OIDC) issuer. A user's cloud trusts that issuer, and Alethia exchanges a short-lived
 signed assertion for cloud credentials when it needs them. You do not need a cloud account of your
-own. How the trust works on each cloud is in [Security](/concepts/security#the-alethia-oidc-issuer-workload-identity).
+own. How the trust works on each cloud is in [Security](/concepts/security#the-issuer).
 
 Hetzner, DigitalOcean and Civo are not keyless: the user pastes an API token, which Alethia stores
 encrypted. They need nothing on this page.

@@ -107,7 +107,7 @@ maintains the [asset inventory](https://alethialabs.io/docs/guides/connectors/he
 
 `verify` is the deterministic, engine-agnostic policy gate (keyless / least-privilege / OIDC-subject
 controls, honest `not_evaluable`, ed25519 receipt). `drift` turns a refresh-only plan into a per-env
-`Posture`. See [Engine internals](https://alethialabs.io/docs/concepts/elench/engine-internals) and `packages/core/verify/README.md`.
+`Posture`. See [Elench internals](./elench.md) and `packages/core/verify/README.md`.
 
 ### infracost/
 

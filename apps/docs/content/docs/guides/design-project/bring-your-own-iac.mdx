@@ -48,9 +48,9 @@ output "greeting" { value = var.greeting }
 ```
 
 To provision a cluster, emit the outputs in
-[the cluster-output contract](/concepts/bring-your-own-iac#the-cluster-output-contract), and give the
+[the cluster-output contract](/concepts/bring-your-own-iac#cluster-setup-from-your-outputs), and give the
 runner's identity cluster-admin as
-[your module must self-admin the cluster](/concepts/bring-your-own-iac#required-your-module-must-self-admin-the-cluster)
+[your module must self-admin the cluster](/concepts/bring-your-own-iac#cluster-setup-from-your-outputs)
 describes.
 
 ## Attach the module
@@ -76,7 +76,7 @@ A safety scan starts on its own.
 
 The module appears as an **External IaC** card with its repository, ref, path, the commit the scan
 pinned, and a scan status. Select the status to open **IaC safety scan**. It runs the
-[static safety gate](/concepts/bring-your-own-iac#the-static-safety-gate) and `tofu validate` on the
+[static safety gate](/concepts/bring-your-own-iac#the-safety-gate) and `tofu validate` on the
 pinned commit, and shows:
 
 - A verdict: **No blocking issues found**, or **Issues found — resolve before deploying**.

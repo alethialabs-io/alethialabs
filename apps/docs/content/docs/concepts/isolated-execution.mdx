@@ -1,0 +1,88 @@
+---
+title: Isolated execution
+description: How Alethia runs your own OpenTofu or Helm on the managed fleet — a sealed container per job with no platform secrets, no cloud metadata, and egress only to allowed domains.
+---
+
+When Alethia runs your own code on its managed fleet, such as bring-your-own OpenTofu providers,
+`external` data sources, Helm charts and their hooks, that code is arbitrary. Isolated execution runs
+each such job in a fresh, sealed container, so the code cannot reach the platform's secrets, the cloud
+metadata service or the open internet.
+
+<Mermaid chart={`
+flowchart TD
+  Job["Untrusted job on a managed runner"] --> Guard{"Platform secret in the child's environment?"}
+  Guard -->|yes| Refuse["Refuse to start"]
+  Guard -->|no| C["Per-job container: own PID namespace, dropped capabilities, read-only credential mounts"]
+  C -->|only route| Proxy["Forward proxy: registries, Git hosts, the target cloud API"]
+  C --> State["State proxy, per-job token"]
+  Proxy -.blocked.-> IMDS["Cloud metadata, other hosts"]
+`} />
+
+## How it works
+
+### Trusted and untrusted code
+
+- **Alethia's own templates** are reviewed platform code. They run in the runner process.
+- **Your OpenTofu or Helm** runs, on a managed runner, in a container per job. The runner serializes
+  the work, starts itself again inside the container, and reads the result from the job's work
+  directory. The container is removed after the job, and a fleet VM runs one job.
+
+Removing environment variables at the last moment is not enough: a child process in the runner's PID
+namespace could read the parent's `/proc/1/environ`. Only a real namespace boundary contains it.
+
+### What the container gets
+
+The child receives an allowlisted environment and nothing else:
+
+- the cloud credential settings: file paths and non-secret IDs, such as `AWS_CONFIG_FILE` or the
+  `ARM_*` variables;
+- a provider token the job needs, such as `HCLOUD_TOKEN`;
+- the state proxy and egress proxy settings;
+- `PATH` and locale.
+
+The runner token, storage keys, the receipt signing key and any static cloud key are dropped. A guard
+checks the final environment and refuses to start the container if a denied secret survived.
+Credential files are mounted read-only as directories, so the runner's token refresh stays visible
+during a long apply.
+
+The container has its own PID namespace, no added capabilities, no privilege escalation, only the job's
+work directory writable, and process and memory limits.
+
+### Secrets removed at the source
+
+- **State.** OpenTofu reaches state through the [state proxy](/concepts/terraform-state) with a per-job
+  token; the runner holds no storage key, and one job's token reaches only its own state.
+- **Cloud credentials** are minted per job and bound to it.
+- **Fleet VMs** register with a short-lived bootstrap token minted for that VM, not a shared secret.
+
+So a managed VM's boot configuration holds no long-lived secret, and the network control below closes
+the last path rather than being the only one.
+
+### Network
+
+The child has no network route of its own. The VM's network has no gateway, and a forward proxy allows
+egress by domain: package registries, Git hosts and the target cloud's API. The cloud metadata service
+(`169.254.169.254`) and other hosts are unreachable by construction. A chart scan needs no network and
+runs with none.
+
+### Availability
+
+The sandbox is turned on per fleet with `ALETHIA_SANDBOX_BACKEND=container`. On a managed runner,
+untrusted work runs only when egress enforcement is confirmed (`ALETHIA_SANDBOX_EGRESS_ENFORCED` and
+`ALETHIA_SANDBOX_ENFORCE_MANAGED`); otherwise the job is refused, never run unsandboxed.
+Bring-your-own Helm is also gated by `ALETHIA_BYO_HELM_ENABLED`, and bring-your-own IaC by
+`ALETHIA_BYO_IAC_ENABLED`. See
+[Managed provisioning](/self-host/fleet-sandbox).
+
+## What it does not do
+
+- It is not a general sandbox service. There is no API to run arbitrary code in it.
+- It does not apply to self-operated runners, which run inside your own trust boundary.
+- It does not sandbox Alethia's own templates.
+- It does not fall back to running untrusted code without the sandbox.
+
+## Related
+
+- [Bring-your-own IaC](/concepts/bring-your-own-iac)
+- [Security](/concepts/security)
+- [Managed provisioning](/self-host/managed-provisioning)
