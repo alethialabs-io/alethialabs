@@ -79,7 +79,7 @@ async function facetCount(page: Page, label: string): Promise<number> {
 	return digits === "" ? Number.NaN : Number(digits);
 }
 
-/** A group section's `<h2>` — `SectionHeading` renders the label, the count rides beside it. */
+/** A group section's `<h2>` — `SectionHeading` renders the label; the "N connected" line sits beside it. */
 const groupHeading = (page: Page, label: string) =>
 	page.getByRole("heading", { name: label, exact: true });
 
@@ -103,13 +103,28 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await expect(owner.page.getByRole("button", { name: "Table view" })).toBeVisible();
 	});
 
-	test("the page toolbar carries the result count, and the page carries no title", async ({
+	test("the page toolbar carries the description and no count, and the page carries no title", async ({
 		owner,
 	}) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		const pill = owner.page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]');
-		await expect(pill).toHaveText(/^\d+$/);
-		expect(Number(await pill.innerText())).toBeGreaterThan(20);
+		// The toolbar carries the line that says what a connector IS — the one thing neither the
+		// sidebar nor the breadcrumb says. It carries NO count: the catalog is a bounded list and the
+		// list standard draws no list-size pill (#7546), and neither do the group headings.
+		//
+		// The toolbar is asserted PRESENT before the pill is asserted absent, and the board is
+		// asserted FULL: an absence check over a page that never rendered passes while measuring
+		// nothing.
+		const toolbar = owner.page.locator('[data-slot="page-toolbar"]');
+		await expect(toolbar.locator('[data-slot="page-toolbar-description"]')).toContainText(
+			"Credentials Alethia acts through",
+		);
+		await expect(groupHeading(owner.page, "Clouds")).toBeVisible();
+		const cards = owner.page.locator('[data-slot="connector-card"]').filter({ visible: true });
+		await expect.poll(() => cards.count()).toBeGreaterThan(20);
+		await expect(toolbar.locator('[data-slot="count-pill"]')).toHaveCount(0);
+		await expect(
+			owner.page.locator('[data-slot="section-heading"] [data-slot="count-pill"]'),
+		).toHaveCount(0);
 		// The console has no page titles — the sidebar entry you clicked and the breadcrumb above
 		// the content both already say "Connectors", so a heading saying it a third time earns
 		// nothing. Asserted as "no heading NAMES this page", not "no h1 anywhere": the shell is
@@ -166,8 +181,14 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await search(owner.page).fill("zzz-no-such-connector");
 		await expect(owner.page.getByText("No connectors match")).toBeVisible();
-		// The description states the size of the universe the filters were applied to.
-		await expect(owner.page.getByText(/None of the \d+ connectors in the catalog/)).toBeVisible();
+		// The description says what the filters were applied to — the catalog — without stating its
+		// size: #7546 removed the number with the count pills ("no N of M prose"). Exact, so a number
+		// creeping back into the sentence reds here.
+		await expect(
+			owner.page.getByText("None of the connectors in the catalog match these filters.", {
+				exact: true,
+			}),
+		).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: "Reset filters" })).toBeVisible();
 	});
 
