@@ -266,7 +266,7 @@ test.describe("Activity — org feed (owner)", () => {
 		await expect(
 			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toBeVisible({ timeout: 30_000 });
-		await expect(owner.page.getByRole("button", { name: /^user$/i })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: /^member$/i })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^project$/i })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^events$/i })).toBeVisible();
 	});
@@ -341,7 +341,7 @@ test.describe("Activity — the five filter keys round-trip through the URL (own
 		).toHaveValue("grant", { timeout: 30_000 });
 		// A facet trigger renders a count badge only when something is selected, so "User 1" is
 		// a name that exists ONLY once the URL has been decoded into the store.
-		await expect(owner.page.getByRole("button", { name: /^user 1$/i })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: /^member 1$/i })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^project 1$/i })).toBeVisible();
 		await expect(owner.page.getByRole("button", { name: /^events 1$/i })).toBeVisible();
 	});

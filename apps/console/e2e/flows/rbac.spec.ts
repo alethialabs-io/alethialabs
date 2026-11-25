@@ -29,6 +29,9 @@ import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
 import { facetTrigger } from "../helpers/facet";
 
+/** `CUSTOM_ROLES_PLAN_REASON` (components/settings/roles/roles-manager.tsx), plan name left open. */
+const CUSTOM_ROLES_PLAN_REASON_RE = /Custom roles are available on the .+ plan\./;
+
 /**
  * A members row's actions trigger and its select checkbox, BY PREFIX.
  *
@@ -444,15 +447,14 @@ test.describe("RBAC — Roles", () => {
 		await expect(owner.page.getByText("No custom roles yet.")).toBeVisible({ timeout: 30_000 });
 	});
 
-	test("Create role is gated → opens the Enterprise custom-roles dialog", async ({ owner }) => {
+	// Since #7399 (R6 E-09) Create role is DISABLED with the plan's reason on it, not an enabled
+	// button that opened an upgrade dialog: one answer, on the control, readable without a click.
+	test("Create role is gated → disabled, and says which plan has custom roles", async ({ owner }) => {
 		await owner.page.goto(rolesUrl(owner.orgSlug));
-		await expect(owner.page.getByRole("button", { name: /create role/i })).toBeVisible({
-			timeout: 30_000,
-		});
-		await owner.page.getByRole("button", { name: /create role/i }).click();
-		const dialog = owner.page.getByRole("dialog");
-		await expect(dialog.getByText("Custom roles")).toBeVisible();
-		await expect(dialog.getByRole("link", { name: /contact sales/i })).toBeVisible();
+		const create = owner.page.getByRole("button", { name: /create role/i });
+		await expect(create).toBeVisible({ timeout: 30_000 });
+		await expect(create).toBeDisabled();
+		await expect(create).toHaveAccessibleDescription(CUSTOM_ROLES_PLAN_REASON_RE);
 	});
 
 	test("the built-in detail renders the per-service permission matrix", async ({ owner }) => {
@@ -473,8 +475,9 @@ test.describe("RBAC — Roles", () => {
 	test("Pro: roles remain custom-role gated (built-ins still visible)", async ({ team }) => {
 		await team.page.goto(rolesUrl(team.orgSlug));
 		await expect(rail(team.page, "Owner")).toBeVisible({ timeout: 30_000 });
-		await team.page.getByRole("button", { name: /create role/i }).click();
-		await expect(team.page.getByRole("dialog").getByText("Custom roles")).toBeVisible();
+		const create = team.page.getByRole("button", { name: /create role/i });
+		await expect(create).toBeDisabled();
+		await expect(create).toHaveAccessibleDescription(CUSTOM_ROLES_PLAN_REASON_RE);
 	});
 });
 
