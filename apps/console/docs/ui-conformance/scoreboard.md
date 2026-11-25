@@ -213,7 +213,7 @@ has a column of its own for the same reason — it is a fact about the instrumen
 | **F2** | F | `check-filter-standard` | 19 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F3** | F | `check-filter-standard` | 19 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F4** | F | `check-filter-standard` | 19 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
-| **F5** | F | `check-filter-standard` | 2 | 17 | 22 | 0 | 0.11 | `not-a-list-page` 22 |
+| **F5** | F | `check-filter-standard` | 4 | 15 | 22 | 0 | 0.21 | `not-a-list-page` 22 |
 | **F6** | F | `check-filter-standard` | 19 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F7** | F | `check-filter-standard` | 19 | 0 | 22 | 0 | 1.00 | `not-a-list-page` 22 |
 | **F8** | F | live — `interaction` | 16 | 0 | 24 | 1 | 1.00 | `not-a-list-page` 24 |
