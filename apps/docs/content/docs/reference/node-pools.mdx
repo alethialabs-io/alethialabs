@@ -1,0 +1,125 @@
+---
+title: Node pools, labels and taints
+description: Every field of node_labels, node_taints and extra_node_pools, the rules a plan checks, and how each cloud builds a pool.
+---
+
+The cluster's `provider_config` accepts three keys on AWS, GCP, Azure and Hetzner. To use them, see
+[Add node pools, labels and taints](/guides/design-project/node-pools).
+
+## Synopsis
+
+```yaml
+cluster:
+  provider_config:
+    node_labels: { <key>: <value> }        # every pool
+    node_taints: [ { key, value, effect } ] # extra pools only
+    extra_node_pools: [ { name, instance_type, min_size, max_size, ... } ]
+```
+
+| Key | Default | Limit |
+| --- | --- | --- |
+| `node_labels` | `{}` | 24 entries |
+| `node_taints` | `[]` | 24 entries |
+| `extra_node_pools` | `[]` | 10 pools |
+
+A taint has a `key`, an optional `value`, and an `effect`: `NoSchedule`, `PreferNoSchedule` or
+`NoExecute`.
+
+## Pool fields
+
+| Field | Required | Allowed values |
+| --- | --- | --- |
+| `name` | Yes | 1–12 lowercase letters and digits, starting with a letter. Unique. Not `default`, `system`, `spot`, or `pool` followed by digits. |
+| `instance_type` | Yes | An instance type of the project's cloud, such as `m7g.large`, `e2-standard-4`, `Standard_D4s_v5` or `cx32` |
+| `min_size` | Yes | A whole number from 0 |
+| `max_size` | Yes | 1–100, and at least `min_size` |
+| `desired_size` | No | From `min_size` to `max_size`. Defaults to `min_size`. |
+| `arch` | No | `amd64` (default) or `arm64`. Must match the instance type. |
+| `capacity_type` | No | `on-demand` (default) or `spot` |
+| `labels` | No | Up to 25. They win over `node_labels` for the same key. |
+| `taints` | No | Up to 25. They replace a `node_taints` entry with the same key and effect. |
+
+## What each pool's nodes carry
+
+| Pool | Labels | Taints |
+| --- | --- | --- |
+| Default | `node_labels` | None |
+| Extra | `node_labels`, then the pool's `labels`, then `alethia.io/pool: <name>` | `node_taints`, then the pool's `taints`, then `alethia.io/arch=arm64:NoSchedule` for an arm64 pool |
+
+A later entry wins over an earlier one with the same label key, or the same taint key and effect.
+You cannot set `alethia.io/pool` or `alethia.io/arch`.
+
+An extra pool gets the default pool's isolation controls: the same subnets, security groups, disk
+encryption and instance metadata protection.
+
+## Rules checked at plan
+
+The server accepts the write if each key is a template variable with the right type. These rules
+run when the runner plans, and a broken value fails the plan with the rule's name. They are the
+strictest of the four clouds, so a value that works on one cloud works on all.
+
+| Rule | Detail |
+| --- | --- |
+| Key | `name` or `prefix/name`, 1–63 characters in all. The prefix is a lowercase DNS name. The name starts and ends with a letter or digit and holds letters, digits, `-`, `_` or `.`. |
+| Value | 1–63 characters, starting and ending with a letter or digit, same characters as a name. A label value cannot be empty. For a taint with no value, leave `value` out. |
+| Reserved prefix | A prefix ending in `kubernetes.io`, `k8s.io`, `karpenter.sh`, `karpenter.k8s.aws`, `amazonaws.com`, `cloud.google.com`, `gke.io`, `azure.com`, `hetzner.cloud` or `alethia.io` is refused. Use your own, such as `example.com/team`, or none. |
+| Count | At most 50 labels and 50 taints on a pool, including Alethia's: the EKS limit for one managed node group. GKE adds its own arm64 taint on top. |
+| Size | `min_size` ≤ `desired_size` ≤ `max_size`, and `max_size` is 1–100. |
+| Duplicate | A pool name appears once. A taint key and effect pair appears once in a list. |
+
+## Differences between clouds
+
+| | AWS | Azure | Hetzner | GCP |
+| --- | --- | --- | --- | --- |
+| A pool is | One more EKS managed node group | One AKS user node pool (`mode = User`) named for the entry | A separate group of Talos servers on its own `/24` of the cluster network | One GKE node pool named `<cluster name>-<name>`. Not on Autopilot. |
+| Size | Starts at `desired_size` and stays there: nothing scales it, and a later change to `desired_size` does not resize it | The cluster autoscaler scales it between `min_size` and `max_size` | Fixed at `desired_size` | The cluster autoscaler scales it between `min_size` and `max_size`. A regional cluster starts with the same count in each of three zones. |
+| `spot` | An EKS Spot node group | A Spot pool, using the cluster's `aks_spot_eviction_policy` and `aks_spot_max_price`. AKS adds `kubernetes.azure.com/scalesetpriority=spot:NoSchedule`. | Refused: Hetzner sells no Spot capacity | Spot VMs. GKE labels the nodes `cloud.google.com/gke-spot=true`. |
+| arm64 taints | `alethia.io/arch` | `alethia.io/arch` | `alethia.io/arch`, set when a node registers, so a change reaches new servers only | `alethia.io/arch` and GKE's `kubernetes.io/arch=arm64:NoSchedule` |
+| arm64 types | Graviton, such as `m7g.large` or `a1.large` | Sizes with `p` after the vCPU count, such as `Standard_D4ps_v5` or `Standard_B2pts_v2` | `cax` types, such as `cax21` | The `t2a`, `c4a`, `n4a` and `a4x` families |
+
+On every cloud the plan refuses an instance type whose architecture is not the pool's `arch`, and an
+instance type that does not belong to the cloud.
+
+On Azure, the pools made by `aks_instance_types` (`pool1`, `pool2`, …) stay as they are and share
+one size. Each `extra_node_pools` entry has its own size and is keyed by its name, so removing one
+from the middle of the list removes only that pool. See
+[Azure resources](/concepts/runner/infrastructure-templates/azure#node-pools).
+
+On GCP, pools are also keyed by name. Their nodes carry the labels the template puts on every GKE
+node (`environment`, `service`, `managed-by` and the classification tags), and the plan refuses a
+label key with one of those names. See
+[GCP resources](/concepts/runner/infrastructure-templates/gcp#node-pools).
+
+## Example
+
+A GPU pool on Azure Spot that scales to zero, beside an arm64 batch pool:
+
+```yaml
+extra_node_pools:
+  - name: gpu
+    instance_type: Standard_NC4as_T4_v3
+    capacity_type: spot
+    min_size: 0
+    max_size: 3
+    taints:
+      - key: gpu
+        value: "true"
+        effect: NoSchedule
+  - name: batch
+    instance_type: Standard_D4ps_v5
+    arch: arm64
+    min_size: 1
+    max_size: 4
+    desired_size: 2
+```
+
+The `gpu` nodes carry `gpu=true:NoSchedule` and AKS's Spot taint. A pod there tolerates both.
+
+## Errors
+
+| Error | Cause |
+| --- | --- |
+| `not a variable of this template` | The cloud's template does not accept the key. |
+| A plan error naming a rule | A value breaks one of the rules above. |
+
+See [Troubleshoot design and GitOps](/troubleshooting/design-project#a-node-pool-key-is-not-a-variable-of-this-template).

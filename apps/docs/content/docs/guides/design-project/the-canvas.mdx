@@ -1,297 +1,119 @@
 ---
-title: The canvas
-description: How the architecture canvas works — the toolbar, the inspector, the changes bar and the review view, how to connect a service, what a card tells you, and how status reads without colour.
+title: Use the canvas
+description: Find your way around the Architecture canvas, add and connect resources, and review and deploy the plan.
 ---
 
-The Architecture view is where a project's infrastructure is designed, deployed, and kept honest.
-This page explains where everything is on the board, how to connect what you draw, and how to *read*
-the board. The conventions are deliberate: once you know them, the board tells you a great deal at a
-glance.
+Design one environment on the **Architecture** canvas, then plan and deploy it. What the cards,
+rules and status dots mean is in [Read the canvas](/concepts/canvas).
 
-## How the board is laid out
+## Before you begin
 
-The board is one environment, and one environment is one Kubernetes cluster inside one network. Four
-things sit around the cards, each always in the same place:
+- You have a project. The cloud account is chosen when you create the project, and you cannot
+  change it on the canvas.
+- To deploy, a runner is online for your organization. See [Runners](/guides/runners).
+
+## Find your way around
+
+One environment is one Kubernetes cluster inside one network. The board stands for both, so
+neither is a card.
 
 ```text
      [ environment | Select Hand | Add Connect | Undo Redo | Tidy Fit | Run Sources | ⌘K ? ⋯ ]
 
    ┌────────────────────────────────────────────────────────┐ ┌──────────────────┐
-   │                                                        │ │  the inspector   │
-   │                       the cards                        │ │  (or the review  │
-   │                                                        │ │   view)          │
-   │                                                        │ │                  │
-   │         [ Pending changes · 3   Discard  Review plan ] │ │                  │
+   │                       the cards                        │ │  the inspector   │
+   │                                                        │ │  (or the review  │
+   │         [ Pending changes · 3   Discard  Review plan ] │ │   view)          │
    └────────────────────────────────────────────────────────┘ └──────────────────┘
 ```
 
-- **The toolbar**, top centre. One row of tools. It starts with the environment: click its name to
-  size the cluster and the network. Then come the select and hand tools, **Add** and **Connect**,
-  **Undo** and **Redo**, **Tidy layout** and **Fit view**, the **Run** menu (plan, audit, detect
-  drift, probe the cluster), **Sources**, the command palette, the list of keyboard shortcuts, and
-  the **⋯** menu. Hover a tool to see its key. A tool that cannot be used stays in place, disabled,
-  and its tooltip says why. On a narrow window the row drops **Connect**, **Tidy layout**,
-  **Fit view** and the shortcut list first. Each of those is also a key, a row of the **⋯** menu or
-  a row of the command palette.
-- **The inspector**, docked on the right. Select a card and it opens there. It is the one panel for
-  everything on the board: a resource, the vault of secrets, an add-on, a chart, the environment
-  itself, or several cards at once. It does not cover the board, so you can keep working on the
-  board while it is open. See [The node inspector](/guides/design-project/node-inspector).
-- **The changes bar**, bottom centre. It says where the design stands: **Pending changes** with a
-  count, **Not deployed yet**, **Saved, not deployed**, **Up to date**, **Deploying** or
-  **Deploy failed**. Its one way forward is **Review plan**. With changes pending it also offers
-  **Discard**, which asks first, and **Save**, which keeps the design without planning or deploying
-  it. When the design has problems, a button on the bar counts them.
-- **The review view**, docked on the right in place of the inspector. **Review plan** (or **⌘S**)
-  opens it. It reads top to bottom in the order the work happens: the design changes, then
-  **Run plan**, which saves the design and shows what would change in the cloud, then **Deploy**,
-  which applies exactly that plan. **Deploy** is only here, and it is enabled only for a current
-  plan that you have reviewed. When it is disabled, the view says why. Open a card while the review
-  is open and the review steps aside; close the card and the review comes back.
+| Area | What it does |
+| --- | --- |
+| **Toolbar**, top centre | Starts with the environment's name: select it to size the cluster and the network. Then the select and hand tools, **Add**, **Connect**, **Undo**, **Redo**, **Tidy layout**, **Fit view**, the **Run** menu (plan, audit, detect drift, probe the cluster), **Sources**, the command palette, the shortcut list and the **⋯** menu. A disabled tool's tooltip says why. On a narrow window some tools move into the **⋯** menu and the command palette. |
+| **Inspector**, right | Opens when you select a card. See [Use the inspector](/guides/design-project/node-inspector). |
+| **Changes bar**, bottom centre | Shows **Pending changes** with a count, **Not deployed yet**, **Saved, not deployed**, **Up to date**, **Deploying** or **Deploy failed**. Offers **Review plan**, and with changes pending also **Discard** and **Save**. A button counts any design problems. |
+| **Review view**, right | Replaces the inspector when you select **Review plan**. |
 
-### An empty board
+## Start an empty board
 
-A board with nothing on it shows a guide with three ways to start:
+An empty board offers three ways to start:
 
-1. **Start from a template** sizes the cluster from a starter template, for the project's cloud.
-2. **Add the first piece yourself** opens the **Add** picker. The **A** key does the same.
-3. **Bring your own** attaches a Helm chart or a bring-your-own IaC module.
+- **Start from a template** sizes the cluster from a starter template. It changes the cluster, not
+  the cards.
+- **Add the first piece yourself** opens the **Add** picker.
+- **Bring your own** attaches a [Helm chart](/guides/design-project/bring-your-own-charts) or a
+  [bring-your-own IaC module](/guides/design-project/bring-your-own-iac).
 
-A template changes the cluster, not the cards, so the guide stays and says which template is applied.
-The guide goes away when the first card is on the board.
+A link to the board can carry a starting point (`?seed=…`). The board applies it once and removes
+it from the address.
 
-A link to the board can carry a starting point in its address (`?seed=…`), for example a template.
-The board applies it once and then removes it from the address, so reloading the page or sharing
-the address does not apply it again. A starting point that cannot be applied is explained in one
-sentence above the board. Dismiss it to remove it from the address.
+## Add a resource
+
+1. Select **Add** in the toolbar, or press **A**. You can also press **⌘K** and type a service name,
+   such as `postgres`, `redis` or `s3`.
+2. Pick the resource. For a database or a cache, pick the engine.
+
+The card appears on the board and the inspector opens on it. The picker lists only what your
+project's cloud can run. A resource already on the board that can exist once is disabled, and a
+resource that is not available yet shows **Soon**.
+
+On Hetzner, databases, caches, queues, topics, NoSQL tables, the registry and secrets run inside
+your cluster, and their cards say so (for example `Runs as · CloudNativePG`).
 
 ## Connect a service to what it uses
 
-A service connects to a database, a cache, a queue or a secret. Alethia then gives the service that
-resource's endpoint and credentials when it deploys, without a stored key.
+A service connects to a database, a cache, a queue or a secret. At deploy, Alethia gives the
+service that resource's endpoint and credentials without a stored key.
 
 1. Drag from the handle at the bottom of the service card.
-2. Release anywhere on the card you want to connect to.
+2. Release on the card you want to connect to. While you drag, the card under the pointer says
+   whether you can connect to it.
+3. In the inspector's **Connections** tab, choose what the service gets from the resource.
 
-While you drag, the card under the pointer says what releasing there does, or why it cannot be
-connected. The connection is drawn and the inspector opens on the service's **Connections** tab, where
-you choose what the service gets from it. If you release on empty board instead, a menu offers what
-the service can connect to, including a new database, cache, queue or secret placed where you let go.
+If you release on empty board, a menu offers what the service can connect to, including a new
+resource placed where you let go. Without a pointer, select the service and press **C**.
 
-To connect without a pointer, select the service and press **C**. The same menu opens.
+To remove a connection, select the line and press **Delete**, or select **Remove connection**.
 
-To remove a connection, select the line and press **Delete**, or click **Remove connection** beside
-it. **⌘Z** puts it back.
+## Review and deploy
+
+1. Select **Review plan** on the changes bar, or press **⌘S**.
+2. Check the design changes at the top of the review view.
+3. Select **Run plan**. This saves the design and shows what would change in the cloud.
+4. Select **Deploy**. It applies exactly that plan, and is enabled only for a current plan you
+   reviewed. When it is disabled, the view says why.
+
+If you open a card while the review is open, the review steps aside until you close the card.
 
 ## Keyboard
 
-Every card and every line is a focus stop. Press **Tab** to move between them.
+Press **Tab** to move between cards and lines. Letter keys do nothing while you type in a field.
+On Windows and Linux, read **Ctrl** for **⌘**.
 
 | Key | Does |
 | --- | --- |
-| **Enter** | Opens the focused card in the inspector. On a line, it opens the service the line starts from. |
-| Arrow keys | Move the selected cards. **Shift** makes the step larger. A held key is one step to undo. |
-| **Delete** or **Backspace** | Removes the selection: a line, or cards. |
+| **Enter** | Opens the focused card. On a line, opens the service it starts from. |
+| Arrow keys | Move the selected cards. **Shift** makes a larger step. |
+| **Delete** or **Backspace** | Removes the selection. |
 | **C** | Connects the selected service. |
 | **A** | Opens the **Add** picker. |
-| **V** / **H** | The select tool / the hand tool. Hold **Space** to pan for a moment. |
+| **V** / **H** | Select tool / hand tool. Hold **Space** to pan. |
+| **⇧L** / **⇧1** | Tidy layout / fit view. |
 | **⌘Z** / **⇧⌘Z** | Undo / redo. |
 | **⌘D** | Duplicates the selection. |
 | **⌘S** | Opens the review view. |
 | **⌘K** | Opens the command palette. |
+| **⌘I** | Asks the AI assistant. |
 | **Esc** | Closes the inspector. |
-| **?** | Lists every key the board binds. |
+| **?** | Lists every key. |
 
-Letter keys never fire while you type in a field. On Windows and Linux, read **Ctrl** for **⌘**.
+## Check that it worked
 
-## Why the board has no colour
+After the deploy, the changes bar reads **Up to date** and each card shows a solid dot. A card
+with a hollow-centre dot failed: open it and read **Status**.
 
-The canvas is **fully grayscale**. Nothing on it is colour-coded. That is a constraint, not an
-oversight: colour is the first thing to fail under a projector, a screenshot, colour-blindness, or a
-dark room. So every distinction you can see is carried by **shape, structure, and type** instead —
-and the one exception is the cloud provider's own brand mark, which stays in its original colours
-because it belongs to someone else.
+## Related
 
-## What a card tells you
-
-Every resource is a card, and every card is built from the same four parts.
-
-### The glyph and the eyebrow
-
-Top-left: the service's icon and its kind, in uppercase mono. This is the fastest read — *what kind
-of thing is this*.
-
-### The facts
-
-The middle of the card is a small grid of the **two or three facts that actually matter for that
-service**. This is what makes a database look like a database and not like a DNS zone:
-
-| Resource | Reads as |
-| --- | --- |
-| Database | `PostgreSQL 16 · 0.5–4 · 7 d` |
-| Cache | `Valkey · cache.t3.medium · 2 · multi-AZ` |
-| Bucket | `private · on · 2 origins` |
-| Topic | `3 subscriptions · push · pull` |
-
-A fact with no value yet draws a **muted dash**, so an unconfigured resource reads as unconfigured
-without having to open it.
-
-The facts are **cloud-honest**. On a compute-only cloud like Hetzner there is no managed database
-service, so a database is deployed as a CloudNativePG cluster *inside your Kubernetes cluster* — and
-the card says exactly that (`Runs as · CloudNativePG`) rather than implying a managed service that
-doesn't exist. The same is true of caches (Valkey) and queues (RabbitMQ).
-
-### The provider chip
-
-Which cloud account this resource lands in. A resource with no chip of its own **inherits the
-project's** cloud — that's the common case, and the chip says `inherits core`.
-
-### The classification rule
-
-The thin band across the **top edge** of the card says what kind of citizen the resource is:
-
-| Rule | Meaning |
-| --- | --- |
-| Solid, full ink | **Root** — the project itself, the anchor everything inherits from |
-| Solid, strong | **Core** — must sit on the project's cloud (network, cluster, data services) |
-| Hairline | **Periphery** — may live on a different cloud (DNS, buckets, registry, secrets, GitOps) |
-| Dashed | **External** — not managed by this design (a bring-your-own Helm chart or IaC module) |
-
-## Status without colour
-
-Status is shown by a **dot**, read by its fill and shape, with a short mono label beside it. There is
-no red and no green anywhere.
-
-| Dot | State | Means |
-| --- | --- | --- |
-| Solid | **Live** / **Ready** | Nominal. The calm state — it shows only the dot, no label. |
-| Hollow ring | **Needs setup** / **Not deployed** | Designed but incomplete, or never applied. |
-| Haloed | **Queued** / **Updating** / **Update pending** / **Destroying** | Something is pending. |
-| Blinking | **Applying** | A runner is changing this resource right now. |
-| Hollow-centre | **Failed** / **Unreachable** | A real, actionable break. |
-| Faint | **Gated** / **Destroyed** | Inert — it won't provision, or it's gone. |
-
-The canvas stays **calm when everything is fine**: a healthy resource shows a dot and nothing else.
-Anything that wants your attention carries a label. If the board is quiet, it's quiet because there
-is nothing to say.
-
-### One state, chosen deliberately
-
-A resource often has several truths at once — its design is invalid, *and* it's live, *and* it has
-drifted. The canvas picks one to show, in a fixed order:
-
-1. **Failed** — a real break outranks everything.
-2. **In flight** (queued · applying · updating · destroying) — what's *happening* outranks what's *wrong*.
-3. **Needs setup** — the design itself is invalid, so the next deploy will not work. This is shown
-   *even for a resource that is currently live*, because the deploy you are about to run is the thing
-   that matters.
-4. **Gated** — valid, but it won't provision (see below).
-5. **Destroyed**, then **Not deployed**.
-6. **Unreachable** — it exists, but the cluster's API server didn't answer the last probe.
-7. **Update pending** — live, but the design has moved ahead of what's deployed.
-8. **Live** / **Ready**.
-
-### Drift is an overlay, not a state
-
-If the real cloud has diverged from what Alethia recorded, the resource is still **Live** — it just
-carries a `2 drifted` chip alongside. Drift never replaces the state, it rides on top of it. The
-resource's panel lists exactly which OpenTofu resources diverged.
-
-Drift that can't confidently be traced back to a specific resource is reported **at the environment**
-rather than pinned to a card it might not belong to. An honest "2 resources drifted, unattributed" is
-better than a wrong badge on your database.
-
-### Gated
-
-A **core** resource placed on a different cloud than the project is drawn as **gated**. It can be
-designed and drawn, but the project will not provision until it's colocated. This mirrors the
-provisioner's own rule — the canvas will never let you believe something will deploy when it won't.
-
-## The cluster and the network are not cards
-
-One environment is one Kubernetes cluster inside one network (VPC), so neither is drawn as a card.
-The board itself stands for them. To size the cluster or change the network, click the environment's
-name at the start of the toolbar, or choose **Environment settings** from the **⋯** menu. The
-environment opens in the inspector with its **Settings**, **Sources**, **Status** and **Activity**
-tabs.
-
-The classification rule on each card still says where it can live: a **core** resource must sit on
-the project's cloud, and a **periphery** resource (DNS, buckets, the container registry, secrets, the
-GitOps repository) may live on a different one.
-
-<Callout>
-On a compute-only cloud like Hetzner there is no managed data plane, so databases, caches and queues
-deploy as Helm charts **inside your cluster**, and their cards say so (`Runs as · CloudNativePG`).
-</Callout>
-
-## Collections — when one card stands for many
-
-A real project has thirty or forty secrets. Thirty cards would bury the architecture: the canvas
-would stop being a picture of your system and become a wall of near-identical boxes.
-
-So high-cardinality resources **collapse into a single card** — a vault. Secrets work this way today.
-The card shows the count, a few names, and **the state of its unhappiest member**: a vault holding one
-failed secret can never read *Live*. Collapsing hides the clutter, never the trouble.
-
-Open the vault to get the full list, filter it, add or remove entries, and click through to any single
-secret to configure it exactly as you would any other resource. Nothing is taken away — only the
-board is kept readable.
-
-<Callout>
-This is a rendering decision, not a data model. Every secret is still an individual resource with its
-own configuration, its own status, and its own line in the deploy diff.
-</Callout>
-
-## Bring your own IaC — still an architecture
-
-An environment can be provisioned from **your own OpenTofu module** instead of the built-in template.
-When it is, the module — not the component design — is the source of truth, so you can't add
-components to it.
-
-That doesn't make it a black box. Alethia inventories the module's resources and draws them, so a
-bring-your-own environment reads as an architecture like any other:
-
-- Resources are grouped into cards **by kind and by OpenTofu module** — the `aws_vpc` and its
-  subnets become one **Network** card; the `aws_eks_*` resources a **Cluster** card. A real module is
-  fifty to two hundred resources, and drawn one per card they would bury the architecture, so the
-  same collapsing rule that governs the Secrets vault applies here.
-- They are drawn **dashed** — external. Alethia plans, prices, drifts and audits these resources; it
-  does not own their definition. Changing one means editing your OpenTofu module, so the cards are
-  read-only. Open one to see every resource inside it: its address, what the last plan would do to
-  it, what it costs, and whether it has drifted.
-- Resources whose type Alethia doesn't recognise — `random_password`, `null_resource`, a provider it
-  has never seen — are **never dropped**. They collect in an honest **Other** card.
-
-**Sources** in the toolbar shows where the module came from: the repository, the ref, the exact commit the
-safety scan pinned — that commit, not the moving branch, is what a deploy applies — and the scan's
-verdict. A module the scan **rejected** reads as *Needs setup* even if its resources are live, because
-the next deploy will not run.
-
-<Callout>
-The cards appear as soon as the module is **scanned**, which needs no cloud credentials at all. At
-that point they show what your code *declares*, so a `count = 3` block still reads as one resource
-and the card says `Source · declared`. Once the environment has been **planned**, the cards switch to
-the real, expanded resources and read `Source · planned`. The board always tells you which of the two
-you're looking at, because a declared list is not a promise about what exists.
-</Callout>
-
-## Detail follows zoom
-
-Cards shed **detail** before they shed **legibility**, so a large architecture stays readable:
-
-| Zoom | Shows |
-| --- | --- |
-| Far out | The glyph, the name, and a status dot |
-| Middle | Header, name, and the single most important fact |
-| Close in | The full card — facts, provider, status, everything |
-
-Zoom out to see the shape of the system; zoom in to work on it.
-
-## Reading the board quickly
-
-- **Everything quiet, dots only** — the environment is healthy and matches its design.
-- **A hollow-centre dot** — something failed or a cluster stopped answering. Start there.
-- **A blinking dot** — a deploy is in flight right now.
-- **Dashed borders** — resources you brought yourself; Alethia plans and verifies them but does not
-  own their definition.
-- **Faint dots** — inert. Either gated (won't provision) or already destroyed.
+- [Read the canvas](/concepts/canvas): card parts, status dots, drift and gated resources.
+- [Use the inspector](/guides/design-project/node-inspector)
+- [Troubleshoot design and GitOps](/troubleshooting/design-project)

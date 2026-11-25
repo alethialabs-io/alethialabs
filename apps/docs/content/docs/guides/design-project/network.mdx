@@ -1,119 +1,73 @@
 ---
-title: Network
-description: VPC/VNet configuration — create new or use existing, CIDR blocks, NAT gateways.
+title: Configure the network
+description: Create a new VPC or VNet for an environment, or deploy into a network that already exists in your cloud account.
 ---
 
-The network section configures the virtual network that contains all provisioned resources.
+Give the environment a new network, or attach it to one that already exists in your account.
 
-## Create New vs. Use Existing
+## Before you begin
 
-Two modes controlled by a toggle:
+- The project's cloud account is connected. To use an existing network, it must be in the
+  project's region and show in the account's [asset inventory](/concepts/connection-health).
 
-### Create New Network
+## Open the network settings
 
-Provisions a new network from scratch. Fields:
+1. On the [canvas](/guides/design-project/the-canvas), select the environment's name at the start
+   of the toolbar.
+2. On **Settings**, find **Network (VPC)**.
 
-| Field | Description |
-|-------|-------------|
-| **CIDR Block** | IP address range (e.g., `10.0.0.0/16`) |
-| **NAT Gateway** | Single (cost-optimized) or HA (one per availability zone) |
+## Create a new network
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    Creates a **VPC** with:
-    - Public and private subnets across availability zones
-    - Internet Gateway for public subnets
-    - NAT Gateway(s) for private subnet internet access
-    - Route tables for each subnet type
-    - Default security group
-  </Tab>
-  <Tab value="GCP">
-    Creates a **VPC Network** with:
-    - Custom-mode subnets in the selected region
-    - Cloud NAT with Cloud Router
-    - Firewall rules for internal communication
-  </Tab>
-  <Tab value="Azure">
-    Creates a **Virtual Network (VNet)** with:
-    - Subnets for cluster nodes and services
-    - NAT Gateway for outbound traffic
-    - Network Security Groups (NSGs)
-  </Tab>
-</Tabs>
+1. Leave **Provision a new network** on.
+2. Set **CIDR block**. The default is `10.0.0.0/16`. Each cloud carves subnets out of this range, so
+   it must be at least this wide:
 
-### Use Existing Network
+   | Cloud | Widest prefix allowed |
+   | --- | --- |
+   | AWS, Azure | `/18` |
+   | Hetzner | `/22` |
+   | GCP | Any valid IPv4 CIDR |
 
-Instead of creating a network, attach the project to one that **already exists** in the account — its id
-comes from Alethia's server-side [asset inventory](/concepts/connection-health) (network id,
-name, CIDR, region).
+3. Choose the NAT gateway. **Single NAT gateway** is on by default: one shared NAT, which costs
+   less. Turn it off for one NAT per availability zone. On AWS, one NAT costs about $35 a month and
+   three cost about $105.
+4. Optional: add **Allowed CIDR blocks**, the extra networks that can reach resources in this
+   network.
 
-**How it works — brownfield attach (AWS · GCP · Azure).** When you pick "existing", Alethia records the
-network id and, at deploy time, the [Runner](/concepts/runner) does **not** create a network. Instead the OpenTofu
-template *reads* your existing network and wires the cluster into it:
+| Cloud | What Alethia creates |
+| --- | --- |
+| AWS | A VPC with public and private subnets across availability zones, an internet gateway, NAT gateways and route tables |
+| GCP | A VPC network with custom-mode subnets in the region, and Cloud NAT with a Cloud Router |
+| Azure | A VNet with subnets for nodes and services, a NAT gateway and network security groups |
 
-- **AWS** — the runner looks up the VPC's subnets and passes them in (public/private split).
-- **GCP** — the template `data`-sources the VPC network and resolves its subnetwork in the project's
-  region (including that subnet's pod/service secondary ranges) for GKE.
-- **Azure** — the template `data`-sources the VNet and uses one of its subnets for AKS.
+## Use an existing network
 
-<Callout type="info">
-Existing networks must be in the same region as the project. The list comes from Alethia's server-side
-[asset inventory](/concepts/connection-health), which stays fresh automatically (a
-reconciliation sweep, plus optional event forwarders) — there's no manual refresh.
-</Callout>
+On AWS, GCP and Azure you can deploy into a network you already have:
 
-## Reuse existing resources
+1. Turn off **Provision a new network**.
+2. Choose the network under **Existing network**. The list comes from the asset inventory, which
+   updates itself.
 
-"Use existing network" is one case of a deliberately **narrow** idea: reuse the **shared substrate you
-deploy _into_**, instead of creating a duplicate. The test for whether reuse is a provisioning concern is
-simple — **does the rest of the infrastructure graph attach to it?**
+At deploy, the runner does not create a network. The template reads yours and puts the cluster in
+it:
 
-- ✅ **Network (VPC/VNet + subnets)** — the cluster and nodes attach into its subnets. Available today on
-  AWS, GCP, and Azure (a provision-new vs use-existing toggle; at deploy time the template `data`-sources
-  the existing network rather than creating one). The list comes from the server-side
-  [asset inventory](/concepts/connection-health).
-- 🚧 **Kubernetes cluster** — your workloads deploy _onto_ it (nobody wants a fresh cluster per app). Same
-  toggle, on the roadmap.
+| Cloud | What the template uses |
+| --- | --- |
+| AWS | The VPC's subnets, split into public and private |
+| GCP | The VPC network's subnetwork in the project's region, with its secondary ranges for pods and services |
+| Azure | One of the VNet's subnets, for AKS |
 
-That's the whole scope. **Databases, caches, queues, storage, etc. are _not_ "reuse" targets** — nothing
-downstream attaches to them in the graph. If a database already exists, there's nothing to provision:
-the app simply needs its **connection endpoint + secret**, which is a *connection/config* concern (a value
-you supply), not a provisioned component. Trying to model that as "provision vs existing" just reintroduces
-a credential-handling problem the keyless model otherwise avoids.
+The network is the only resource you can reuse this way, because the cluster attaches into it. A
+database, cache or bucket that already exists is not something to provision: give your service its
+endpoint and credentials instead.
 
-<Callout type="info">
-The inventory still tracks every resource kind (databases, caches, …) — but for **drift/day-2 awareness,
-collision-avoidance, and agent context**, not for reuse. Storing what exists is not the same as attaching
-your project to it.
-</Callout>
+## Check that it worked
 
-## CIDR Block Validation
+Run a plan from the review view. It lists the network resources to create. With an existing
+network, it creates none.
 
-The form validates CIDR notation in real-time and shows a breakdown. For `10.0.0.0/16`:
+## Related
 
-| Field | Value |
-|-------|-------|
-| Total addresses | 65,536 |
-| Usable IPs | 65,531 |
-| Range | 10.0.0.0 – 10.0.255.255 |
-| Size | Large |
-
-Common ranges:
-- `/16` — 65,536 addresses (recommended for production)
-- `/20` — 4,096 addresses (suitable for small environments)
-- `/24` — 256 addresses (minimal, development only)
-
-## NAT Gateway Cost Impact
-
-NAT gateways have significant cost implications:
-
-| Mode | AWS Cost | Description |
-|------|---------|-------------|
-| Single | ~$35/mo | One NAT in a single AZ (cost-optimized, single point of failure) |
-| HA | ~$105/mo (3 AZ) | One NAT per AZ (high availability, 3x cost) |
-
-The [cost sidebar](/guides/design-project/cost-sidebar) reflects the NAT gateway choice immediately.
-
-## Allowed CIDR Blocks
-
-Optional field for restricting inbound access. Enter CIDR ranges that should be allowed to connect to resources within the network. Default: open to the VPC CIDR only.
+- [Configure the cluster](/guides/design-project/cluster)
+- [Connection health and inventory](/concepts/connection-health)
+- [Troubleshoot design and GitOps](/troubleshooting/design-project#the-cidr-block-is-refused)
