@@ -4,7 +4,7 @@
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { notFound } from "next/navigation";
 import { prefetchClassificationOfList } from "@/components/classification/prefetch-classification";
-import { environmentsQueryFromUrl } from "@/components/environments/environments-query";
+import { prefetchEnvironmentsLists } from "@/components/environments/environments-prefetch";
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 import { getQueryClient } from "@/lib/query/client";
@@ -24,13 +24,13 @@ export async function generateMetadata() {
  * canvas). Lists the project's environments; create / duplicate / delete / promote are handled in
  * the client view.
  *
- * THE ADR 0005 SLICE (#6120), as the jobs route (#6113): the page's one read,
- * `environments.overview`, is prefetched IN-PROCESS through the read router with exactly the keys
- * the client asks for, and the dehydrated cache is handed to the client — so the first paint
- * carries the environments and the client issues no request on mount. Two keys, as every list on
- * the filter standard: the pristine read (`{ project }`), which the client renders before its
- * filter store has read the link, and the read for the link's filters, the key it settles on once
- * it has — the same key twice for a pristine link, which TanStack dedupes. Each environment card's
+ * THE ADR 0005 SLICE (#6120), as the jobs route (#6113): the page's reads are prefetched
+ * IN-PROCESS through the read router with exactly the keys the client asks for, and the dehydrated
+ * cache is handed to the client — so the first paint carries the environments and the client
+ * issues no request on mount. The panels' read, `environments.overview` (`{ project }`: every
+ * environment, whatever the bar selects), and the paged reads (LST-3 #7485,
+ * `prefetchEnvironmentsLists`): the table's first keyset page for the pristine list and for the
+ * link's filters, and the promotions history's first page. Each environment card's
  * classification control is prefetched the same way once the environments are known (#6334): the
  * edit decision, the taxonomy and every card's chips in the view's one batched read, so the
  * "Classify" pickers are in the first paint. `loading.tsx` covers the
@@ -53,10 +53,10 @@ export default async function ProjectEnvironmentsPage({
 
 	const queryClient = getQueryClient();
 	const overview = serverOrpc().environments.overview.queryOptions({ input: { project } });
-	const filtered = serverOrpc().environments.overview.queryOptions({
-		input: environmentsQueryFromUrl(project, paramReader(await searchParams)),
-	});
-	await Promise.all([queryClient.prefetchQuery(overview), queryClient.prefetchQuery(filtered)]);
+	await Promise.all([
+		queryClient.prefetchQuery(overview),
+		prefetchEnvironmentsLists(queryClient, project, paramReader(await searchParams)),
+	]);
 	const envs = queryClient.getQueryData(overview.queryKey)?.envs;
 	if (envs !== undefined) {
 		await prefetchClassificationOfList(

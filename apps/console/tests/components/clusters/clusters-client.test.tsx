@@ -8,11 +8,13 @@
 // led by the environment. A refresh that fails after data arrived keeps the rows.
 //
 // And the list is on the filter standard: the read's input is the normalized query, a project is a
-// SCOPE in that input and never a filter, and the open row is in the URL.
+// SCOPE in that input and never a filter, and the open row is in the URL. And on the list standard
+// (LST-3 #7485): the read is `useKeysetList(orpc.clusters.page, query)`, the table is in server
+// mode with its footer, there is no count and no `?page=`.
 
 import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClusterListItem } from "@/lib/rpc/procedures/clusters";
@@ -26,12 +28,30 @@ const h = vi.hoisted(() => ({
 	search: new URLSearchParams(),
 	project: undefined as string | undefined,
 	handlers: {} as Record<string, FakeHandler>,
+	loadMore: vi.fn(),
+	loadMoreFailed: false,
 }));
 
-vi.mock("@/lib/query/use-clusters-page-query", () => ({
-	useClustersPageQuery: (input: unknown) => {
+/** The list's state, as `useKeysetList` would derive it from `h.query` (the first page's status). */
+vi.mock("@/lib/query/use-keyset-list", () => ({
+	useKeysetList: (_procedure: unknown, input: unknown) => {
 		h.inputs.push(input);
-		return h.query;
+		const q = h.query as {
+			data?: { rows: unknown[]; facets: unknown; universeEmpty: boolean | null; nextCursor: string | null };
+			isPlaceholderData?: boolean;
+		};
+		return {
+			rows: q.data?.rows ?? [],
+			facets: q.data?.facets ?? null,
+			universeEmpty: q.data?.universeEmpty ?? null,
+			query: h.query,
+			isPending: q.data === undefined,
+			isPlaceholderData: q.isPlaceholderData ?? false,
+			hasMore: q.data?.nextCursor != null,
+			loadingMore: false,
+			loadMoreFailed: h.loadMoreFailed,
+			loadMore: h.loadMore,
+		};
 	},
 }));
 vi.mock("@/lib/rpc/client", async () => {
@@ -65,9 +85,14 @@ const FACETS = {
 	regions: [{ value: "eu-central-1", label: null, count: 3 }],
 };
 
-/** The read's answer for `rows`, out of `total` clusters in scope. */
-function page(rows: ClusterListItem[], total = rows.length) {
-	return { rows, resultCount: rows.length, total, facets: FACETS };
+/** The read's first page for `rows`; `universeEmpty` unless the scope holds `total` clusters. */
+function page(rows: ClusterListItem[], total = rows.length, nextCursor: string | null = null) {
+	return {
+		rows: rows.map((cluster) => ({ id: cluster.project_cluster.id, cluster })),
+		nextCursor,
+		facets: FACETS,
+		universeEmpty: total === 0,
+	};
 }
 
 /** A cluster `id` of environment `environment` in project `projectName`. */
@@ -95,6 +120,8 @@ beforeEach(() => {
 	h.inputs.length = 0;
 	h.search = new URLSearchParams();
 	h.project = undefined;
+	h.loadMoreFailed = false;
+	delete h.handlers["clusters.detail"];
 	h.query = { data: undefined, isError: false, isLoading: true, isPlaceholderData: false, error: null, refetch };
 	act(() => useClustersFilters.getState().reset());
 });
@@ -170,7 +197,31 @@ describe("ClustersClient — the table", () => {
 		expect(screen.getByRole("button", { name: "Open staging in shop" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Open production in search" })).toBeInTheDocument();
 		expect(screen.getByRole("columnheader", { name: /project/i })).toBeInTheDocument();
-		expect(document.querySelector('[data-slot="page-toolbar"]')).toHaveTextContent("3");
+		// No count anywhere in the toolbar (lib/query/README.md → "Counts").
+		expect(document.querySelector('[data-slot="page-toolbar"]')?.textContent).not.toMatch(/\d/);
+	});
+
+	it("pages by keyset: a further page is the footer's Load more, never page numbers", async () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE, 3, "next") };
+		renderList();
+		expect(screen.queryByRole("button", { name: /next page|previous page/i })).toBeNull();
+		await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+		expect(h.loadMore).toHaveBeenCalledOnce();
+		expect(h.replace).not.toHaveBeenCalled(); // the cursor never enters the URL
+	});
+
+	it("at the end there is no footer at all", () => {
+		h.query = { ...h.query, isLoading: false, data: page(THREE) };
+		renderList();
+		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+	});
+
+	it("a failed later page keeps the rows and offers the retry line", () => {
+		h.loadMoreFailed = true;
+		h.query = { ...h.query, isLoading: false, data: page(THREE, 3, "next") };
+		renderList();
+		expect(rowEnvironments()).toHaveLength(3);
+		expect(screen.getByText("Couldn't load more")).toBeInTheDocument();
 	});
 
 	it("links each row's project, on the organization's list", () => {
@@ -258,6 +309,49 @@ describe("ClustersClient — the open row is in the URL", () => {
 	it("a link that names a row opens its record", () => {
 		h.search = new URLSearchParams("selected=c2");
 		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")]) };
+		renderList();
+		expect(screen.getByRole("dialog", { name: "staging · shop" })).toBeInTheDocument();
+	});
+
+	it("a deep link to a cluster that is not on a loaded page (page 3) opens it at once, read by id", async () => {
+		const FAR = "33333333-3333-4333-8333-333333333333";
+		h.search = new URLSearchParams(`selected=${FAR}`);
+		// Two rows loaded and more to come: the selected cluster's row is pages away.
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")], 120, "next") };
+		const asked: unknown[] = [];
+		h.handlers["clusters.detail"] = async (input) => {
+			asked.push(input);
+			return cluster(FAR, "qa", "billing");
+		};
+		renderList();
+		expect(await screen.findByRole("dialog", { name: "qa · billing" })).toBeInTheDocument();
+		expect(asked).toEqual([{ clusterId: FAR }]);
+		// Nothing was paged to get there.
+		expect(h.loadMore).not.toHaveBeenCalled();
+	});
+
+	it("on a project's list the by-id read carries the project as its scope", async () => {
+		const FAR = "33333333-3333-4333-8333-333333333333";
+		h.project = "shop";
+		h.search = new URLSearchParams(`selected=${FAR}`);
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")], 120, "next") };
+		const asked: unknown[] = [];
+		h.handlers["clusters.detail"] = async (input) => {
+			asked.push(input);
+			return null;
+		};
+		renderList("p2");
+		await waitFor(() => expect(asked).toEqual([{ clusterId: FAR, projectId: "p2" }]));
+		// The cluster is not visible in this scope: nothing opens.
+		expect(screen.queryByRole("dialog")).toBeNull();
+	});
+
+	it("a loaded row opens from the page, with no by-id read", () => {
+		h.search = new URLSearchParams("selected=c2");
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production"), cluster("c2", "staging")]) };
+		h.handlers["clusters.detail"] = async () => {
+			throw new Error("must not be asked");
+		};
 		renderList();
 		expect(screen.getByRole("dialog", { name: "staging · shop" })).toBeInTheDocument();
 	});
