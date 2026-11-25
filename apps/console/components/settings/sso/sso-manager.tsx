@@ -144,7 +144,6 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 		<div className="space-y-4" aria-busy={busy}>
 			<PageToolbar
 				description="Identity providers your members can sign in through."
-				count={providers ? providers.length : null}
 				actions={
 					<DisabledReason reason={writeReason}>
 						<Button size="sm" onClick={connect}>
