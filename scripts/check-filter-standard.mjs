@@ -1539,6 +1539,10 @@ const COUNT_PROSE = [
  * The `query*Page` builders under `lib/queries/` that return the keyset contract — an exported
  * function whose body returns `nextCursor`, or assembles its page through `keysetListPage(`.
  *
+ * A type parameter list between the name and the parameters is read too: the runners builder is
+ * generic over its row (`queryRunnersPage<Row extends RunnerFacts>(`, #7484), and a matcher that
+ * wanted `(` straight after the name reported its procedure as having no keyset builder at all.
+ *
  * @param {ReturnType<typeof fsIo>} io
  * @returns {Set<string>}
  */
@@ -1549,7 +1553,7 @@ export function deriveKeysetBuilders(io) {
 	for (const e of io.listDir(dir)) {
 		if (e.dir || !/\.ts$/.test(e.name) || /\.test\.ts$/.test(e.name)) continue;
 		const text = stripCommentLines(io.readFile(`${dir}/${e.name}`)).lines.join("\n");
-		for (const m of text.matchAll(/export (?:async )?function (query\w+Page)\s*\(/g)) {
+		for (const m of text.matchAll(/export (?:async )?function (query\w+Page)\s*(?:<[^>()]*>)?\s*\(/g)) {
 			const body = functionBody(text, m.index, text.length);
 			if (/\bnextCursor\b\s*[,:}]/.test(body) || /\bkeysetListPage\s*\(/.test(body)) names.add(m[1]);
 		}
