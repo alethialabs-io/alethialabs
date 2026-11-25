@@ -19,7 +19,8 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, type Tx, withScope } from "@/lib/db";
 import { supportCases } from "@/lib/db/schema";
-import { CASE_PAGE_SIZE, type CaseListFilter, type CasePage, queryCasesPage } from "@/lib/queries/support";
+import { decodeKeysetCursor, KEYSET_DEFAULT_LIMIT as CASE_PAGE_SIZE } from "@/lib/queries/keyset";
+import { type CaseListFilter, type CasePage, queryCasesPage } from "@/lib/queries/support";
 import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG = randomUUID();
@@ -88,6 +89,23 @@ describeIfDb("support.cases — filters in the paged query (#7396)", () => {
 		const page = await firstPage({});
 		expect(page.rows).toHaveLength(CASE_PAGE_SIZE);
 		expect(page.rows.map((r) => r.id)).not.toContain(targetId);
+	});
+
+	it.skipIf(!APP_ROLE_DISTINCT)("following nextCursor walks every case once and ends with null", async () => {
+		const first = await firstPage({});
+		expect(first.universeEmpty).toBe(false);
+		expect(first.nextCursor).not.toBeNull();
+		const cursor = decodeKeysetCursor(first.nextCursor ?? "") ?? undefined;
+		const second = await withScope({ ownerId: USER, orgId: ORG }, async (tx: Tx) => {
+			await tx.execute(sql`select set_config('app.support_all', 'false', true)`);
+			return queryCasesPage(tx, USER, {}, { cursor, limit: CASE_PAGE_SIZE });
+		});
+		// AHEAD + 1 cases in all: the second page holds the rest, ending with the target, and is the last.
+		expect(second.rows).toHaveLength(AHEAD + 1 - CASE_PAGE_SIZE);
+		expect(second.rows.at(-1)?.id).toBe(targetId);
+		expect(second.nextCursor).toBeNull();
+		const ids = [...first.rows, ...second.rows].map((r) => r.id);
+		expect(new Set(ids).size).toBe(AHEAD + 1);
 	});
 
 	it.skipIf(!APP_ROLE_DISTINCT).each<[string, CaseListFilter]>([
