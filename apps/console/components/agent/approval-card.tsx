@@ -4,11 +4,7 @@
 
 import { Check, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-	getApprovedJob,
-	tryPlanProject,
-	tryProvisionProject,
-} from "@/app/server/actions/projects";
+import { getApprovedJob, tryPlanProject } from "@/app/server/actions/projects";
 import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { track } from "@/lib/analytics/track";
@@ -67,10 +63,19 @@ function deniedOutput(reason: string): { status: "denied"; reason: string } {
 }
 
 /**
- * HITL approval for an agent-proposed plan/deploy. Approve calls the PDP-gated
- * planProject/provisionProject (the M1 placement + usage gates run inside them) and opens
- * the artifact Logs tab on the returned job; a denial (Forbidden / usage cap) shows
- * the "held back" note from the action's error message.
+ * The sentence a stored deploy proposal resolves with. A deploy is no longer a proposal: the agent
+ * requests it with `request_apply`, a person approves the request, and the queue gate consumes the
+ * approval (components/agent/approval/**). A proposal stored before that shows this instead of
+ * Approve, and Dismiss feeds it back so the agent can request the approval.
+ */
+export const DEPLOY_PROPOSAL_RETIRED =
+	"Deploys are requested with request_apply now, and a person approves the request in this conversation. Request approval for the plan instead.";
+
+/**
+ * HITL approval for an agent-proposed plan. Approve calls the PDP-gated planProject (the M1
+ * placement + usage gates run inside it) and opens the artifact Logs tab on the returned job; a
+ * denial (Forbidden / usage cap) shows the "held back" note from the action's error message. A
+ * stored deploy proposal is shown but not run (see {@link DEPLOY_PROPOSAL_RETIRED}).
  *
  * The operation runs against the ENVIRONMENT the proposal names, falling back to the one the
  * Elench surface is scoped to (`ctx.environmentId`, the topbar switcher's). Only when neither
@@ -116,7 +121,7 @@ export function ApprovalCard({
 	}, [opProjectId, opName, approvalKey]);
 
 	const approve = async () => {
-		track("elench_tool_approved", { tool: "propose_operation" });
+		track(isDeploy ? "elench_tool_denied" : "elench_tool_approved", { tool: "propose_operation" });
 		setPhase("running");
 		setReason(null);
 		try {
@@ -125,16 +130,14 @@ export function ApprovalCard({
 				op.environmentId ??
 				(ctx.kind === "project" ? ctx.environmentId : null) ??
 				undefined;
-			const res =
-				op.operation === "plan_project"
-					? await tryPlanProject(op.projectId, undefined, envId, approvalKey)
-					: await tryProvisionProject(
-							op.projectId,
-							op.planJobId,
-							undefined,
-							envId,
-							approvalKey,
-						);
+			if (op.operation !== "plan_project") {
+				// A stored deploy proposal: a deploy goes through an approval request now.
+				setPhase("denied");
+				setReason(DEPLOY_PROPOSAL_RETIRED);
+				onResolve?.(deniedOutput(DEPLOY_PROPOSAL_RETIRED));
+				return;
+			}
+			const res = await tryPlanProject(op.projectId, undefined, envId, approvalKey);
 			if (!res.ok) {
 				// The gate's own sentence (#5445) — thrown, a production build reduced it to a digest.
 				setPhase("denied");
@@ -269,7 +272,7 @@ export function ApprovalCard({
 					<div className="flex items-center justify-between gap-3">
 						<span className="text-ui-xs text-muted-foreground">
 							{isDeploy
-								? "The agent will apply the plan exactly as shown."
+								? "A deploy needs an approval request now. Dismiss this and ask the assistant to request approval for the plan."
 								: "Review the plan in the panel after it runs."}
 						</span>
 						<div className="flex flex-none gap-2">
@@ -289,7 +292,7 @@ export function ApprovalCard({
 								onClick={approve}
 							>
 								<Check className="h-3.5 w-3.5" />
-								{isDeploy ? "Approve & deploy" : "Approve & plan"}
+								{isDeploy ? "Dismiss" : "Approve & plan"}
 							</Button>
 						</div>
 					</div>
