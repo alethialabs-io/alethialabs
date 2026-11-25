@@ -16,6 +16,7 @@
 
 import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
+import { copyText } from "@repo/ui/copy-text";
 import { EmptyState } from "@repo/ui/empty";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetTitle } from "@repo/ui/sheet";
 import { Skeleton } from "@repo/ui/skeleton";
@@ -40,12 +41,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Copies `href` and says so. */
 async function copyLink(href: string): Promise<void> {
-	try {
-		await navigator.clipboard.writeText(href);
-		toast.success("Link copied.");
-	} catch {
-		toast.error("Couldn't copy the link. Copy it from the address bar instead.");
-	}
+	if (await copyText(href)) toast.success("Link copied.");
+	else toast.error("Couldn't copy the link. Copy it from the address bar instead.");
 }
 
 /** The props of {@link ApprovalSheet}. */
