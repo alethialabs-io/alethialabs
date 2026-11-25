@@ -1,18 +1,17 @@
 ---
 title: MCP tool reference
-description: Every tool the Alethia MCP server offers today — 20 read tools, six tools that plan, apply, destroy and follow jobs, their arguments, and what each returns.
+description: Every tool the Alethia MCP server offers — 19 tools that read, change designs, scan, plan, apply, destroy and follow jobs, their arguments, and what each returns.
 ---
 
-{/* Source of truth: the read tools are apps/console/lib/ai/tools/registry.ts (TOOL_AUDIENCE "both" or
-    "external") and their definitions in apps/console/lib/ai/tools/{compose,read,docs,scanner}.ts; the
-    operation tools are the declared tools in apps/console/lib/ai/mcp/surface.ts that have a handler in
-    apps/console/lib/ai/mcp/handlers.ts (HANDLED_TOOL_NAMES). Change this page when either set changes. */}
+{/* Source of truth: the declared tools in apps/console/lib/ai/mcp/surface.ts (EXTERNAL_TOOLS) and their
+    handlers in apps/console/lib/ai/mcp/{reads,design,handlers}.ts (HANDLED_TOOL_NAMES). Change this page
+    when either changes. */}
 
 # MCP tool reference
 
-The MCP server at `<console origin>/api/mcp` offers the tools below: 20 read tools, with the same
-names and arguments as the tools of Elench, the console's own assistant, and six
-[operation tools](#operations) that plan, apply, destroy and follow jobs.
+The MCP server at `<console origin>/api/mcp` offers the 19 tools below. Twelve of them change nothing
+in your account and are the ones a client connected with `?readonly` sees: the eleven reads and
+`send_feedback`.
 
 Every tool:
 
@@ -21,74 +20,56 @@ Every tool:
 - **stays inside what you granted.** The scopes you approved when you connected the client decide
   which tools it is offered. A tool that needs a scope you did not grant is not listed, and refuses a
   call.
-- **returns JSON.** A refusal or a failure comes back as a tool error with a message.
+- **takes `snake_case` arguments and returns structured content**, with the same JSON as text. A
+  refusal or a failure comes back as a tool error with a message.
+- **carries all four MCP annotations**, which tell a client which tools change something.
 - **leaves secrets out.** No result carries a password, a token or a cloud credential.
 
-## Projects and jobs
+## Reads
+
+Each read answers through the same reads the console's own assistant uses.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Your projects, with cloud, region and status. |
-| `get_project` | `projectId` | One project's configuration: its components and their sizes. |
-| `list_jobs` | `limit` (up to 50), `environmentId` (optional) | Recent jobs (plan, deploy, destroy and others) with their status. |
-| `get_job` | `jobId` | One job's status and error. |
-| `get_plan_result` | `jobId` | A plan or deploy job's status, error, and the names of its outputs. |
-| `get_drift_posture` | `projectId`, `environmentId` (optional) | Whether the live infrastructure matches what was provisioned, and which resources drifted. |
+| `list_resources` | `kind` (`project`, `job`, `runner`, `cluster`, `connector` or `cloud_identity`), `filter` (optional: `project_id`, `environment_id`, `limit` up to 50) | The items of that kind, and whether more matched than were returned. |
+| `get_resource` | `kind` (`project`, `design`, `job`, `drift`, `cloud_inventory` or `scan`), `id`, `environment_id` (optional) | One item in full. A design comes with its `revision`. An unknown id is a tool error. |
+| `get_plan_result` | `job_id` | What a plan would do: resources added, changed and destroyed, the monthly cost change, the verify verdict and the plan digest (`plan_sha256`). |
+| `catalog` | `provider` (optional) | Every service a design can contain, with each cloud's service name and how it is deployed there. With `provider`, also that cloud's valid regions, instance types, versions and engines. |
+| `cidr_for_hosts` | `hosts`, `base` (optional), `cloud` (optional) | The smallest network CIDR block that fits the hosts and that the cloud's template accepts. |
+| `compare_providers` | `scan_job_id` | A finished scan's estimated monthly cost on each cloud, cheapest first. |
+| `get_usage` | `kind` (`runner_minutes`, `ai` or `billing`) | Runner minutes against the plan, AI credit use, or the plan and seats. |
+| `search_docs` | `query`, `top_k` (1 to 8, default 4) | The most relevant passages of these docs, each with its URL. |
+| `wait_for_job` | `job_id` or `approval_id`, `timeout_s` (up to 50) | Where the job or the approval stands, whether it is done, and when to ask again. |
+| `get_job_logs` | `job_id`, `cursor` (optional) | The job's log from the cursor, in a field named `untrusted_output`, and the next cursor. |
+| `validate_design` | `design` | Whether the design is valid, and each problem with its path and, where known, a fix. Nothing is saved. |
 
-## Runtime
+Amounts are integer minor units with a currency code. Timestamps are ISO 8601.
 
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `list_clusters` | none | Provisioned clusters with their endpoints, databases and caches. |
-| `list_runners` | none | Your runners, with status and version. |
-| `list_connectors` | none | The connectors (DNS, secrets, registry, observability, git, cloud) and which ones you have connected. |
-| `list_cloud_identities` | none | Your verified cloud accounts: id, name, display id and provider. |
-| `get_cached_resources` | `cloudIdentityId` | A cloud account's existing networks, subnets and regions, from the asset inventory. |
+## Designs
 
-## Catalog
-
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `list_services` | none | The services a design can contain, with each cloud's service name and how it is deployed there. |
-| `list_service_options` | `provider` | Valid values for one cloud: instance types, Kubernetes versions, database engines, cache node types, regions and more. |
-| `cidr_for_hosts` | `hosts`, `base` (optional), `cloud` (optional) | The smallest network CIDR block that fits the hosts and that the cloud's template accepts. Without `cloud`, the answer is a `/18` or larger, which every cloud accepts. |
-
-## Repository scans
-
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `get_scan_result` | `jobId` | A repository scan's status and, when it is ready, the stack it inferred. |
-| `compare_providers` | `jobId` | The scanned stack's estimated monthly cost on AWS, GCP and Azure, cheapest first. |
-
-A scan starts from the console or from Elench. No MCP tool starts one.
-
-## Usage and billing
-
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `get_org_usage` | none | Managed-runner minutes this period against the plan's allowance, overage, running jobs and the concurrency limit. |
-| `get_ai_usage` | none | The organization's AI tier, credits used in the current session and week against its limits, and any purchased balance. |
-| `get_billing_summary` | none | The plan, its status, seats against members, the per-seat amount and the end of the current period. The amount is in minor units, with its currency code. |
-
-## Docs
-
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `search_docs` | `query`, `topK` (1 to 8, default 4) | The most relevant passages of these docs, each with its URL. |
-
-## Operations
-
-These tools take their arguments in `snake_case`, return structured content, and carry the MCP
-annotations that tell a client which of them change something.
+These tools change records in Alethia, never your cloud. A problem you can fix comes back in
+`errors`, not as a tool error.
 
 | Tool | Scope | Arguments | Returns |
 | --- | --- | --- | --- |
+| `create_project` | `design` | `name`, `design`, `idempotency_key` | `status` (`created` or `invalid`), the `project_id` and its `revision`. |
+| `apply_design_patch` | `design` | `project_id`, `environment_id` (optional), `base_revision`, `patch`, `idempotency_key` | `status` (`applied`, `invalid` or `conflict`) and the new `revision`. |
+
+`patch` is a list of JSON Patch operations (`add`, `remove`, `replace`), applied in order, all or
+none. Read the design with `get_resource` and pass its `revision` as `base_revision`. If the design
+changed since, the tool answers `conflict` with the `current_revision`: read it again and retry. The
+same `idempotency_key` returns the first result and changes nothing more.
+
+## Operations
+
+| Tool | Scope | Arguments | Returns |
+| --- | --- | --- | --- |
+| `scan_repo` | `plan` | `repo`, `idempotency_key` | The `job_id` of a scan that infers what a repository needs. The repository is cloned and parsed, never run. The same key returns the same job. |
 | `plan` | `plan` | `project_id`, `environment_id`, `idempotency_key` | The `job_id` of a plan of what the design would create or change. It changes nothing in the cloud. The same key returns the same job. |
 | `request_apply` | `apply` | `plan_job_id`, `reason` (optional) | An approval request for that plan: `approval_id`, `status`, `approve_url`, `digest_prefix`, `expires_at` and `job_id`. |
 | `request_destroy` | `destroy` | `project_id`, `environment_id`, `reason` (optional) | The same, for destroying the environment as it was last deployed. |
-| `wait_for_job` | `read` | `job_id` or `approval_id`, `timeout_s` (up to 50) | Where the job or the approval stands, whether it is done, and when to ask again. |
-| `get_job_logs` | `read` | `job_id`, `cursor` (optional) | The job's log from the cursor, in a field named `untrusted_output`, and the next cursor. |
 | `cancel_job` | `plan` | `job_id` | The job's status after the cancel. A finished job stays as it is. |
+| `send_feedback` | none | `text`, `missing_capability` (optional) | Whether the Alethia team received it. On a self-managed installation there is no team inbox, so it answers `false`. |
 
 ### How an apply or a destroy runs
 
@@ -109,5 +90,5 @@ organization set (60 minutes by default). A newer plan, or a change to the envir
 These need a person in the console, or the CLI:
 
 - Approving an apply or a destroy.
-- Starting a repository scan or an audit of existing infrastructure.
-- Changing a design, connecting a cloud, and anything that opens part of the console.
+- An audit of existing infrastructure.
+- Connecting a cloud, and anything that opens part of the console.

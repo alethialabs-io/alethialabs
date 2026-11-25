@@ -4,12 +4,10 @@
 // The external tool contract (lib/ai/mcp/surface.ts) is data; the server (lib/ai/mcp/server.ts) serves
 // part of it. The tests here are what stop it from drifting away from the things it describes:
 //
-//   1. THE LIVE SURFACE. The in-app tools the contract's read tools stand for are exactly the tools
-//      the external in-app projection registers (`registerAiToolsOnMcp(server,
-//      buildExternalAgentTools())`), which the server serves beside the declared tools that have a
-//      handler (tests/lib/ai/mcp/server.test.ts covers that composition). When every read tool has a
-//      handler of its own, replace test 1 with one that compares the registered names to
-//      `listExternalTools()` directly.
+//   1. THE LIVE SURFACE. Every declared tool has a handler (`HANDLED_TOOL_NAMES`), so the server lists
+//      exactly the declared tools (tests/lib/ai/mcp/server.test.ts asserts the listing: 19 tools, 12
+//      under `?readonly`). Each declared read answers through the in-app tools it `replaces`, and
+//      those are exactly the tools of the external in-app projection (`buildExternalAgentTools()`).
 //   2. THE RULES. Every declared tool passes `toolContractViolations`, and a tool missing a scope
 //      or an annotation is refused by it.
 //   3. THE SCHEMAS. Each one is an object at the JSON Schema root, and a sample of every
@@ -33,10 +31,16 @@ vi.mock("@/app/server/actions/projects");
 vi.mock("@/app/server/actions/runners");
 vi.mock("@/app/server/actions/scanner");
 vi.mock("@/lib/rpc/procedures/projects");
+vi.mock("@/lib/ai/mcp/approval-store", () => ({
+	findOwnApproval: vi.fn(),
+	requestOwnApproval: vi.fn(),
+	readOwnOrgApproval: vi.fn(),
+	appliedPlanFor: vi.fn(),
+}));
+vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
+vi.mock("@/lib/ai/mcp/feedback", () => ({ sendAgentFeedback: vi.fn() }));
 
-import type { McpServer } from "@modelcontextprotocol/server";
-
-import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
+import { HANDLED_TOOL_NAMES } from "@/lib/ai/mcp/handlers";
 import {
 	AGENT_SCOPES,
 	EXTERNAL_TOOLS,
@@ -91,18 +95,18 @@ function names(tools: { name: string }[]): string[] {
 }
 
 describe("external tool contract — the live surface", () => {
-	it("stands for exactly the tools the MCP route composition registers today", () => {
-		const registered: string[] = [];
-		const server = {
-			registerTool: (name: string) => registered.push(name),
-		} as unknown as McpServer;
-		registerAiToolsOnMcp(server, buildExternalAgentTools());
+	it("has a handler for every declared tool, and none for anything undeclared", () => {
+		expect(HANDLED_TOOL_NAMES).toHaveLength(19);
+		expect([...HANDLED_TOOL_NAMES].sort()).toEqual(Object.keys(EXTERNAL_TOOLS).sort());
+	});
 
+	it("stands for exactly the tools of the external in-app projection", () => {
+		const projected = Object.keys(buildExternalAgentTools());
 		const declared = listExternalTools().flatMap((tool) => [...tool.replaces]);
 
-		// Non-vacuous: the route really does register a read surface.
-		expect(registered.length).toBeGreaterThan(0);
-		expect([...declared].sort()).toEqual([...registered].sort());
+		// Non-vacuous: the projection really does hold a read surface.
+		expect(projected.length).toBeGreaterThan(0);
+		expect([...declared].sort()).toEqual([...projected].sort());
 	});
 
 	it("gives each in-app tool one home, on a read tool, and only if it is externally visible", () => {
