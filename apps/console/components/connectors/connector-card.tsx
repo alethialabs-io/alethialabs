@@ -141,7 +141,12 @@ export function ConnectorCard({
 		// with the status welded to the account count. Naming the control explicitly and pointing
 		// the description at the two nodes that carry the copy and the state gives them back as a
 		// description.
+		//
+		// `data-slot` names the tile as one board row. The page draws no count (#7546 — the catalog
+		// is a bounded list), so the e2e specs count these to know a search has been applied and how
+		// many connectors it matched.
 		<div
+			data-slot="connector-card"
 			onClick={isPick ? onSelect : undefined}
 			role={isPick ? "button" : undefined}
 			tabIndex={isPick ? 0 : undefined}
