@@ -147,6 +147,8 @@ export const TOPIC_KEYS = {
 		orpc.overview.projects.key(),
 		// The in-conversation approval card: an agent's apply approval was decided, used or replaced.
 		[...IN_APP_APPROVAL_KEY],
+		// The approvals list and its decision sheet (AGT-L2): the same apply_approvals triggers.
+		orpc.approvals.key(),
 	],
 	// A project's name/slug/region changed, or one was created or deleted (#6128): the shell's list
 	// (switcher, breadcrumbs, palette), the setup guide, usage, and the project's Settings → General.

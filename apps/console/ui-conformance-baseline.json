@@ -1624,6 +1624,73 @@
 			}
 		},
 		{
+			"route": "/[org]/~/approvals",
+			"redirectOnly": false,
+			"families": {
+				"S": {
+					"instrumented": 4,
+					"of": 4,
+					"pass": 4,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"T": {
+					"instrumented": 7,
+					"of": 7,
+					"pass": 3,
+					"fail": 0,
+					"na": 1,
+					"notMeasured": 3,
+					"score": 1
+				},
+				"H": {
+					"instrumented": 9,
+					"of": 9,
+					"pass": 9,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 0,
+					"score": 1
+				},
+				"F": {
+					"instrumented": 10,
+					"of": 10,
+					"pass": 7,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 3,
+					"score": 1
+				},
+				"R": {
+					"instrumented": 8,
+					"of": 8,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 8,
+					"score": null
+				},
+				"B": {
+					"instrumented": 5,
+					"of": 6,
+					"pass": 0,
+					"fail": 0,
+					"na": 0,
+					"notMeasured": 5,
+					"score": null
+				}
+			},
+			"overall": {
+				"pass": 23,
+				"fail": 0,
+				"na": 1,
+				"notMeasured": 19,
+				"score": 1
+			}
+		},
+		{
 			"route": "/[org]/~/clusters",
 			"redirectOnly": false,
 			"families": {
@@ -6607,6 +6674,242 @@
 			"predicate": "T7",
 			"verdict": "N/A",
 			"reason": "no-restricted-surface"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B1",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B2",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B3",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B4",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "B5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `behaviour` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F10",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F7",
+			"verdict": "PASS",
+			"detail": "queryAccessGrantsPage, queryActivityPage, queryAlertChannelsPage, queryAlertDeliveriesPage, queryAlertPoliciesPage, queryApprovalsPage, queryMembersPage, queryRolesPage, queryTeamsPage — driven by apps/console/tests/lib/queries/filter-standard-facets.test.ts"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F8",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "F9",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H5",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H6",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H7",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H8",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "H9",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R1",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R2",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R3",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R4",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R6",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "R8",
+			"verdict": "NOT MEASURED",
+			"reason": "the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S3",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "S4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T1",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T2",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T3",
+			"verdict": "N/A",
+			"reason": "does-not-call-not-found"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T4",
+			"verdict": "PASS"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T5",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T6",
+			"verdict": "NOT MEASURED",
+			"reason": "the `routes` run did not reach this route — it covers every route the manifest names"
+		},
+		{
+			"route": "/[org]/~/approvals",
+			"predicate": "T7",
+			"verdict": "NOT MEASURED",
+			"reason": "the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given"
 		},
 		{
 			"route": "/[org]/~/clusters",

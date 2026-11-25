@@ -279,6 +279,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/approvals` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |

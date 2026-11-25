@@ -18,6 +18,8 @@ export const PERSONAL_ORG_SLUG = "~";
 const STATIC_RESERVED_SLUGS = [
 	PERSONAL_ORG_SLUG,
 	"dashboard",
+	// The legacy approval link (`app/(private)/approvals/[id]/route.ts`, AGT-L2 G1).
+	"approvals",
 	"auth",
 	"api",
 	"start",
