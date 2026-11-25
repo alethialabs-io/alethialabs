@@ -18,7 +18,7 @@ import "server-only";
 import { type GrantBinding, readGrantBinding } from "@/lib/agents/grant-binding";
 import { readAgentPolicy } from "@/lib/approvals/context";
 import type { AgentScope } from "@/lib/approvals/types";
-import { agentScopesFromClaims, ceilingFromAccessTokenClaims } from "@/lib/auth/mcp-scopes";
+import { ceilingFromAccessTokenClaims } from "@/lib/auth/mcp-scopes";
 import { getActiveScope } from "@/lib/auth/scope";
 import { actorWithCredential } from "@/lib/authz/actor-credential";
 import type { Actor, ResolvedScope } from "@/lib/authz/types";
@@ -93,7 +93,9 @@ export async function resolveMcpActor(
 ): Promise<McpActorResolution> {
 	const subject = claims.sub;
 	if (typeof subject !== "string" || subject.length === 0) return { ok: false, reason: "no_subject" };
-	if (!agentScopesFromClaims(claims).ok) return { ok: false, reason: "insufficient_scope" };
+	// The token's own ceiling, read once: no agent scope is a refusal before any grant is read.
+	const ceiling = ceilingFromAccessTokenClaims(claims, null);
+	if (!ceiling) return { ok: false, reason: "insufficient_scope" };
 	// Every access token the provider issues names its client (`azp`); one that does not cannot be
 	// matched to a grant, and "no grant" is the widest answer there is, so it is a refusal.
 	const clientId = clientIdFromClaims(claims);
@@ -122,12 +124,11 @@ export async function resolveMcpActor(
 		scope = await deps.resolveScope(subject);
 	}
 
-	const tokenCeiling = ceilingFromAccessTokenClaims(claims, grantProjects);
-	if (!tokenCeiling) return { ok: false, reason: "insufficient_scope" };
 	const allowed = grantScopes;
-	const scopes = allowed === null ? tokenCeiling.scopes : tokenCeiling.scopes.filter((s) => allowed.includes(s));
+	const scopes = allowed === null ? ceiling.scopes : ceiling.scopes.filter((s) => allowed.includes(s));
 	if (scopes.length === 0) return { ok: false, reason: "insufficient_scope" };
-	let projectIds = tokenCeiling.projectIds;
+	// The grant's projects (never empty: refused above), or every project when there is no grant.
+	let projectIds: readonly string[] | null = grantProjects === null ? null : [...grantProjects];
 
 	if (projectPin !== null) {
 		if (projectIds !== null && !projectIds.includes(projectPin)) {
