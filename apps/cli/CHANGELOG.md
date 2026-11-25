@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.11.1...cli-v0.12.0) (2026-11-25)
+
+
+### Features
+
+* **agents:** deploys apply the reviewed plan (AGT-S0b) ([#7410](https://github.com/alethialabs-io/alethialabs/issues/7410)) ([908cbcc](https://github.com/alethialabs-io/alethialabs/commit/908cbcc9279b59ab532ce9db105f945960294151))
+* **cli:** approval-aware deploy, destroy, apply and up; agent setup; approve (AGT-L7) ([#7475](https://github.com/alethialabs-io/alethialabs/issues/7475)) ([6a42b04](https://github.com/alethialabs-io/alethialabs/commit/6a42b04e4ba6454a9ec78846ec150667716a9f7e)), closes [#6934](https://github.com/alethialabs-io/alethialabs/issues/6934)
+
 ## [0.11.1](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.11.0...cli-v0.11.1) (2026-11-23)
 
 
