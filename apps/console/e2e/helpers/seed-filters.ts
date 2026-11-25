@@ -68,13 +68,16 @@ export interface FilterFixtures {
  * The manifest routes this file seeds a narrowing pair for. `filters.spec.ts` fails one of them
  * when it reads NOT MEASURED while the list visibly ANSWERED without a narrowing pair (an answered
  * count under MIN_ROWS, or options that narrowed nothing) — that means the pair stopped reaching
- * the page, a defect in this file. A NOT MEASURED where no list size was read (no count pill, no
- * table, still busy) is let through as a column, not a failure; listing a route here does not by
+ * the page, a defect in this file. A NOT MEASURED where no list size was read (no `[data-list-item]`,
+ * no table, still busy) is let through as a column, not a failure; listing a route here does not by
  * itself hold it to a measured verdict.
  */
 export const SEEDED_ROUTES: readonly string[] = [
 	"/[org]/~/jobs",
 	"/[org]/[project]/jobs",
+	"/[org]/[project]/environments",
+	"/[org]/~/clusters",
+	"/[org]/[project]/clusters",
 	"/[org]/~/runners",
 	"/[org]/~/alerts",
 	"/[org]/~/support/my-cases",
@@ -211,6 +214,42 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	const identity = await seedCloudIdentity(owner, { provider: "aws", name: `filters-aws-${stamp}` });
 	written.cloudIdentityIds.push(identity.id);
 	await sql`update projects set cloud_identity_id = ${identity.id} where id = ${project.projectId}`;
+
+	// Environments (`/[org]/[project]/environments`) and clusters (`/[org]/~/clusters`,
+	// `/[org]/[project]/clusters`), #7673. `seedProject` writes ONE environment, so the environments
+	// list read a single row, and its cluster row is not "under management" until its environment has
+	// deployed (`managedClusterPredicate`, lib/queries/usage-counts.ts), so both clusters lists read
+	// empty. A second environment differs on STAGE (production vs staging), and its cluster on REGION
+	// (the project's eu-central-1 vs us-east-1); stamping `last_deployed_at` on both puts both
+	// clusters under management.
+	//
+	// The stamp feeds NO background loop, which the header requires: the drift and probe schedulers
+	// and the ephemeral reaper all select environments by a successful DEPLOY JOB
+	// (`lib/drift/dispatch.ts`, `lib/probes/dispatch.ts`, `lib/reconcile/reap.ts`), and this file
+	// writes none — only the column the list reads. Both environments stay DRAFT, which is not in
+	// flight, so the converger has nothing to settle either. Both rows, and the second cluster row,
+	// go with the project in `cleanFilterFixtures()`: `project_environments` and `project_cluster`
+	// cascade from `projects`, exactly as the rows `seedProject` writes already do.
+	const [staging] = await sql<{ id: string }[]>`
+		insert into project_environments ${sql({
+			project_id: project.projectId,
+			user_id: owner.userId,
+			org_id: owner.orgId,
+			name: "staging",
+			stage: "staging",
+			status: "DRAFT",
+			is_default: false,
+			region: "us-east-1",
+		})}
+		returning id`;
+	await sql`
+		insert into project_cluster ${sql({
+			project_id: project.projectId,
+			environment_id: staging.id,
+			region: "us-east-1",
+			status: "PENDING",
+		})}`;
+	await sql`update project_environments set last_deployed_at = now() where id in ${sql([project.envId, staging.id])}`;
 
 	// Teams (`/[org]/~/settings/teams`): the run's org already has teams, all in the 1–5 bucket, so
 	// the Size facet had nothing narrower than the list. An EMPTY team puts a row in "No members"

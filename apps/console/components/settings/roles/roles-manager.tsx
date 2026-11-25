@@ -103,6 +103,8 @@ function RailRow({
 		<button
 			type="button"
 			onClick={onClick}
+			// The list-item marker (#7673, components/data-table.tsx): the rail IS the roles list.
+			data-list-item=""
 			// The rail is a set of buttons choosing which role the detail pane shows — the WAI-ARIA
 			// "current item in a set" case, so `aria-current`, not `aria-pressed` (a toggle that would
 			// unpress on a second click) nor `aria-selected` (valid only on option/tab/row roles).

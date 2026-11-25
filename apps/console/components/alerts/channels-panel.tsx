@@ -331,6 +331,8 @@ function ChannelRow({
 		<button
 			type="button"
 			role="option"
+			// The list-item marker (#7673, components/data-table.tsx).
+			data-list-item=""
 			aria-selected={selected}
 			onClick={onSelect}
 			className={cn(
@@ -641,13 +643,17 @@ function ChannelDetail({
 					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Used by
 					</span>
-					<button
-						type="button"
-						onClick={() => onOpenPolicy()}
+					{/* An in-page LINK to the Policies section, not a button that scrolls (#7673). The
+					    button moved the viewport and nothing else — focus stayed here, so a keyboard
+					    or screen-reader user pressed it and was told nothing, and R8 filed it inert.
+					    A fragment link moves the reading position with the view and puts the section
+					    in the URL; the hub's scroll-spy follows it in the sidebar. */}
+					<a
+						href="#policies"
 						className="ml-auto text-muted-foreground text-xs hover:text-foreground"
 					>
 						All policies →
-					</button>
+					</a>
 				</div>
 				{usingPolicies.length === 0 ? (
 					<p className="text-muted-foreground text-xs">

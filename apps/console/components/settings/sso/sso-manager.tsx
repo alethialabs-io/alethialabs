@@ -243,6 +243,8 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 							<button
 								key={p.id}
 								type="button"
+								// The list-item marker (#7673, components/data-table.tsx).
+								data-list-item=""
 								onClick={() => setSelectedId(p.id)}
 								// The rail picks the pane's subject: WAI-ARIA's current item (R6 E-24).
 								aria-current={selected?.id === p.id ? "true" : undefined}
