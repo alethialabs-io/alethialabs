@@ -29,8 +29,8 @@ export const runtime = "nodejs";
  * person's grants under that ceiling with no new authority. The grant is read on every request, so
  * disconnecting it answers the next request 401 although the JWT itself would still verify.
  *
- * The server (lib/ai/mcp/server.ts) lists the in-app read tools and the declared external tools
- * that have a handler, including the writes: `plan`, `request_apply`, `request_destroy` and
+ * The server (lib/ai/mcp/server.ts) lists the 19 declared external tools, including the writes:
+ * `apply_design_patch`, `create_project`, `scan_repo`, `plan`, `request_apply`, `request_destroy` and
  * `cancel_job`. An apply or a destroy is queued only after a person approved it in the console, and
  * only for the plan that was approved (lib/ai/mcp/handlers.ts).
  *
