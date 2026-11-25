@@ -39,16 +39,21 @@ async function gotoConnectors(page: Page, orgSlug: string): Promise<void> {
  * catalog (aws · gcp · azure · alibaba · github · gitlab · bitbucket), and the Azure card was
  * only one of them.
  *
- * The settle point is the toolbar's count pill, which IS the row count, so this states how many
- * connectors the term is expected to match. `toHaveText` retries, so it waits out the debounce —
- * and a catalog change that moves the number reds here, naming it, instead of silently making a
- * sibling assertion true about the wrong card. That is the reason this is not a `.first()`.
+ * The settle point is the number of cards on the board, which IS the row count, so this states how
+ * many connectors the term is expected to match. `toHaveCount` retries, so it waits out the
+ * debounce — and a catalog change that moves the number reds here, naming it, instead of silently
+ * making a sibling assertion true about the wrong card. That is the reason this is not a `.first()`.
+ *
+ * It used to read the toolbar's count pill. #7546 removed that pill (no count pills anywhere — the
+ * catalog is a bounded list), so the cards are counted directly: `data-slot="connector-card"` is on
+ * `ConnectorCard`'s root and nowhere else. Only VISIBLE cards count, for the same reason the search
+ * box is asked for by role — a hidden streamed copy must not add to the tally.
  */
 async function filterTo(page: Page, term: string, rows: number): Promise<void> {
 	await page.getByRole("textbox", { name: "Search connectors", exact: true }).fill(term);
 	await expect(
-		page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]'),
-	).toHaveText(String(rows));
+		page.locator('[data-slot="connector-card"]').filter({ visible: true }),
+	).toHaveCount(rows);
 }
 
 test.describe("Connectors — a cloud this instance cannot connect", () => {

@@ -255,7 +255,7 @@
 			},
 			"flows/connectors.spec.ts": {
 				"Connectors — the board and its filter bar › loads the board authenticated, on the shared filter grammar": "passed",
-				"Connectors — the board and its filter bar › the page toolbar carries the result count, and the page carries no title": "passed",
+				"Connectors — the board and its filter bar › the page toolbar carries the description and no count, and the page carries no title": "passed",
 				"Connectors — the board and its filter bar › every catalog group renders as its own section": "passed",
 				"Connectors — the board and its filter bar › each group header reports how many of its connectors are connected": "passed",
 				"Connectors — the board and its filter bar › search narrows the board to the matching connector's section": "passed",
