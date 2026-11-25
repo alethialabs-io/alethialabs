@@ -109,6 +109,8 @@ const measuredRoutes: { route: string; verdict: string; enumerated: number; iner
 interface LedgerControl {
 	route: string;
 	control?: { role?: string; name?: string };
+	/** The steps that reveal the control. An `open` step names the opener a person clicks first. */
+	reach?: { open?: string }[];
 }
 
 /**
@@ -144,14 +146,30 @@ const LEDGER = destructiveLedger();
  * the part the product really renders.
  */
 export function isRegisteredDestructive(route: string, name: string): boolean {
-	const needle = name.toLowerCase();
-	return LEDGER.some((entry) => {
-		if (entry.route !== route) return false;
-		const declared = entry.control?.name;
-		if (declared === undefined) return false;
+	return LEDGER.some((entry) => entry.route === route && declaresControl(entry, name));
+}
+
+/**
+ * Whether one ledger entry declares the control named `name`: as its `control`, matched on the
+ * literal prefix, or as one of its `reach` OPENERS, matched exactly.
+ *
+ * The openers count because an entry whose destructive step sits behind one declares that opener
+ * too: `runners.destroy` is reached by the card's "Destroy", which opens a runner picker, whose
+ * "Continue to destroy" opens the typed confirm. Reading `control` alone filed that "Destroy" as
+ * `unregistered-destructive` and failed `~/runners` for a control the ledger names (#7673). An
+ * opener holds no confirm of its own — clicking it only reveals the declared path — so activating
+ * it is the same thing R8 does for any registered control. Matched EXACTLY, not by prefix: an
+ * opener like "Select" must not register every "Delete selected" on its route.
+ */
+function declaresControl(entry: LedgerControl, name: string): boolean {
+	const needle = name.trim().toLowerCase();
+	const declared = entry.control?.name;
+	if (declared !== undefined) {
 		const literal = declared.split("<")[0].trim().toLowerCase();
-		return literal.length > 0 && needle.includes(literal);
-	});
+		if (literal.length > 0 && needle.includes(literal)) return true;
+	}
+	const steps = Array.isArray(entry.reach) ? entry.reach : [];
+	return steps.some((step) => typeof step === "object" && step !== null && typeof step.open === "string" && step.open.trim().toLowerCase() === needle);
 }
 
 // ── one route ───────────────────────────────────────────────────────────────────────────────────

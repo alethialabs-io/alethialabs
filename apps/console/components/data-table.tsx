@@ -304,11 +304,26 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 				}),
 		},
 		...(onPageIndexChange && {
+			// A CONTROLLED page index is the caller's URL state, and only a person paging may write it.
+			//
+			// TanStack resets the page index to 0 on its own whenever `data` changes
+			// (`autoResetPageIndex`), and it reports that reset through this callback. On a filtered
+			// list the data changes BECAUSE a facet was applied — in the same commit in which
+			// `useFilterUrlSync` has just called `router.replace(?facet=…)`. The caller turned the
+			// reset into a page-URL write built from the search params it rendered with, which do not
+			// carry the new facet yet, so that write landed last and dropped the facet from the URL:
+			// the list narrowed and the link did not (F8 `applied: false` on `~/clusters` and
+			// `~/settings/members`, #7673). Resetting the page on a filter change is already the
+			// filter sync's job (`resetParams`), so the table's own reset is off, and an "update" to
+			// the index the URL already holds is dropped rather than written.
+			autoResetPageIndex: false,
 			onPaginationChange: (updater: Updater<PaginationState>) => {
+				const current = externalPageIndex ?? 0;
 				const next =
 					typeof updater === "function"
-						? updater({ pageIndex: externalPageIndex ?? 0, pageSize })
+						? updater({ pageIndex: current, pageSize })
 						: updater;
+				if (next.pageIndex === current) return;
 				onPageIndexChange(next.pageIndex);
 			},
 		}),
@@ -381,7 +396,11 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 					</TableRow>
 				))}
 			</TableHeader>
-			<TableBody aria-busy={bodyState === "pending" || undefined}>
+			{/* Busy while pending AND while a keyset list shows the previous filter's rows as
+			    placeholder data (`keepPreviousData`): those rows are not this filter's answer yet,
+			    and the body says so rather than letting them read as one — to assistive tech, and to
+			    the filter audit's settle (e2e/audit/filters.ts, #7673). */}
+			<TableBody aria-busy={bodyState === "pending" || keyset?.isPlaceholderData || undefined}>
 				{bodyState === "error" ? (
 					<TableRow className="hover:bg-transparent">
 						<TableCell colSpan={leafColumnCount} className="whitespace-normal p-0">
@@ -394,6 +413,11 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 					table.getRowModel().rows.map((row) => (
 						<TableRow
 							key={row.id}
+							// THE list-item marker (#7673): every list primitive puts it on each item it
+							// renders, so a list's size is countable without a count pill — which the
+							// console no longer shows (epic #7481). Only real rows carry it: never the
+							// skeleton, the empty row or the error row.
+							data-list-item=""
 							data-state={
 								(selectedRowId && row.original.id === selectedRowId) || row.getIsSelected()
 									? "selected"
