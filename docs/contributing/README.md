@@ -9,6 +9,9 @@ How Alethia is built, for people changing it. User-facing documentation lives in
 | [console-internals.md](./console-internals.md) | The console's stack and its client-state stores |
 | [database-schema.md](./database-schema.md) | The console's tables and their columns |
 | [runner-apis.md](./runner-apis.md) | The HTTP API the runner calls on the console |
+| [runner-internals.md](./runner-internals.md) | The runner's code map, queue recovery and the fleet scaler |
+| [authorization.md](./authorization.md) | The authorization layer's internals and the open-core boundary |
+| [elench.md](./elench.md) | The verification engine, adding controls, and the agent harness |
 | [core-library.md](./core-library.md) | The `packages/core` Go library, package by package |
 | [cli-tui.md](./cli-tui.md) | The CLI's terminal UI components |
 | [release-system.md](./release-system.md) | Builds, releases and the CI/CD pipeline |

@@ -17,6 +17,7 @@
 		"apps-repository",
 		"bring-your-own-iac",
 		"bring-your-own-charts",
+		"chart-admission",
 		"drift",
 		"cost-estimation",
 		"---Execution---",

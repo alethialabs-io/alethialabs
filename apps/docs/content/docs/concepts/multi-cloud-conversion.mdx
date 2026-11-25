@@ -1,96 +1,63 @@
 ---
-title: Multi-Cloud Conversion
-description: How Project configurations are converted across AWS, GCP, and Azure when duplicating.
+title: Multi-cloud conversion
+description: What changes when you duplicate a project onto another cloud — what Alethia maps, what it clears, and the warnings it shows before you submit.
 ---
 
-Users can duplicate an existing Project and target a different cloud provider. The platform converts the configuration automatically, mapping resources, instance types, and capacity units across providers.
+When you duplicate a project and pick a cloud identity on another cloud, Alethia converts the design
+for you. It maps each setting to the target cloud, clears what cannot carry over, and lists a warning
+for each change so you can review it before you submit.
 
-<img src="/docs/diagrams/concepts/multi-cloud-conversion.svg" alt="Multi-Cloud Conversion" />
+<Mermaid chart={`
+flowchart LR
+  Src["Project on cloud A"] -->|Duplicate and edit| Conv["Convert design"]
+  Conv --> Map["Mapped: region, machine types, engines, sizes"]
+  Conv --> Clear["Cleared: network ID, DNS zone, WAF rules"]
+  Conv --> Warn["Warnings to review"]
+  Map --> Dst["Draft project on cloud B"]
+  Clear --> Dst
+`} />
 
-<Callout type="info">
-  A converted project doesn't just *provision* on the new cloud — it **deploys apps** there too. The
-  ArgoCD/GitOps layer is cloud-agnostic (per-cloud workload identity), so GCP and Azure get a working
-  external-dns + app-sync just like AWS. See [Multi-cloud GitOps seam](/concepts/elench/multi-cloud).
-</Callout>
+## How it works
 
-## When Conversion Happens
+1. Select **Duplicate & Edit** on a project.
+2. Choose a cloud identity on another cloud.
+3. Alethia converts the design and shows the warnings.
+4. Review and change the draft, then submit it.
 
-1. User clicks **"Duplicate & Edit"** on an existing Project
-2. Selects a different cloud identity (e.g., switching from AWS to GCP)
-3. The `convertProjectConfig()` function transforms the configuration
-4. Conversion **warnings** are displayed for items that need manual review
-5. User adjusts the converted config and submits
+### What is mapped
 
-## What Gets Converted
+| Setting | What happens |
+| --- | --- |
+| Region | Mapped to the nearest region on the target, for example AWS `us-east-1` → GCP `us-east4` → Azure `eastus`. With no match, the target's default region, with a warning. |
+| Machine types | Mapped to an equivalent, for example `t3.medium` → `e2-standard-2` → `Standard_B2s`. A mapping never picks a type too small to run the cluster add-ons, so it can pick a larger node. With no match, the target's default type, with a warning. |
+| Kubernetes version | Set to the target's default version. |
+| Autoscaler | Replaced with the target's equivalent, for example Karpenter → GKE Autopilot → the AKS cluster autoscaler. |
+| Spot capacity | Kept where the target sells Spot. On Hetzner, or on GKE Autopilot, the cluster uses on-demand nodes, with a warning. On Azure, Spot adds a separate Spot pool; the system pool stays on-demand. |
+| Database engine | Mapped, for example `aurora-postgresql` → `cloudsql-postgresql` → `azure-postgresql`. An engine the target does not offer switches, with a warning: MySQL on Hetzner becomes PostgreSQL. |
+| Database capacity | Kept inside the target's range. The unit changes: Aurora capacity units on AWS, vCPUs on GCP, vCores on Azure. A warning names the new unit. |
+| Cache | The node type is mapped, or set to the target's default. A Valkey cache moved to Azure becomes Redis. |
+| NoSQL tables | Converted with a note on the data-model difference. A capacity mode the target does not offer, or a range key it does not support, is changed or dropped, with a warning. |
+| Network CIDR | Kept. |
 
-### Region
+### What is cleared
 
-Regions are mapped via a cross-provider table:
+These identify resources in the source account, so they cannot carry over. Set them again on the
+target.
 
-```
-AWS us-east-1 → GCP us-east4 → Azure eastus
-```
+- An existing network you reused. The draft provisions a new network instead.
+- The DNS zone and domain. Select a zone in the target account.
+- WAF rules. The rule formats differ between clouds.
+- IAM roles, service accounts and cluster admin identities.
 
-If no mapping exists, the target provider's default region is used, and a warning is shown.
+## What it does not do
 
-### Cluster
+- It does not move data. A converted project provisions new, empty resources.
+- It does not submit for you. The converted design is a draft until you submit it.
+- It does not offer a component the target cannot build. See
+  [Cloud abstraction](/concepts/cloud-abstraction).
 
-- **Instance types**: Mapped via `INSTANCE_TYPE_MAP` (e.g., `t3.medium` → `e2-standard-2` → `Standard_B2s`). Unmapped types generate a warning. A mapping never targets a machine type too small to run the cluster add-ons, so a conversion to GCP can land on a larger node than the capability match alone would pick.
-- **Kubernetes version**: Reset to the target provider's default (versions differ across providers)
-- **Autoscaler**: Key name converted in `provider_config` (`enable_karpenter` → `enable_autopilot` → `enable_cluster_autoscaler`)
+## Related
 
-### Databases
-
-- **Engine**: Mapped (e.g., `aurora-postgresql` → `cloudsql-postgresql` → `azure-postgresql`)
-- **Capacity**: Clamped to target provider's min/max range. Units change (ACU → vCPU → vCores), and a warning explains the difference.
-
-### Caches
-
-- **Node type**: Mapped (e.g., `cache.t3.medium` → `M2` → `C2`). Unmapped types fall back to the target provider's default.
-
-### Network
-
-- If the source Project uses an **existing network** (`provision_network = false`), the conversion switches to **create new** (`provision_network = true`) with a warning: "Existing network cannot be reused across providers."
-- CIDR blocks are preserved (they're provider-agnostic).
-
-### DNS & WAF
-
-- **Zone ID and domain**: Cleared (DNS zones are provider-specific)
-- **WAF config**: Cleared with a warning (WAF rules differ significantly across providers)
-- User must re-select a DNS zone and re-configure WAF in the target provider.
-
-### NoSQL
-
-- **DynamoDB → Firestore**: Warning about data model differences ("Firestore is document-based, not key-value")
-- **Range key support**: Checked per provider. If the target doesn't support range keys natively, a warning is shown.
-
-### Messaging
-
-- **FIFO queues**: Warning when targeting GCP Pub/Sub ("No direct FIFO support; consider ordering keys")
-
-## Conversion Warnings
-
-Each conversion issue generates a `ConversionWarning`:
-
-```typescript
-interface ConversionWarning {
-  component: string;     // "cluster", "databases", "network", etc.
-  field: string;         // "instance_types", "engine", etc.
-  message: string;       // Human-readable explanation
-  severity: "info" | "warning" | "error";
-}
-```
-
-Warnings are displayed in the Design a Project form after provider switch, giving the user a chance to review and adjust before submitting.
-
-## What Cannot Be Converted
-
-Some configurations are fundamentally provider-specific:
-
-- **IAM roles / service accounts** — identity models differ
-- **Cluster admin ARNs** — IAM identifiers are provider-specific
-- **Existing network references** — VPC IDs don't translate across providers
-- **DNS hosted zones** — zone IDs are provider-specific
-- **WAF rules** — rule schemas differ significantly
-
-These are cleared during conversion and must be re-configured manually.
+- [Cloud abstraction](/concepts/cloud-abstraction)
+- [Domain model](/concepts/domain-model)
+- [GitOps and ArgoCD](/concepts/gitops-argocd)

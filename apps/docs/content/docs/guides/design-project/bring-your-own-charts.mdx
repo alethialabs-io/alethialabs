@@ -44,7 +44,7 @@ name, `argocd`, and the namespaces of the platform's controllers and add-ons, su
 ## Read the safety scan
 
 Attaching starts a scan. The runner fetches the chart, then renders it with `helm template` in a
-sandbox with no network and no secrets, and the [Elench](/concepts/elench/architecture) engine
+sandbox with no network and no secrets, and the [Elench](/concepts/elench) engine
 checks the manifests. It looks for privileged containers, host access, wildcard RBAC, missing
 resource limits and mutable image tags.
 

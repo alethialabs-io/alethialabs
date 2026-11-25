@@ -1,55 +1,61 @@
 ---
 title: Real-time updates
-description: How the console pushes live job logs and support messages over Postgres LISTEN/NOTIFY and SSE, and why everything else refreshes by polling.
+description: How the console streams job logs and support messages live over Postgres LISTEN/NOTIFY and server-sent events, and why everything else refreshes by polling.
 ---
 
-The console has two ways to keep a page current. A stream that must feel instant — a job's log, a
-support thread — is **pushed**: Postgres `LISTEN/NOTIFY` fanned out to the browser over SSE
-(Server-Sent Events). Everything else — job status, the runner list, an environment's status — is
-**polled**, and polls fast only while something is in flight.
-
-## Push: LISTEN/NOTIFY → SSE
-
-When a row is inserted, the database emits `pg_notify` on a named channel with a small JSON payload
-that names the row, not its contents. Each console instance holds **one** dedicated `LISTEN`
-connection per channel and dispatches each notification to the SSE subscribers for that key. Because
-every instance listens for itself, this scales to several console instances without a message
-broker. The implementation lives in `apps/console/lib/realtime/index.ts`.
+A stream that must feel instant, such as a job's log or a support thread, is pushed to the browser:
+Postgres `LISTEN/NOTIFY`, relayed over server-sent events (SSE). Everything else, such as job status,
+the runner list and environment status, is polled, and polls fast only while something is in flight.
 
 <Mermaid chart={`
 flowchart LR
-  I["INSERT row"] --> N["pg_notify(channel, {key, id})"]
-  N --> L["Console LISTEN<br/>(1 per channel per instance)"]
-  L --> S["SSE stream for that key"]
-  S --> B["Browser EventSource"]
+  T["tofu output"] --> L["Runner log buffer"]
+  L -->|POST batch| DB[("job_logs")]
+  DB -->|NOTIFY jobId, logId| C["Console LISTEN"]
+  C -->|SSE| B["Browser"]
 `} />
 
-Two channels are wired:
+## How it works
 
-| Channel | Emitted by | Payload | SSE route |
-|---|---|---|---|
-| `job_logs` | the `insert_job_log` RPC | `{jobId, logId}` | `/api/stream/jobs/{id}` |
-| `support_messages` | `notify_support_message()` | `{caseId, messageId}` | `/api/stream/support/cases/{id}` |
+### Log streaming
 
-The payload carries only ids because `NOTIFY` caps a payload at 8 KB. On each notification the SSE
-route reads the rows newer than the last one it sent and writes them to the stream. Each route
-checks that the caller may see the job or case before it opens the stream.
+1. The runner captures OpenTofu's standard output and standard error in two buffers.
+2. It sends a buffer to the control plane within about 100 milliseconds of a write, when it passes
+   10 KB, and at the end of the job. A 1-second timer backs this up.
+3. The control plane inserts each chunk into the job's log, and the database emits a notification on
+   the `job_logs` channel with only the job and row IDs, because a notification is capped at 8 KB.
+4. Each console instance holds one `LISTEN` connection per channel. On a notification, the job's SSE
+   route reads the rows newer than the last one it sent and writes them to the stream.
+5. The browser appends each chunk. A dropped connection reconnects on its own and resumes from the last
+   row it received, so no chunk is lost or shown twice.
 
-For the log path end to end — the runner's buffered writer, the flush cadence, and how the viewer
-renders the chunks — see [Real-time log streaming](/concepts/runner/log-streaming).
+From OpenTofu writing a line to the browser showing it takes about 200 milliseconds. Standard error
+chunks are shown in the error color.
 
-## Poll: everything else
+Support threads use the same path on the `support_messages` channel. Each stream route checks that you
+may see the job or case before it opens. Because each instance listens for itself, this works with
+several console instances and no message broker.
 
-Lists and statuses refresh through TanStack Query, which dedupes every component that asks for the
-same data into one request:
+The runner also writes every log line to its container's own output: `docker logs` on a managed fleet
+VM, CloudWatch Logs for a self-deployed runner on ECS Fargate, or your terminal for a registered
+runner.
+
+### Poll everything else
 
 | Data | Refresh |
-|---|---|
-| Jobs page (`useJobsPageQuery`) | every 5 seconds while a listed job is in flight; every 30 seconds otherwise |
-| Shared jobs cache (`useJobsQuery`) — palette, overview, notifications | every 5 seconds while any job is in flight; idle otherwise |
-| One job (`useJobQuery`) | every 3 seconds while it is `QUEUED`, `CLAIMED` or `PROCESSING`; idle once terminal |
-| Runners (`useRunnersQuery`) | every 10 seconds while the tab is focused |
-| Environment status (canvas) | every 4 seconds while a job is active on the environment; every 30 seconds once settled |
+| --- | --- |
+| Jobs page | Every 5 seconds while a listed job is in flight, otherwise every 30 seconds |
+| Shared job list (palette, overview, notifications) | Every 5 seconds while any job is in flight |
+| One job | Every 3 seconds while it is `QUEUED`, `CLAIMED` or `PROCESSING` |
+| Runners | Every 10 seconds while the tab is focused |
+| Environment status on the canvas | Every 4 seconds while a job runs on it, otherwise every 30 seconds |
 
-There is no SSE stream for job status, runners, or environments. A status change shows up on the
-next poll, not instantly.
+## What it does not do
+
+- It does not push job status, runners or environment status. A change shows on the next poll.
+- It does not send log contents in the notification, only IDs.
+
+## Related
+
+- [Job queue](/concepts/job-queue)
+- [Job detail](/guides/jobs/job-detail)

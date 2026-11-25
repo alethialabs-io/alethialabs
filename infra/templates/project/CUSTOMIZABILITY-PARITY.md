@@ -135,7 +135,7 @@ So there is no observability template gap to close — it runs on every cluster 
 Some per-cloud differences are **not** parity gaps to close — the cloud simply has no analogue, so
 the honest thing is to record the skip (and its alternative), not paper over it. These are surfaced
 as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, forwarded on
-`execution_metadata["infra_services"]`) and in the [cloud-abstraction docs](../../../apps/docs/content/docs/concepts/cloud-abstraction.mdx#infra-services-post-apply):
+`execution_metadata["infra_services"]`) and in the [cloud-abstraction docs](../../../apps/docs/content/docs/concepts/cloud-abstraction.mdx#cluster-services-after-the-apply):
 
 - **Alibaba Database `IamAuth`** — ApsaraDB RDS has no IAM-database-authentication analogue, so the
   shared `iam_auth` toggle is a no-op on Alibaba (AWS Aurora / GCP Cloud SQL / Azure DB support it).

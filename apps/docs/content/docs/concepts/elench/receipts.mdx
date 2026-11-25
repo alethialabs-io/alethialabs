@@ -1,71 +1,85 @@
 ---
-title: Receipts & signing
-description: What an evidence receipt is, how ed25519 signing makes it tamper-evident and offline-verifiable, waivers, and the root-of-trust model.
+title: Receipts and signing
+description: What an evidence receipt records, how ed25519 signing makes it tamper-evident and checkable offline, who a signature can vouch for, transparency-log anchoring, and how waivers appear.
 ---
 
-<Enterprise />
+Alethia seals an evidence receipt on every apply. It binds the Elench verdict to the exact plan that
+was applied, and when a signing key is configured it is signed, so you can check it later without
+trusting the console.
 
-An **evidence receipt** is the record Alethia seals on every apply. It is the artifact that turns "the
-console says it passed" into something you can verify independently, later, without trusting the console.
+<Mermaid chart={`
+flowchart LR
+  Plan["Plan file"] -->|SHA-256| Rec["Receipt: plan hash, verdict, catalog version, report, exception"]
+  Rec -->|ed25519| Sig["Signed receipt"]
+  Sig -->|opt-in| Rekor["Transparency log anchor"]
+  Sig --> CLI["alethia verify receipt"]
+`} />
 
-## What a receipt binds
+## How it works
 
-Each receipt is bound to the exact change it describes:
+### What a receipt records
 
-- **`plan_sha256`** — the hash of the exact OpenTofu plan that was applied.
-- **verdict** — the Elench gate's decision (`pass` / `warn` / `fail` / `not_evaluable`).
-- **catalog version** — which control catalog produced the verdict (an old receipt is only meaningful
-  against the catalog that generated it).
-- the full per-control report, the provider, OpenTofu version, the runner, and the evaluation time.
-- any **sealed exception** (see waivers below).
+| Field | Why |
+| --- | --- |
+| `plan_sha256` | Binds the receipt to the exact plan. |
+| Verdict and the per-control report | What was decided, including `not_evaluable` controls. |
+| Catalog version | A verdict means something only against the controls that produced it. |
+| Exception | Any waiver: the control IDs, the reason, who granted it, and when it expires. |
+| OpenTofu version, runner, evaluation time | Where and when it was produced. |
 
-## Signing — what it buys you
+### Signing
 
-When a signing key is configured, the receipt is signed with **ed25519**. A signed receipt is
-**tamper-evident** and **verifiable offline**: anyone with the public key can confirm the receipt wasn't
-altered after the fact — the signature is over the receipt's canonical JSON, so any change breaks it. Even
-with the platform-held key, this upgrades "trust the database row" to "cryptographically bound to this
-plan and verdict."
+With `ALETHIA_RECEIPT_SIGNING_KEY` set on the runner, each receipt is signed with ed25519 over its
+canonical JSON, so any change breaks the signature. Without a key, the receipt is still attached,
+unsigned: an apply is never blocked on signing.
 
 | State | Meaning |
 | --- | --- |
-| **Signed** | An ed25519 signature seals the receipt; it's tamper-evident and offline-verifiable. |
-| **Unsigned** | A receipt was sealed, but no signing key is configured — still a faithful record, not signed. |
+| **Signed** | Tamper-evident and checkable offline. |
+| **Unsigned** | A faithful record, not signed. |
 | **—** | No apply has sealed a receipt for this environment yet. |
 
-### Enabling signing
-
-Signing is off until a key is set. Provide an ed25519 key to the runner (via
-`ALETHIA_RECEIPT_SIGNING_KEY`) and every subsequent receipt is signed. Absent a key, receipts are still
-attached — just unsigned — so an apply is never blocked on signing.
-
-### Checking one yourself
+### Checking one
 
 ```bash
 alethia verify receipt --job <job-id>
 ```
 
-Pulls the receipt, checks its signature, and **exits non-zero when it cannot** — so a deployment
-pipeline can gate on it. `alethia verify show --job <job-id>` prints the per-control report behind
-the verdict. See [Verify Commands](/reference/cli/verify).
+The command checks the signature and exits non-zero when it cannot, so a pipeline can gate on it.
+`alethia verify show --job <job-id>` prints the report. See [Verify commands](/reference/cli/verify).
 
-The signature is checked against a key the control plane **vouches for**, not against the public key
-the receipt carries about itself. That distinction is the whole point: a receipt always verifies
-under its own embedded key, whoever produced it, so checking only that would prove the document was
-not altered — never who signed it. To verify against a key you hold out of band, pass
-`--key-file <path>`.
+A receipt always verifies under the public key it carries, whoever made it, so that alone proves only
+that it was not altered. The CLI checks the signature against a key it trusts and says which:
 
-### Root of trust
+| Trust | The signing key is |
+| --- | --- |
+| `pinned` | A key you gave with `--key-file`, held outside Alethia. The strongest answer. |
+| `org` | A key registered for your organization. Registered, not proven to be held by you. |
+| `platform` | Alethia's platform key. The receipt says "Alethia asserted this". |
+| `self` | Only the receipt's own key. Proves it was not altered, not who made it. |
 
-A receipt signed by Alethia's own runner attests "Alethia asserted this" — `alethia verify receipt`
-reports that honestly as trust `platform`, and reports `org` when your own registered key signed it.
-For auditor-grade non-repudiation, sign with a **customer-controlled key** and/or anchor the receipt
-in a **transparency log** (Rekor) so its existence and integrity are provable by any third party
-offline. Both are on the roadmap; the signing seam is already in place.
+### Transparency log
 
-## Waivers
+An operator can turn on anchoring with `ALETHIA_REKOR_ANCHOR_ENABLED=true`. The control plane then
+logs a hash of each signed receipt in a Rekor transparency log (only the hash; the receipt's contents
+are not uploaded), so anyone can check offline that the receipt existed at that time. Anchoring never
+blocks an apply: if it fails, the receipt stays unanchored.
 
-A fail-closed gate blocks an apply on a hard failure. A **waiver** (override) is the authorized, escape
-hatch: a time-boxed pass of **specific** failing control IDs, recorded with who granted it, why, and when
-it expires. The waiver is sealed into the receipt as an **exception**, so the record shows the gate was
-passed deliberately — not disabled. Active waivers are listed on the Evidence page.
+### Waivers
+
+A waiver passes specific failing controls for a limited time. It is sealed into the receipt as an
+exception, so the record shows the check was passed on purpose, not turned off. Active waivers are
+listed on the Evidence page.
+
+## What it does not do
+
+- It does not prove compliance, only what was checked on one plan.
+- A platform-signed receipt does not prove that your organization asserted anything. Use your own key
+  for that.
+- It does not record the Git commit of a bring-your-own module. That is on the environment's source.
+
+## Related
+
+- [Elench](/concepts/elench)
+- [Verify commands](/reference/cli/verify)
+- [Override a verify failure](/guides/jobs/verify-override)
