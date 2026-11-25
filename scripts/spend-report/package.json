@@ -1,6 +1,6 @@
 {
   "name": "@repo/spend-report",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "The weekly cloud-spend email (.github/workflows/spend-report.yml). See README.md.",
   "scripts": {

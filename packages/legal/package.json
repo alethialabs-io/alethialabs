@@ -1,6 +1,6 @@
 {
 	"name": "@repo/legal",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Alethia Labs legal facts shared by the Alethia web apps: the legal entity, its documents, and the markets and processing rules for selling.",
 	"private": true,
 	"exports": {
