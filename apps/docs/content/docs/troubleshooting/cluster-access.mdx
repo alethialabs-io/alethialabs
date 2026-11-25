@@ -1,0 +1,89 @@
+---
+title: Cluster access
+description: Fix a kubeconfig that the CLI or the console will not give you, and a kubectl that says Unauthorized.
+---
+
+Find the message you see, then do what the row says. `alethia cluster kubeconfig` prints errors
+after `Error:`. `alethia cluster token` prints them after `alethia cluster token:`, and `kubectl`
+shows that line. How cluster access works is in [Cluster access](/concepts/cluster-access).
+
+## kubectl says "You must be logged in to the server (Unauthorized)"
+
+**Cause:** the credential expired, or someone revoked it.
+
+**Fix:** with a static kubeconfig, run `alethia cluster kubeconfig` again. With an exec kubeconfig,
+the cache may still hold a revoked token, for example after someone deleted the `alethia-view`
+ServiceAccount. Delete the cache directory (see
+[the cache locations](/concepts/cluster-access#exec-and-static-kubeconfigs)), then run `kubectl`
+again.
+
+## The control plane refuses the request
+
+| Status | Message | Fix |
+| --- | --- | --- |
+| 401 | your session is not valid — run `alethia login`, then try again | Run `alethia login`. |
+| 402 | your organization's plan does not allow another kubeconfig right now: … | The mint uses runner minutes. Run `alethia usage` to see the limit you reached. |
+| 403 | your role cannot mint a kubeconfig for this cluster (owners, admins and operators can) | Ask an owner or admin for a role with `cluster:access_readonly`. |
+| 403 | you cannot mint an admin kubeconfig for this cluster: … drop --admin for read-only access | Run it without `--admin`. For admin access, sign in as yourself with `alethia login`, or ask for a role with `cluster:access_admin`. |
+| 404 | the cluster was not found in the active organization | Run `alethia org switch`, or pass `--org`. |
+| 409 | The cluster has not been provisioned, so there is nothing to mint a kubeconfig for | Deploy the environment. Drafts and environments being destroyed cannot get a kubeconfig. |
+| 422 | This cluster's cloud cannot mint a kubeconfig through Alethia | The cluster is not on AWS, GCP, Azure or Hetzner. Use the cloud's own CLI. |
+| 429 | too many kubeconfig requests — try again in … | You made more than 20 requests in 10 minutes in this organization (the limit is per person); each new exec token counts. Wait the time shown. |
+
+## The CLI gives up while it waits
+
+| Message | Fix |
+| --- | --- |
+| the kubeconfig request expired before a runner completed it … | No runner took the job within 10 minutes. Check `alethia runner list`. |
+| timed out waiting for a runner to mint the kubeconfig … | The same, measured on your clock. Check `alethia runner list`. |
+| the kubeconfig request is gone (already collected, or expired and swept) | Run the command again. A credential can be collected only once. |
+| your role no longer allows collecting this kubeconfig | Your role changed during the mint. Ask for the permission again. |
+| the minted credential had already expired when it arrived … | Set your machine's clock correctly. |
+
+## The runner could not mint the kubeconfig
+
+The CLI prints `the runner could not mint the kubeconfig:` and one of these reasons.
+
+| Reason | Fix |
+| --- | --- |
+| The runner could not mint the credential. | Read the job log: `alethia jobs logs --latest --type MINT_KUBECONFIG`. |
+| The cluster was not found in the cloud account. | The cluster was deleted or renamed outside Alethia. Check the cloud console. |
+| The runner could not reach the cluster's API endpoint. | Check that the runner's network can reach the endpoint. |
+| The runner could not assume the cluster's cloud identity. | Check the connection in [Connectors](/guides/connectors). |
+| The cloud refused to issue a credential for this cluster. | Give the cloud identity permission to get cluster credentials. |
+| The read-only identity could not be prepared in the cluster. | Check whether someone changed the `alethia-view` ServiceAccount or the `alethia:view` ClusterRole. |
+| This cloud cannot issue the requested kubeconfig shape. | Run it again with or without `--static`. |
+| The runner could not seal the credential to the client key. | Run the command again. |
+| Kubeconfig mints are not available for an environment placed on a shared cluster. | The environment uses a `namespace` or `vcluster` placement. Only `dedicated` environments get a kubeconfig. |
+
+## The CLI rejects the command
+
+| Message | Fix |
+| --- | --- |
+| --ttl must be whole seconds from 15m to 8h | Pass a TTL from `15m` to `8h`. |
+| --output takes a file path here (or - for stdout), not a format | `--output` takes a file name. For a file called `json`, pass `./json`. |
+| if any flags in the group [merge output] are set none of the others can be | Pass `--merge` or `--output`, not both. |
+| … is locked by another writer (kubectl?) | Another program is writing your kubeconfig. If nothing is, delete the `.lock` file the message names. |
+| kubecache: insecure cache file | Other users can read a cache file. Delete the file the message names. |
+| a cluster id is required | `alethia cluster token` needs a cluster ID outside a terminal. Get a new kubeconfig with `alethia cluster kubeconfig`. |
+
+## The console download fails
+
+The console uses the same checks and the same rate limit as the CLI.
+
+| Message | Fix |
+| --- | --- |
+| Your plan's usage limit is reached, so no new kubeconfig can be minted. | Check your plan's usage. |
+| You need cluster read-only access to download a kubeconfig. | Ask an owner or admin for a role with `cluster:access_readonly`. |
+| This cluster was not found. | Reload the page. The cluster may have been removed. |
+| This cluster has not finished provisioning, so there is no kubeconfig to mint yet. | Deploy the environment, or wait for the deploy to finish. |
+| This cluster's cloud cannot mint a kubeconfig through Alethia. | Use the cloud's own CLI. |
+| Too many kubeconfig requests. Try again in a few minutes. | Wait. Your CLI and console requests count together. |
+| No runner finished the kubeconfig in time. … | Check that a runner is online, then try again. |
+| Still waiting for a runner to mint it. | Shown after 20 seconds. Check the runners, or select **Cancel**. |
+| This browser cannot create the X25519 key the download is sealed to. … | Use Chrome 133, Firefox 130, Safari 17 or later, or the CLI. |
+| Downloading a kubeconfig in the browser needs HTTPS … | Open the console over HTTPS, or use the CLI. |
+| The kubeconfig could not be requested. / arrived but could not be opened / is no longer available. | Select the button again. |
+
+When a mint fails, the console shows the runner's reason from
+[the table above](#the-runner-could-not-mint-the-kubeconfig).
