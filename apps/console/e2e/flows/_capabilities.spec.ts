@@ -34,7 +34,11 @@ test.describe("capabilities — the enforcement fires in both directions", () =>
 
 	test("a misspelt promise promises nothing — loudly", () => {
 		expect(() => promised({ [PROMISE_VAR]: "stripe-test" })).toThrow(/not a capability/);
-		expect(assertEnvForPromises({ [PROMISE_VAR]: "stripe" })).toHaveLength(5);
+		// One complaint per variable `REQUIRED_ENV.stripe` (e2e/helpers/capabilities.ts) names: six since
+		// #7499 added BILLING_PROVIDER, which a Stripe leg must pin now that billing has a provider seam.
+		const missing = assertEnvForPromises({ [PROMISE_VAR]: "stripe" });
+		expect(missing).toHaveLength(6);
+		expect(missing).toContain('ALETHIA_E2E_CAPABILITIES promises "stripe" but BILLING_PROVIDER is unset');
 		expect(assertEnvForPromises({})).toEqual([]);
 	});
 });
