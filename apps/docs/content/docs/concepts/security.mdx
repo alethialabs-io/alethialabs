@@ -212,7 +212,7 @@ The issuer's signing key is the trust root for all three federated clouds, so it
 overlap: the JWKS publishes the outgoing and the new key at once, and each assertion's `kid` header selects
 the right one. New assertions are signed by the new key while in-flight ones still verify; the old key is
 retired once every cloud's cached JWKS has refreshed. The operator steps are in the
-[rotation runbook](/self-host/managed-cloud-connectors#rotating-the-issuer-signing-key).
+[rotation runbook](/self-host/managed-cloud-connectors#rotate-the-issuer-signing-key).
 
 ## Execution isolation (managed untrusted BYO)
 
@@ -245,7 +245,7 @@ Three properties keep the blast radius of a single job to that one job:
 The container boundary is what actually contains a hostile provider (env-scrubbing alone doesn't — a child
 sharing the worker's PID namespace can read the parent's `/proc`). Until it is enabled and verified on the
 fleet, managed **untrusted** BYO stays gated off; trusted provisioning is unaffected. Operators turn it on per
-the [managed provisioning runbook](/self-host/managed-provisioning#untrusted-byo-container-sandbox-3b). See
+the [managed provisioning runbook](/self-host/fleet-sandbox). See
 [Isolated Execution](/concepts/isolated-execution) for the full picture; the engineering detail lives in the
 `packages/core/sandbox` package README.
 

@@ -3,10 +3,9 @@ title: Deploy
 description: Fix a deploy that waits for a runner, is blocked by the verify gate, is refused by a plan limit, or fails in the job log.
 ---
 
-A deploy is a job. A runner claims it, plans with OpenTofu, runs the
-[verify gate](/guides/jobs/plan-and-apply#verify-gate), and applies the plan. Start with the job log:
-open the job from **Jobs** in the sidebar, select **View log** on the canvas, or run
-`alethia jobs logs --latest --follow`.
+A runner claims a deploy job, plans with OpenTofu, runs the
+[verify gate](/guides/jobs/plan-and-apply#verify-gate), and applies. Start with the job log: open the
+job from **Jobs**, select **View log** on the canvas, or run `alethia jobs logs --latest --follow`.
 
 ## The job waits for a runner
 

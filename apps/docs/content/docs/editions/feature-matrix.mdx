@@ -1,95 +1,62 @@
 ---
 title: Feature matrix
-description: The authoritative, capability-by-capability comparison of the open-source Community edition and the licensed Enterprise edition.
+description: Capability by capability, what the open-source Community edition and the licensed Enterprise edition include.
 ---
 
-The single source of truth for what each edition includes. <Community>Community</Community> is free and
-open-source (AGPL-3.0); <Enterprise>Enterprise</Enterprise> is licensed.
+<Community>Community</Community> is free and open source (AGPL-3.0).
+<Enterprise>Enterprise</Enterprise> needs a licence. On the hosted service, each organization's plan
+decides which of these it has; the [pricing page](https://alethialabs.io/pricing) lists them.
 
-## Authorization core
+## Authorization
 
-Everything here is **open-source** — the authorization model is the same in both editions.
-
-| Capability | Community | Enterprise |
-|---|:--:|:--:|
-| Policy Decision Point (`can` / `enforce` / `bulkCheck` / `listAccessible`) | ✅ | ✅ |
-| Built-in roles — owner · admin · operator · viewer | ✅ | ✅ |
-| Per-resource grants + Org → Project inheritance | ✅ | ✅ |
-| Explicit **deny** with hierarchy + exceptions | ✅ | ✅ |
-| Single-permission grants (not just roles) | ✅ | ✅ |
-| Row-Level Security tenant isolation (the blast wall) | ✅ | ✅ |
-| Full **Activity log** (every action + denials) | ✅ | ✅ |
-| Registry-as-code (resources × actions, exhaustively typed) | ✅ | ✅ |
-
-## Organizations & teams
+The permission model is the same in both editions.
 
 | Capability | Community | Enterprise |
 |---|:--:|:--:|
-| Personal organization (single owner — you) | ✅ | ✅ |
-| **Multi-member organizations** | — | ✅ |
-| **Member invitations** (email → accept → join) | — | ✅ |
-| **Active-organization switcher** | — | ✅ |
-| **Teams** (group-based grants) | — | ✅ |
+| Policy decision point: every action checked the same way | ✅ | ✅ |
+| Built-in roles: owner, admin, operator, viewer | ✅ | ✅ |
+| Per-resource grants, inherited from organization to project | ✅ | ✅ |
+| Explicit deny, with exceptions | ✅ | ✅ |
+| Grants of a single permission, not only a role | ✅ | ✅ |
+| Row-Level Security between tenants | ✅ | ✅ |
+| Activity log of every action and refusal | ✅ | ✅ |
+| Postgres authorization engine | ✅ | ✅ |
+| OpenFGA engine (optional) | — | ✅ |
 
-## Roles & access
-
-| Capability | Community | Enterprise |
-|---|:--:|:--:|
-| Built-in role catalog (read-only) | ✅ | ✅ |
-| **Custom roles** — the permission-matrix editor | — | ✅ |
-| **Access portal** — AWS-IAM-style grant assignment | — | ✅ |
-| Grant to a **user or a team**, allow/deny, any scope | — | ✅ |
-
-## Authentication
+## Organizations and people
 
 | Capability | Community | Enterprise |
 |---|:--:|:--:|
-| Email OTP + social sign-in (GitHub · Google · GitLab · Bitbucket) | ✅ | ✅ |
-| **SSO — OIDC** (Okta · Entra ID · Google · AWS IAM Identity Center · …) | — | ✅ |
-| **SSO — SAML** | — | ✅ |
+| A personal organization with one owner | ✅ | ✅ |
+| Multi-member organizations, invitations, organization switcher | — | ✅ |
+| Teams, with grants to a team | — | ✅ |
+| Custom roles: the permission-matrix editor | — | ✅ |
+| Access portal: allow or deny, for a user or a team, at any scope | — | ✅ |
+| Email codes and GitHub, Google, GitLab and Bitbucket sign-in | ✅ | ✅ |
+| SSO over OIDC or SAML | — | ✅ |
 
-## Activity
-
-| Capability | Community | Enterprise |
-|---|:--:|:--:|
-| Browse the Activity log in the console | ✅ | ✅ |
-| **Export** the Activity log (CSV) | — | ✅ |
-
-## Engine
+## Activity, alerts and agents
 
 | Capability | Community | Enterprise |
 |---|:--:|:--:|
-| `PostgresRbacPDP` — the Postgres-backed engine | ✅ | ✅ |
-| **OpenFGA fine-grained engine** (ReBAC at scale) | — | ✅ (optional) |
-| Dual-write tuple sync (Postgres → OpenFGA) | — | ✅ |
+| Browse the Activity log | ✅ | ✅ |
+| Export the Activity log as CSV | — | ✅ |
+| Alert policies, channels and the delivery log | — | ✅ |
+| Alert rules on security events from the Activity log | — | ✅ |
+| Agent access switch, and no agent applies to production | ✅ | ✅ |
+| Agent policy: a different approver, and an OAuth client allow-list | — | ✅ |
 
-<Callout type="info">
-  The OpenFGA engine is **optional even with a license** — Enterprise runs perfectly on `PostgresRbacPDP`.
-  Turn OpenFGA on when you want a dedicated relationship-graph engine. See the
-  [OpenFGA operator guide](/concepts/access-control/openfga).
-</Callout>
+## Runners
 
-## Operations
-
-| Capability | Community | Enterprise |
+| Capability | Self-hosted, either edition | Hosted service |
 |---|:--:|:--:|
-| **Alerting** — alert policies, channels, delivery log | — | ✅ |
-| **Advanced alerting** — security/governance rules from Activity events | — | ✅ |
-| **Bring-your-own runners** — deploy into your cloud or register your own | — | ✅ |
-| **Managed warm-pool fleet** operations | — | ✅ |
+| Bring-your-own runners | ✅ | By plan |
+| A managed runner fleet with warm pools | ✅ | — |
 
-<Callout type="info">
-  On the hosted service, entitlements follow each organization's billing plan
-  (`apps/console/lib/billing/plan.ts`). The **Team** plan sits between the two columns: it unlocks
-  multi-member organizations, alerting and bring-your-own runners, but not teams, custom roles,
-  Activity export, advanced alerting, SSO or managed pools.
-</Callout>
+A self-hosted operator always manages runners and pools. See
+[Managed provisioning](/self-host/managed-provisioning).
 
-## How the line is drawn
+## Related
 
-Community is a **complete single-tenant product**: roles, grants, hierarchy, deny, the PDP, RLS, and the Activity
-log all ship open-source. Enterprise is about **organizations of people** — inviting and grouping members,
-authenticating them with SSO, authoring fine-grained custom roles, assigning access through the portal, and
-(optionally) deciding it with OpenFGA.
-
-Next: [how licensing works](/editions/licensing).
+- [Licensing](/editions/licensing)
+- [Access control](/concepts/access-control)

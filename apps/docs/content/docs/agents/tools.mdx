@@ -7,10 +7,8 @@ description: Every tool the Alethia MCP server offers — 19 tools that read, ch
     handlers in apps/console/lib/ai/mcp/{reads,design,handlers}.ts (HANDLED_TOOL_NAMES). Change this page
     when either changes. */}
 
-# MCP tool reference
-
-The MCP server at `<console origin>/api/mcp` offers the 19 tools below. Twelve of them change nothing
-in your account and are the ones a client connected with `?readonly` sees: the eleven reads and
+The MCP server at `<console origin>/api/mcp` offers the 19 tools below. Twelve change nothing in your
+account, and a client connected with `?readonly` sees only those: the eleven reads and
 `send_feedback`.
 
 Every tool:
@@ -27,7 +25,7 @@ Every tool:
 
 ## Reads
 
-Each read answers through the same reads the console's own assistant uses.
+The reads are the ones the console's assistant uses.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
@@ -58,7 +56,7 @@ These tools change records in Alethia, never your cloud. A problem you can fix c
 `patch` is a list of JSON Patch operations (`add`, `remove`, `replace`), applied in order, all or
 none. Read the design with `get_resource` and pass its `revision` as `base_revision`. If the design
 changed since, the tool answers `conflict` with the `current_revision`: read it again and retry. The
-same `idempotency_key` returns the first result and changes nothing more.
+same `idempotency_key` returns the first result.
 
 ## Operations
 
@@ -92,3 +90,8 @@ These need a person in the console, or the CLI:
 - Approving an apply or a destroy.
 - An audit of existing infrastructure.
 - Connecting a cloud, and anything that opens part of the console.
+
+## Related
+
+- [Security model for agents](/agents/security)
+- [The CLI for agents](/agents/cli)

@@ -3,15 +3,21 @@
 	"icon": "Server",
 	"pages": [
 		"index",
-		"configuration",
-		"managed-cloud-connectors",
-		"managed-provisioning",
-		"email",
+		"---Install---",
+		"install",
+		"one-click",
 		"terraform",
 		"helm",
+		"---Configure---",
+		"configuration",
+		"email",
+		"enterprise-setup",
 		"scaling-out",
-		"one-click",
+		"---Operate---",
 		"upgrading",
-		"enterprise-setup"
+		"---Run a managed fleet---",
+		"managed-cloud-connectors",
+		"managed-provisioning",
+		"fleet-sandbox"
 	]
 }
