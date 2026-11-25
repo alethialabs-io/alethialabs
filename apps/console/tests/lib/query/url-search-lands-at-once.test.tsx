@@ -229,6 +229,23 @@ describe("ActivityLog — ~/settings/activity?search=…", () => {
 	});
 });
 
+/** The key "My cases" reads: the first page of the `support.cases` infinite query (`useKeysetList`). */
+function casesKey(input: { bucket: "all"; search?: string }) {
+	return orpc.support.cases.infiniteOptions({
+		input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+		initialPageParam: null,
+		getNextPageParam: (last: { nextCursor: string | null }) => last.nextCursor,
+	}).queryKey;
+}
+
+/** One first page of "My cases" as the infinite query caches it. */
+function casesPage(rows: CaseListItem[]) {
+	return {
+		pages: [{ rows, nextCursor: null, facets: { severity: [], type: [] }, universeEmpty: rows.length === 0 }],
+		pageParams: [null],
+	};
+}
+
 describe("CaseList — ~/support/my-cases?search=…", () => {
 	const item = (id: string, case_number: number, subject: string): CaseListItem => ({
 		id,
@@ -248,17 +265,16 @@ describe("CaseList — ~/support/my-cases?search=…", () => {
 
 	it("shows only the matching case before any debounce has elapsed", async () => {
 		currentSearch = "search=registry";
-		const facets = { severity: [], type: [] };
 		// The unfiltered key holds both cases, the link's filtered key (what the route prefetches)
 		// only the match: a list still reading the unfiltered key shows the wrong row.
 		renderWithClient(<CaseList orgSlug="acme" seeAll={false} />, (qc) => {
-			qc.setQueryData(orpc.support.cases.queryOptions({ input: { bucket: "all" } }).queryKey, {
-				rows: [item("c1", 1042, "Runner cannot reach the registry"), item("c2", 1043, "Invoice address is wrong")],
-				facets,
-			});
 			qc.setQueryData(
-				orpc.support.cases.queryOptions({ input: { bucket: "all", search: "registry" } }).queryKey,
-				{ rows: [item("c1", 1042, "Runner cannot reach the registry")], facets },
+				casesKey({ bucket: "all" }),
+				casesPage([item("c1", 1042, "Runner cannot reach the registry"), item("c2", 1043, "Invoice address is wrong")]),
+			);
+			qc.setQueryData(
+				casesKey({ bucket: "all", search: "registry" }),
+				casesPage([item("c1", 1042, "Runner cannot reach the registry")]),
 			);
 		});
 		await settleWithoutTime();
