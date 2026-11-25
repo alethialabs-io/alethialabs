@@ -50,6 +50,11 @@ const APPROVAL_ERROR_CODES = {
 	reauthentication_required: 403,
 	/** The org requires a different person than the requester to approve. */
 	self_approval: 403,
+	/**
+	 * The org's agent policy, read again at decision time, no longer lets this request run (agent
+	 * access is off, or agents are kept off production), so it can only be denied (AGT-L2, G14).
+	 */
+	policy_refused: 403,
 	/** The approval is no longer pending (decided, expired, superseded or used). */
 	not_pending: 409,
 	/** The typed environment name for a destroy does not match. */
