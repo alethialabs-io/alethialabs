@@ -80,6 +80,50 @@ git show origin/main:.release-please-manifest.json
 
 To force a version (the release-candidate cut), put a `Release-As: X.Y.Z` footer in a commit that
 touches the component and let release-please propose it on `main`. Do not edit the manifest.
+"Touches" means the commit changes a file under the package directory. release-please assigns a
+commit with no changed files (`git commit --allow-empty`) to every package, so an empty
+`Release-As:` commit would set the version of the CLI and the runner together.
+
+## A release can miss a commit
+
+release-please finds a component's new commits by walking `main` from newest to oldest. The walk
+uses GitHub's commit history, which has the same order as `git log`: by commit date, across every
+parent. release-please stops the component's list at its last release commit, **by position in that
+walk, not by ancestry** (`commitsAfterSha` in release-please's `manifest.js`). The upstream README
+states the assumption: with squash merges, "commits are sorted by merge date".
+
+Our promotions break that assumption. A promotion merges a pinned `dev` commit into `main`, so dev's
+squash commits reach `main` hours after their commit date. Take a `dev` commit X that changes
+`apps/cli`, and the merge commit R of a CLI release PR. If X is committed before R but promoted after
+it, X sorts below R in the walk. release-please then never sees X: X is not in the changelog and does
+not count towards the version bump. If X is the only CLI change, release-please opens no release PR,
+and the run log says `No commits for path: apps/cli, skipping`.
+
+This has happened three times. `scripts/release-cursor.sh lost <ref>` finds each one when it is run
+at the commit before each release:
+
+| Release | Hidden commit | Effect |
+|---|---|---|
+| runner 0.9.0 | #5344 | not in the changelog |
+| runner 0.10.0 | #6566 | not in the changelog |
+| cli 0.11.1 | #7237 (`feat`) | released as a patch, not a minor |
+
+Two things stop it:
+
+- **`.claude/hooks/guard-merge.sh` refuses to merge a release PR while `dev` holds commits under that
+  component that `main` does not.** Wait for the next promotion. release-please adds those commits
+  to the same release PR, and you then merge it. To see what is waiting, run
+  `scripts/release-cursor.sh pending origin/main origin/dev`.
+- **The `release-cursor` job in `release-please.yml` runs after every push to `main`.** It fails, and
+  names each commit, when a commit on `main` is hidden from release-please. A failure means a release
+  PR was merged in some way that the guard did not check.
+
+When the job fails, the hidden commits are on `main` but no release includes them. To release them,
+merge a PR into `dev` that changes a file under the component. Give it a conventional subject such
+as `fix(cli): …`, and optionally a `Release-As: X.Y.Z` footer. This commit is newer than every
+release commit, so release-please sees it, and the next promotion opens the release PR. Write the
+hidden commits' changes into that PR's description so that the changelog entry says what was
+released.
 
 ## Writing a platform release note
 
