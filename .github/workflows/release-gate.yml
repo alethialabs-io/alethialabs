@@ -151,18 +151,21 @@ on:
   pull_request:
     branches: [main, staging, dev]
     types: [opened, synchronize, reopened, ready_for_review]
-  # Called by .github/workflows/release-gate-label.yml when a `release-gate:run` or `release-gate:all`
-  # label is added to a non-draft dev PR. The caller's `labeled` event payload IS this run's
-  # `github.event`, so the job-level `if:` clauses and the picker below read it exactly as they read
-  # a direct `labeled` run before #7654 — which is why those `labeled` clauses are still here.
-  workflow_call:
   workflow_dispatch:
     inputs:
       legs:
         description: "Comma-separated legs to run (hero, elench-ai, console, canvas, qa, audit, audit-interaction). Empty runs every leg."
         required: false
         default: ""
-  # ci.yml's `e2e-qa-leg` job calls this file for the `qa` leg on a dev PR whose diff touches
+  # ONE `workflow_call:` with TWO callers (a second key is a YAML duplicate GitHub rejects):
+  #
+  # · release-gate-label.yml (#7654), when a `release-gate:run` or `release-gate:all` label is added to
+  #   a non-draft dev PR. It passes NO `ci_legs`, so the input is '' and the label path below runs as it
+  #   always has: the caller's `labeled` event payload IS this run's `github.event`, so the job-level
+  #   `if:` clauses and the picker read it exactly as they read a direct `labeled` run before #7654 —
+  #   which is why those `labeled` clauses are still here.
+  #
+  # · ci.yml's `e2e-qa-leg` job calls this file for the `qa` leg on a dev PR whose diff touches
   # what that leg measures (#7647). Same `legs` picker, same `gate` job, same ratchet and baseline:
   # the leg is DEFINED once, here, and ci.yml only decides WHEN. Inside a called run
   # `github.event_name` is the CALLER's (`pull_request`) and the base is `dev`, so every clause
@@ -176,8 +179,9 @@ on:
   workflow_call:
     inputs:
       ci_legs:
-        description: "Comma-separated legs ci.yml wants run on this PR (today only `qa`)."
-        required: true
+        description: "Comma-separated legs ci.yml wants run on this PR (today only `qa`). Empty: the label path."
+        required: false
+        default: ""
         type: string
     outputs:
       run:
