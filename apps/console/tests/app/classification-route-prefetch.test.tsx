@@ -117,10 +117,14 @@ describe("[project]/environments — every card's Classification control is in t
 		});
 	});
 
-	it("a link that carries filters hands down BOTH reads: the pristine one and the link's (#6819)", async () => {
+	it("a link that carries filters asks the table's BOTH first pages: the pristine one and the link's (#6819, LST-3 #7485)", async () => {
 		const searchParams = Promise.resolve({ stages: "production,staging", search: " qa " });
 		await EnvironmentsRoute({ params, searchParams });
-		const asked = h.calls.filter((c) => c.path === "environments.overview").map((c) => c.input);
+		// The overview carries no filter any more: its panels need every environment.
+		expect(h.calls.filter((c) => c.path === "environments.overview").map((c) => c.input)).toEqual([
+			{ project: "payments" },
+		]);
+		const asked = h.calls.filter((c) => c.path === "environments.page").map((c) => c.input);
 		expect(asked).toContainEqual({ project: "payments" });
 		expect(asked).toContainEqual({ project: "payments", search: "qa", stages: ["production", "staging"] });
 	});

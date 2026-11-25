@@ -677,6 +677,26 @@ export const FIXTURES: Record<string, Fixture> = {
 			y: field(out, "projectId") === s.projectY,
 		}),
 	},
+	// LST-3 (#7485): the Environments TABLE and the promotions history, each a keyset page, each
+	// addressing the project by slug exactly as `overview` does. The table's rows name the ADDRESSED
+	// org's seeded environment; no promotion is seeded, so the history answers an empty page.
+	"environments.page": {
+		kind: "gated",
+		reason: "addresses a project by slug: the addressed org's project, NOT_FOUND in the personal scope",
+		input: { project: PROJECT_SLUG },
+		enterprise: { x: "ok", y: "ok" },
+		markers: (out, s) => {
+			const rows = field(out, "rows");
+			const has = (id: string) => Array.isArray(rows) && rows.some((row: unknown) => field(row, "id") === id);
+			return { x: has(s.envX), y: has(s.envY) };
+		},
+	},
+	"environments.promotions": {
+		kind: "gated",
+		reason: "addresses a project by slug: the addressed org's project, NOT_FOUND in the personal scope",
+		input: { project: PROJECT_SLUG },
+		enterprise: { x: "ok", y: "ok" },
+	},
 	"environments.byoAdmissionReport": {
 		kind: "by-id",
 		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
@@ -884,10 +904,19 @@ export const FIXTURES: Record<string, Fixture> = {
 	"clusters.page": {
 		kind: "org-scoped",
 		input: {},
-		markers: (out, s) => ({
-			x: hasCluster(field(out, "rows"), s.clusterX),
-			y: hasCluster(field(out, "rows"), s.clusterY),
-		}),
+		// A keyset page (LST-3 #7485): each row wraps its cluster as `{ id, cluster }`.
+		markers: (out, s) => {
+			const rows = field(out, "rows");
+			const clusters = Array.isArray(rows) ? rows.map((row: unknown) => field(row, "cluster")) : undefined;
+			return { x: hasCluster(clusters, s.clusterX), y: hasCluster(clusters, s.clusterY) };
+		},
+	},
+	// LST-3 (#7485): one cluster by its own id, for a `?selected=` link whose row is not loaded. The
+	// same composed read as the page, narrowed: another org's cluster id answers null, never its row.
+	"clusters.detail": {
+		kind: "by-id",
+		input: (s, org) => ({ clusterId: org === "x" ? s.clusterX : s.clusterY }),
+		reveals: (out, s, org) => hasCluster([out], org === "x" ? s.clusterX : s.clusterY),
 	},
 	// General settings (#6128).
 	"settings.org": {
