@@ -76,6 +76,7 @@ export function requiredScopes(action: Action, resource: Resource): readonly Age
 		case "reply":
 		case "manage_support":
 		case "manage_tokens":
+		case "manage_agents":
 		case "access_admin":
 			return AGENT_SCOPES;
 		default: {
