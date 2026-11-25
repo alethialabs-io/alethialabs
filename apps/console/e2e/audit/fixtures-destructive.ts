@@ -689,6 +689,31 @@ export const FIXTURE_SEEDERS: ReadonlyMap<string, FixtureSeeder> = new Map<strin
 		},
 	],
 	[
+		"service-token",
+		{
+			writes: "one active `cli_service_tokens` row in the org, named for the audit",
+			seed: async (scope) => {
+				const sql = db();
+				const existing = await sql<{ id: string }[]>`
+					select id from cli_service_tokens
+					where organization_id = ${scope.owner.orgId} and name = 'audit token' and revoked_at is null
+					limit 1`;
+				if (existing.length > 0) return;
+				// `token_hash` is unique and is never matched by the spec: the row only has to RENDER
+				// with its Revoke control. A per-org literal is not a credential no client can present.
+				await sql`
+					insert into cli_service_tokens ${sql({
+						organization_id: scope.owner.orgId,
+						name: "audit token",
+						token_hash: `audit-fixture-${scope.owner.orgId}`,
+						token_prefix: "audit",
+						created_by: scope.owner.userId,
+					})}
+					on conflict do nothing`;
+			},
+		},
+	],
+	[
 		"sso-provider",
 		{
 			writes: "one `sso_provider` row scoped to the org",

@@ -508,7 +508,7 @@ export const FIXTURES: Record<string, Fixture> = {
 	"agents.serviceTokens": {
 		kind: "gated",
 		reason: "org:manage_tokens, which U (a viewer in both orgs) does not hold",
-		input: undefined,
+		input: {},
 		enterprise: { x: "FORBIDDEN", y: "FORBIDDEN" },
 	},
 	"agents.tokenEnvironments": {

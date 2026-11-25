@@ -45,6 +45,7 @@ const (
 	RouteOrgSettingsRoles              = "/[org]/~/settings/roles"
 	RouteOrgSettingsSso                = "/[org]/~/settings/sso"
 	RouteOrgSettingsTeams              = "/[org]/~/settings/teams"
+	RouteOrgSettingsTokens             = "/[org]/~/settings/tokens"
 	RouteOrgSupportAbuse               = "/[org]/~/support/abuse"
 	RouteOrgSupportAsk                 = "/[org]/~/support/ask"
 	RouteOrgSupportCasesID             = "/[org]/~/support/cases/[id]"
@@ -55,7 +56,7 @@ const (
 	RouteCliLogin                      = "/cli/login"
 )
 
-// Routes is every pattern above, in manifest order — 41 routes.
+// Routes is every pattern above, in manifest order — 42 routes.
 var Routes = []string{
 	RouteOrgProjectArchitecture,
 	RouteOrgProjectClusters,
@@ -90,6 +91,7 @@ var Routes = []string{
 	RouteOrgSettingsRoles,
 	RouteOrgSettingsSso,
 	RouteOrgSettingsTeams,
+	RouteOrgSettingsTokens,
 	RouteOrgSupportAbuse,
 	RouteOrgSupportAsk,
 	RouteOrgSupportCasesID,
