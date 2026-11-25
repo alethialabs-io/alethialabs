@@ -164,7 +164,7 @@ describe("new charges", () => {
 		expect(h.posts[0]).toMatchObject({ subscriptionId: "sub_1", overageMinutes: 250, amount: { minor: 275, currency: "eur" }, immediate: false });
 		expect(h.store.rows).toHaveLength(1);
 		expect(h.store.rows[0]).toMatchObject({ status: "reconciled", providerRef: "pri_next", amountMinor: 275, currency: "eur" });
-		expect(result.reconciled).toBe(1);
+		expect(result.reconciledCharges).toBe(1);
 
 		// A second pass finds the period settled: nothing is posted again.
 		await runPaddleOverageSweep(new Date(NOW.getTime() + STALE_CLAIM_MS * 2), h.deps);
@@ -191,7 +191,7 @@ describe("new charges", () => {
 			const result = await runPaddleOverageSweep(NOW, h.deps);
 			expect(h.getSubscription).not.toHaveBeenCalled();
 			expect(h.store.rows).toHaveLength(0);
-			expect(result.skipped).toBe(1);
+			expect(result.skippedSubscriptions).toBe(1);
 		}
 	});
 
@@ -252,7 +252,7 @@ describe("final cancellation (O9)", () => {
 		expect(h.posts).toHaveLength(0);
 		expect(h.store.rows[0]).toMatchObject({ status: "waived", amountMinor: 275 });
 		expect(h.store.rows[0].error).toMatch(/O9/);
-		expect(result.waived).toBe(1);
+		expect(result.waivedCharges).toBe(1);
 	});
 });
 
@@ -263,7 +263,7 @@ describe("failures and reconciliation", () => {
 		const result = await runPaddleOverageSweep(NOW, h.deps);
 		expect(h.store.rows[0]).toMatchObject({ status: "failed", error: "Paddle POST → 400 bad_request" });
 		expect(h.alerts).toEqual(["Paddle refused an overage charge"]);
-		expect(result.failed).toBe(1);
+		expect(result.failedCharges).toBe(1);
 	});
 
 	it("an unknown outcome stays claimed; the retry finds the charge and does NOT post again", async () => {
@@ -274,7 +274,7 @@ describe("failures and reconciliation", () => {
 			throw new PaddleApiError("timeout", "timed out");
 		});
 		const first = await runPaddleOverageSweep(NOW, h.deps);
-		expect(first.pending).toBe(1);
+		expect(first.unconfirmedCharges).toBe(1);
 		expect(h.store.rows[0].status).toBe("claimed");
 
 		// Before the claim is stale, nothing happens.
@@ -284,7 +284,7 @@ describe("failures and reconciliation", () => {
 		const retry = await runPaddleOverageSweep(new Date(NOW.getTime() + STALE_CLAIM_MS + 1), h.deps);
 		expect(h.post).toHaveBeenCalledTimes(1);
 		expect(h.store.rows[0]).toMatchObject({ status: "reconciled", providerRef: "pri_next" });
-		expect(retry.reconciled).toBe(1);
+		expect(retry.reconciledCharges).toBe(1);
 	});
 
 	it("an unknown outcome whose charge never landed is posted again after the lookup", async () => {

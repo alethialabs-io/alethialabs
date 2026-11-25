@@ -153,14 +153,14 @@ export interface OverageSweepDeps {
 
 /** What a pass did, for the log line and tests (a `type`, so the reconcile heartbeat can record it). */
 export type OverageSweepResult = {
-	posted: number;
-	reconciled: number;
-	waived: number;
-	failed: number;
+	postedCharges: number;
+	reconciledCharges: number;
+	waivedCharges: number;
+	failedCharges: number;
 	/** Claims left for a later pass (outcome unknown). */
-	pending: number;
+	unconfirmedCharges: number;
 	/** Candidates passed over this time (inside the allowance, period mismatch, not chargeable yet). */
-	skipped: number;
+	skippedSubscriptions: number;
 };
 
 /** A short reason from a thrown value — never a secret (PaddleApiError messages carry none). */
@@ -234,7 +234,10 @@ async function postClaimed(
 
 /** Bumps the tally for an outcome. */
 function count(result: OverageSweepResult, outcome: "posted" | "reconciled" | "failed" | "pending"): void {
-	result[outcome] += 1;
+	if (outcome === "posted") result.postedCharges += 1;
+	else if (outcome === "reconciled") result.reconciledCharges += 1;
+	else if (outcome === "failed") result.failedCharges += 1;
+	else result.unconfirmedCharges += 1;
 }
 
 /** Handles one candidate subscription: measure, read Paddle, claim, post. */
@@ -250,7 +253,7 @@ async function sweepCandidate(
 	const used = await deps.store.usedMinutes(c.organizationId, c.currentPeriodStart, to);
 	// Priced in USD only to ask "is anything over?" — the real price waits for the subscription's currency.
 	if (measureOverage(used, included, "usd").overageMinutes <= 0) {
-		result.skipped += 1;
+		result.skippedSubscriptions += 1;
 		return;
 	}
 
@@ -262,7 +265,7 @@ async function sweepCandidate(
 			mirror_start: c.currentPeriodStart.toISOString(),
 			paddle_start: paddleStart?.toISOString() ?? null,
 		});
-		result.skipped += 1;
+		result.skippedSubscriptions += 1;
 		return;
 	}
 
@@ -279,19 +282,19 @@ async function sweepCandidate(
 			now,
 		);
 		if (row) await page(deps, row, "Paddle overage not priced", row.error ?? "no rate");
-		if (row) result.failed += 1;
+		if (row) result.failedCharges += 1;
 		return;
 	}
 	const { overageMinutes, amount } = measureOverage(used, included, currency);
 	if (amount.minor <= 0) {
-		result.skipped += 1;
+		result.skippedSubscriptions += 1;
 		return;
 	}
 	const facts = { ...base, overageMinutes, amountMinor: amount.minor, currency };
 
 	if (sub.status === "past_due") {
 		if (end.getTime() - now.getTime() > PAST_DUE_PAGE_MS) {
-			result.skipped += 1;
+			result.skippedSubscriptions += 1;
 			return;
 		}
 		const row = await deps.store.insert(
@@ -300,12 +303,12 @@ async function sweepCandidate(
 		);
 		if (row) {
 			await page(deps, row, "Paddle overage not charged (past due)", row.error ?? "past due");
-			result.failed += 1;
+			result.failedCharges += 1;
 		}
 		return;
 	}
 	if (sub.status !== "active") {
-		result.skipped += 1;
+		result.skippedSubscriptions += 1;
 		return;
 	}
 
@@ -315,7 +318,7 @@ async function sweepCandidate(
 			{ ...facts, status: "waived", error: `final cancellation: below the ${OVERAGE_IMMEDIATE_MINIMUM_MINOR} minor-unit minimum (O9)` },
 			now,
 		);
-		if (row) result.waived += 1;
+		if (row) result.waivedCharges += 1;
 		return;
 	}
 
@@ -329,14 +332,14 @@ async function sweepStaleClaim(row: UsageCharge, deps: OverageSweepDeps, now: Da
 	if (!(await deps.store.reclaim(row.id, new Date(now.getTime() - STALE_CLAIM_MS), now))) return;
 	const found = await deps.paddle.find(row.subscriptionId, row.id);
 	if (found) {
-		if (await deps.store.settle(row.id, { status: "reconciled", providerRef: found.providerRef }, now)) result.reconciled += 1;
+		if (await deps.store.settle(row.id, { status: "reconciled", providerRef: found.providerRef }, now)) result.reconciledCharges += 1;
 		return;
 	}
 	if (now.getTime() - row.createdAt.getTime() > UNCONFIRMED_GIVE_UP_MS) {
 		const reason = "unconfirmed for 24h and not found on the subscription; check Paddle before charging by hand";
 		if (await deps.store.settle(row.id, { status: "failed", error: reason }, now)) {
 			await page(deps, row, "Paddle overage charge unconfirmed", reason);
-			result.failed += 1;
+			result.failedCharges += 1;
 		}
 		return;
 	}
@@ -345,7 +348,7 @@ async function sweepStaleClaim(row: UsageCharge, deps: OverageSweepDeps, now: Da
 		const reason = `subscription is ${sub.status}; the charge was not found and cannot be posted`;
 		if (await deps.store.settle(row.id, { status: "failed", error: reason }, now)) {
 			await page(deps, row, "Paddle overage charge not posted", reason);
-			result.failed += 1;
+			result.failedCharges += 1;
 		}
 		return;
 	}
@@ -358,7 +361,14 @@ async function sweepStaleClaim(row: UsageCharge, deps: OverageSweepDeps, now: Da
  * heartbeat shows it.
  */
 export async function runPaddleOverageSweep(now: Date = new Date(), deps: OverageSweepDeps = defaultDeps()): Promise<OverageSweepResult> {
-	const result: OverageSweepResult = { posted: 0, reconciled: 0, waived: 0, failed: 0, pending: 0, skipped: 0 };
+	const result: OverageSweepResult = {
+		postedCharges: 0,
+		reconciledCharges: 0,
+		waivedCharges: 0,
+		failedCharges: 0,
+		unconfirmedCharges: 0,
+		skippedSubscriptions: 0,
+	};
 	const errors: string[] = [];
 
 	for (const row of await deps.store.staleClaims(new Date(now.getTime() - STALE_CLAIM_MS), OVERAGE_SWEEP_BATCH)) {

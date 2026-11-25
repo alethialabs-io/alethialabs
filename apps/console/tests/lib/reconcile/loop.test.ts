@@ -13,7 +13,14 @@ vi.mock("@/lib/billing/factura/sweeper", () => ({
 }));
 vi.mock("@/lib/billing/paddle/overage-sweeper", () => ({
 	paddleOverageSweepEnabled: vi.fn(() => false),
-	runPaddleOverageSweep: vi.fn(async () => ({ posted: 0, reconciled: 0, waived: 0, failed: 0, pending: 0, skipped: 0 })),
+	runPaddleOverageSweep: vi.fn(async () => ({
+		postedCharges: 0,
+		reconciledCharges: 0,
+		waivedCharges: 0,
+		failedCharges: 0,
+		unconfirmedCharges: 0,
+		skippedSubscriptions: 0,
+	})),
 }));
 vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async () => ({ converged: 0, candidates: 0 })) }));
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
