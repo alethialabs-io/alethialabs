@@ -711,6 +711,19 @@ controls:
     status: confirmed
     prod-qa: own-rows-only
 
+  - id: settings.service-token.revoke
+    route: /[org]/~/settings/tokens
+    surface: apps/console/components/settings/tokens/revoke-token-dialog.tsx
+    mutation: revokeConsoleServiceToken
+    control: { role: button, name: "Revoke <name>" }
+    confirm: confirm-dialog
+    confirm_action: "Revoke token"
+    dialog_title: "Revoke <name>?"
+    fixture: service-token
+    persona: owner
+    status: confirmed
+    prod-qa: own-rows-only
+
   - id: members.remove
     route: /[org]/~/settings/members
     surface: apps/console/components/settings/members/members-table.tsx

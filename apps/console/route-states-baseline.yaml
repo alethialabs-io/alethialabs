@@ -107,6 +107,7 @@ predicates:
       - /[org]/~/settings/roles: does-not-call-not-found
       - /[org]/~/settings/sso: does-not-call-not-found
       - /[org]/~/settings/teams: does-not-call-not-found
+      - /[org]/~/settings/tokens: does-not-call-not-found
       - /[org]/~/settings: does-not-call-not-found
       - /[org]/~/support/abuse: does-not-call-not-found
       - /[org]/~/support/ask: does-not-call-not-found

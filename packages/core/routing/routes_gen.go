@@ -45,6 +45,7 @@ const (
 	RouteOrgSettingsRoles              = "/[org]/~/settings/roles"
 	RouteOrgSettingsSso                = "/[org]/~/settings/sso"
 	RouteOrgSettingsTeams              = "/[org]/~/settings/teams"
+	RouteOrgSettingsTokens             = "/[org]/~/settings/tokens"
 	RouteOrgSupportAbuse               = "/[org]/~/support/abuse"
 	RouteOrgSupportAsk                 = "/[org]/~/support/ask"
 	RouteOrgSupportCasesID             = "/[org]/~/support/cases/[id]"
@@ -90,6 +91,7 @@ var Routes = []string{
 	RouteOrgSettingsRoles,
 	RouteOrgSettingsSso,
 	RouteOrgSettingsTeams,
+	RouteOrgSettingsTokens,
 	RouteOrgSupportAbuse,
 	RouteOrgSupportAsk,
 	RouteOrgSupportCasesID,
