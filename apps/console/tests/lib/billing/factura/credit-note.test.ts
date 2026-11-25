@@ -57,11 +57,13 @@ function refund(over: Partial<RefundSource> = {}): RefundSource {
 function rowOf(id: string, insert: FacturaInsert): Factura {
 	return {
 		id,
-		organizationId: insert.organizationId,
+		organizationId: insert.organizationId ?? null,
+		source: insert.source ?? "stripe",
+		manualKey: insert.manualKey ?? null,
 		number: insert.number,
 		kind: insert.kind,
 		originalFacturaId: insert.originalFacturaId ?? null,
-		stripeInvoiceId: insert.stripeInvoiceId,
+		stripeInvoiceId: insert.stripeInvoiceId ?? null,
 		stripeRefundId: insert.stripeRefundId ?? null,
 		issueDate: insert.issueDate,
 		chargeableDate: insert.chargeableDate,

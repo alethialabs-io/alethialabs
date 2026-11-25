@@ -63,6 +63,8 @@ function row(id: string, snapshot: Factura["snapshot"], kind: Factura["kind"], o
 		originalFacturaId: null,
 		stripeInvoiceId: `in_demo_${id}`,
 		stripeRefundId: null,
+		source: "stripe",
+		manualKey: null,
 		issueDate: snapshot.issueDate,
 		chargeableDate: snapshot.chargeableDate,
 		snapshot,

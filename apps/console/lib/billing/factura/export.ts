@@ -9,8 +9,10 @@
 // THE FILES, for month M:
 //  - `facturi-M.csv`: one line per document issued in M (Sofia dates), фактури and credit notes,
 //    in number order: number, kind, the corrected фактура, dates, recipient, amounts in the document
-//    currency and in EUR with the rate, its date and source, the no-VAT ground, the Stripe ids, and
-//    the PDF's file name and SHA-256;
+//    currency and in EUR with the rate, its date and source, the no-VAT ground, the Stripe ids, the
+//    PDF's file name and SHA-256, and (appended by L6b, so earlier columns keep their place) the
+//    document's source (`stripe` or `manual`), its VAT rate when VAT is charged, and the operator key
+//    of a manual document;
 //  - `facturi-M-pdfs.zip`: every PDF under `pdfs/<number>.pdf`, stored (PDFs are already compressed);
 //  - `stripe-balance-M.csv`: every Stripe balance transaction created in M (gross, fee, net, type,
 //    the payout it settled in), so the accountant can reconcile payouts and fees to the documents;
@@ -161,6 +163,9 @@ export const FACTURA_CSV_HEADER = [
 	"stripe_invoice_number",
 	"pdf_file",
 	"pdf_sha256",
+	"source",
+	"vat_rate",
+	"manual_key",
 ] as const;
 
 /**
@@ -200,6 +205,9 @@ export function facturaCsv(rows: readonly Factura[]): Uint8Array {
 				s.stripeInvoiceNumber,
 				pdfEntryName(r),
 				r.pdfSha256,
+				r.source,
+				s.vatRatePercent ?? null,
+				r.manualKey,
 			];
 		}),
 	);
