@@ -1,0 +1,2 @@
+ALTER TABLE "apply_approvals" ADD COLUMN "decision_reason" text;--> statement-breakpoint
+ALTER TABLE "apply_approvals" ADD CONSTRAINT "apply_approvals_decision_reason_length" CHECK (decision_reason IS NULL OR char_length(decision_reason) <= 500);

@@ -90,6 +90,11 @@ export const applyApprovals = pgTable(
 		/** The browser session that decided. No FK: sessions are deleted on sign-out and expiry. */
 		approver_session_id: uuid(),
 		decided_at: timestamp({ withTimezone: true }),
+		/**
+		 * The decider's optional reason, given when denying (AGT-L2, gap G3). UNTRUSTED text, like
+		 * `reason`: shown to the requester and their agent as data, never as an instruction.
+		 */
+		decision_reason: text(),
 		/** Set at creation from the org's approval TTL (default 60 minutes, at most 24 hours). */
 		expires_at: timestamp({ withTimezone: true }).notNull(),
 		consumed_at: timestamp({ withTimezone: true }),
@@ -131,6 +136,10 @@ export const applyApprovals = pgTable(
 			sql`status NOT IN ('approved', 'rejected', 'consumed') OR (approver_user_id IS NOT NULL AND decided_at IS NOT NULL)`,
 		),
 		check("apply_approvals_expiry_after_create", sql`expires_at > created_at`),
+		check(
+			"apply_approvals_decision_reason_length",
+			sql`decision_reason IS NULL OR char_length(decision_reason) <= 500`,
+		),
 	],
 );
 
