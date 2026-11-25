@@ -2,16 +2,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The actor an MCP access token becomes (lib/ai/mcp/actor.ts), over stood-in reads: the ceiling it is
-// held to, the organization the consent grant names, the URL's project pin, and the kill switch.
+// held to, the organization the consent grant names, its projects, its revocation, the URL's project
+// pin, and the kill switch.
 
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withScope: vi.fn() }));
+vi.mock("@/lib/agents/grant-binding", () => ({ readGrantBinding: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
 vi.mock("@/lib/approvals/context", () => ({ readAgentPolicy: vi.fn() }));
 
+import type { AgentGrant, GrantBinding } from "@/lib/agents/grant-binding";
+import { readGrantBinding } from "@/lib/agents/grant-binding";
 import {
-	type AgentGrant,
 	clientIdFromClaims,
 	defaultMcpActorDeps,
 	type McpActorDeps,
@@ -21,10 +24,15 @@ import { readAgentPolicy } from "@/lib/approvals/context";
 import { getServiceDb, withScope } from "@/lib/db";
 import { txAnswering } from "./tx-stub";
 
+/** A live binding to `grant`. */
+function live(grant: AgentGrant): GrantBinding {
+	return { kind: "live", grant };
+}
+
 /** Reads that answer a person in org-1 with no grant and agent access on, unless overridden. */
 function deps(over: Partial<McpActorDeps> = {}): McpActorDeps {
 	return {
-		readGrant: vi.fn(async () => null),
+		readGrant: vi.fn(async (): Promise<GrantBinding> => ({ kind: "none" })),
 		resolveScope: vi.fn(async (userId: string, orgId?: string) => ({ userId, orgId: orgId ?? "org-1" })),
 		agentAccessEnabled: vi.fn(async () => true),
 		...over,
@@ -65,7 +73,7 @@ describe("resolveMcpActor", () => {
 
 	it("acts in the grant's organization, narrowed to the grant's scopes and projects", async () => {
 		const grant: AgentGrant = { orgId: "org-2", scopes: ["read", "plan"], projectIds: ["p1", "p2"] };
-		const d = deps({ readGrant: vi.fn(async () => grant) });
+		const d = deps({ readGrant: vi.fn(async () => live(grant)) });
 		const result = await resolveMcpActor(CLAIMS, null, d);
 		expect(d.readGrant).toHaveBeenCalledWith("user-1", "client-1");
 		expect(d.resolveScope).toHaveBeenCalledWith("user-1", "org-2");
@@ -77,7 +85,7 @@ describe("resolveMcpActor", () => {
 
 	it("refuses when the grant's organization is not the one the person resolves into", async () => {
 		const d = deps({
-			readGrant: vi.fn(async () => ({ orgId: "org-left", scopes: ["read" as const], projectIds: null })),
+			readGrant: vi.fn(async () => live({ orgId: "org-left", scopes: ["read"], projectIds: null })),
 			resolveScope: vi.fn(async (userId: string) => ({ userId, orgId: "org-1" })),
 		});
 		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "org_not_permitted" });
@@ -85,7 +93,7 @@ describe("resolveMcpActor", () => {
 
 	it("refuses when the token and the grant share no scope", async () => {
 		const d = deps({
-			readGrant: vi.fn(async () => ({ orgId: "org-1", scopes: ["destroy" as const], projectIds: null })),
+			readGrant: vi.fn(async () => live({ orgId: "org-1", scopes: ["destroy"], projectIds: null })),
 		});
 		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "insufficient_scope" });
 	});
@@ -97,9 +105,62 @@ describe("resolveMcpActor", () => {
 
 	it("refuses a pin outside the grant's projects; a pin never widens", async () => {
 		const d = deps({
-			readGrant: vi.fn(async () => ({ orgId: "org-1", scopes: ["read" as const], projectIds: ["p1"] })),
+			readGrant: vi.fn(async () => live({ orgId: "org-1", scopes: ["read"], projectIds: ["p1"] })),
 		});
 		expect(await resolveMcpActor(CLAIMS, "p9", d)).toEqual({ ok: false, reason: "project_not_permitted" });
+	});
+
+	it("answers grant_revoked when every grant to the client is revoked, before resolving any org", async () => {
+		const d = deps({ readGrant: vi.fn(async (): Promise<GrantBinding> => ({ kind: "revoked" })) });
+		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "grant_revoked" });
+		// A revoked grant must not fall back to the no-grant path (the person's default org, every project).
+		expect(d.resolveScope).not.toHaveBeenCalled();
+		expect(d.agentAccessEnabled).not.toHaveBeenCalled();
+	});
+
+	it("refuses the very next request after a disconnect, with the same token", async () => {
+		let binding: GrantBinding = live({ orgId: "org-2", scopes: ["read"], projectIds: ["p1"] });
+		const d = deps({ readGrant: vi.fn(async () => binding) });
+		expect(await resolveMcpActor(CLAIMS, null, d)).toMatchObject({ ok: true, actor: { orgId: "org-2" } });
+		binding = { kind: "revoked" };
+		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "grant_revoked" });
+		expect(d.readGrant).toHaveBeenCalledTimes(2);
+	});
+
+	it("refuses a grant that records no organization rather than falling back to the person's own", async () => {
+		const d = deps({ readGrant: vi.fn(async () => live({ orgId: "", scopes: ["read"], projectIds: null })) });
+		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "org_not_permitted" });
+		expect(d.resolveScope).not.toHaveBeenCalled();
+	});
+
+	it("refuses a grant whose project list is empty rather than reading it as every project", async () => {
+		const d = deps({ readGrant: vi.fn(async () => live({ orgId: "org-1", scopes: ["read"], projectIds: [] })) });
+		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "project_not_permitted" });
+	});
+
+	it("holds an unpinned request to the grant's projects", async () => {
+		const d = deps({ readGrant: vi.fn(async () => live({ orgId: "org-1", scopes: ["read"], projectIds: ["p1"] })) });
+		expect(await resolveMcpActor(CLAIMS, null, d)).toMatchObject({ ok: true, actor: { ceiling: { projectIds: ["p1"] } } });
+	});
+
+	it("narrows a pin inside the grant's projects to that one project", async () => {
+		const d = deps({ readGrant: vi.fn(async () => live({ orgId: "org-1", scopes: ["read"], projectIds: ["p1", "p2"] })) });
+		expect(await resolveMcpActor(CLAIMS, "p2", d)).toMatchObject({ ok: true, actor: { ceiling: { projectIds: ["p2"] } } });
+	});
+
+	it("refuses a token that names no client: no grant can be read for it", async () => {
+		const d = deps();
+		expect(await resolveMcpActor({ sub: "user-1", scope: "read" }, null, d)).toEqual({ ok: false, reason: "no_client" });
+		expect(d.readGrant).not.toHaveBeenCalled();
+	});
+
+	it("keeps a token with no grant row on the token's own scopes over every project", async () => {
+		const d = deps();
+		expect(await resolveMcpActor(CLAIMS, null, d)).toMatchObject({
+			ok: true,
+			actor: { orgId: "org-1", ceiling: { scopes: ["read", "plan", "apply"], projectIds: null } },
+		});
+		expect(d.resolveScope).toHaveBeenCalledWith("user-1");
 	});
 
 	it("refuses every call while the organization's agent access is off (the kill switch)", async () => {
@@ -119,21 +180,8 @@ describe("clientIdFromClaims", () => {
 });
 
 describe("defaultMcpActorDeps", () => {
-	it("reads the client's live consent grant as an org, its scopes and its projects", async () => {
-		const db = txAnswering([{ org_id: "org-2", scopes: ["read", "plan"], project_ids: ["p1"] }]);
-		// The stub cannot satisfy drizzle's database type; the same shape addons-version.test.ts uses.
-		vi.mocked(getServiceDb).mockReturnValue(db as never);
-		expect(await defaultMcpActorDeps.readGrant("user-1", "client-1")).toEqual({
-			orgId: "org-2",
-			scopes: ["read", "plan"],
-			projectIds: ["p1"],
-		});
-		expect(db.select).toHaveBeenCalledTimes(1);
-	});
-
-	it("answers no grant when the client has none (or it was revoked)", async () => {
-		vi.mocked(getServiceDb).mockReturnValue(txAnswering([]) as never);
-		expect(await defaultMcpActorDeps.readGrant("user-1", "client-1")).toBeNull();
+	it("reads the grant through the binding read, live, revoked or none", () => {
+		expect(defaultMcpActorDeps.readGrant).toBe(readGrantBinding);
 	});
 
 	it("reads the organization's agent switch inside that person's tenancy scope", async () => {
@@ -143,5 +191,35 @@ describe("defaultMcpActorDeps", () => {
 		expect(await defaultMcpActorDeps.agentAccessEnabled({ userId: "user-1", orgId: "org-1" })).toBe(false);
 		expect(withScope).toHaveBeenCalledWith({ ownerId: "user-1", orgId: "org-1" }, expect.any(Function));
 		expect(readAgentPolicy).toHaveBeenCalledWith(tx, "org-1");
+	});
+});
+
+describe("readGrantBinding", () => {
+	/** The real read, past this file's module stand-in for the actor's tests. */
+	async function realRead() {
+		return (await vi.importActual<typeof import("@/lib/agents/grant-binding")>("@/lib/agents/grant-binding"))
+			.readGrantBinding;
+	}
+
+	it("answers a live grant as its org, scopes and projects", async () => {
+		const db = txAnswering([{ org_id: "org-2", scopes: ["read", "plan"], project_ids: ["p1"], revoked_at: null }]);
+		// The stub cannot satisfy drizzle's database type; the same shape addons-version.test.ts uses.
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+		expect(await (await realRead())("user-1", "client-1")).toEqual({
+			kind: "live",
+			grant: { orgId: "org-2", scopes: ["read", "plan"], projectIds: ["p1"] },
+		});
+		expect(db.select).toHaveBeenCalledTimes(1);
+	});
+
+	it("answers revoked when the row read first (live rows sort first) is revoked", async () => {
+		const db = txAnswering([{ org_id: "org-2", scopes: ["read"], project_ids: null, revoked_at: new Date() }]);
+		vi.mocked(getServiceDb).mockReturnValue(db as never);
+		expect(await (await realRead())("user-1", "client-1")).toEqual({ kind: "revoked" });
+	});
+
+	it("answers none when the client has no grant row at all", async () => {
+		vi.mocked(getServiceDb).mockReturnValue(txAnswering([]) as never);
+		expect(await (await realRead())("user-1", "client-1")).toEqual({ kind: "none" });
 	});
 });
