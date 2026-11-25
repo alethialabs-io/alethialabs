@@ -1,63 +1,47 @@
 ---
-title: NoSQL
-description: DynamoDB, Firestore, and Cosmos DB table configuration with key schema and billing modes.
+title: Add a NoSQL table
+description: Add a DynamoDB, Firestore or Cosmos DB table to an environment, with its keys, capacity mode, backups and replicas.
 ---
 
-The NoSQL section configures managed NoSQL database tables. Multiple tables can be added per project.
+Add a NoSQL table to the environment. You can add as many as you need.
 
-## Fields Per Table
+## Before you begin
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Name** | Text input | Table/collection name |
-| **Hash Key** | Text input | Partition key name (default: `id`) |
-| **Hash Key Type** | Select | `S` (String), `N` (Number), `B` (Binary) |
-| **Range Key** | Text input | Optional sort key name |
-| **Range Key Type** | Select | `S`, `N`, or `B` |
-| **Billing Mode** | Select | `PAY_PER_REQUEST` or `PROVISIONED` |
-| **Point-in-Time Recovery** | Toggle | Enable continuous backups |
-| **Table Type** | Select | `standard` or `global` (multi-region replication) |
+- You have a project open on the [canvas](/guides/design-project/the-canvas).
 
-## Services by Provider
+## Steps
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    **DynamoDB** — fully managed key-value and document database
+1. Select **Add**, then **NoSQL table** in the **Data** group.
+2. Under **Schema**, set the **Partition key** (default `id`) and its **Key type**.
+3. Optional: set a **Sort key** and its **Sort key type**. With the partition key it forms a
+   composite key. GCP and Hetzner do not offer a sort key.
+4. Under **Capacity**, choose the **Capacity mode**. Only AWS offers more than one.
+5. Leave **Point-in-time recovery** on (the default) for continuous backups that you can restore to
+   any second in the retention window. It is unavailable on Hetzner, which backs up on a schedule.
+6. Optional: under **Replication**, add **Global replica regions**, such as `us-east-1`. Only AWS and
+   Azure support them.
 
-    - Hash key (partition key) + optional range key (sort key)
-    - On-demand or provisioned capacity billing
-    - Global tables for multi-region replication
-    - KMS encryption at rest
-    - Point-in-time recovery (continuous backups up to 35 days)
-  </Tab>
-  <Tab value="GCP">
-    **Firestore** — document-oriented NoSQL database
+| Cloud | Service | Key types | Capacity modes |
+| --- | --- | --- | --- |
+| AWS | DynamoDB | String, Number, Binary | On-Demand, Provisioned |
+| GCP | Firestore | String, Number | Native Mode |
+| Azure | Cosmos DB | String, Number | Serverless |
+| Hetzner | ScyllaDB in your cluster, with its DynamoDB-compatible API | — | — |
 
-    - Document-based model (collections → documents → fields)
-    - Serverless with automatic scaling
-    - Multi-region replication built-in
+On Azure, replicas apply to the whole Cosmos DB account: it uses every table's list together. The
+first replica moves the account from serverless to provisioned billing. On a project that is already
+deployed, this replaces the account.
 
-    <Callout type="info">
-    Firestore uses a document model rather than a key-value model. When converting from DynamoDB, hash/range keys map to document IDs. See [Multi-Cloud Conversion](/concepts/multi-cloud-conversion).
-    </Callout>
-  </Tab>
-  <Tab value="Azure">
-    **Cosmos DB** — globally distributed multi-model database
+On Hetzner, a client written for DynamoDB works unchanged against the in-cluster table.
 
-    - Partition key (maps to hash key)
-    - Multiple APIs: SQL (document), Table (key-value), MongoDB, Cassandra, Gremlin
-    - Multi-region writes for global distribution
-    - Serverless or provisioned throughput (RU/s)
-  </Tab>
-</Tabs>
+NoSQL tables are priced per request, so a plan cannot estimate their cost from the design.
 
-## Billing Modes
+## Check that it worked
 
-| Mode | Description | Best For |
-|------|-------------|----------|
-| **PAY_PER_REQUEST** | Pay per read/write operation, no capacity planning | Unpredictable workloads, development |
-| **PROVISIONED** | Reserved read/write capacity units | Predictable workloads, cost optimization |
+After the deploy, the table's card shows a solid dot and its partition key, capacity mode and
+point-in-time recovery setting. Its **Status** tab shows the endpoint.
 
-<Callout type="info">
-NoSQL tables show $0 in the cost sidebar because pricing is usage-based (per operation), not estimable from configuration alone. Actual costs depend on read/write patterns.
-</Callout>
+## Related
+
+- [Add a service](/guides/design-project/services)
+- [Multi-cloud conversion](/concepts/multi-cloud-conversion): how keys and capacity modes change on another cloud.

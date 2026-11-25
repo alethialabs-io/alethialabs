@@ -1,101 +1,83 @@
 ---
-title: Databases
-description: Managed relational databases — Aurora, Cloud SQL, Azure Database with engine selection and capacity.
+title: Add a database
+description: Add a managed PostgreSQL or MySQL database to an environment, set its capacity, backups and version, and read its credentials.
 ---
 
-The databases section configures managed relational database instances. Multiple databases can be added per project, each with its own engine, version, and capacity settings.
+Add a relational database to the environment. You can add as many as you need.
 
-## Fields Per Database
+## Before you begin
 
-| Field | Type | Description |
-|-------|------|-------------|
-| **Name** | Text input | Unique per project, lowercase, used in resource naming |
-| **Engine** | Select | Provider-specific engine (see below) |
-| **Engine Version** | Auto-set | Determined by engine selection |
-| **Min Capacity** | Number | Minimum capacity (ACUs for Aurora, vCPUs for Cloud SQL) |
-| **Max Capacity** | Number | Maximum capacity for auto-scaling |
-| **Port** | Number | Database port (default: 5432 for PostgreSQL, 3306 for MySQL) |
-| **IAM Auth** | Toggle | Authenticate with short-lived cloud IAM tokens instead of a password. PostgreSQL and MySQL, on AWS, GCP and Azure. See [Keyless database auth](/guides/design-project/keyless-database-auth) |
+- You have a project open on the [canvas](/guides/design-project/the-canvas).
 
-## Engines by Provider
+## Steps
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
-  <Tab value="AWS">
-    **Aurora Serverless v2** — auto-scaling managed database
+1. Select **Add**, then **Database** in the **Data** group.
+2. Choose **PostgreSQL** or **MySQL**. On Hetzner, only PostgreSQL is offered. The first database
+   is named `primary`.
+3. Under **General**, check the **Port**. The default is 5432.
+4. Under **Capacity**, set **Min capacity** and **Max capacity**. The database scales between them:
 
-    | Engine | Version | Capacity Unit |
-    |--------|---------|---------------|
-    | Aurora PostgreSQL | 16.6 | ACUs (0.5–128) |
-    | Aurora MySQL | 8.0 | ACUs (0.5–128) |
+   | Cloud | Service | Unit | Range | Default |
+   | --- | --- | --- | --- | --- |
+   | AWS | Aurora Serverless v2 | ACU (about 2 GiB of memory each) | 0.5–128 | 0.5–4 |
+   | GCP | Cloud SQL | vCPU | 1–96 | 1–4 |
+   | Azure | Azure Database Flexible Server | vCores | 1–64 | 2–4 |
 
-    Aurora Capacity Units (ACUs) scale automatically between min and max. Each ACU provides ~2 GiB of memory. At $0.14/ACU-hour, a 0.5–4 ACU database costs approximately $51–$408/month.
-  </Tab>
-  <Tab value="GCP">
-    **Cloud SQL** — managed database instances
+   On Hetzner the database runs in your cluster on CloudNativePG. Set **Storage**, the volume per
+   PostgreSQL instance in GiB, and **Instances**, one primary plus replicas (1–5), under
+   **In-cluster sizing** instead.
+5. Under **Security**:
+   - Turn on **IAM authentication** so that services connect with short-lived cloud tokens instead
+     of a password. See [Use keyless database auth](/guides/design-project/keyless-database-auth).
+     It is unavailable on Hetzner, and the switch says why.
+   - Set **Backup retention** in days (0–35). `0` turns automated backups off. Point-in-time restore
+     covers this window.
+6. Optional: under **Advanced**, pin an **Engine version**, or choose an **Instance class**. Empty
+   values use the template's defaults.
 
-    | Engine | Version | Capacity Unit |
-    |--------|---------|---------------|
-    | Cloud SQL PostgreSQL | 15 | vCPUs (1–96) |
-    | Cloud SQL MySQL | 8.0 | vCPUs (1–96) |
-  </Tab>
-  <Tab value="Azure">
-    **Azure Database Flexible Server** — managed database
+### Engine versions
 
-    | Engine | Version | Capacity Unit |
-    |--------|---------|---------------|
-    | Azure PostgreSQL | 16 | vCores (1–64) |
-    | Azure MySQL | 8.0 | vCores (1–64) |
-  </Tab>
-</Tabs>
+The lists come from your cloud account when Alethia can read them. When it cannot:
 
-## Adding Multiple Databases
+| Cloud | PostgreSQL | MySQL |
+| --- | --- | --- |
+| AWS | 14–18, default 16 | 8.0 and 8.4, default 8.0 |
+| GCP | 14–18, default 15 | 5.7, 8.0 and 8.4, default 8.0 |
+| Azure | 14–18, default 16 | 5.7, 8.0.21 and 8.4, default 8.0.21 |
+| Hetzner | 16 | Not offered |
 
-Click **"Add Database"** to add another instance. Each database gets its own card in the form. The first database defaults to:
-- Name: `primary`
-- Engine: Aurora PostgreSQL (or equivalent)
-- Capacity: 0.5–4 ACUs
+## Read the credentials
 
-Common patterns:
-- **Primary + Read Replica**: One write database + one read-optimized database
-- **Multi-service**: Separate databases per microservice (e.g., `users-db`, `orders-db`)
+Alethia generates the database's password at deploy. A service gets it through a
+[binding](/guides/design-project/services), as a Kubernetes Secret that the External Secrets
+Operator keeps in sync, so you never copy it.
 
-## After Provisioning
+## Read the extra database user on AWS
 
-Once deployed, the database card in the [project detail](/guides/dashboard) Services tab shows:
-- **Writer endpoint** — primary connection string
-- **Reader endpoint** — read replica connection (Aurora only)
-- **Master credentials** — stored in Secrets Manager (ARN shown, copy button)
-- **Status** — ACTIVE, CREATING, or FAILED
+On AWS, Alethia also creates a second database user, `demouser`, on the database `demodb`. It
+generates the password and stores the user name, password and database name in AWS Secrets
+Manager. After the deploy, the database records that secret's ARN as `extra_secret_ref`. Read the
+credentials from the secret.
 
-<Callout type="info">
-**IAM authentication** lets a workload connect using its own cloud identity and a short-lived token
-instead of a stored password — nothing to rotate, no secret in the cluster. A service bound to an
-IAM-auth database picks this up automatically.
+You cannot change this user on the canvas or in `provider_config`, because the template variable
+`rds_extra_credentials` holds the password too, and Alethia does not store a credential in a
+component's configuration.
 
-It covers **PostgreSQL and MySQL on AWS, GCP and Azure**. Hetzner has no
-token-based database login, so a database there stays on the password path even with the toggle
-on. See [Keyless database auth](/guides/design-project/keyless-database-auth) for how it works per
-cloud and its current rollout status.
-</Callout>
+A project saved earlier can still hold an `rds_extra_credentials` value. Alethia keeps applying it
+and never shows it. To remove it:
 
-## The extra database user (AWS)
+1. Open the database's **Advanced** group.
+2. Choose **Remove the stored value**.
+3. Deploy. The secret is rewritten with the default user, database and a new password.
+4. Update the services that read the old credentials.
 
-On AWS, Alethia creates a second database user beside the master user. Alethia generates its
-password and stores the user name, password and database name in AWS Secrets Manager. After the
-deploy, the database records the secret's ARN as `extra_secret_ref`. Read the credentials from that
-secret.
+## Check that it worked
 
-You cannot set this user on the canvas or with `provider_config`. The template variable
-`rds_extra_credentials` holds the user name, the database name and the password in one value, and
-Alethia does not store a credential in a component's configuration. The **Advanced** section shows a
-note in its place. Because the three fields are one variable, the user name and database name are
-not settable either: every new database gets the template defaults, user `demouser` on database
-`demodb`. Read them from the same Secrets Manager secret as the password.
+After the deploy, open the database's **Status** tab. **Endpoints** shows the hostname, with a copy
+button.
 
-<Callout type="warn">
-A project saved before this change can still hold an `rds_extra_credentials` value. Alethia keeps it
-and still applies it, and it never shows the value. To stop storing it, open the database's
-**Advanced** section and choose **Remove the stored value**. The next deploy then rewrites the
-secret with the template's default user name and database and a generated password. Update the
-services that read the old credentials.
-</Callout>
+## Related
+
+- [Use keyless database auth](/guides/design-project/keyless-database-auth)
+- [Add a service](/guides/design-project/services)
+- [Add secrets](/guides/design-project/secrets)
