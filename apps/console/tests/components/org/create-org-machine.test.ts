@@ -305,6 +305,13 @@ const EVENTS: { readonly [K in CreateOrgEvent["type"]]: Row } = {
 		expect: { view: "invite", isTrialOrg: true, paidPlan: null },
 		screen: "invite",
 	},
+	// A Paddle checkout completed on the org created first (O2): a paid org, so not the trial's invite copy.
+	"provider-paid": {
+		from: at({ view: "declare", isTrialOrg: true, paidPlan: { ...DONE, paymentUrl: null } }),
+		event: { type: "provider-paid" },
+		expect: { view: "invite", isTrialOrg: false, paidPlan: null },
+		screen: "invite",
+	},
 	"charge-confirmed": {
 		from: at({ view: "pay", clientSecret: "s" }),
 		event: { type: "charge-confirmed", record: RECORD },
@@ -568,7 +575,9 @@ describe("money-path rules", () => {
 			const from: CreateOrgState = { ...row.from, view: row.from.view === "invite" ? "pay" : row.from.view };
 			return createOrgReducer(from, row.event).view === "invite" ? [type] : [];
 		});
-		expect(reached.sort()).toEqual(["setup-ended", "trial-started"]);
+		// `provider-paid`: Paddle reported the checkout complete on an org that already exists (O2) — the
+		// merchant of record's own "finished", with no setup steps of ours left to run.
+		expect(reached.sort()).toEqual(["provider-paid", "setup-ended", "trial-started"]);
 	});
 
 	it("a trial-eligible account skips the declaration", () => {
