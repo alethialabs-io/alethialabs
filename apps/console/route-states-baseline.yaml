@@ -16,9 +16,9 @@
 # It prints; it never writes. Regenerating this file over a red run is how a ratchet becomes
 # a rubber stamp — read the diff and only accept lines your change actually moved.
 version: 1
-routes: 43
+routes: 44
 redirectOnly: 4
-real: 39
+real: 40
 predicates:
   S1:
     fail: []
@@ -89,6 +89,7 @@ predicates:
       - /[org]/[project]/settings: does-not-call-not-found
       - /[org]/[project]: does-not-call-not-found
       - /[org]/~/alerts: does-not-call-not-found
+      - /[org]/~/approvals: does-not-call-not-found
       - /[org]/~/clusters: does-not-call-not-found
       - /[org]/~/connectors: does-not-call-not-found
       - /[org]/~/evidence: does-not-call-not-found

@@ -27,6 +27,7 @@ vi.mock("@/lib/rpc/client", () => {
 			},
 			// The support pages' reads (#6130).
 			support: { key: () => ["support-orpc"] },
+			approvals: proc("approvals"),
 			// The Alerts hub's reads (#6125).
 			alerts: { key: () => ["alerts-orpc"] },
 			// The people & access reads, which the members and access topics invalidate (#6129).
