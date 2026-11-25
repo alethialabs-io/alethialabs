@@ -17,6 +17,8 @@ import {
 	planIncludedCreditCents,
 	planMeta,
 	planUnitAmountCents,
+	RUNNER_MINUTE_OVERAGE_PER_1000,
+	runnerOverageAmountMinor,
 } from "../src/index";
 
 describe("planMeta", () => {
@@ -163,5 +165,21 @@ describe("aiPlanUnitAmountCents (Stripe-provisioning SSOT)", () => {
 
 	it("is free (0 cents) for AI Free rather than throwing", () => {
 		expect(aiPlanUnitAmountCents("ai_free")).toBe(0);
+	});
+});
+
+describe("runnerOverageAmountMinor (overage SSOT)", () => {
+	it("prices $0.012 / €0.011 per minute, rounding a fraction of a cent down", () => {
+		expect(RUNNER_MINUTE_OVERAGE_PER_1000).toEqual({ usd: 1200, eur: 1100 });
+		expect(runnerOverageAmountMinor(1000, "usd")).toBe(1200);
+		expect(runnerOverageAmountMinor(1000, "eur")).toBe(1100);
+		expect(runnerOverageAmountMinor(1, "usd")).toBe(1);
+		expect(runnerOverageAmountMinor(83, "usd")).toBe(99);
+	});
+
+	it("charges nothing for zero, negative or non-numeric minutes", () => {
+		expect(runnerOverageAmountMinor(0, "usd")).toBe(0);
+		expect(runnerOverageAmountMinor(-5, "eur")).toBe(0);
+		expect(runnerOverageAmountMinor(Number.NaN, "usd")).toBe(0);
 	});
 });

@@ -110,6 +110,9 @@ export interface BillingDocument {
 	url: string | null;
 	/** Who issued it — Paddle's documents are Paddle's, not ours. */
 	issuer: SellerOfRecord;
+	/** The billing period it covers, when it is a subscription document. */
+	periodStart?: Date | null;
+	periodEnd?: Date | null;
 }
 
 /** A provider's live self-serve prices, per item, per currency. */

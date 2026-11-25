@@ -3,7 +3,8 @@
 
 // The Paddle adapter (lib/billing/paddle/provider.ts): parseWebhook verifies before it parses and
 // returns the normalized event; mode follows the KEY's prefix; the methods later lanes own refuse
-// loudly instead of pretending.
+// loudly instead of pretending; the L5 usage methods are wired (their logic is tested in
+// paddle-overage*.test.ts and paddle-documents.test.ts).
 
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
@@ -76,7 +77,7 @@ describe("createPaddleProvider() identity and mode", () => {
 });
 
 describe("methods later lanes own", () => {
-	it("refuse with PaddleNotImplementedError, and job usage is not metered", async () => {
+	it("refuse with PaddleNotImplementedError", async () => {
 		const ref = { organizationId: "o", subscriptionId: "sub_1", slot: "plan" as const };
 		const calls = [
 			provider.startPurchase({ organizationId: "o", userId: "u", item: { kind: "plan", plan: "team" }, returnUrl: "https://x.invalid" }),
@@ -84,7 +85,20 @@ describe("methods later lanes own", () => {
 			provider.cancelAtPeriodEnd(ref),
 			provider.resume(ref),
 			provider.changePlan(ref, { kind: "plan", plan: "team" }),
-			provider.listDocuments("o"),
+			provider.livePrices(),
+		];
+		for (const call of calls) await expect(call).rejects.toBeInstanceOf(PaddleNotImplementedError);
+	});
+});
+
+describe("L5 usage methods", () => {
+	it("records job usage in our own ledger (true when there are minutes), never a provider meter", async () => {
+		await expect(provider.reportJobUsage({ organizationId: "o", customerId: null, minutes: 1, idempotencyKey: "k" })).resolves.toBe(true);
+		await expect(provider.reportJobUsage({ organizationId: "o", customerId: null, minutes: 0, idempotencyKey: "k" })).resolves.toBe(false);
+	});
+
+	it("refuses to post a usage charge when no runner-minutes product is configured", async () => {
+		await expect(
 			provider.postUsageCharge({
 				usageChargeId: "c",
 				organizationId: "o",
@@ -92,13 +106,8 @@ describe("methods later lanes own", () => {
 				periodStart: new Date(0),
 				periodEnd: new Date(1),
 				overageMinutes: 1,
-				amount: { minor: 100, currency: "EUR" },
+				amount: { minor: 100, currency: "eur" },
 			}),
-			provider.livePrices(),
-		];
-		for (const call of calls) await expect(call).rejects.toBeInstanceOf(PaddleNotImplementedError);
-		await expect(provider.reportJobUsage({ organizationId: "o", customerId: null, minutes: 1, idempotencyKey: "k" })).resolves.toBe(
-			false,
-		);
+		).rejects.toThrow(/PADDLE_PRODUCT_RUNNER_MINUTES/);
 	});
 });
