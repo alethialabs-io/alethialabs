@@ -4,9 +4,10 @@
 // #6120 / #6819 — the Environments page reads `environments.overview` (prefetched by the route) and
 // renders its states distinctly (RUBRIC B3/B4): pending is the route's own skeleton, a refusal is a
 // refusal (forbidden, or a project that is not there), a failure is an error with a retry, and only
-// data renders the page. With data, the page opens with the toolbar — the count, one line of
-// description, the actions — and NO page title (F010), and the environments are a TABLE on the
-// filter standard: the server decides which rows match, and the bar's selection is the read's input.
+// data renders the page. With data, the page opens with the toolbar — one line of description, the
+// actions, NO count and NO page title (F010) — and the environments are a TABLE on the filter
+// standard and the list standard (LST-3 #7485): the server decides which rows match and pages them
+// by keyset (`environments.page`), and the bar's selection is that read's key.
 //
 // It also says what a person must not miss: a control they may not use is disabled WITH its reason,
 // and a FAILED environment may still hold cloud resources that only Destroy removes.
@@ -17,7 +18,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FakeHandler } from "@/tests/helpers/fake-orpc";
-import { DEV, PROD, envRow, overviewOf, pageOf } from "./fixtures";
+import { DEV, PROD, envRow, overviewOf, pageOf, seedLists } from "./fixtures";
 
 const h = vi.hoisted(() => ({
 	handlers: {} as Record<string, FakeHandler>,
@@ -62,6 +63,7 @@ import { ENVIRONMENT_COLUMN_COUNT } from "@/components/environments/environment-
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { orpc } from "@/lib/rpc/client";
+import type { EnvironmentsPage } from "@/lib/queries/environments";
 import type { EnvironmentsOverview } from "@/lib/rpc/procedures/environments";
 import { useEnvironmentsFilters } from "@/lib/stores/use-environments-filters";
 
@@ -73,7 +75,7 @@ function renderView(seed: (qc: QueryClient) => void) {
 	// it, not refetching. (An errored entry with no data is refetched on mount by default, and a
 	// refetch of a never-successful query resets it to pending — the render under test would vanish.)
 	const qc = new QueryClient({
-		defaultOptions: { queries: { retry: false, staleTime: Infinity, retryOnMount: false } },
+		defaultOptions: { queries: { retry: false, retryDelay: 0, staleTime: Infinity, retryOnMount: false } },
 	});
 	seed(qc);
 	return render(
@@ -83,9 +85,12 @@ function renderView(seed: (qc: QueryClient) => void) {
 	);
 }
 
-/** Seeds the pristine read with `data`. */
-function seeded(data: EnvironmentsOverview) {
-	return (qc: QueryClient) => qc.setQueryData(KEY, data);
+/** Seeds the pristine overview with `data`, and the table's first page (`page`, default: every environment). */
+function seeded(data: EnvironmentsOverview, page: EnvironmentsPage = pageOf(data.envs)) {
+	return (qc: QueryClient) => {
+		qc.setQueryData(KEY, data);
+		seedLists(qc, data, page);
+	};
 }
 
 /** Seeds the overview read as failed with `error` (what a refused or failed prefetch leaves). */
@@ -103,19 +108,22 @@ beforeEach(() => {
 	h.inputs.length = 0;
 	h.search = new URLSearchParams();
 	for (const key of Object.keys(h.handlers)) delete h.handlers[key];
-	h.handlers["environments.overview"] = async (input) => {
+	h.handlers["environments.overview"] = async () => overviewOf();
+	h.handlers["environments.page"] = async (input) => {
 		h.inputs.push(input);
-		return overviewOf();
+		return pageOf([DEV, PROD]);
 	};
+	h.handlers["environments.promotions"] = async () => ({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 	act(() => useEnvironmentsFilters.getState().reset());
 });
 
 describe("EnvironmentsView — the data (F010)", () => {
-	it("opens with the toolbar — the count, the description, the actions — and no page title", () => {
+	it("opens with the toolbar — the description, the actions, no count — and no page title", () => {
 		renderView(seeded(overviewOf()));
 		const toolbar = document.querySelector('[data-slot="page-toolbar"]');
 		expect(toolbar).not.toBeNull();
-		expect(toolbar).toHaveTextContent("2");
+		// No list size anywhere in it (lib/query/README.md → "Counts").
+		expect(toolbar?.textContent).not.toMatch(/\d/);
 		expect(toolbar).toHaveTextContent("Isolated instances of this project's services.");
 		expect(screen.getByRole("button", { name: /new environment/i })).toBeEnabled();
 		expect(screen.getByRole("button", { name: /promote/i })).toBeEnabled();
@@ -271,7 +279,7 @@ describe("EnvironmentsView — what needs a decision", () => {
 
 	it("a filter does not hide the warning: the failed environment is filtered out of the list, not out of the notice", () => {
 		renderView(
-			seeded(overviewOf({ envs: [DEV, QA], page: { ...pageOf([DEV, QA]), rowIds: ["env-dev"], resultCount: 1 } })),
+			seeded(overviewOf({ envs: [DEV, QA] }), pageOf([DEV, QA], [DEV])),
 		);
 		expect(within(screen.getByRole("table")).queryByRole("link", { name: "qa" })).toBeNull();
 		expect(document.querySelectorAll('[data-slot="failed-environment-notice"]')).toHaveLength(1);
@@ -314,18 +322,16 @@ describe("EnvironmentsView — what needs a decision", () => {
 });
 
 describe("EnvironmentsView — the filter standard", () => {
-	it("shows the rows the SERVER matched, and counts them — not every environment it knows", () => {
-		renderView(
-			seeded(overviewOf({ page: { ...pageOf([DEV, PROD]), rowIds: ["env-prod"], resultCount: 1 } })),
-		);
+	it("shows the rows the SERVER matched — not every environment it knows — and no count", () => {
+		renderView(seeded(overviewOf(), pageOf([DEV, PROD], [PROD])));
 		const table = screen.getByRole("table");
 		expect(within(table).getByRole("link", { name: "production" })).toBeInTheDocument();
 		expect(within(table).queryByRole("link", { name: "development" })).toBeNull();
-		expect(document.querySelector('[data-slot="page-toolbar"]')).toHaveTextContent("1");
+		expect(document.querySelector('[data-slot="page-toolbar"]')?.textContent).not.toMatch(/\d/);
 	});
 
 	it("environments the filters exclude is `no match`, with a way back — never `No environments`", () => {
-		renderView(seeded(overviewOf({ page: { ...pageOf([DEV, PROD]), rowIds: [], resultCount: 0 } })));
+		renderView(seeded(overviewOf(), pageOf([DEV, PROD], [])));
 		expect(screen.getByText("No environments match these filters")).toBeInTheDocument();
 		expect(screen.queryByText("No environments")).toBeNull();
 		expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
@@ -351,5 +357,63 @@ describe("EnvironmentsView — the filter standard", () => {
 		for (const label of ["Development", "Staging", "Production"]) {
 			expect(screen.getByRole("button", { name: new RegExp(`^${label}`) })).toBeInTheDocument();
 		}
+	});
+});
+
+describe("EnvironmentsView — the table pages by keyset (LST-3 #7485)", () => {
+	const QA = envRow({ id: "env-qa", name: "qa", stage: "staging" });
+
+	it("a further page is reached through the footer's Load more, and joins the rows already shown", async () => {
+		const overview = overviewOf({ envs: [DEV, PROD, QA] });
+		const first = { ...pageOf([DEV, PROD, QA], [PROD, DEV]), nextCursor: "c1" };
+		h.handlers["environments.page"] = async (input) => {
+			h.inputs.push(input);
+			return { rows: pageOf([QA]).rows, nextCursor: null, facets: null, universeEmpty: null };
+		};
+		renderView(seeded(overview, first));
+		const table = screen.getByRole("table");
+		expect(within(table).queryByRole("link", { name: "qa" })).toBeNull();
+		await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+		await waitFor(() => expect(within(table).getByRole("link", { name: "qa" })).toBeInTheDocument());
+		expect(h.inputs.at(-1)).toEqual({ project: "payments", cursor: "c1" });
+		// The end: no footer, and no "that's all N".
+		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+	});
+
+	it("a failed later page keeps the rows and offers a retry line", async () => {
+		h.handlers["environments.page"] = async () => {
+			throw new Error("network");
+		};
+		renderView(seeded(overviewOf(), { ...pageOf([DEV, PROD]), nextCursor: "c1" }));
+		await userEvent.click(screen.getByRole("button", { name: "Load more" }));
+		expect(await screen.findByText("Couldn't load more")).toBeInTheDocument();
+		expect(within(screen.getByRole("table")).getByRole("link", { name: "production" })).toBeInTheDocument();
+	});
+
+	it("a failed FIRST page of the table is its own error with a retry, under the panels", async () => {
+		h.handlers["environments.page"] = async () => {
+			throw new Error("network");
+		};
+		const qc = (client: QueryClient) => client.setQueryData(KEY, overviewOf());
+		renderView(qc);
+		expect(await screen.findByText("Couldn't load environments")).toBeInTheDocument();
+		// The overview still rendered: the toolbar is there.
+		expect(document.querySelector('[data-slot="page-toolbar"]')).not.toBeNull();
+		expect(screen.queryByText("No environments")).toBeNull();
+	});
+
+	it("a filter change restarts at page one — no cursor from the old walk", async () => {
+		renderView(seeded(overviewOf(), { ...pageOf([DEV, PROD]), nextCursor: "c1" }));
+		act(() => useEnvironmentsFilters.getState().set("stages", ["production"]));
+		await waitFor(() => expect(h.inputs).toContainEqual({ project: "payments", stages: ["production"] }));
+		expect(h.inputs.every((input) => typeof input === "object" && input !== null && !("cursor" in input && input.cursor))).toBe(true);
+	});
+
+	it("Reset clears the filters back to the pristine key", async () => {
+		renderView(seeded(overviewOf()));
+		act(() => useEnvironmentsFilters.getState().set("stages", ["production"]));
+		await waitFor(() => expect(h.inputs).toContainEqual({ project: "payments", stages: ["production"] }));
+		act(() => useEnvironmentsFilters.getState().reset());
+		expect(useEnvironmentsFilters.getState().filters).toEqual({ search: "", stages: [], statuses: [] });
 	});
 });

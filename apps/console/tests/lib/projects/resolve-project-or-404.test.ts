@@ -33,7 +33,16 @@ vi.mock("@/lib/rpc/server", () => ({
 			},
 		},
 		clusters: {
-			page: { queryOptions: () => ({ queryKey: [["clusters", "page"]], queryFn: async () => null }) },
+			// The clusters route prefetches the first KEYSET page (components/clusters/clusters-prefetch.ts).
+			page: {
+				infiniteOptions: () => ({
+					queryKey: [["clusters", "page"], { type: "infinite" }],
+					queryFn: async () => ({ rows: [], nextCursor: null }),
+					initialPageParam: null,
+					getNextPageParam: () => null,
+				}),
+			},
+			detail: { queryOptions: () => ({ queryKey: [["clusters", "detail"]], queryFn: async () => null }) },
 		},
 	}),
 }));

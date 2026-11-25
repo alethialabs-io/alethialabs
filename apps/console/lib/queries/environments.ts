@@ -6,13 +6,24 @@
 //
 // ── WHY THIS RESOLVES IN MEMORY ─────────────────────────────────────────────────────────────
 //
-// The list is not read here. `readEnvironmentsOverview()` (lib/rpc/procedures/environments.ts)
-// gets a project's environments from `getProjectEnvironments`, an in-process call into the projects
-// unit's module, and composes each row with its BYO admission state; the same answer also feeds the
-// consistency matrix, the promote dialog and the promotions history, which need EVERY environment
-// whatever the bar selects. So the read stays one read and the narrowing happens here, over the
-// composed list — the arrangement the runners and clusters lists have. A project's environments are
-// a handful, bounded by the plan.
+// The list is not read here. `readEnvironmentsPage()` (lib/rpc/procedures/environments.ts) gets a
+// project's environments from `getProjectEnvironments`, an in-process call into the projects unit's
+// module — a composed source, not a table this builder can put a `WHERE` on — and the narrowing
+// happens here, over that list: the arrangement the runners and clusters lists have.
+//
+// ── PAGED IN MEMORY, ON THE SERVER ──────────────────────────────────────────────────────────
+//
+// The list standard's keyset contract (lib/query/README.md → "Paging"; LST-3 #7485). A SQL keyset
+// is impossible over an in-process module call, so the composed list is paged here through
+// `keysetPageInMemory`: the same order (creation instant truncated to ms, then id, both
+// descending) and the same strictly-after cursor as a SQL builder, one page to the browser at a
+// time. Not a `bounded` decision: nothing in the product caps how many environments a project
+// holds, so there is no server-side bound to name.
+//
+// The rest of the Environments page — the failure notices, the consistency matrix, the promote
+// dialog — needs EVERY environment whatever the bar selects, and keeps reading them whole through
+// `environments.overview`. Only the TABLE's rows are paged, from this builder; the page joins each
+// row to the overview's record of that environment.
 //
 // The invariant is the standard's: the SCOPE is the project (the route's, already applied by the
 // read), a FILTER (search, stage, status) is applied to the rows pass only, and
@@ -21,6 +32,12 @@
 // query narrows.
 
 import { type FacetOption, asOptions, orderedOptions, tally } from "@/lib/queries/facets";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetPageInMemory,
+} from "@/lib/queries/keyset";
 
 /** The environments list's normalized query (the `normalizeEnvironmentsQuery()` output). */
 export interface EnvironmentsQuery {
@@ -32,30 +49,27 @@ export interface EnvironmentsQuery {
 	statuses?: string[];
 }
 
-/** The environment fields every predicate and facet below reads. */
+/** The environment fields every predicate and facet below reads — and one row of a page. */
 export interface EnvironmentFacts {
 	id: string;
 	name: string;
 	stage: string;
 	status: string;
+	/** When the environment was created (ISO) — the list's sort key. */
+	created_at: string;
 }
 
 /** The stages, in the order a change is promoted through them. */
 export const ENVIRONMENT_STAGES = ["development", "staging", "production"] as const;
 
-/** Which environments match, and the facet options behind the bar. */
-export interface EnvironmentsPage {
-	/** The ids of the environments matching the query, in the list's order. */
-	rowIds: string[];
-	resultCount: number;
-	/** Every environment of the project — the "no environments yet" test, not "none match". */
-	total: number;
-	/** Counts over EVERY environment of the project, so an option never disappears once selected. */
-	facets: {
-		stages: FacetOption[];
-		statuses: FacetOption[];
-	};
+/** The facet options behind the bar: counts over EVERY environment of the project. */
+export interface EnvironmentFacetSet {
+	stages: FacetOption[];
+	statuses: FacetOption[];
 }
+
+/** One keyset page of the environments list (lib/queries/keyset.ts → `KeysetListPage`). */
+export type EnvironmentsPage = KeysetListPage<EnvironmentFacts, EnvironmentFacetSet>;
 
 /** The selection as a set, or null when nothing is selected (= no filter). */
 function selection(values: string[] | undefined): Set<string> | null {
@@ -78,7 +92,7 @@ export function matchesEnvironmentsQuery(env: EnvironmentFacts, query: Environme
  * Facet counts over EVERY environment handed in. Separate from `matchesEnvironmentsQuery` on
  * purpose: its caller hands it the whole list, so the facet pass cannot see the query.
  */
-export function environmentFacets(all: readonly EnvironmentFacts[]): EnvironmentsPage["facets"] {
+export function environmentFacets(all: readonly EnvironmentFacts[]): EnvironmentFacetSet {
 	const rows = [...all];
 	return {
 		// The three stages are a fixed row: a stage with no environment is a fact worth showing.
@@ -88,18 +102,27 @@ export function environmentFacets(all: readonly EnvironmentFacts[]): Environment
 }
 
 /**
- * Resolve `query` against a project's environments: which match, how many, how many there are at
- * all, and the facet counts over every one.
+ * One keyset page of `query` over a project's environments: the matching ones, newest first,
+ * strictly after `request.cursor`; and, on the FIRST page only, the facet counts over every one and
+ * whether the project has any environment at all (`universeEmpty` — never a count).
  *
- * @param all every environment of the project, in the list's order
+ * @param all every environment of the project (the route's scope, already applied by the read)
  * @param query the normalized filter query; `{}` is the pristine view
+ * @param request the decoded cursor (absent on page one) and the page size
  */
-export function environmentsPage(all: readonly EnvironmentFacts[], query: EnvironmentsQuery = {}): EnvironmentsPage {
-	const rows = all.filter((env) => matchesEnvironmentsQuery(env, query));
+export function queryEnvironmentsPage(
+	all: readonly EnvironmentFacts[],
+	query: EnvironmentsQuery = {},
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): EnvironmentsPage {
+	const matched = all.filter((env) => matchesEnvironmentsQuery(env, query));
+	const page = keysetPageInMemory(matched, request, (env) => ({ at: env.created_at, id: env.id }));
+	const first = request.cursor === undefined;
 	return {
-		rowIds: rows.map((env) => env.id),
-		resultCount: rows.length,
-		total: all.length,
-		facets: environmentFacets(all),
+		rows: page.rows,
+		nextCursor: page.nextCursor,
+		// The facet pass is handed every environment, never `matched`: it cannot see the filter.
+		facets: first ? environmentFacets(all) : null,
+		universeEmpty: first ? all.length === 0 : null,
 	};
 }
