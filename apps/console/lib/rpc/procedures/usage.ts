@@ -27,7 +27,7 @@ import {
 } from "@/lib/billing/ai-plan";
 import { aiPaidTiersEnabled } from "@/lib/billing/config";
 import { effectiveBillingPeriodStart } from "@/lib/billing/period";
-import { resolvePlanEntitlements } from "@/lib/billing/plan";
+import { entitlementStatus, resolvePlanEntitlements } from "@/lib/billing/plan";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { computeUsage, type UsageSummary } from "@/lib/billing/usage";
 import { getServiceDb } from "@/lib/db";
@@ -131,7 +131,7 @@ export async function getOrgUsage(): Promise<UsageReport> {
 	const actor = await currentActor();
 	const billing = await getOrgBilling(actor.orgId).catch(() => null);
 	const plan = billing?.plan ?? "community";
-	const status = billing?.status ?? "none";
+	const status = billing ? entitlementStatus(billing) : "none";
 	const quotas = resolvePlanEntitlements(plan, status).quotas;
 	const included = quotas.includedRunnerMinutes;
 
