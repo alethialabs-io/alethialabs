@@ -7,6 +7,7 @@
 // carries; neither holds state.
 
 import type { ColumnDef } from "@tanstack/react-table";
+import type { ReactNode } from "react";
 import type { ServiceTokenListItem } from "@/lib/queries/service-tokens";
 import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
@@ -55,7 +56,7 @@ function RowActions({ token, actions }: { token: ServiceTokenListItem; actions: 
 function AutoApproveCell({ token }: { token: ServiceTokenListItem }) {
 	if (token.autoApproveEnvironments.length === 0) return <span className="text-text-tertiary">None</span>;
 	return (
-		<ul className="grid gap-0.5">
+		<ul className="grid gap-0.5 whitespace-normal">
 			{token.autoApproveEnvironments.map((env) => (
 				<li key={env.id} className="font-mono text-ui-sm text-text-primary">
 					{env.projectName} / {env.name}
@@ -65,24 +66,34 @@ function AutoApproveCell({ token }: { token: ServiceTokenListItem }) {
 	);
 }
 
+/**
+ * Lets a cell's text wrap. Table cells default to `whitespace-nowrap` and the table's wrapper clips
+ * its overflow, so with eight columns the widest text pushed the Edit and Revoke buttons past the
+ * clipped edge at a laptop width: they rendered but could not be clicked. The free-text columns
+ * wrap instead, so the table fits its container.
+ */
+function Wraps({ children }: { children: ReactNode }) {
+	return <span className="whitespace-normal">{children}</span>;
+}
+
 /** The desktop table's columns. */
 export function buildTokenColumns(actions: TokenRowActions): ColumnDef<ServiceTokenListItem>[] {
 	return [
 		{
 			id: "name",
 			header: "Name",
-			cell: ({ row }) => <span className="font-medium text-text-primary">{row.original.name}</span>,
+			cell: ({ row }) => <span className="whitespace-normal break-words font-medium text-text-primary">{row.original.name}</span>,
 		},
 		{
 			id: "token",
 			header: "Token",
 			cell: ({ row }) => <span className="font-mono text-ui-sm text-text-secondary">{row.original.tokenPrefix}…</span>,
 		},
-		{ id: "scopes", header: "Can", cell: ({ row }) => scopeWords(row.original.scopes) },
-		{ id: "projects", header: "Projects", cell: ({ row }) => projectsPhrase(row.original) },
+		{ id: "scopes", header: "Can", cell: ({ row }) => <Wraps>{scopeWords(row.original.scopes)}</Wraps> },
+		{ id: "projects", header: "Projects", cell: ({ row }) => <Wraps>{projectsPhrase(row.original)}</Wraps> },
 		{
 			id: "autoApprove",
-			header: "Deploys without approval",
+			header: () => <Wraps>Deploys without approval</Wraps>,
 			cell: ({ row }) => <AutoApproveCell token={row.original} />,
 		},
 		{
