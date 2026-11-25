@@ -1,57 +1,52 @@
 ---
-title: Members & invitations
-description: How people join an organization — the invitation lifecycle from email to membership, and how membership becomes authorization.
+title: Invite members
+description: Invite people to an organization by email with a role, change a member's role, and remove members.
 ---
 
-<Enterprise />
+Bring people into your organization with the role they need. A member's role turns into their
+access at once: there is no separate grant to manage.
 
-In the open-source <Community>Community</Community> edition your organization has exactly one member: you, the
-owner. The <Enterprise>Enterprise</Enterprise> edition adds **multiple members** and the flow to bring them in.
+## Before you begin
 
-## The invitation lifecycle
+- The organization is on the Pro or Enterprise plan. A personal organization has one member: you.
+- Your role can manage members (`owner` or `admin`).
+
+## Steps
 
 <Steps>
-<Step>
-### Invite
-In **Settings → Members → Invite member**, enter an email and pick a role. An invitation is created and an
-email is sent with an accept link.
-</Step>
-<Step>
-### Accept
-The invitee clicks the link and lands on the accept page. If they're not signed in, they're sent to sign-in
-first and returned afterward — and because email sign-in doubles as sign-up, this works even if they don't have
-an account yet.
-</Step>
-<Step>
-### Join
-Accepting creates their **membership** in the organization with the chosen role.
-</Step>
-<Step>
-### Authorize
-Membership is turned into real authorization: the member's role is synced into a **grant**, so the
-[Policy Decision Point](/concepts/access-control/architecture) starts authorizing them immediately.
-</Step>
+
+### Open the invite dialog
+Open **Settings → Members** and select **Invite members**.
+
+### Enter emails and roles
+Enter each email and pick a role: one of the four built-in roles, or a
+[custom role](/guides/access/custom-roles). The dialog refuses an address that is already a member,
+already invited, or entered twice.
+
+### Send
+Alethia sends each person an email with an accept link.
+
 </Steps>
 
-<Callout type="info">
-  The last step matters. An organization's membership role and the authorization **grant** are kept in step
-  automatically — adding a member, changing their role, or removing them updates their access without any
-  manual grant management.
-</Callout>
+The invitee opens the link. If they are not signed in, they sign in first and come back. Email sign-in
+also creates an account, so they do not need one beforehand. Accepting makes them a member with the
+role you chose.
 
-## Roles for members
+## Change or remove members
 
-When you invite or edit a member you pick one of the [roles](/concepts/access-control/roles-and-permissions) — the four
-built-ins or a [custom role](/guides/access/custom-roles). For finer control (scoped or deny grants), use the
-[Access portal](/guides/access/access-portal) after they've joined.
+- Change a member's role in the members table. Their access changes at once.
+- Select **Remove member** on one row, or select several and **Remove selected**. Their access ends
+  at once.
 
-## Switching organizations
+For finer access, such as one project or an explicit deny, add a grant after they join. See
+[Grant access](/guides/access/access-portal).
 
-A member can belong to more than one organization and switch between them with the **organization switcher** in
-the dashboard header. The active organization scopes everything — what you see, and what the PDP and Row-Level
-Security enforce.
+## Check that it worked
 
-## Next
+The new member appears in **Settings → Members** with their role. They see the organization in their
+switcher.
 
-- Group members for bulk grants with [**teams**](/guides/access/teams).
-- Manage the org itself in [**organizations**](/guides/access/organizations).
+## Related
+
+- [Create teams](/guides/access/teams): grant access to a group at once.
+- [Create and switch organizations](/guides/access/organizations)

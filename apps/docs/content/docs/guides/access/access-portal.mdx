@@ -1,61 +1,57 @@
 ---
-title: The Access portal
-description: The AWS-IAM-style UI for assigning access — pick a principal, a role or permission, a scope, and allow or deny.
+title: Grant access
+description: Add a grant in Settings → Access, choosing who, allow or deny, a role or permission, and a scope, and revoke grants you no longer need.
 ---
 
-<Enterprise />
+Give a member or team access to the organization or one resource, or take it away. **Settings →
+Access** lists every grant in the organization. A project's **Settings → Access** lists the grants on
+that project.
 
-**Settings → Access** is where you assign access, the way you'd attach policies in the AWS IAM portal. It shows
-every grant in the organization and lets you create new ones.
+## Before you begin
 
-## Granting access
+- The organization is on the Enterprise plan.
+- Your role can manage access.
+- You know the parts of a grant. See [How grants and scopes work](/guides/access/grants-and-scopes).
 
-Click **Grant access** and fill in the four parts of a [grant](/guides/access/grants-and-scopes):
-
-<Steps>
-<Step>
-### Who
-Pick a **member** or a **team** <Enterprise />. A team grant reaches everyone on the team.
-</Step>
-<Step>
-### Allow or Deny
-**Allow** confers access; **Deny** is an explicit exception that overrides any inherited allow.
-</Step>
-<Step>
-### What
-Choose a **Role** (built-in or [custom](/guides/access/custom-roles)) **or** a **single permission**
-(e.g. `project:deploy`).
-</Step>
-<Step>
-### Scope
-**Entire organization**, or a specific **project / runner / cloud identity**. A grant on a container flows
-down to its children.
-</Step>
-</Steps>
-
-The grants table lists each entry with its **principal**, **effect** (Allow/Deny), **role or permission**, and
-**scope**, and a button to revoke it.
-
-## The deny-exception workflow
-
-The portal is where you build the canonical exception — broad access with a precise carve-out:
+## Steps
 
 <Steps>
-<Step>Grant **Allow · viewer · organization** to Dana.</Step>
-<Step>Grant **Deny · `project:view` · project `S`** to Dana.</Step>
-<Step>Dana sees the other projects, but not `S`.</Step>
+
+### Start a grant
+Open **Settings → Access** and select **Add grant**.
+
+### Pick who
+Pick a **Member or team**. A team grant reaches everyone on the team.
+
+### Allow or deny
+Leave it as an allow, or choose **Deny** for an exception that overrides any inherited allow.
+
+### Pick what
+Choose a **Role**, built-in or [custom](/guides/access/custom-roles), or a single permission such as
+`project:deploy`.
+
+### Pick the scope
+Choose **Entire organization**, or one project, runner or cloud identity. A grant on the organization
+flows down to everything in it.
+
+### Save
+The grant takes effect at once.
+
 </Steps>
 
-See [grants & scopes](/guides/access/grants-and-scopes) for the precedence rules behind this.
+To take access away, select **Revoke access** on the grant's row.
 
-## What you can pick from
+## Find a grant
 
-- **Principals** — the org's members and teams.
-- **Roles** — the four built-ins plus your [custom roles](/guides/access/custom-roles).
-- **Permissions** — the full `resource:action` catalog for single-permission grants.
-- **Resources** — your projects, runners, and cloud identities, for scoped grants.
+Search by member, team or scope, and filter by scope, role and effect. Each row shows the principal,
+the effect, the role or permission, the scope, its **Effective reach**, and when it was granted.
 
-<Callout type="info">
-  In the open-source <Community>Community</Community> edition there's a single owner who already holds every
-  permission, so there's nothing to assign — the Access portal is an Enterprise surface.
-</Callout>
+## Check that it worked
+
+The grant appears in the list. Sign in as the member, or ask them, to confirm that they can do what
+the grant allows and nothing it denies.
+
+## Related
+
+- [How grants and scopes work](/guides/access/grants-and-scopes)
+- [Create teams](/guides/access/teams)

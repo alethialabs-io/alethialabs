@@ -44,7 +44,7 @@ Provisions a new network from scratch. Fields:
 ### Use Existing Network
 
 Instead of creating a network, attach the project to one that **already exists** in the account — its id
-comes from Alethia's server-side [asset inventory](/guides/connectors/health-and-inventory) (network id,
+comes from Alethia's server-side [asset inventory](/concepts/connection-health) (network id,
 name, CIDR, region).
 
 **How it works — brownfield attach (AWS · GCP · Azure).** When you pick "existing", Alethia records the
@@ -58,7 +58,7 @@ template *reads* your existing network and wires the cluster into it:
 
 <Callout type="info">
 Existing networks must be in the same region as the project. The list comes from Alethia's server-side
-[asset inventory](/guides/connectors/health-and-inventory), which stays fresh automatically (a
+[asset inventory](/concepts/connection-health), which stays fresh automatically (a
 reconciliation sweep, plus optional event forwarders) — there's no manual refresh.
 </Callout>
 
@@ -71,7 +71,7 @@ simple — **does the rest of the infrastructure graph attach to it?**
 - ✅ **Network (VPC/VNet + subnets)** — the cluster and nodes attach into its subnets. Available today on
   AWS, GCP, and Azure (a provision-new vs use-existing toggle; at deploy time the template `data`-sources
   the existing network rather than creating one). The list comes from the server-side
-  [asset inventory](/guides/connectors/health-and-inventory).
+  [asset inventory](/concepts/connection-health).
 - 🚧 **Kubernetes cluster** — your workloads deploy _onto_ it (nobody wants a fresh cluster per app). Same
   toggle, on the roadmap.
 

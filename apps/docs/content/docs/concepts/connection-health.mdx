@@ -1,0 +1,69 @@
+---
+title: Connection health and inventory
+description: How the console checks each cloud connection and keeps a minimal, encrypted, expiring inventory of the resources in the account, without a runner.
+---
+
+The console checks every cloud connection on its own, and keeps a small inventory of the resources
+in each connected account. Both run in the console, not on a runner: a runner only provisions.
+
+## How it works
+
+<Mermaid chart={`
+flowchart LR
+  C[Console] -- health probe, every 10 min --> Cloud[Your cloud account]
+  C -- inventory sweep, every hour --> Cloud
+  F[Event forwarder, optional] -- change events --> C
+`} />
+
+### Connection health
+
+The console signs in to the account with a short-lived credential that it makes from the Alethia
+OIDC issuer (Hetzner uses the stored token). It then runs a few read calls that stand for what
+Alethia provisions. The account gets one of three states:
+
+| State | Meaning |
+| --- | --- |
+| **Connected** | Sign-in works and the read calls pass. |
+| **Limited permissions** | Sign-in works, but some permissions are missing. They are listed, and a deploy can fail until you add them. |
+| **Verification failed** | Sign-in fails: the trust was removed, the trust no longer names the Alethia issuer, or the token is wrong. |
+
+The check runs when you connect, again when it is more than 10 minutes old, and when you select
+**Re-verify**. It is a direct API call, so it answers in about a second.
+
+### Asset inventory
+
+The inventory lists networks, subnets, network interfaces, Kubernetes clusters, databases, caches,
+queues, topics, NoSQL tables, container registries, secrets, storage buckets, DNS zones and regions.
+The canvas uses it to offer existing resources, such as an existing VPC. The verification agent
+uses it for context.
+
+| When | What happens |
+| --- | --- |
+| On connect | A first sync fills the inventory. |
+| Every hour | A sweep lists the resources again, adds new ones, marks missing ones as removed, and fills accounts that were never synced. It is on by default and needs no external scheduler. |
+| On a change event (optional) | A forwarder that you deploy in your cloud sends each change within seconds: EventBridge and Lambda on AWS, Cloud Asset Inventory, Pub/Sub and a Cloud Function on GCP, Event Grid and a Function App on Azure. It sends only `{ kind, native_id, region, deleted }`, never a credential. |
+
+### How the inventory is stored
+
+The cloud stays the source of truth. The inventory is a reduced copy:
+
+- **Reduced.** It keeps the resource ID, name, region, kind and a few low-risk fields. It does not
+  keep tags, because tags often hold email addresses or secrets. Only the `Name` tag becomes the
+  row's name.
+- **Encrypted.** CIDRs, IP addresses, endpoints and DNS domains are sealed with AES-GCM in one field
+  per row, and decrypted only when a feature needs them.
+- **Expiring.** Removed rows are deleted after `ALETHIA_INVENTORY_RETENTION_DAYS` days (default 7).
+  Disconnecting an account deletes its whole inventory.
+
+## What it does not do
+
+- It does not run on a runner, and a runner does not test connections, list resources or cache
+  resource lists.
+- It does not hold a standing cloud credential. A stolen inventory row gives no cloud access, because
+  access still needs the trust that you created in your account.
+
+## Related
+
+- [Manage connections](/guides/connectors/managing-connections): re-verify or disconnect an account.
+- [Security](/concepts/security): the keyless model behind the health check.
+- [Troubleshoot: connect a cloud](/troubleshooting/connect): fix **Limited permissions** and **Verification failed**.
