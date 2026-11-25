@@ -97,6 +97,9 @@ async function settle(): Promise<void> {
 beforeEach(() => {
 	rpc.calls.length = 0;
 	for (const k of Object.keys(rpc.handlers)) delete rpc.handlers[k];
+	// The waivers panel is a list of its own, read page by page from the browser (#7488); held
+	// unanswered here, because these tests are about the roll-up's four renders.
+	rpc.handlers["evidence.waivers"] = () => new Promise(() => {});
 	sessionStorage.clear();
 	useEvidenceFilters.getState().reset();
 });
@@ -110,7 +113,10 @@ describe("EvidenceClient — four renders, never confused", () => {
 		// Never scanned is said per row, not as an empty page (F052).
 		expect(screen.getAllByText("Not scanned").length).toBeGreaterThan(0);
 		expect(screen.queryByText("No environments yet")).toBeNull();
-		expect(rpc.calls, "nothing was fetched for first-paint data").toEqual([]);
+		expect(
+			rpc.calls.filter((c) => c.path === "evidence.page"),
+			"nothing was fetched for first-paint data",
+		).toEqual([]);
 	});
 
 	it("an unanswered read draws the page's skeleton — never an empty state (B3)", async () => {
@@ -155,7 +161,8 @@ describe("EvidenceClient — four renders, never confused", () => {
 		const { qc } = renderPage(result(1));
 		await settle();
 		await act(async () => {
-			await qc.refetchQueries();
+			// The roll-up's read only: the waivers list is held unanswered (see beforeEach).
+			await qc.refetchQueries({ queryKey: [["evidence", "page"]] });
 		});
 		expect(screen.getByRole("button", { name: "payments-prod" })).toBeInTheDocument();
 		expect(await screen.findByText(/Couldn't refresh/, undefined, { timeout: 4000 })).toBeInTheDocument();
