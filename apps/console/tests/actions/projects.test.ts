@@ -4232,6 +4232,17 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		});
 	});
 
+	it("updateProjectDesign records a design-write key on its audit row, and only a SHA-256 hex", async () => {
+		const key = "c".repeat(64);
+		const { valuesSpy } = setupDb({});
+		await updateProjectDesign("p1", "env-1", design({}) as never, { idempotencyKey: key });
+		expect(valuesFor(valuesSpy, auditLog)).toMatchObject({ action: "UPDATED", changes: { idempotency_key: key } });
+
+		const second = setupDb({});
+		await updateProjectDesign("p1", "env-1", design({}) as never, { idempotencyKey: "not-a-digest" });
+		expect(valuesFor(second.valuesSpy, auditLog)).not.toHaveProperty("changes.idempotency_key");
+	});
+
 	it("updateProjectDesign refuses a CHANGED value even when an older one is stored", async () => {
 		setupDb({
 			select: new Map<unknown, RowsResolver>([
