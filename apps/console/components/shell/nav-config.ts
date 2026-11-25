@@ -21,6 +21,7 @@ import {
 	Settings,
 	ShieldAlert,
 	ShieldCheck,
+	Stamp,
 	Waypoints,
 	Webhook,
 	Workflow,
@@ -95,6 +96,9 @@ export function buildSidebarNav(
 			{ label: "Overview", icon: LayoutDashboard, href: orgHref(orgSlug), exact: true },
 			{ label: "Clusters", icon: Server, sub: "clusters", href: globalHref(orgSlug, "clusters") },
 			{ label: "Jobs", icon: ClipboardList, sub: "jobs", href: globalHref(orgSlug, "jobs") },
+			// No waiting-count badge (AGT-L2 spec §1.5): every request hands its link straight to a person,
+			// and the list opens on Waiting.
+			{ label: "Approvals", icon: Stamp, sub: "approvals", href: globalHref(orgSlug, "approvals") },
 			{ label: "Evidence", icon: ShieldCheck, sub: "evidence", href: globalHref(orgSlug, "evidence") },
 		],
 		connect: [

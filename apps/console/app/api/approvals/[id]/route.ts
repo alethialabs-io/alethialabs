@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { UnauthorizedError } from "@/lib/auth/errors";
-import { approvalErrorResponse, approvePath, cliApprovalActor } from "@/lib/approvals/http";
+import { approvalErrorResponse, approvePathForOrg, cliApprovalActor } from "@/lib/approvals/http";
 import { readApproval } from "@/lib/approvals/read";
 import { authorizeCli, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
@@ -43,7 +43,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const caller = actor;
 	try {
 		const view = await withActorScope(caller, (tx) => readApproval(tx, caller, id));
-		return NextResponse.json({ approval: view, approve_path: approvePath(view.id) });
+		return NextResponse.json({ approval: view, approve_path: await approvePathForOrg(caller.orgId, view.id) });
 	} catch (err) {
 		const refused = approvalErrorResponse(err);
 		if (refused) return refused;
