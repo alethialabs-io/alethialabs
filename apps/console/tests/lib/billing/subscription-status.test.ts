@@ -34,6 +34,10 @@ const LIVE = ["active", "trialing", "past_due", "unpaid", "paused"];
  * subject.
  */
 const DELIBERATELY_DIFFERENT: Readonly<Record<string, string>> = {
+	"lib/billing/events/apply.ts: active,trialing,past_due":
+		"LIVE: our billing row's `billing_status` under which a Paddle subscription holds its slot (Paddle has no `unpaid`; `paused` is stored as `none`).",
+	"lib/billing/paddle/events.ts: active,canceled,past_due,paused,trialing":
+		"Paddle's own `subscription.status` enum as its webhook sends it: every value, not a live set.",
 	"lib/billing/new-org-setup.ts: active,trialing,past_due":
 		"PAID_SUBSCRIPTION_STATUSES: a first charge went through. `unpaid` and `paused` are live but not paid.",
 	"lib/billing/org-plan-row.ts: active,trialing,past_due":
