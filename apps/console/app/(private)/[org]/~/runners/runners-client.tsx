@@ -3,8 +3,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Fleet / Runners page. A two-column layout (mirrors the org overview): the left column
-// stacks the warm Pools and the Versions changelog; the right column is the filterable,
-// paginated grid of runner cards. No eyebrow/title/KPI chrome — pools and runners show first.
+// stacks the warm Pools and the Versions changelog; the right column is the filterable grid of
+// runner cards. No eyebrow/title/KPI chrome — pools and runners show first.
+//
+// PAGING (#7484). The grid reads one keyset page at a time through `useKeysetList` and ends in
+// `ListFooter` (a scroll sentinel plus an always-visible "Load more"). The server composes the
+// universe — the org's own runners and the managed fleet — filters it and cuts the page
+// (`queryRunnersPage`); the browser never holds the whole fleet. No count is shown: the list
+// standard carries no list sizes (lib/query/README.md → "Counts").
+//
+// LIVE (ADR 0005). A runner that changes is a `runners` hint on the org's change stream, which
+// invalidates `orpc.runners.page.key()` — a prefix of this list's infinite key (lib/query/topics.ts).
+// TanStack re-reads the loaded pages in order from page one, each with the cursor the page before
+// it now ends on, and `useKeysetList` keeps each runner id once, so a runner seen on two pages
+// mid-refetch is drawn once.
 
 import { lookup } from "@/lib/typed-object";
 import { EmptyState } from "@repo/ui/empty";
@@ -18,7 +30,6 @@ import {
 	RunnersToolbar,
 	type RunnerFacetOption,
 } from "@/components/runners/runners-toolbar";
-import { RunnersPager } from "@/components/runners/runners-pager";
 import { RUNNERS_COLUMNS, RUNNERS_GRID } from "@/components/runners/runners-layout";
 import { VersionsPanel } from "@/components/runners/versions-panel";
 import type { CloudFilterOption } from "@/components/filters/cloud-filter";
@@ -32,19 +43,14 @@ import { useRunnerFilters } from "@/lib/stores/use-runner-filters";
 import { PROVIDER_LABELS } from "@repo/ui/provider-icon";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
+import { ListFooter } from "@/components/list/list-footer";
 import { ANY_CLOUD } from "@/lib/queries/runners";
-import { useRunnersPageQuery } from "@/lib/query/use-runners-page-query";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
-import { PAGE_PARAM, hrefWithParamPatch, pageFromUrl, pagePatch } from "@/lib/query/view-url-params";
+import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";
-import { Server } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { CircleAlert, Server } from "lucide-react";
 import { useMemo } from "react";
-
-const PAGE_SIZE = 9;
-
-/** The view params the grid's page number depends on: a filter change goes back to page 1. */
-const RUNNERS_RESET_PARAMS: readonly string[] = [PAGE_PARAM];
 
 /**
  * The runners page body, rendered only for a viewer the server has already found entitled
@@ -57,12 +63,7 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 	// facet tally used to happen in this component over the whole universe (#4890).
 	const filters = useRunnerFilters((s) => s.filters);
 	const resetFilters = useRunnerFilters((s) => s.reset);
-	const urlRead = useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS, undefined, {
-		resetParams: RUNNERS_RESET_PARAMS,
-	});
-	const router = useRouter();
-	const pathname = usePathname();
-	const searchParams = useSearchParams();
+	const urlRead = useFilterUrlSync(useRunnerFilters, DEFAULT_RUNNER_FILTERS);
 	// Seeded from the URL, so a pasted `?search=…&versions=…` asks for the key the route
 	// prefetched first — not `{versions}` alone, which it did not (#4980 review).
 	const search = useDebouncedValue(filters.search, 300, { urlRead });
@@ -70,23 +71,10 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 		() => normalizeRunnersQuery(filters, search),
 		[filters, search],
 	);
-	const {
-		data: runnersPage,
-		isPending: isLoading,
-		isError,
-		error,
-		isPlaceholderData,
-		refetch,
-	} = useRunnersPageQuery(query);
-	// The page is view state in the URL (`?page=`, lib/query/view-url-params.ts), so a link, a
-	// refresh and Back all come back to the same page. It belongs to the filters it was picked
-	// under: `useFilterUrlSync` drops it on any write that changes a filter (`resetParams`), so a
-	// different result set starts at page 1.
-	const page = pageFromUrl(searchParams);
-	/** Shows a page of the result set on screen, by writing it into the URL. */
-	const setPage = (next: number) => {
-		router.replace(hrefWithParamPatch(pathname, searchParams.toString(), pagePatch(next)), { scroll: false });
-	};
+	// The normalized query IS the key: a filter change is a new key, so the walk restarts at page
+	// one; the cursor is the infinite query's page param and never part of this object or the URL.
+	const list = useKeysetList(orpc.runners.page, query);
+	const rows = list.rows;
 	// The grid is BUSY while what it shows may not answer the URL and the bar: before the link
 	// has been read into the store, before the first answer, while the rows are the previous
 	// query's placeholder, and while a typed search is still inside its debounce. Exposed as
@@ -94,19 +82,21 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 	// a placeholder as an answer (#4980) — can tell an answer from a stand-in. The dim below is
 	// the placeholder half only: dimming the first paint of every visit would flash a page that
 	// is correct.
-	const busy = !urlRead || isLoading || isPlaceholderData || filters.search !== search;
-	const refused = isError && isForbidden(error);
+	const busy = !urlRead || list.isPending || list.isPlaceholderData || filters.search !== search;
+	// A failure with nothing on screen is the region's; a failed REFRESH behind cards already shown
+	// keeps them under a one-line notice; a failed LATER page is the footer's retry line.
+	const firstPageFailed = list.query.isError && list.query.data === undefined;
+	const refused = firstPageFailed && isForbidden(list.query.error);
+	const staleRefresh = list.query.isError && list.query.data !== undefined;
+	// First page only: true = the actor can see no runner at all (first run), false = some exist,
+	// so an empty page is the FILTERED empty state.
+	const firstRun = !list.isPending && list.universeEmpty === true;
 
-	// The SERVER's rows, each with the job in flight on it (joined on the server, #6123).
-	const filtered = useMemo(() => runnersPage?.rows ?? [], [runnersPage]);
-	/** Every runner the actor can see — "no runners yet", as opposed to "none match". */
-	const total = runnersPage?.total ?? 0;
-
-	// Facet options from the builder's own pass over the UNFILTERED universe. Only the labels
-	// are resolved here: the server counts values, and what a provider or a version is CALLED
-	// is a client constant.
+	// Facet options from the builder's own pass over the UNFILTERED universe, on the first page.
+	// Only the labels are resolved here: the server counts values, and what a provider or a version
+	// is CALLED is a client constant.
 	const facets = useMemo(() => {
-		const clouds: CloudFilterOption[] = (runnersPage?.facets.clouds ?? []).map((o) => ({
+		const clouds: CloudFilterOption[] = (list.facets?.clouds ?? []).map((o) => ({
 			value: o.value,
 			label:
 				o.value === ANY_CLOUD
@@ -121,22 +111,15 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 			options.map((o) => ({ value: o.value, label: label(o.value), count: o.count }));
 		return {
 			clouds,
-			regions: plain(runnersPage?.facets.regions ?? [], (v) => v),
-			versions: plain(runnersPage?.facets.versions ?? [], (v) => `v${v}`),
+			regions: plain(list.facets?.regions ?? [], (v) => v),
+			versions: plain(list.facets?.versions ?? [], (v) => `v${v}`),
 		};
-	}, [runnersPage]);
+	}, [list.facets]);
 
-	const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-	const safePage = Math.min(page, pageCount);
-	const pageItems = useMemo(
-		() => filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE),
-		[filtered, safePage],
-	);
-
-	// One batched query hydrates the visible runner cards' classification chips.
+	// One batched query hydrates the loaded runner cards' classification chips.
 	const { data: classMap = {} } = useAssignmentsForKind(
 		"runner",
-		pageItems.map((r) => r.id),
+		rows.map((r) => r.id),
 	);
 
 	return (
@@ -149,13 +132,10 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 
 			{/* Right column — runners. */}
 			<div className="min-w-0 space-y-4" aria-busy={busy}>
-				{/* The section heading and its result count come from the shared primitives. Both
-				    were hand-rolled here — a `font-display text-ui-lg` span for the heading and a
-				    bordered `rounded-full` span for the pill, the latter under a comment claiming
-				    it WAS "the count pill (the standard)". A second copy of a primitive is how two
-				    list pages come to disagree about what a count looks like. */}
+				{/* The section heading comes from the shared primitive, with no count: the list
+				    standard carries no list sizes (#7484); totals live only in the facet options. */}
 				{refused ? (
-					// An expected refusal is its own render, IN PLACE of the column: no count, no
+					// An expected refusal is its own render, IN PLACE of the column: no
 					// "Add runner" and no filter bar over rows this viewer cannot read. Retrying it would
 					// answer the same (RUBRIC B4).
 					<>
@@ -164,11 +144,7 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 					</>
 				) : (
 					<>
-						<SectionHeading
-							title="Runners"
-							count={isLoading ? null : (runnersPage?.resultCount ?? 0)}
-							actions={<AddRunnerButton />}
-						/>
+						<SectionHeading title="Runners" actions={<AddRunnerButton />} />
 
 						<RunnersToolbar
 							cloudOptions={facets.clouds}
@@ -178,22 +154,22 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 					</>
 				)}
 
-				{refused ? null : isError ? (
+				{refused ? null : firstPageFailed ? (
 					// A fetch failure must not render as "no runners".
 					<RegionError
 						title="Couldn't load runners"
 						description="Something went wrong fetching your runners. Check your connection and try again."
-						onRetry={() => refetch()}
+						onRetry={() => void list.query.refetch()}
 					/>
-				) : isLoading ? (
+				) : list.isPending ? (
 					<div className={RUNNERS_GRID}>
 						{[1, 2, 3, 4].map((i) => (
 							<RunnerCardSkeleton key={i} />
 						))}
 					</div>
-				) : total === 0 ? (
+				) : firstRun ? (
 					<EmptyRunners />
-				) : filtered.length === 0 ? (
+				) : rows.length === 0 ? (
 					<EmptyState
 						title="No runners match your filters."
 						description="Change the search or the filters above, or clear them to see every runner."
@@ -208,9 +184,10 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 					/* The filter standard's `isPlaceholderData` dim: these cards are the PREVIOUS
 					   query's answer, kept so the grid does not blank on a filter change and
 					   marked so they are not read as the current one. */
-					<div className={cn(isPlaceholderData && "opacity-60 transition-opacity")}>
+					<div className={cn("space-y-4", list.isPlaceholderData && "opacity-60 transition-opacity")}>
+						{staleRefresh ? <StaleRunnersNotice onRetry={() => void list.query.refetch()} /> : null}
 						<div className={RUNNERS_GRID}>
-							{pageItems.map((runner) => (
+							{rows.map((runner) => (
 								<RunnerCard
 									key={runner.id}
 									runner={runner}
@@ -218,15 +195,34 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 								/>
 							))}
 						</div>
-						<RunnersPager
-							page={safePage}
-							pageCount={pageCount}
-							total={filtered.length}
-							onPageChange={setPage}
-						/>
+						<ListFooter list={list} />
 					</div>
 				)}
 			</div>
+		</div>
+	);
+}
+
+/**
+ * A failed REFRESH behind cards already on screen: the cards stay, under one polite line with a
+ * retry. Live updates make every change a refetch, so this is the common failure, and replacing a
+ * good grid with a full error for it would be worse than the failure. Worded as DataTable's
+ * stale notice is, so the grid and the tables tell it the same way.
+ */
+function StaleRunnersNotice({ onRetry }: { onRetry: () => void }) {
+	return (
+		<div
+			data-slot="runners-stale"
+			role="status"
+			className="flex flex-wrap items-center justify-between gap-2 text-ui-sm text-text-secondary"
+		>
+			<span className="flex items-center gap-2">
+				<CircleAlert className="size-3.5 shrink-0" aria-hidden />
+				{"Couldn't refresh — showing earlier data"}
+			</span>
+			<Button variant="ghost" size="xs" onClick={onRetry}>
+				Try again
+			</Button>
 		</div>
 	);
 }
