@@ -7,7 +7,7 @@
 // organization's agent access (the kill switch) is off.
 //
 // The ceiling is applied by the PDP that `getPdp` returns (lib/authz/scope-ceiling.ts), so every tool
-// the server lists, the in-app read tools included, is held to it; the MCP server also checks each
+// the server lists, and every in-app read a declared read answers through, is held to it; the MCP server also checks each
 // declared tool's scope before it runs (lib/ai/mcp/server.ts).
 
 import "server-only";
