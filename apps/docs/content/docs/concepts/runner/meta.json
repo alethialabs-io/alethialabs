@@ -2,10 +2,8 @@
 	"title": "Runner",
 	"pages": [
 		"index",
-		"architecture",
 		"job-execution",
 		"cloud-credentials",
-		"log-streaming",
 		"scaling",
 		"infrastructure-templates"
 	]

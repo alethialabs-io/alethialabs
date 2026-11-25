@@ -1,184 +1,104 @@
 ---
-title: Domain Model & Terminology
-description: The entity graph — organization, project, environment, component — and the lifecycle states each moves through.
+title: Domain model
+description: The objects Alethia works with — organization, project, environment, component and job — how they relate, and the states each moves through.
 ---
 
-Every object in Alethia maps to one row in one Postgres table under `apps/console/lib/db/schema/`.
-This page describes that graph and the state machines its rows move through. For the canonical name
-of each concept — and the words the product deliberately avoids — start with the
-[Glossary](/reference/glossary); this page assumes those terms.
-
-<img src="/docs/diagrams/concepts/domain-model.svg" alt="Domain Model" />
-
-## The core shape
-
-The tenancy and configuration graph is four levels deep:
+Alethia organizes infrastructure as organizations that own projects, projects that own several
+environments, and environments that declare components. A job is one unit of work a runner does on
+one environment. For the canonical name of each term, see the [Glossary](/reference/glossary).
 
 <Mermaid chart={`
 flowchart TD
-  Org["organization<br/>(RLS boundary, org_id)"] -->|1:N| Proj["project<br/>(projects)"]
-  Proj -->|N:1| CI["cloud identity<br/>(cloud_identities)"]
-  Proj -->|1:N| Env["environment<br/>(project_environments)"]
-  Env --> Comp["components<br/>(project_* tables)"]
-  Env --> Jobs["jobs<br/>(provisioning work)"]
-  Jobs --> Logs["job_logs"]
+  Org["Organization"] -->|owns many| Proj["Project"]
+  Proj -->|uses one| CI["Cloud identity"]
+  Proj -->|owns many| Env["Environment"]
+  Env --> Comp["Components: cluster, network, databases, caches, ..."]
+  Env --> Jobs["Jobs: plan, deploy, destroy, ..."]
 `} />
 
-- An **organization** (`org_id`) is the tenancy boundary. Coarse Postgres RLS keyed on `org_id`
-  filters every org-scoped table (see [Security](/concepts/security#row-level-security-rls)).
-- A **project** (`projects`) is a declarative infrastructure *app*. It links to **exactly one**
-  [cloud identity](/reference/glossary#connectivity) (`projects.cloud_identity_id`) and carries the
-  `region` and `iac_version`. It owns **N** environments.
-- An **environment** (`project_environments`) is an independently-provisionable deployment target.
-  This is the level most other tools collapse to 1:1 — here it is **1:N**: `staging` and `production`
-  are two rows of the same project, each with its own state file, its own components, and its own
-  provisioning `status`.
-- **Components** are the cloud resources an environment declares (`project_cluster`,
-  `project_databases`, …). Every component row carries **both** `project_id` and `environment_id`.
+## How it works
 
-<Callout type="warn">
-  **A project owns N environments, not one.** The per-environment provisioning `status` lives on
-  `project_environments` (moved off `projects`), and components attach to a `(project, environment)`
-  pair — never to the project alone. Treating a project as if it has a single environment is the most
-  common stale assumption.
-</Callout>
+- An **organization** is the tenancy boundary. Every project, runner, connection and job belongs to
+  exactly one, and the database refuses a query for another organization's rows. See
+  [Security](/concepts/security#row-level-security).
+- A **project** is one infrastructure application. It uses one
+  [cloud identity](/reference/glossary#connectivity) (a connected cloud account) and has a default
+  region.
+- An **environment** is a target you provision on its own, such as `staging` or `production`.
+- A **component** is a resource an environment declares: a cluster, a network, a database, a cache.
+- A **job** is the work a runner does for one environment.
 
 ## Environments
 
-`project_environments` is the pivot of the whole model. Each row has:
+A project owns several environments, not one. Each environment has its own OpenTofu state, its own
+components and its own status, so deploying `production` never changes `staging`.
 
-| Column | Type | Meaning |
-|---|---|---|
-| `name` | `text` | Slug feeding the OpenTofu state key (`{project}-{name}-{region}/tofu.tfstate`) and the URL. Unique per project. |
-| `stage` | `environment_stage` | `development` \| `staging` \| `production`. Drives provider template defaults (instance sizing, HA knobs). Distinct from `name`. |
-| `status` | `project_status` | The per-environment provisioning lifecycle (see below). |
-| `is_default` | `boolean` | Exactly one row per project is the representative for single-value surfaces — the CLI wire, the project list's "Env"/status column, the project-detail header. Enforced by a partial unique index. |
-| `lifecycle` | `environment_lifecycle` | `persistent` (long-lived dev/staging/prod) or `ephemeral` (disposable, TTL'd). |
-| `region` | `text` | `NULL` inherits `projects.region`. |
+| Property | Meaning |
+| --- | --- |
+| Name | Unique in the project. It is part of the OpenTofu state key and of the URL. |
+| Stage | `development`, `staging` or `production`. The stage sets template defaults such as instance sizes and high availability, and the order [promotions](/concepts/promotions) follow. |
+| Default | One environment per project is the default. Single-value views, such as the project list's status column and the CLI, show it. |
+| Lifecycle | `persistent`, or `ephemeral`. An ephemeral environment has an expiry, and Alethia queues a destroy for it when the expiry passes. |
+| Region | Empty means the project's region. |
 
-### The ephemeral seam (inert today)
+Where an environment's infrastructure comes from is a separate choice: see
+[Fabrics and placement](/concepts/fabrics-and-placement).
 
-`lifecycle`, `expires_at`, `cost_cap`, and the reaper bookkeeping columns (`reap_attempts`,
-`last_reap_at`, `reap_gave_up_at`) exist so a future reaper — a `drift`-style reconciler — and the UI
-can build disposable "sandbox" environments on top. **Nothing reads them yet**: every environment is
-effectively `persistent`. The column is a forward seam, not a live feature.
+## Components
 
-## Components attach to `(project, environment)`
+Some components exist at most once per environment: the network, the cluster, the DNS zone,
+observability, the GitOps repository and a [bring-your-own IaC](/concepts/bring-your-own-iac)
+module. Others can exist many times, each with its own name: databases, caches, queues, topics, NoSQL
+tables, container registries, secrets, storage buckets and [add-ons](/concepts/gitops-argocd).
 
-Two shapes, distinguished only by their unique constraint (`apps/console/lib/db/schema/project-components.ts`):
+Each component has its own status, so a cluster can be `ACTIVE` while a database you just added is
+`CREATING`.
 
-**Singletons** — `UNIQUE (project_id, environment_id)`, so zero-or-one per environment:
+| Component status | Meaning |
+| --- | --- |
+| `PENDING` | Declared, not provisioned yet. |
+| `CREATING` | Being created by `tofu apply`. |
+| `ACTIVE` | Provisioned. |
+| `UPDATING` | A change is being applied. |
+| `FAILED` | Creation or update failed. |
+| `DESTROYING` | Being removed. |
+| `DESTROYED` | Removed. |
 
-<Cards>
-  <Card title="project_network">VPC / VNet / VPC Network</Card>
-  <Card title="project_cluster">EKS / GKE / AKS / Talos</Card>
-  <Card title="project_dns">Route 53 / Cloud DNS / Azure DNS</Card>
-  <Card title="project_observability">Log/metric delivery config</Card>
-  <Card title="project_repositories">GitOps repo references</Card>
-  <Card title="project_iac_sources">Bring-your-own IaC module (E3)</Card>
-</Cards>
-
-**Multi-instance** — `UNIQUE (project_id, environment_id, name)`, so zero-or-many per environment,
-each addressed by `name`:
-
-<Cards>
-  <Card title="project_databases">Aurora / Cloud SQL / Azure DB / RDS</Card>
-  <Card title="project_caches">ElastiCache / Memorystore / Azure Cache (redis \| valkey)</Card>
-  <Card title="project_queues">SQS / Pub/Sub / Service Bus</Card>
-  <Card title="project_topics">SNS / Pub/Sub / Service Bus Topics</Card>
-  <Card title="project_nosql_tables">DynamoDB / Firestore / Cosmos DB</Card>
-  <Card title="project_container_registries">ECR / Artifact Registry / ACR</Card>
-  <Card title="project_secrets">Secrets Manager / Secret Manager / Key Vault</Card>
-  <Card title="project_storage_buckets">S3 / Cloud Storage / Storage Account</Card>
-  <Card title="project_addons">Marketplace add-ons via ArgoCD (keyed by `addon_id`)</Card>
-</Cards>
-
-## Environment lifecycle
-
-The per-environment `status` (`project_status` enum) is the state machine a provision walks. It is a
-property of the **environment**, not the project — provisioning `production` never moves `staging`.
+## Environment status
 
 <Mermaid chart={`
 stateDiagram-v2
   [*] --> DRAFT
-  DRAFT --> QUEUED: submit plan/deploy
-  QUEUED --> PROVISIONING: runner claims the job
-  PROVISIONING --> ACTIVE: tofu apply succeeds
+  DRAFT --> QUEUED: plan or deploy
+  QUEUED --> PROVISIONING: a runner claims the job
+  PROVISIONING --> ACTIVE: apply succeeds
   PROVISIONING --> FAILED: apply fails
   FAILED --> QUEUED: retry
-  ACTIVE --> QUEUED: re-deploy a change
+  ACTIVE --> QUEUED: deploy a change
   ACTIVE --> DESTROYING: destroy
   DESTROYING --> DESTROYED
   DESTROYING --> FAILED
-  DESTROYED --> [*]
 `} />
 
-| Status | Meaning |
-|---|---|
-| `DRAFT` | Configuration written but never submitted for provisioning |
-| `QUEUED` | A provisioning job is waiting for a runner to claim it |
-| `PROVISIONING` | A runner is actively executing `tofu` for this environment |
-| `ACTIVE` | Infrastructure is provisioned and live |
-| `FAILED` | A plan/apply/destroy failed (retryable — re-enters `QUEUED`) |
-| `DESTROYING` | A `DESTROY` job is tearing the environment down |
-| `DESTROYED` | Infrastructure has been torn down |
-
-## Component status
-
-Each component carries its own `component_status`, independent of its environment's status — a
-cluster can be `ACTIVE` while a newly-added database is still `CREATING`.
-
-| Status | Meaning |
-|---|---|
-| `PENDING` | Declared, awaiting first provisioning |
-| `CREATING` | Being created by `tofu apply` |
-| `ACTIVE` | Successfully provisioned |
-| `UPDATING` | A configuration change is being applied |
-| `FAILED` | Creation or update failed |
-| `DESTROYING` | Being torn down |
-| `DESTROYED` | Successfully removed |
+`DRAFT` means the design was never submitted. `FAILED` can be retried.
 
 ## Jobs
 
-A **job** (`jobs`) is one unit of runner work. It references a `(project_id, environment_id,
-cloud_identity_id)` and, once claimed, a `runner_id`. Its `provision_job_status` walks:
+A job references one project, one environment and one cloud identity, and records the runner that
+claimed it. It moves `QUEUED → CLAIMED → PROCESSING → SUCCESS` or `FAILED`; a queued or claimed job
+can also be `CANCELLED`. A promotion adds no job type: it runs a plan, then a deploy. The full list of
+job types is in [Job types](/guides/jobs/job-types), and how a job is claimed and recovered is in
+[Job queue](/concepts/job-queue).
 
-<Mermaid chart={`
-stateDiagram-v2
-  [*] --> QUEUED
-  QUEUED --> CLAIMED: claim_next_job / SKIP LOCKED
-  CLAIMED --> PROCESSING: runner starts execution
-  PROCESSING --> SUCCESS: reported ok
-  PROCESSING --> FAILED: error / stale-job sweep
-  QUEUED --> CANCELLED: user cancels
-  CLAIMED --> CANCELLED
-  SUCCESS --> [*]
-  FAILED --> [*]
-  CANCELLED --> [*]
-`} />
+## What it does not do
 
-See [Job queue](/concepts/job-queue) for the atomic-claim mechanics and
-[Warm-pool scaling](/concepts/runner/scaling) for how capacity appears.
+- An environment does not inherit components from another environment. Each declares its own.
+  [Promotions](/concepts/promotions) copy structural changes on purpose, behind gates.
+- A project does not span cloud accounts. To run the same design on another cloud, see
+  [Multi-cloud conversion](/concepts/multi-cloud-conversion).
 
-### Job types
+## Related
 
-The `provision_job_type` enum (`apps/console/lib/db/schema/enums.ts`) is the full catalog of work a
-runner can claim — not just plan/apply/destroy. Each type is described once, in
-[Job types](/guides/jobs/job-types).
-
-Promotions (`staging → production`) do **not** add a job type — a promotion reuses `PLAN` then
-`DEPLOY` under a `promotions` row.
-
-## Where each entity lives
-
-<Files>
-  <Folder name="apps/console/lib/db/schema" defaultOpen>
-    <File name="organizations.ts — organization / RLS scope" />
-    <File name="projects.ts — project (owns N environments)" />
-    <File name="project-environments.ts — environment (status, stage, lifecycle)" />
-    <File name="project-components.ts — every project_* component table" />
-    <File name="identities.ts — cloud_identities" />
-    <File name="jobs.ts — jobs + job_logs" />
-    <File name="enums.ts — project_status / component_status / provision_job_* enums" />
-  </Folder>
-</Files>
+- [Fabrics and placement](/concepts/fabrics-and-placement)
+- [Provisioning pipeline](/concepts/provisioning-pipeline)
+- [Glossary](/reference/glossary)

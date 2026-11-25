@@ -1,0 +1,132 @@
+---
+title: Job execution
+description: What a runner does for each job type — plan, deploy and destroy, cluster probes and image builds, scans and audits, kubeconfig mints and runner lifecycle jobs — and what happens when a step fails.
+---
+
+Every job is claimed the same way and gets the same per-job credential; the job type decides what the
+runner then runs. This page describes the work for each type. What each type is for, from the
+console's side, is in [Job types](/guides/jobs/job-types).
+
+<Mermaid chart={`
+flowchart LR
+  Claim["Claim"] --> Proc["PROCESSING"]
+  Proc --> Cred["Per-job credential"]
+  Cred --> Type{"Job type"}
+  Type --> Tofu["PLAN, DEPLOY, DESTROY, DETECT_DRIFT: OpenTofu"]
+  Type --> K8s["PROBE_CLUSTER, BUILD, MINT_KUBECONFIG: the cluster"]
+  Type --> Scan["IAC_SCAN, CHART_SCAN, AUDIT, ANALYZE_REPO: read and check"]
+  Type --> Run["DEPLOY_RUNNER, UPDATE_RUNNER, DESTROY_RUNNER"]
+  Tofu --> Done["SUCCESS or FAILED, with results"]
+  K8s --> Done
+  Scan --> Done
+  Run --> Done
+`} />
+
+## How it works
+
+### Job types
+
+| Job type | What the runner does |
+| --- | --- |
+| `PLAN` | Plans, checks the plan with [Elench](/concepts/elench), prices it, and saves the plan file. |
+| `DEPLOY` | Checks the reviewed plan, applies it behind the Elench gate, and sets up the cluster. |
+| `DESTROY` | Destroys every resource in the environment's state. |
+| `DETECT_DRIFT` | Runs a refresh-only plan. See [Drift detection](/concepts/drift). |
+| `PROBE_CLUSTER` | Checks that the cluster's API server answers. Read-only. |
+| `BUILD` | Builds your repository's container images inside your cluster. |
+| `MINT_KUBECONFIG` | Mints a short-lived cluster credential sealed to your key. See [Cluster access](/concepts/cluster-access). |
+| `IAC_SCAN` | Clones a [bring-your-own module](/concepts/bring-your-own-iac), pins its commit and runs the safety gate. |
+| `CHART_SCAN` | Renders a [bring-your-own chart](/concepts/bring-your-own-charts) and checks its manifests, always in the sandbox. |
+| `AUDIT` | Checks a plan or manifests you supply with the Elench controls. Provisions nothing. |
+| `ANALYZE_REPO` | Reads a source repository, without running it, and reports its services. |
+| `DEPLOY_RUNNER`, `UPDATE_RUNNER`, `DESTROY_RUNNER` | Manage a self-deployed runner. |
+| `STATE_SURGERY` | Break-glass state repair. Refused unless the runner opts in with `ALETHIA_BREAKGLASS_STATE_SURGERY_ENABLED`. |
+
+On a managed runner, `IAC_SCAN`, and drift on a bring-your-own module, run only when the container
+sandbox is enforced. See [Isolated execution](/concepts/isolated-execution).
+
+### Plan
+
+1. Write the snapshot as OpenTofu variables and initialize against the [state proxy](/concepts/terraform-state).
+2. Run `tofu plan -out=plan.tfplan`, then `tofu show -json` for the plan JSON.
+3. Evaluate the plan JSON with Elench. On a plan the report is advisory: it is shown in the Plan tab.
+4. Price the plan with Infracost, if a key is configured. See [Cost estimation](/concepts/cost-estimation).
+5. Save the plan file with the control plane for the deploy.
+
+### Deploy
+
+1. Check the plan this deploy names: the plan job succeeded, the configuration has not changed, and the
+   saved plan file's SHA-256 matches. Any mismatch refuses the job.
+2. Run Elench on the plan. A failing hard control that no authorized
+   [override](/guides/jobs/verify-override) waives fails the job before any resource changes. An
+   evidence [receipt](/concepts/elench/receipts) is sealed for the apply.
+3. Run `tofu apply plan.tfplan`. State is written back as each resource settles.
+4. Read the outputs, write a kubeconfig that mints tokens in the runner process, and check that the
+   cluster answers. A successful apply with an unreachable cluster is reported as not ready.
+5. Install ArgoCD and the platform services. See [GitOps and ArgoCD](/concepts/gitops-argocd).
+6. Report the cluster details, outputs with secrets removed, the Elench report and receipt, and timings.
+
+The control plane then writes the cluster, database and cache endpoints onto the environment and sets
+it `ACTIVE`. A component marked existing, such as a network you reuse, is read with a data source
+instead of created.
+
+### Destroy
+
+The runner initializes against the state proxy and runs `tofu destroy -auto-approve`; you confirmed in
+the console or CLI. The state object stays, empty, and the environment becomes `DESTROYED`. If a
+destroy fails partway, the state shows what is gone, and a retry removes only the rest.
+
+<Callout type="warn">
+  Destroy deletes data. Database contents, cache contents and secret values are gone.
+</Callout>
+
+### Probe
+
+The runner reads the environment's outputs from state with a backend-only workspace, so it runs no
+provider and clones no module. It builds a kubeconfig and calls the API server's `/readyz` with a
+30-second limit. The cluster is reachable only when the answer is `ok`; then it also reads the
+Kubernetes version and node readiness. An unreachable cluster is a successful probe with
+`reachable: false`, not a failed job.
+
+The control plane probes on a schedule (production every 10 minutes, staging every hour, development
+every 6 hours) every environment it believes holds a cluster, and on demand from the canvas **Run**
+menu. When a reachable cluster becomes unreachable, it raises one alert.
+
+### Build
+
+For each service built from a repository, the runner:
+
+1. reads the registry and build service account from the environment's outputs, and fails if no
+   registry was provisioned;
+2. pins the commit with a shallow clone on the runner; a private repository's token is used only here;
+3. runs a kaniko Job named `build-<service>` in your cluster, tagged with the commit SHA, for up to 30
+   minutes;
+4. records the pushed image's digest.
+
+Your Dockerfile runs in your cluster, never on the runner, and kaniko pushes with the cluster's
+workload identity, so the runner holds no registry credential. The job fails if any service has no
+registry, fails to build, or yields no digest; digests already captured are still recorded.
+
+### Runner lifecycle
+
+These jobs manage a self-deployed runner. `DEPLOY_RUNNER` applies the runner template (on AWS, an ECS
+Fargate service with its IAM roles, log group and security groups) and registers the runner.
+`UPDATE_RUNNER` rolls it to the latest image. `DESTROY_RUNNER` destroys it and removes its
+registration. Managed runners need no job: they register themselves.
+
+### When a step fails
+
+The runner writes the error to the log, marks the job `FAILED`, keeps the partial state, clears the
+credentials, and claims the next job. A retry continues from the state.
+
+## What it does not do
+
+- It does not apply a plan other than the one the deploy names.
+- It does not run your Dockerfile on the runner.
+- It does not treat an unreachable cluster as a failed probe.
+
+## Related
+
+- [Job types](/guides/jobs/job-types)
+- [Job queue](/concepts/job-queue)
+- [Provisioning pipeline](/concepts/provisioning-pipeline)

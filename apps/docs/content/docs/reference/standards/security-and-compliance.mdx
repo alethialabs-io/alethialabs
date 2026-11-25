@@ -12,7 +12,7 @@ the end.
 ### Tenant isolation — coarse Postgres RLS
 
 Every tenant-owned table is scoped by `org_id`, and Postgres **Row-Level Security** enforces the
-boundary at the database. After authentication, the [PDP](/concepts/access-control/architecture) resolves the
+boundary at the database. After authentication, the [PDP](/concepts/access-control) resolves the
 active [organization](/reference/glossary) and sets `app.current_org` via `set_config`; RLS policies
 key on that setting, so a query can only ever see its own org's rows even if application code forgets a
 `WHERE`. This is *coarse* isolation (org-level), complemented by the fine-grained PDP for
