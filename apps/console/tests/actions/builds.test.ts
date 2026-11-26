@@ -10,12 +10,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// The cloud check's SQL is integration-tested (tests/integration/cloud-availability/); here it is a
+// seam whose answer decides whether anything is queued. Default: the cloud is offered.
+vi.mock("@/lib/queries/projects", () => ({ projectCloudRefusal: vi.fn(async () => null) }));
 
 import {
 	enqueueDeployAfterBuild,
 	finalizeBuild,
 } from "@/lib/jobs/finalize-build";
 import { getServiceDb } from "@/lib/db";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 import { jobs, projectServices } from "@/lib/db/schema";
 
 type Update = { table: unknown; set: Record<string, unknown> | undefined; where: boolean };
@@ -32,6 +37,7 @@ function mockDb(rows: unknown[], opts?: { casUpdated?: boolean }) {
 	const casUpdated = opts?.casUpdated ?? true;
 	let curUpdate: Update | null = null;
 	let curInsert: Insert | null = null;
+	let casCount = 0;
 	const db: Record<string, unknown> = {};
 	Object.assign(db, {
 		select: () => db,
@@ -61,13 +67,17 @@ function mockDb(rows: unknown[], opts?: { casUpdated?: boolean }) {
 		},
 		returning: () => Promise.resolve([{ id: "deploy-1" }]),
 		// The env-status CAS (transitionEnv → db.execute<{updated}>): true = env legitimately moved.
-		execute: () => Promise.resolve([{ updated: casUpdated }]),
+		execute: () => {
+			casCount += 1;
+			return Promise.resolve([{ updated: casUpdated }]);
+		},
 		then: (resolve: (v: unknown) => void) => resolve(rows),
 	});
 	vi.mocked(getServiceDb).mockReturnValue(db as never);
 	return {
 		updates,
 		inserts,
+		casCalls: () => casCount,
 		writesFor: (table: unknown) => updates.filter((u) => u.table === table),
 	};
 }
@@ -167,5 +177,15 @@ describe("enqueueDeployAfterBuild", () => {
 		const h = mockDb([buildJob({ status: "FAILED" })], { casUpdated: true });
 		await enqueueDeployAfterBuild("job-1");
 		expect(h.inserts.filter((i) => i.table === jobs)).toHaveLength(0);
+	});
+
+	it("chains no DEPLOY, and moves no environment, on a cloud this deployment no longer offers", async () => {
+		vi.mocked(projectCloudRefusal).mockResolvedValueOnce(new CloudNotOfferedError("alibaba"));
+		const h = mockDb([buildJob()], { casUpdated: true });
+		const res = await enqueueDeployAfterBuild("job-1");
+		expect(projectCloudRefusal).toHaveBeenCalledWith(expect.anything(), "proj-1");
+		expect(h.inserts.filter((i) => i.table === jobs)).toHaveLength(0);
+		expect(h.casCalls()).toBe(0);
+		expect(res).toBeUndefined();
 	});
 });

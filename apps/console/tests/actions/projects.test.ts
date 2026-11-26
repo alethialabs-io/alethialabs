@@ -91,7 +91,9 @@ import {
 } from "@/lib/queries/destroy-tree";
 import {
 	addEnvironment,
+	buildProject,
 	duplicateEnvironment,
+	queueDriftDetection,
 	tryDestroyProject,
 	tryPlanProject,
 	tryProvisionProject,
@@ -127,6 +129,7 @@ import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { CloudNotOfferedError, withHiddenClouds } from "@/lib/cloud-providers/availability";
 import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
 import { CloudIdentityRefusedError } from "@/lib/cloud-providers/design-identities";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
@@ -2062,10 +2065,15 @@ describe("planProject", () => {
 					]),
 				),
 			});
-			await expect(planProject("p1")).rejects.toThrow(reason);
-			await expect(planProject("p1")).rejects.toThrow(
-				/Turn IAM authentication off/,
-			);
+			// Alibaba is not offered by default (#6964 refuses its plan first); the operator setting
+			// offers it here, because this test is about the keyless gate behind that refusal.
+			const offered = provider === "alibaba" ? (["alibaba"] as const) : ([] as const);
+			await withHiddenClouds(offered, async () => {
+				await expect(planProject("p1")).rejects.toThrow(reason);
+				await expect(planProject("p1")).rejects.toThrow(
+					/Turn IAM authentication off/,
+				);
+			});
 			expect(notifyScaler).not.toHaveBeenCalled();
 		},
 	);
@@ -3565,7 +3573,7 @@ describe("tryDuplicateProjectForProvider", () => {
 			"ci-target",
 			"europe-west1",
 		);
-		expect(res).toEqual({ ok: false, error: TOO_LONG });
+		expect(res).toEqual({ ok: false, error: TOO_LONG, field: "project_name" });
 	});
 
 	it("returns the taken-name sentence when the org already holds it", async () => {
@@ -4316,6 +4324,7 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		expect(res).toEqual({
 			ok: false,
 			error: expect.stringContaining('database "orders": rds_extra_credentials'),
+			field: "form",
 		});
 		expect(res).toHaveProperty("error", expect.stringContaining("Remove the stored value"));
 	});
@@ -4498,5 +4507,73 @@ describe("design writes name only cloud identities the caller may use", () => {
 		});
 		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-1" });
 		expect(insertSpy).toHaveBeenCalledWith(jobs);
+	});
+});
+
+// ============================================================
+// A project on a cloud this deployment does not offer (#6964)
+// ============================================================
+
+// #6811 made `assertProjectCloudOffered`; #6964 calls it from `buildConfigSnapshot` for the three
+// job kinds that put something new on the project's cloud (plan, deploy, and a build, whose success
+// chains a deploy). Everything else stays open for such a project, so both halves are pinned here:
+// the refusals, and a drift check, a destroy and a destroy plan that still queue. The cloud is read
+// from the stored account row (`cloudIdentities` below), never from the caller.
+describe("a project on a cloud this deployment does not offer (#6964)", () => {
+	/** The snapshot fixture with the project's account on Alibaba, which is not offered by default. */
+	const onAlibaba = () =>
+		snapshotSelect(
+			new Map<unknown, RowsResolver>([[cloudIdentities, [{ id: "ci-1", provider: "alibaba" }]]]),
+		);
+	const REFUSAL = "Alibaba Cloud is not available in this release.";
+
+	it("refuses a plan, and queues nothing", async () => {
+		const { insertSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-1" }]]]) });
+		await expect(planProject("p1")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("returns the refusal as a value to the console, naming the cloud", async () => {
+		setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-1" }]]]) });
+		await expect(tryPlanProject("p1")).resolves.toEqual({ ok: false, error: REFUSAL });
+		await expect(tryProvisionProject("p1", "plan-3")).resolves.toEqual({ ok: false, error: REFUSAL });
+	});
+
+	it("refuses a deploy before its plan is even looked up", async () => {
+		const { insertSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-7" }]]]) });
+		await expect(provisionProject("p1", "plan-3")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(resolveReviewedPlan).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+	});
+
+	it("refuses a build, whose success would chain a deploy", async () => {
+		const { insertSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-b" }]]]) });
+		await expect(buildProject("p1")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+	});
+
+	it("still queues a drift check", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-d" }]]]) });
+		await expect(queueDriftDetection("p1")).resolves.toEqual({ jobId: "job-d" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DETECT_DRIFT" });
+	});
+
+	it("still queues a destroy", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-x" }]]]) });
+		await destroyProject("p1");
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DESTROY" });
+	});
+
+	it("still queues a destroy plan, the teardown's review", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-p" }]]]) });
+		await expect(planProject("p1", null, null, null, { destroy: true })).resolves.toEqual({ jobId: "job-p" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN", destroy_plan: true });
+	});
+
+	it("plans it once the operator setting offers the cloud again", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-1" }]]]) });
+		await expect(withHiddenClouds(["alibaba"], () => planProject("p1"))).resolves.toEqual({ jobId: "job-1" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN" });
 	});
 });

@@ -44,6 +44,7 @@ vi.mock("@/lib/approvals/plan-binding", async (importOriginal) => ({
 
 import { provisionProject } from "@/app/server/actions/projects";
 import { EXPORT_CLOUDS } from "@/lib/addons/catalog-export";
+import { isCloudOffered, withHiddenClouds } from "@/lib/cloud-providers/availability";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
@@ -255,7 +256,13 @@ describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
 		"the REAL buildConfigSnapshot freezes the committed %s shape",
 		async (cloud) => {
 			const fixture = fixtureFor(cloud);
-			const snapshot = await frozenSnapshot(canonicalSelect(cloud));
+			// A DEPLOY of a project on a hidden cloud is refused (#6964), so a hidden cloud is offered
+			// here through the operator setting, exactly as the BYOC e2e leg for that cloud offers it
+			// (`ALETHIA_ENABLE_HIDDEN_CLOUDS` in .github/workflows/e2e-nightly.yml). The fixture is the
+			// shape a deployment that offers the cloud freezes; the refusal itself is pinned in
+			// tests/actions/projects.test.ts.
+			const offered = isCloudOffered(cloud) ? [] : [cloud];
+			const snapshot = await withHiddenClouds(offered, () => frozenSnapshot(canonicalSelect(cloud)));
 			// Runtime secret placeholder — never part of the frozen fidelity shape.
 			expect((snapshot as { git_access_token?: string }).git_access_token).toBe("");
 			// The one key the whole per-cloud split exists for: it must be THIS cloud's, or the Go

@@ -83,8 +83,13 @@ vi.mock("@/lib/db/env-status", () => ({ transitionEnv: vi.fn() }));
 vi.mock("@/lib/db/signed-job", () => ({ signedJob: <T>(values: T): T => values }));
 vi.mock("@/lib/observability/trace", () => ({ newTraceparent: () => "00-trace-span-01" }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The cloud check's SQL is integration-tested (tests/integration/cloud-availability/); here it is
+// a seam whose answer decides whether anything is queued.
+vi.mock("@/lib/queries/projects", () => ({ projectCloudRefusal: vi.fn() }));
 
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import { transitionEnv } from "@/lib/db/env-status";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 import { jobs, projectEnvironments } from "@/lib/db/schema";
 import { maybeAutoHeal } from "@/lib/reconcile/auto-heal";
 import { notifyScaler } from "@/lib/scaler";
@@ -111,6 +116,7 @@ beforeEach(() => {
 	fake.selects.length = 0;
 	fake.writes.length = 0;
 	vi.mocked(transitionEnv).mockResolvedValue(true);
+	vi.mocked(projectCloudRefusal).mockResolvedValue(null);
 });
 
 describe("maybeAutoHeal — guards that enqueue nothing", () => {
@@ -173,6 +179,16 @@ describe("maybeAutoHeal — the enqueue", () => {
 		vi.mocked(transitionEnv).mockResolvedValue(false);
 		fake.selects.push([env()], [LAST_DEPLOY]);
 		await maybeAutoHeal("p1", "env-1");
+		expect(fake.writes).toEqual([]);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("re-applies nothing on a cloud this deployment does not offer, and leaves the environment as it is", async () => {
+		vi.mocked(projectCloudRefusal).mockResolvedValue(new CloudNotOfferedError("alibaba"));
+		fake.selects.push([env()], [LAST_DEPLOY]);
+		await maybeAutoHeal("p1", "env-1");
+		expect(projectCloudRefusal).toHaveBeenCalledWith(expect.anything(), "p1");
+		expect(transitionEnv).not.toHaveBeenCalled();
 		expect(fake.writes).toEqual([]);
 		expect(notifyScaler).not.toHaveBeenCalled();
 	});
