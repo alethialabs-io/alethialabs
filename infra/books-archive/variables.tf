@@ -70,8 +70,28 @@ variable "books_github_repo" {
   }
 }
 
+variable "books_github_owner_id" {
+  description = "The numeric GitHub id of the books repository's owner (gh api repos/<repo> --jq .owner.id). GitHub's immutable OIDC subject carries it: repo:<owner>@<owner_id>/<name>@<repo_id>:..."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.books_github_owner_id))
+    error_message = "books_github_owner_id must be the owner's numeric GitHub id."
+  }
+}
+
+variable "books_github_repo_id" {
+  description = "The numeric GitHub id of the books repository (gh api repos/<repo> --jq .id). A rename or transfer keeps it, so a repository re-created under the old name does not match."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.books_github_repo_id))
+    error_message = "books_github_repo_id must be the repository's numeric GitHub id."
+  }
+}
+
 variable "books_github_environment" {
-  description = "The GitHub environment whose jobs may assume books-monthly. Bound with StringEquals to repo:<repo>:environment:<this>; the environment's own protection (main only) is what restricts which refs reach it."
+  description = "The GitHub environment whose jobs may assume books-monthly. Bound with StringEquals to repo:<owner>@<owner_id>/<name>@<repo_id>:environment:<this>; the environment's own protection (main only) is what restricts which refs reach it."
   type        = string
 
   validation {
