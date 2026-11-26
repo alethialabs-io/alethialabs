@@ -4,10 +4,11 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Controller, type FieldPath, useForm, useWatch } from "react-hook-form";
 import { savePreviewConfig } from "@/app/server/actions/preview";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
+import { useLeavePageGuard } from "@/components/confirm/use-unsaved-guard";
 import { manageReason } from "@/components/errors/manage-gate";
 import { RegionError } from "@/components/errors/region-error";
 import { FormRootError } from "@/components/forms/form-root-error";
@@ -293,14 +294,9 @@ export function PreviewSettings({
 	const saveDisabled = busy || !dirty;
 
 	// Nine fields of unsaved edits are not dropped silently (R6 F-16): a reload or a closed tab asks
-	// first, the page-level form of the guard the console's sheets use (`useUnsavedGuard`), and the
+	// first, the page-level form of the guard the console's sheets use (`useLeavePageGuard`), and the
 	// card's foot says the changes are not saved yet. A save resets the form, which clears both.
-	useEffect(() => {
-		if (!dirty || readOnly) return undefined;
-		const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-		window.addEventListener("beforeunload", warn);
-		return () => window.removeEventListener("beforeunload", warn);
-	}, [dirty, readOnly]);
+	useLeavePageGuard(dirty && !readOnly);
 	const errors = form.formState.errors;
 	const repoMessage = repoError ?? errors.repo_owner?.message ?? errors.repo_name?.message;
 	const placementMessage =

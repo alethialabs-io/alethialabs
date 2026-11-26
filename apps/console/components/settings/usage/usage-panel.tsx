@@ -59,13 +59,12 @@ import {
 } from "@/components/settings/billing/read-state";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { ClockText } from "@/components/settings/usage/clock-text";
-import { useUsageRange } from "@/components/settings/usage/use-usage-range";
+import { useUsageMetric, useUsageRange } from "@/components/settings/usage/use-usage-range";
 import {
 	count,
 	countQuota,
 	Fact,
 	FactList,
-	type Metric,
 	Meter,
 	OverTimeCard,
 } from "@/components/settings/usage/usage-primitives";
@@ -369,7 +368,7 @@ function PlanAndLimits({ summary, usage }: { summary: BillingSummary; usage: Usa
  */
 function UsageOverTimeSection() {
 	const picker = useUsageRange();
-	const [metric, setMetric] = useState<Metric>("runnerMinutes");
+	const [metric, setMetric] = useUsageMetric();
 	// No `keepPreviousData`: `label` changes with the picker synchronously, so keeping the previous
 	// window's bars would caption seven days of data "last 30 days" for the length of the refetch.
 	const overTime = useQuery(

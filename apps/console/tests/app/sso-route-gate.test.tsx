@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
 	sso: false,
 	refuse: false,
+	fail: false,
 	listed: [] as unknown[],
 }));
 
@@ -31,6 +32,7 @@ vi.mock("@/lib/rpc/server", async () => {
 		sso: {
 			bootstrap: base.handler(async ({ errors }) => {
 				if (h.refuse) throw errors.FORBIDDEN();
+				if (h.fail) throw new Error("database unavailable");
 				return { sso: h.sso, canManage: true, orgId: "o1", slug: "acme", origin: "https://c.test" };
 			}),
 			providers: base.input(z.record(z.string(), z.unknown())).handler(async ({ input }) => {
@@ -57,6 +59,7 @@ vi.mock("@/components/settings/members/people-skeleton", () => ({
 import SsoLoading from "@/app/(private)/[org]/~/settings/sso/loading";
 import SsoPage from "@/app/(private)/[org]/~/settings/sso/page";
 import { SsoNoAccess } from "@/components/settings/sso/sso-no-access";
+import { SsoReadFailed } from "@/components/settings/sso/sso-read-failed";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
@@ -82,6 +85,7 @@ function providersKey(input: unknown): string {
 beforeEach(() => {
 	h.listed = [];
 	h.refuse = false;
+	h.fail = false;
 });
 
 describe("the SSO route's plan gate (F021)", () => {
@@ -116,6 +120,26 @@ describe("the SSO route's plan gate (F021)", () => {
 		const node = await route();
 		expect(isValidElement(node) && node.type === SsoNoAccess).toBe(true);
 		expect(h.listed).toEqual([]);
+	});
+
+	// R6 E-21: a FAILED bootstrap (not a refusal) is the page's own region error with a retry, as
+	// every other people & access page renders a failed read — not a throw to the route boundary.
+	it("renders its own read-failed state, and prefetches nothing, when the bootstrap fails", async () => {
+		h.sso = true;
+		h.fail = true;
+		const node = await route();
+		expect(isValidElement(node) && node.type === SsoReadFailed).toBe(true);
+		expect(h.listed).toEqual([]);
+	});
+
+	// R6 E-22: the entitled skeleton has the manager's shape — the provider rail beside the detail
+	// pane, and the SCIM card under them — not one plain panel.
+	it("loading draws the rail-and-pane split and the SCIM card for an entitled org", () => {
+		act(() => useWorkspaceStore.setState({ entitlements: { ...COMMUNITY_ENTITLEMENTS, sso: true } }));
+		const { container } = render(<SsoLoading />);
+		const root = container.querySelector('[data-slot="skeleton-root"]');
+		expect(root?.querySelector(".lg\\:grid-cols-\\[280px_1fr\\]")).not.toBeNull();
+		expect(root?.querySelector("[data-slot=\"sso-scim-skeleton\"]")).not.toBeNull();
 	});
 
 	// The loading state is SYNCHRONOUS (CON-M4): it keys on the workspace store's plan, and while that
