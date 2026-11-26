@@ -23,6 +23,12 @@ import {
 	paddleApiKey,
 	paddleKeyEnvironment,
 } from "@/lib/billing/paddle-key";
+import {
+	PADDLE_CLIENT_TOKEN_ENV,
+	PADDLE_PRICE_ENV,
+	PADDLE_PRODUCT_ENV,
+	PADDLE_WEBHOOK_SECRET_ENV,
+} from "@/lib/billing/paddle/env-names";
 
 /** The client-token prefix each Paddle environment issues (Paddle.js `Initialize({ token })`). */
 export const PADDLE_CLIENT_TOKEN_PREFIX: { readonly [E in PaddleEnvironment]: string } = {
@@ -99,17 +105,18 @@ export function parsePaddleConfig(
 	const parsed = schema.safeParse({
 		environment: env.PADDLE_ENVIRONMENT?.trim(),
 		apiKey: paddleApiKey(env),
-		webhookSecret: env.PADDLE_WEBHOOK_SECRET?.trim(),
-		clientToken: env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN?.trim(),
+		webhookSecret: env[PADDLE_WEBHOOK_SECRET_ENV]?.trim(),
+		clientToken: env[PADDLE_CLIENT_TOKEN_ENV]?.trim(),
+		// The names come from env-names.ts, which scripts/paddle-setup.ts prints from too.
 		prices: {
-			team: env.PADDLE_PRICE_TEAM?.trim(),
-			enterprise: env.PADDLE_PRICE_ENTERPRISE,
-			aiPlus: env.PADDLE_PRICE_AI_PLUS,
-			aiMax: env.PADDLE_PRICE_AI_MAX,
+			team: env[PADDLE_PRICE_ENV.team]?.trim(),
+			enterprise: env[PADDLE_PRICE_ENV.enterprise],
+			aiPlus: env[PADDLE_PRICE_ENV.aiPlus],
+			aiMax: env[PADDLE_PRICE_ENV.aiMax],
 		},
 		products: {
-			runnerMinutes: env.PADDLE_PRODUCT_RUNNER_MINUTES,
-			aiCredits: env.PADDLE_PRODUCT_AI_CREDITS,
+			runnerMinutes: env[PADDLE_PRODUCT_ENV.runnerMinutes],
+			aiCredits: env[PADDLE_PRODUCT_ENV.aiCredits],
 		},
 		appUrl: env.NEXT_PUBLIC_APP_URL ?? env.BETTER_AUTH_URL,
 	});
