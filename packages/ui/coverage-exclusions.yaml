@@ -84,6 +84,12 @@ tier_separation:
     issue: "#2649"
     reason: The table suite mounts a real colgroup table and asserts every row's children are cells, as many as the header and the colgroup declare, with the row's hover clamp drawn by its first cell rather than a row pseudo-element (#6237).
 
+  - path: src/empty.tsx
+    suite: [tests/error-state.test.tsx]
+    symbols: [Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle]
+    issue: "#7734"
+    reason: RegionError is built on the Empty primitives, and the error-state suite mounts it for real and asserts its alert role, data-state, title and retry (#7734, moved from the console).
+
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
   # No suite of their own. Each is executed because a component that IS tested renders it, which is
@@ -281,10 +287,10 @@ baseline:
     reason: The disabled-reason suite mounts a real dropdown (menu, trigger, content, item); these eleven parts are the ones it does not reach.
 
   - path: src/empty.tsx
-    symbols: [Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyState, EmptyTitle]
+    symbols: [EmptyState]
     issue: "#2649"
-    state: no-test
-    reason: EmptyState — the shared-surface row every empty list, tab and panel in the console is required to use — is named by no suite in this package.
+    state: untested-export
+    reason: EmptyState — the shared-surface row every empty list, tab and panel in the console is required to use — is rendered by no suite in this package; the error-state suite reaches only the primitives RegionError composes.
 
   - path: src/field-help.tsx
     symbols: [FieldHelp]

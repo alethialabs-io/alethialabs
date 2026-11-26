@@ -14,7 +14,7 @@ import {
 } from "@/app/server/actions/connectors";
 import type { ActionResult } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { boardRefusalOf, connectorKeys } from "@/components/connectors/connectors-board";

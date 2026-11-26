@@ -13,7 +13,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ErrorState } from "@/components/errors/error-state";
+import { ErrorState } from "@repo/ui/error-state";
 import { orgHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
 

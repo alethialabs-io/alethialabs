@@ -10,7 +10,7 @@ import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { draftScope, fnv1a32, stableStringify } from "@/lib/canvas/design-revision";
 import { boardFor } from "@/lib/canvas/store/board";
 import { CanvasStoreProvider } from "@/lib/canvas/store/canvas-store-provider";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { BoardPreview, BoardPreviewProvider } from "./canvas/board-preview";
 import { formToGraph } from "./canvas/graph/form-to-graph";
 import { ConnectorsProvider } from "./connectors-context";

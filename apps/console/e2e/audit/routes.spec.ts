@@ -417,7 +417,7 @@ async function auditRoute(page: Page, route: RouteRecord): Promise<void> {
 		expect.soft(
 			t6.rendersSharedErrorState,
 			`T6 ${route.route}: with the client render made to throw, the page did not render ` +
-				`components/errors/error-state. It rendered ${
+				`@repo/ui/error-state. It rendered ${
 					t6.errorish ? `a different error surface: "${t6.errorish}"` : `${t6.visibleLength} visible characters`
 				}.`,
 		).toBe(true);
@@ -473,7 +473,7 @@ test.describe("pass 2 · routes carrying [project] / [id], against real rows", (
 });
 
 test("the shared error component is still recognisable", async ({ page }) => {
-	// The T6 detector derives its signature from `components/errors/error-state.tsx`. Prove the
+	// The T6 detector derives its signature from `packages/ui/src/error-state.tsx`. Prove the
 	// derivation still finds that component in a page that definitely renders it — a 404 — so a
 	// restyle turns T6 into a red line here rather than into 36 quiet FAILs on real pages.
 	await page.goto(`/${ctx.orgSlug}/~/this-route-does-not-exist`, { waitUntil: "domcontentloaded" });
@@ -481,6 +481,6 @@ test("the shared error component is still recognisable", async ({ page }) => {
 	expect(
 		await rendersSharedErrorState(page),
 		"the T6 detector no longer recognises ErrorState on a page that renders one (a 404). Its " +
-			"signature is derived from components/errors/error-state.tsx — update e2e/audit/error-state.ts.",
+			"signature is derived from packages/ui/src/error-state.tsx — update e2e/audit/error-state.ts.",
 	).toBe(true);
 });

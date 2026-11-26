@@ -1069,7 +1069,7 @@ export function summariseLiveEvidence(predicate, evidence, verdict = "FAIL") {
 		}
 		if (predicate === "T6") {
 			const e = asObject(evidence, predicate);
-			return `the injected fault did not render components/errors/error-state${e.shellSurvived === true ? " (the shell survived)" : ""}`;
+			return `the injected fault did not render @repo/ui/error-state${e.shellSurvived === true ? " (the shell survived)" : ""}`;
 		}
 		if (predicate === "T7") {
 			const e = asObject(evidence, predicate);
@@ -3969,7 +3969,7 @@ function selfTest() {
 	ok(
 		"T6 says the fault did not reach the shared error state",
 		summariseLiveEvidence("T6", { shellSurvived: true, rendersSharedErrorState: false, errorish: "…" }) ===
-			"the injected fault did not render components/errors/error-state (the shell survived)",
+			"the injected fault did not render @repo/ui/error-state (the shell survived)",
 	);
 	ok(
 		"T7 distinguishes a redirect from a blank",

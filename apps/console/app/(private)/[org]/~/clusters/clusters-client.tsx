@@ -39,7 +39,7 @@ import { ClustersFilterBar } from "@/components/clusters/clusters-filter-bar";
 import { DEFAULT_CLUSTER_FILTERS, normalizeClustersQuery } from "@/components/clusters/clusters-query";
 import { CLUSTERS_REGION, ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";

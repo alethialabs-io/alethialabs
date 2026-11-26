@@ -4,7 +4,7 @@
 
 import { Button } from "@repo/ui/button";
 import { useEffect } from "react";
-import { ErrorState } from "@/components/errors/error-state";
+import { ErrorState } from "@repo/ui/error-state";
 import { captureException } from "@/lib/analytics/track";
 
 /**

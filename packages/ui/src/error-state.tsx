@@ -6,14 +6,18 @@
 // (error.tsx / global-error.tsx). Actions are passed in by the caller so each
 // boundary supplies its own links / reset() buttons.
 //
+// Promoted from apps/console/components/errors/ (#7734) so marketing, blog and docs can render the
+// same surface. The brand mark is a `mark` slot rather than an import: `@repo/brand` depends on
+// `@repo/ui`, so importing `AlethiaMark` here would make the two packages a cycle.
+//
 // A data REGION that failed to load is not a route error: use `RegionError`
-// (./region-error.tsx), or `DataTable`'s `query` prop for a table. This one renders the route's
-// heading, which is right when it replaces the page and a stray second `<h1>` inside it.
-// tests/components/errors/error-state-placement.test.tsx holds the line (#6117).
+// (./region-error.tsx), or the console `DataTable`'s `query` prop for a table. This one renders the
+// route's heading, which is right when it replaces the page and a stray second `<h1>` inside it.
+// In the console, apps/console/tests/components/errors/error-state-placement.test.tsx holds the
+// line (#6117).
 
 import type { ReactNode } from "react";
-import { AlethiaMark } from "@repo/brand/lockup";
-import { cn } from "@repo/ui/utils";
+import { cn } from "./utils";
 
 interface ErrorStateProps {
 	/** Big mono status line above the title, e.g. "404" or "500". */
@@ -22,9 +26,14 @@ interface ErrorStateProps {
 	description?: string;
 	/** A row of buttons/links — the caller owns navigation + reset(). */
 	actions?: ReactNode;
-	/** Centered full-screen layout with the logo (for top-level pages); otherwise a
+	/** Centered full-screen layout, with `mark` above it (for top-level pages); otherwise a
 	 * compact in-content panel (for errors rendered inside the dashboard shell). */
 	fullPage?: boolean;
+	/**
+	 * The brand mark above the code, full-page layout only, e.g. `<AlethiaMark />` from
+	 * `@repo/brand/lockup`. It is sized and coloured here, and hidden from assistive technology.
+	 */
+	mark?: ReactNode;
 	className?: string;
 }
 
@@ -35,6 +44,7 @@ export function ErrorState({
 	description,
 	actions,
 	fullPage = false,
+	mark,
 	className,
 }: ErrorStateProps) {
 	const body = (
@@ -45,9 +55,15 @@ export function ErrorState({
 				className,
 			)}
 		>
-			{fullPage && (
-				<AlethiaMark className="mb-1 h-7 w-7 text-text-primary" aria-hidden />
-			)}
+			{fullPage && mark ? (
+				<span
+					data-slot="error-state-mark"
+					aria-hidden
+					className="mb-1 block size-7 text-text-primary [&>svg]:size-full"
+				>
+					{mark}
+				</span>
+			) : null}
 			{code && (
 				<span className="font-mono text-ui-sm uppercase tracking-[0.22em] text-text-tertiary">
 					{code}

@@ -19,7 +19,7 @@ import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { CARD_EMPTY } from "@/components/overview/card-empty";
 import { globalHref } from "@/lib/routing";

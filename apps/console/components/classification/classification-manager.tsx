@@ -46,7 +46,7 @@ import {
 	updateDimension,
 } from "@/app/server/actions/classification/dimensions";
 import { MANAGE_DENIED_REASON, MANAGE_PENDING_REASON } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { SettingsSearch } from "@/components/settings/settings-ui";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";

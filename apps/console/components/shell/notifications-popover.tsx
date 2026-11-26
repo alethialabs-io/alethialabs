@@ -11,7 +11,7 @@ import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Skeleton } from "@repo/ui/skeleton";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
   useJobNotifications,
   type JobNotification,
