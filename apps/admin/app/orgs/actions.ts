@@ -18,8 +18,9 @@ import { enterpriseContract } from "@repo/platform/schema";
 import { assertPlatformAdmin } from "@/lib/auth/staff";
 import { getServiceDb } from "@/lib/db";
 import { withPlatformAudit } from "@/lib/platform/audit";
-import { provisionOrg, setOrgPlan } from "@/lib/platform/console-client";
-import { getOrgStripeCustomer } from "@/lib/platform/queries";
+import { linkPaddleCustomer, provisionOrg, setOrgPlan } from "@/lib/platform/console-client";
+import { linkPaddleCustomerSchema, planPaddleCustomerLink } from "@/lib/platform/paddle-customer-link";
+import { getOrgPaddleCustomer, getOrgStripeCustomer } from "@/lib/platform/queries";
 import { createEnterpriseInvoiceSubscription } from "@/lib/platform/stripe";
 
 const contractFields = z.object({
@@ -199,3 +200,49 @@ export async function createEnterpriseOrg(form: unknown): Promise<ActionResult> 
 	}
 }
 
+
+export interface LinkPaddleCustomerActionResult {
+	ok: boolean;
+	error?: string;
+	/** Set when the org holds a different customer id: the operator must confirm replacing it. */
+	confirmReplace?: string;
+	/** False when the org already held that id, so nothing was written (and nothing audited). */
+	changed?: boolean;
+	/** Whether Paddle confirmed the customer exists (false when Paddle is not configured). */
+	verified?: boolean;
+}
+
+/**
+ * "Link Paddle customer" — store the org's Paddle customer id, for a customer invoiced by hand from
+ * the Paddle dashboard. A different stored id is replaced only after the operator confirms that exact
+ * value (`replace`). The write goes through the console, under withPlatformAudit like every operator
+ * mutation; a no-op and an unconfirmed replace write nothing and so record nothing.
+ */
+export async function linkPaddleCustomerAction(form: unknown): Promise<LinkPaddleCustomerActionResult> {
+	const staff = await assertPlatformAdmin();
+	const parsed = linkPaddleCustomerSchema.safeParse(form);
+	if (!parsed.success) {
+		return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+	}
+	const { orgId, customerId, replace, reason } = parsed.data;
+
+	try {
+		const current = await getOrgPaddleCustomer(orgId);
+		const plan = planPaddleCustomerLink(current, customerId, replace);
+		if (plan.kind === "unchanged") return { ok: true, changed: false };
+		if (plan.kind === "confirm") return { ok: false, confirmReplace: plan.current };
+
+		const result = await withPlatformAudit(
+			staff.email,
+			"link_paddle_customer",
+			orgId,
+			reason,
+			{ paddleCustomerId: customerId, replacedPaddleCustomerId: plan.replace },
+			() => linkPaddleCustomer({ orgId, customerId, replace: plan.replace }),
+		);
+		revalidatePath(`/orgs/${orgId}`);
+		return { ok: true, changed: result.changed, verified: result.verified };
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : "Linking the Paddle customer failed" };
+	}
+}
