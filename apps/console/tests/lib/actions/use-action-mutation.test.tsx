@@ -5,6 +5,7 @@
 // with snapshot rollback, invalidation of every declared key, and one treatment per error kind.
 // #6755: a call that gets no server answer is a `network` failure the person is told about, and
 // the declared keys are still invalidated.
+// #7741: the standard failure path — a failure that is safe to retry gets one toast with Retry.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -24,6 +25,27 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { endSession, useSessionState } from "@/lib/stores/use-session-state";
 
 const KEY = ["projects", "acme"];
+
+/** The options argument of a toast that offers Retry. */
+const RETRY = expect.objectContaining({
+	action: expect.objectContaining({ label: "Retry", onClick: expect.any(Function) }),
+});
+
+/** The Retry handler of the toast at call `index`; fails the test if that toast offered none. */
+function retryOf(index = 0): () => void {
+	const options: unknown = toast.error.mock.calls[index]?.[1];
+	if (typeof options !== "object" || options === null || !("action" in options)) {
+		throw new Error(`toast ${index} offered no Retry`);
+	}
+	const action: unknown = options.action;
+	if (typeof action !== "object" || action === null || !("onClick" in action) || typeof action.onClick !== "function") {
+		throw new Error(`toast ${index} has no Retry handler`);
+	}
+	const onClick: unknown = action.onClick;
+	return () => {
+		if (typeof onClick === "function") onClick();
+	};
+}
 
 /** A fresh client + wrapper per test, seeded with one cached list. */
 function setup() {
@@ -200,7 +222,7 @@ describe("useActionMutation", () => {
 			await result.current.mutateAsync(undefined).catch(() => {});
 		});
 		expect(onRefusal).not.toHaveBeenCalled();
-		expect(toast.error).toHaveBeenCalledWith("Something went wrong on our side. Reference: abc123");
+		expect(toast.error).toHaveBeenCalledWith("Something went wrong on our side. Reference: abc123", RETRY);
 	});
 
 	it("tells the person when the call itself rejects, rolls back, and still invalidates (#6755)", async () => {
@@ -247,7 +269,7 @@ describe("useActionMutation", () => {
 		});
 		expect(action).not.toHaveBeenCalled();
 		expect(client.getQueryData(KEY)).toEqual(["alpha"]);
-		expect(toast.error).toHaveBeenCalledWith("You appear to be offline. Nothing was changed.");
+		expect(toast.error).toHaveBeenCalledWith("You appear to be offline. Nothing was changed.", RETRY);
 		await waitFor(() => expect(result.current.error?.error).toEqual({ kind: "network", sent: false }));
 		expect(result.current.isPaused).toBe(false);
 	});
@@ -364,5 +386,67 @@ describe("useActionMutation", () => {
 		await waitFor(() => expect(result.current.isPending).toBe(false));
 		act(() => result.current.submit(undefined));
 		await waitFor(() => expect(action).toHaveBeenCalledTimes(2));
+	});
+
+	it("Retry on an unexpected failure re-invokes the action with the same variables (#7741)", async () => {
+		const { wrapper } = setup();
+		const action = vi
+			.fn<(name: string) => Promise<ActionResult<string>>>()
+			.mockResolvedValueOnce({ ok: false, error: { kind: "unexpected", ref: "r1" } })
+			.mockResolvedValueOnce({ ok: true, data: "beta" });
+		const onSuccess = vi.fn();
+		const { result } = renderHook(() => useActionMutation(action, { invalidates: [], onSuccess }), { wrapper });
+		act(() => result.current.submit("beta"));
+		await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+		expect(toast.error).toHaveBeenCalledWith("Something went wrong on our side. Reference: r1", RETRY);
+		await waitFor(() => expect(result.current.isPending).toBe(false));
+
+		act(() => retryOf(0)());
+		await waitFor(() => expect(onSuccess).toHaveBeenCalledWith("beta", "beta"));
+		expect(action).toHaveBeenCalledTimes(2);
+		expect(action).toHaveBeenNthCalledWith(2, "beta");
+		expect(toast.error).toHaveBeenCalledTimes(1);
+	});
+
+	it("offers no Retry where trying again would be refused again or may double-apply (#7741)", async () => {
+		const { wrapper } = setup();
+		const failures: ActionResult<string>[] = [
+			{ ok: false, error: { kind: "conflict", message: "Already exists." } },
+			{ ok: false, error: { kind: "forbidden", message: "Not allowed." } },
+			{ ok: false, error: { kind: "not-found", message: "Gone." } },
+			{ ok: false, error: { kind: "validation", message: "Check the name.", fields: {} } },
+			{ ok: false, error: { kind: "entitlement", message: "A Pro feature.", feature: "teams" } },
+		];
+		for (const failure of failures) {
+			const { result } = renderHook(() => useActionMutation(async () => failure, { invalidates: [] }), { wrapper });
+			await act(async () => {
+				await result.current.mutateAsync(undefined).catch(() => {});
+			});
+		}
+		// A call that was sent and got no answer may already have applied.
+		const unanswered = async (): Promise<ActionResult<string>> => {
+			throw new TypeError("Failed to fetch");
+		};
+		const { result } = renderHook(() => useActionMutation(unanswered, { invalidates: [] }), { wrapper });
+		await act(async () => {
+			await result.current.mutateAsync(undefined).catch(() => {});
+		});
+		expect(toast.error).toHaveBeenCalledTimes(failures.length + 1);
+		for (const call of toast.error.mock.calls) expect(call).toHaveLength(1);
+	});
+
+	it("Retry after an offline failure calls the action once the browser is back online (#7741)", async () => {
+		const { wrapper } = setup();
+		online = false;
+		const action = vi.fn(async (name: string): Promise<ActionResult<string>> => ({ ok: true, data: name }));
+		const { result } = renderHook(() => useActionMutation(action, { invalidates: [] }), { wrapper });
+		act(() => result.current.submit("alpha"));
+		await waitFor(() => expect(toast.error).toHaveBeenCalledWith("You appear to be offline. Nothing was changed.", RETRY));
+		await waitFor(() => expect(result.current.isPending).toBe(false));
+		expect(action).not.toHaveBeenCalled();
+
+		online = true;
+		act(() => retryOf(0)());
+		await waitFor(() => expect(action).toHaveBeenCalledWith("alpha"));
 	});
 });
