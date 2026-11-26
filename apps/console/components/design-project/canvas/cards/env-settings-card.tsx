@@ -375,7 +375,7 @@ function EnvironmentStatusView() {
 			)}
 			{env.unattributedDrift.length > 0 && (
 				<section className="space-y-2">
-					<SectionHeading level={3} title="Drift" count={env.unattributedDrift.length} />
+					<SectionHeading level={3} title="Drift" />
 					<ul className="space-y-1">
 						{env.unattributedDrift.map((d) => (
 							<li
