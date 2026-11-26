@@ -16,6 +16,7 @@ import {
 	timestamp,
 	uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 /** The permission registry, seeded from lib/authz/registry.ts. Key = `resource:action`. */
 export const permission = pgTable("permission", {
@@ -130,7 +131,30 @@ export const authzActivityLog = pgTable(
 		// so paging is a bounded probe instead of an org-index scan + in-memory sort. This
 		// SUPERSEDES a standalone (org_id) index (a lone org filter is just a prefix of this
 		// one), so we don't keep the old idx_authz_activity_org — it would be redundant.
-		index("idx_authz_activity_org_id_desc").on(t.org_id, t.id.desc()),
+		//
+		// NULLS FIRST is what makes that true (#7539). drizzle's `.desc()` alone emits DESC NULLS
+		// LAST, and a bare `ORDER BY id DESC` means NULLS FIRST; the planner does not treat the two
+		// as the same order even on a NOT NULL column, so for months this index served only the
+		// org filter and every page was sorted on top of it (or walked the pkey backwards). Its
+		// EXPLAIN test passed while it was the only index leading with org_id, and went red the
+		// moment a second one did.
+		index("idx_authz_activity_org_id_desc").on(t.org_id, t.id.desc().nullsFirst()),
+		// The Settings › Activity read (lib/queries/activity.ts, the console keyset contract since
+		// LST-10 #7492) is `WHERE org_id = ? [AND (sort_key, id) < (?, ?)] ORDER BY sort_key DESC,
+		// id DESC LIMIT n`, with sort_key the instant truncated to the millisecond. This serves the
+		// org filter, the row-value cursor bound and the order as one range scan, so a large org's
+		// wide window is no longer sorted in memory (#7539). The expression is the UTC form
+		// (`keysetUtcSortKey`): `date_trunc(text, timestamptz)` is STABLE and cannot be indexed,
+		// the `timestamp` overload is IMMUTABLE, and the order is the same. It must match the
+		// query's expression exactly — a different spelling of the same order is a silent sort.
+		// `id` is DESC NULLS FIRST on purpose: that is what the query's bare `id desc` means, and
+		// drizzle's `.desc()` alone emits NULLS LAST, which the planner treats as a different
+		// order (it then adds an Incremental Sort on id) even though the column is NOT NULL.
+		index("idx_authz_activity_org_ts_ms_id").on(
+			t.org_id,
+			sql`date_trunc('milliseconds', (${t.ts} at time zone 'UTC')) desc`,
+			t.id.desc().nullsFirst(),
+		),
 		// Retention GC (gc_authz_activity_log) range-scans `ts < now() - p_age` and takes the
 		// oldest first (ORDER BY ts) with no org predicate, so the (org_id, id) index above
 		// can't serve it — its leading org_id column is unconstrained. This ts btree

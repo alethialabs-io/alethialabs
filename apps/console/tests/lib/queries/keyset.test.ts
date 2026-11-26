@@ -29,6 +29,8 @@ import {
 	keysetPageInMemory,
 	keysetPageInput,
 	keysetSortKey,
+	keysetUtcAfter,
+	keysetUtcSortKey,
 	type KeysetPosition,
 } from "@/lib/queries/keyset";
 
@@ -192,6 +194,22 @@ describe("the SQL half", () => {
 		const rendered = dialect.sqlToQuery(after);
 		expect(rendered.sql).toBe(`(date_trunc('milliseconds', "things"."updated_at"), "things"."id") < ($1::timestamptz, $2::uuid)`);
 		expect(rendered.params).toEqual(["2026-11-20T10:00:00.123Z", uuid(1)]);
+	});
+
+	it("the UTC sort key is the indexable form, and its cursor is read in the same frame", () => {
+		const key = keysetUtcSortKey(things.updated_at);
+		const order = dialect.sqlToQuery(sql.join(keysetOrderBy(key, things.id), sql`, `)).sql;
+		expect(order).toBe(`date_trunc('milliseconds', ("things"."updated_at" at time zone 'UTC')) desc, "things"."id" desc`);
+		expect(keysetUtcAfter(key, things.id, undefined)).toBeUndefined();
+		const after = keysetUtcAfter(key, things.id, { at: "2026-11-20T10:00:00.123Z", id: "5" }, "integer");
+		if (after === undefined) throw new Error("expected a predicate");
+		const rendered = dialect.sqlToQuery(after);
+		// Both sides are `timestamp` in UTC: a bare `::timestamptz` here would be converted through
+		// the session TimeZone and shift the boundary by its offset.
+		expect(rendered.sql).toBe(
+			`(date_trunc('milliseconds', ("things"."updated_at" at time zone 'UTC')), "things"."id") < (($1::timestamptz at time zone 'UTC'), $2::bigint)`,
+		);
+		expect(rendered.params).toEqual(["2026-11-20T10:00:00.123Z", "5"]);
 	});
 
 	it("page one has no predicate, and the id cast follows the id kind", () => {

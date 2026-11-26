@@ -6,14 +6,23 @@
 // boundaries fall INSIDE ties on `ts` — including events in the same millisecond but different
 // microseconds, which a JS `Date` cursor cannot tell apart — visits every event of the scope exactly
 // once, newest first, and a filter changes the universe the walk covers without changing that.
+// And that the read's sort is served by idx_authz_activity_org_ts_ms_id, not sorted in memory
+// (#7539). The walk's oracle (`everyId`) orders on the PLAIN `date_trunc(ts)` on purpose: the
+// read uses the indexable UTC form, and the two orders must agree.
 
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { authzActivityLog } from "@/lib/db/schema";
 import { queryActivityPage } from "@/lib/queries/activity";
-import { decodeKeysetCursor } from "@/lib/queries/keyset";
+import {
+	decodeKeysetCursor,
+	keysetFetchLimit,
+	keysetOrderBy,
+	keysetUtcAfter,
+	keysetUtcSortKey,
+} from "@/lib/queries/keyset";
 import type { ActivityQuery } from "@/app/server/actions/activity";
 import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
@@ -93,6 +102,39 @@ describeIfDb("Activity log keyset walk (LST-10)", () => {
 		const ids = await walk({ actorIds: [grace] });
 		expect(ids).toEqual(await everyId(grace));
 		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	/**
+	 * The plan of the Activity rows pass's org + cursor + order shape, built from the same keyset
+	 * helpers `queryActivityPage` uses. Sequential and bitmap scans are switched off for the one
+	 * transaction, so on nine rows the planner still has to choose among index paths — and an
+	 * index that did not match the ORDER BY would show up as a Sort above it.
+	 */
+	async function planOf(cursor: { at: string; id: string } | undefined): Promise<string> {
+		return getServiceDb().transaction(async (tx) => {
+			await tx.execute(sql`set local enable_seqscan = off`);
+			await tx.execute(sql`set local enable_bitmapscan = off`);
+			const sortKey = keysetUtcSortKey(authzActivityLog.ts);
+			const rowsPass = tx
+				.select({ id: authzActivityLog.id })
+				.from(authzActivityLog)
+				.where(and(eq(authzActivityLog.org_id, orgId), keysetUtcAfter(sortKey, authzActivityLog.id, cursor, "integer")))
+				.orderBy(...keysetOrderBy(sortKey, authzActivityLog.id))
+				.limit(keysetFetchLimit(LIMIT));
+			const plan = await tx.execute<{ "QUERY PLAN": string }>(sql`explain (costs off) ${rowsPass}`);
+			return plan.map((r) => r["QUERY PLAN"]).join("\n");
+		});
+	}
+
+	it("the first page and a cursor page are one index range scan in the contract's order, no sort (#7539)", async () => {
+		const first = await planOf(undefined);
+		expect(first).toContain("idx_authz_activity_org_ts_ms_id");
+		expect(first).not.toMatch(/Sort/);
+		const later = await planOf({ at: new Date().toISOString(), id: "1" });
+		expect(later).toContain("idx_authz_activity_org_ts_ms_id");
+		expect(later).not.toMatch(/Sort/);
+		// The cursor bound is an index condition, not a filter over every row of the org.
+		expect(later).toMatch(/Index Cond: .*ROW\(date_trunc/);
 	});
 
 	it("answers universeEmpty on the first page only", async () => {
