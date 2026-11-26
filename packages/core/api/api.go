@@ -171,6 +171,10 @@ type ProvisionJob struct {
 	CompletedAt       *time.Time              `json:"completed_at"`
 	CreatedAt         time.Time               `json:"created_at"`
 	UpdatedAt         time.Time               `json:"updated_at"`
+	// DestroyPlan marks a PLAN job that planned a teardown (`tofu plan -destroy`, #7455) rather than
+	// an apply. A deploy never applies one; a destroy is approved against one. False on every other
+	// job type, and on a control plane older than the field.
+	DestroyPlan bool `json:"destroy_plan"`
 	// List-only display fields (GET /api/jobs); absent on the single-job GET.
 	ProjectName string `json:"project_name,omitempty"`
 	RunnerName  string `json:"runner_name,omitempty"`
@@ -327,6 +331,10 @@ type QueueJobParams struct {
 	// tenants first. Without it the server refuses to destroy a Fabric owner that still has live
 	// tenants, naming them. Sent only when true.
 	Cascade bool
+	// DestroyPlan (PLAN only, #7455) plans a teardown of the environment instead of an apply.
+	// Nothing is destroyed; a DESTROY is then approved against this plan and tears down exactly
+	// it. Sent only when true; the control plane refuses it on any other job type.
+	DestroyPlan bool
 	// ApprovalID (DEPLOY and DESTROY only) presents a person's approval of the reviewed plan, which
 	// a CLI login or a service token needs (RequestApproval). Sent only when set.
 	ApprovalID string
@@ -793,6 +801,9 @@ func (c *Client) QueueJobFull(params QueueJobParams) (*QueueJobResponse, error) 
 	}
 	if params.Cascade {
 		payload["cascade"] = true
+	}
+	if params.DestroyPlan {
+		payload["destroy_plan"] = true
 	}
 	if params.ApprovalID != "" {
 		payload["approval_id"] = params.ApprovalID

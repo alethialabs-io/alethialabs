@@ -264,17 +264,21 @@ than coming back as a `400`. The file's full reference, components included, is 
 Queue a `PLAN`, `DEPLOY` or `DESTROY` job for one environment of a project.
 
 - `preview` works out what a deploy would change, with a cost estimate. It changes nothing in your
-  cloud account.
+  cloud account. With `--destroy` it works out what a destroy would delete instead: a **destroy
+  plan**, which is what a destroy from the CLI is approved against.
 - `deploy` creates or updates the environment's cloud resources. A deploy applies a reviewed plan:
   without `--plan-job-id` or `--latest-plan` it previews the environment first, waits for that
   plan, prints what it would change, asks, and then deploys exactly that plan. See
   [Deploying without a plan reference](#deploying-without-a-plan-reference).
-- `destroy` tears them down. This cannot be undone.
+- `destroy` tears them down. This cannot be undone. See
+  [A deploy or a destroy that needs a person's approval](#a-deploy-or-a-destroy-that-needs-a-persons-approval)
+  for the destroy plan it is approved against.
 
 ```bash
 alethia project preview --project boutique --env dev-1 --runner eu-box --wait
 alethia project deploy --project boutique --env dev-1 --latest-plan --wait
-alethia project destroy --project boutique --env dev-1
+alethia project preview --project boutique --env dev-1 --destroy --wait
+alethia project destroy --project boutique --env dev-1 --latest-plan
 ```
 
 Omit `--project` on a terminal and you are asked which project; omit the runner and you are
@@ -288,8 +292,9 @@ available runner.
 | `--env` | ✓ | ✓ | ✓ | Target environment name (default: the project's default environment) |
 | `--runner` | ✓ | ✓ | ✓ | Runner by **name** or id. Asked for on a terminal when omitted. |
 | `--runner-id` | ✓ | ✓ | ✓ | Runner id. Prefer `--runner`, which also takes the name. |
-| `--plan-job-id` | | ✓ | | Deploy a specific `PLAN` job, by id |
-| `--latest-plan` | | ✓ | | Deploy the project's most recent `PLAN` job |
+| `--destroy` | ✓ | | | Plan a teardown of the environment instead of a deploy. Deletes nothing. |
+| `--plan-job-id` | | ✓ | ✓ | `deploy`: apply this `PLAN` job, by id. `destroy`: ask for the approval of this destroy plan, by id. |
+| `--latest-plan` | | ✓ | ✓ | `deploy`: apply the project's most recent `PLAN` job that is not a destroy plan. `destroy`: ask for the approval of the project's most recent destroy plan of this environment. |
 | `-w`, `--wait` | ✓ | ✓ | ✓ | Wait for the job to finish |
 | `--timeout` | ✓ | ✓ | ✓ | With `--wait`, stop waiting after this long, for example `30m`. The job keeps running and the command exits `12`. On `deploy`, it also bounds the wait for the preview it makes first. |
 | `--dry-run` | ✓ | ✓ | ✓ | Check every input and print the request. Nothing is queued. |
@@ -364,7 +369,11 @@ alethia project destroy --project boutique --env prod --cascade --dry-run
 
 A deploy or a destroy started from the CLI, with a device sign-in or a service token, needs a
 person's approval of its reviewed plan. A deploy is approved against the plan it applies. A destroy
-is approved against the plan the environment's current state was deployed from.
+is approved against a destroy plan, from `preview --destroy`, and tears down exactly that plan. A
+destroy takes the destroy plan you name with `--latest-plan` or `--plan-job-id`. With neither, it
+makes one when the approval is needed, waits for it, and prints what it would delete. A destroy
+plan that fails or is cancelled stops the command with exit `13`, and nothing is destroyed.
+`deploy --latest-plan` never takes a destroy plan.
 
 When the control plane answers that the job needs an approval, the command asks for one and prints
 the console page where a person approves it, with the first eight characters of the plan's digest:
@@ -380,9 +389,9 @@ is queued before that.
 - A rejected approval exits `5`. An expired or superseded one exits `7`; run the command again to
   ask for a new approval.
 - `--no-wait`, or agent mode, prints the page and exits `9` without waiting. Once the approval is
-  approved, run the same `deploy` with `--plan-job-id` and the plan the message names, or the same
-  `destroy`. Asking again for the same plan returns the same approval, so the command finds it
-  approved and goes ahead.
+  approved, run the command the message names: the same `deploy` or `destroy` with `--plan-job-id`
+  and the plan that was approved. Asking again for the same plan returns the same approval, so the
+  command finds it approved and goes ahead.
 - A `--cascade` destroy cannot be approved this way. Start it from the console.
 
 `alethia approve` opens an approval's page in the browser; see the
