@@ -18,6 +18,7 @@ import {
 	type BillingRowPatch,
 	type BillingRowState,
 	decideSubscriptionCanceled,
+	type ProviderRefs,
 	lifecycleRank,
 	RetryableBillingEventError,
 	type TransactionMirrorState,
@@ -40,6 +41,8 @@ class MemoryStore implements BillingEventStore {
 	rows = new Map<string, Row>();
 	txns = new Map<string, TransactionMirrorWrite & { refundedAt?: Date | null; chargebackAt?: Date | null }>();
 	grants = new Map<string, { orgId: string; userId: string; credits: number }>();
+	/** `org|id` pairs our records hold: a stored Paddle customer, or a Paddle order's txn / sub id. */
+	records = new Set<string>();
 
 	/** Whether the org exists. */
 	async orgExists(orgId: string) {
@@ -56,6 +59,18 @@ class MemoryStore implements BillingEventStore {
 	async businessOwner(id: string) {
 		for (const r of this.rows.values()) if (r.paddleBusinessId === id) return r.organizationId;
 		return null;
+	}
+	/** Whether a stored customer, an order or the mirror ties the org to one of the refs. */
+	async orgHasRecordOf(orgId: string, refs: ProviderRefs) {
+		for (const id of [refs.customerId, refs.transactionId, refs.subscriptionId]) {
+			if (id && this.records.has(`${orgId}|${id}`)) return true;
+		}
+		for (const t of this.txns.values()) {
+			if (t.organizationId !== orgId) continue;
+			if (refs.transactionId && t.transactionId === refs.transactionId) return true;
+			if (refs.subscriptionId && t.subscriptionId === refs.subscriptionId) return true;
+		}
+		return false;
 	}
 	/** Runs fn over the row with a merging write. */
 	async withLockedRow<T>(orgId: string, fn: (row: BillingRowState | null, write: (p: BillingRowPatch) => Promise<void>) => Promise<T>) {
@@ -120,6 +135,10 @@ beforeEach(() => {
 	store = new MemoryStore();
 	store.orgs.add(ORG);
 	store.orgs.add(OTHER_ORG);
+	// Both orgs hold the fixtures' Paddle customer, so the rule tests below are about their own rule;
+	// "a record of ours" has its own describe.
+	store.records.add(`${ORG}|ctm_a`);
+	store.records.add(`${OTHER_ORG}|ctm_a`);
 	alert = vi.fn<ApplyDeps["alert"]>(async () => true);
 	warn = vi.fn<ApplyDeps["warn"]>();
 	deps = { store, alert, warn };
@@ -525,6 +544,83 @@ describe("transactions", () => {
 		await applyBillingEvent({ ...ev, kind: "transaction_payment_failed" }, deps);
 		expect(store.txns.has("txn_a")).toBe(true);
 		expect(warn).toHaveBeenCalledWith("[paddle] payment failed", expect.objectContaining({ transaction_id: "txn_a" }));
+	});
+});
+
+describe("an org named only by custom_data needs a record of ours", () => {
+	beforeEach(() => store.records.clear());
+
+	it("refuses and alerts on a transaction no order, customer or mirror ties to the org", async () => {
+		const r = await applyBillingEvent(completed({ customerId: "ctm_x" }), deps);
+		expect(r).toEqual({ outcome: "refused", reason: "unrecorded_org" });
+		expect(store.txns.size).toBe(0);
+		expect(alert).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not grant a credit pack on a transaction it cannot tie to the org", async () => {
+		const pack: PaddleTransactionCustomData = { organizationId: ORG, kind: "credit_pack", credits: 5000, userId: USER };
+		await applyBillingEvent(completed({ customerId: "ctm_x" }, pack), deps);
+		expect(store.grants.size).toBe(0);
+	});
+
+	it("mirrors a transaction our checkout placed an order for", async () => {
+		store.records.add(`${ORG}|txn_a`);
+		expect(await applyBillingEvent(completed({ customerId: "ctm_x" }), deps)).toEqual({ outcome: "applied" });
+		expect(store.txns.get("txn_a")?.organizationId).toBe(ORG);
+	});
+
+	it("mirrors a transaction of the org's stored Paddle customer", async () => {
+		store.records.add(`${ORG}|ctm_x`);
+		expect(await applyBillingEvent(completed({ customerId: "ctm_x" }), deps)).toEqual({ outcome: "applied" });
+	});
+
+	it("never takes another org's order as the record", async () => {
+		store.records.add(`${OTHER_ORG}|txn_a`);
+		expect((await applyBillingEvent(completed({ customerId: "ctm_x" }), deps)).outcome).toBe("refused");
+	});
+
+	it("alerts on an untied billed invoice, but not on other mere updates", async () => {
+		const billed = { ...snapshot({ organizationId: ORG, kind: "plan" }), status: "billed" as const };
+		await applyBillingEvent({ ...completed({ customerId: "ctm_x", transaction: billed }), kind: "transaction_updated" }, deps);
+		expect(alert).toHaveBeenCalledTimes(1);
+		const paid = { ...billed, status: "paid" as const };
+		await applyBillingEvent({ ...completed({ customerId: "ctm_x", transaction: paid }), kind: "transaction_updated" }, deps);
+		expect(alert).toHaveBeenCalledTimes(1);
+	});
+
+	it("asks for redelivery of an untied subscription transaction, whose subscription may not have landed", async () => {
+		await expect(
+			applyBillingEvent(completed({ customerId: "ctm_x", subscriptionId: "sub_new" }), deps),
+		).rejects.toThrow(RetryableBillingEventError);
+		expect(store.txns.size).toBe(0);
+	});
+
+	it("asks for redelivery of a live subscription it cannot tie yet, and applies it once its transaction is mirrored", async () => {
+		const first = upsert({ customerId: "ctm_x", subscriptionId: "sub_new" });
+		await expect(applyBillingEvent(first, deps)).rejects.toThrow(RetryableBillingEventError);
+		expect(store.rows.size).toBe(0);
+		// The checkout's transaction lands (its order is ours), carrying the subscription id.
+		store.records.add(`${ORG}|txn_a`);
+		await expect(
+			applyBillingEvent(completed({ customerId: "ctm_x", subscriptionId: "sub_new" }), deps),
+		).resolves.toEqual({ outcome: "applied" });
+		expect(await applyBillingEvent(first, deps)).toEqual({ outcome: "applied" });
+		expect(store.rows.get(ORG)?.paddleSubscriptionId).toBe("sub_new");
+	});
+
+	it("applies subscription.created through the order of the transaction that created it", async () => {
+		store.records.add(`${ORG}|txn_checkout`);
+		const r = await applyBillingEvent(
+			upsert({ eventType: "subscription.created", customerId: "ctm_x", transactionId: "txn_checkout" }),
+			deps,
+		);
+		expect(r).toEqual({ outcome: "applied" });
+	});
+
+	it("refuses quietly an ended subscription it cannot tie, with no redelivery", async () => {
+		const r = await applyBillingEvent(upsert({ customerId: "ctm_x", status: "canceled" }), deps);
+		expect(r).toEqual({ outcome: "refused", reason: "unrecorded_org" });
+		expect(alert).not.toHaveBeenCalled();
 	});
 });
 
