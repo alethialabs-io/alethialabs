@@ -14,6 +14,7 @@ import { useMemo } from "react";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
+import { FilterEmpty } from "@repo/ui/filter-bar";
 import { Table, TableBody } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
 import type { ProjectListItem } from "@/app/server/actions/projects";
@@ -143,15 +144,7 @@ export function ProjectsGrid({
 					) : (
 						// The organization HAS projects; this view resolved to none. "No projects yet"
 						// here would read as data loss.
-						<EmptyState
-							title="No projects match your filters"
-							description="Widen or clear the search, cloud and repository filters."
-							action={
-								<Button variant="outline" size="sm" onClick={onClearFilters}>
-									Clear filters
-								</Button>
-							}
-						/>
+						<FilterEmpty noun="projects" onClear={onClearFilters} />
 					)
 				) : state.view === "table" ? (
 					<div className="overflow-x-auto rounded-xl border border-border/60">

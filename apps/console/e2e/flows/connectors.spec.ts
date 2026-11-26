@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Exhaustive e2e for the Connectors board (`/{org}/~/connectors`) as it is TODAY: the console
-// filter standard (search → chips → Group facet → vendor combobox → reset, URL-synced, facet
-// counts over the unfiltered universe), the seven catalog sections, the card↔table toggle, the
+// filter standard on the one-row `ListToolbar` (search → Status / Group / Vendor facets → reset,
+// URL-synced, facet counts over the unfiltered universe), the seven catalog sections, the card↔table toggle, the
 // per-cloud connect sheets (opened + validated, never submitting real credentials) and — via a
 // seeded cloud identity — the connected state, the manage sheet and the disconnect confirm.
 // Negative / permission / not-enabled paths live in connectors.negative.spec.ts.
@@ -11,10 +11,10 @@
 // WHAT THE JULY SPEC LOOKED FOR AND WHY IT IS GONE. It drove a Radix `<Select>` group filter
 // (`getByRole("combobox")`), four sections named Clouds / Secrets / Registries / **Apps**, an
 // `N / M connected` counter and the copy "No connectors match your search." None of those exist:
-// the bar moved to the shared filter grammar (`components/connectors/connectors-filter-bar.tsx`),
+// the bar moved to the shared filter grammar (now one `ListToolbar`, `components/connectors/connectors-facets.ts`),
 // `apps` was split into source / registries / chart_repos / observability / dns
 // (`connectors-query.ts` → `GROUP_META`), the header counter reads "N connected", and the empty
-// state is an `EmptyState` titled "No connectors match".
+// state is the shared `FilterEmpty`, "No connectors match these filters."
 //
 // SELECTOR RULE FOR THIS BOARD. Never `getByRole("button", { name: "Connect" })`. The catalog is
 // 42 connectors and every connectable one renders a button whose visible word is "Connect", so
@@ -59,17 +59,23 @@ async function gotoConnectors(page: Page, orgSlug: string, query = ""): Promise<
 const search = (page: Page) => page.getByRole("textbox", { name: "Search connectors", exact: true });
 
 /**
- * Opens the Group facet popover. The trigger's accessible name grows a selection badge
- * ("Group" → "Group 1"), so it is matched by prefix rather than exactly.
+ * Opens one facet's popover. The trigger's accessible name grows the selection once one is made
+ * ("Group" → "Group: Clouds", or "Group · 3 selected"), so it is matched by prefix rather than
+ * exactly.
  */
+async function openFacet(page: Page, label: "Status" | "Group" | "Vendor"): Promise<void> {
+	await page.getByRole("button", { name: new RegExp(`^${label}\\b`) }).click();
+}
+
+/** Opens the Group facet popover, and waits for its first option. */
 async function openGroupFacet(page: Page): Promise<void> {
-	await page.getByRole("button", { name: /^Group\b/ }).click();
+	await openFacet(page, "Group");
 	await expect(page.getByRole("option", { name: /^Clouds/ })).toBeVisible();
 }
 
 /**
  * The count the Group facet prints beside one option. `FacetFilter` renders it as the option's
- * `hint`, so it is the trailing digits of the row's text — read as a NUMBER rather than compared as
+ * trailing mono `count`, so it is the trailing digits of the row's text — read as a NUMBER rather than compared as
  * a string, so the assertion cannot pass on two differently-rendered spellings of the same tally.
  * Requires the popover to be open.
  */
@@ -96,35 +102,39 @@ test.describe("Connectors — the board and its filter bar", () => {
 	test("loads the board authenticated, on the shared filter grammar", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		// The four controls the console filter standard requires of a list page's bar.
+		// The one-row toolbar: the search, the three facets, then the view toggle.
 		await expect(search(owner.page)).toBeVisible();
-		await expect(owner.page.getByRole("button", { name: /^Group\b/ })).toBeVisible();
-		await expect(owner.page.getByRole("textbox", { name: "All vendors", exact: true })).toBeVisible();
+		for (const facet of ["Status", "Group", "Vendor"]) {
+			await expect(owner.page.getByRole("button", { name: facet, exact: true })).toBeVisible();
+		}
 		await expect(owner.page.getByRole("button", { name: "Table view" })).toBeVisible();
 	});
 
+	// The title predates #7738 and is kept because it is this test's key in e2e/gate-baseline.json:
+	// the body asserts the one-row toolbar with NO description line. The same holds for the four
+	// renamed-in-spirit titles below (EmptyState → FilterEmpty, Reset → Clear filters, chips and
+	// combobox → facets).
 	test("the page toolbar carries the description and no count, and the page carries no title", async ({
 		owner,
 	}) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		// The toolbar carries the line that says what a connector IS — the one thing neither the
-		// sidebar nor the breadcrumb says. It carries NO count: the catalog is a bounded list and the
-		// list standard draws no list-size pill (#7546), and neither do the group headings.
+		// One `ListToolbar` row (polish-wave spec §3): the description line that used to sit above it
+		// is gone ("it just takes space and does nothing"), and so is any count: the catalog is a
+		// bounded list and the list standard draws no list-size pill (#7546), and neither do the group
+		// headings.
 		//
-		// The toolbar is asserted PRESENT before the pill is asserted absent, and the board is
-		// asserted FULL: an absence check over a page that never rendered passes while measuring
-		// nothing.
-		const toolbar = owner.page.locator('[data-slot="page-toolbar"]');
-		await expect(toolbar.locator('[data-slot="page-toolbar-description"]')).toContainText(
-			"Credentials Alethia acts through",
-		);
+		// The row is asserted PRESENT (its search, and the docs link at its far end) before the
+		// description and the pill are asserted absent, and the board is asserted FULL: an absence
+		// check over a page that never rendered passes while measuring nothing.
+		await expect(search(owner.page)).toBeVisible();
+		const end = owner.page.locator('[data-slot="list-toolbar-end"]');
+		await expect(end.getByRole("link", { name: "What are connectors?" })).toBeVisible();
 		await expect(groupHeading(owner.page, "Clouds")).toBeVisible();
 		const cards = owner.page.locator('[data-slot="connector-card"]').filter({ visible: true });
 		await expect.poll(() => cards.count()).toBeGreaterThan(20);
-		await expect(toolbar.locator('[data-slot="count-pill"]')).toHaveCount(0);
-		await expect(
-			owner.page.locator('[data-slot="section-heading"] [data-slot="count-pill"]'),
-		).toHaveCount(0);
+		await expect(owner.page.locator('[data-slot="page-toolbar"]')).toHaveCount(0);
+		await expect(owner.page.getByText("Credentials Alethia acts through")).toHaveCount(0);
+		await expect(owner.page.locator('main [data-slot="count-pill"]')).toHaveCount(0);
 		// The console has no page titles — the sidebar entry you clicked and the breadcrumb above
 		// the content both already say "Connectors", so a heading saying it a third time earns
 		// nothing. Asserted as "no heading NAMES this page", not "no h1 anywhere": the shell is
@@ -180,22 +190,19 @@ test.describe("Connectors — the board and its filter bar", () => {
 	test("a search that matches nothing renders the shared EmptyState", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await search(owner.page).fill("zzz-no-such-connector");
-		await expect(owner.page.getByText("No connectors match")).toBeVisible();
-		// The description says what the filters were applied to — the catalog — without stating its
-		// size: #7546 removed the number with the count pills ("no N of M prose"). Exact, so a number
+		// Exact, and the console's one wording for a filtered empty list (`FilterEmpty`): it names
+		// no size — #7546 removed the number with the count pills ("no N of M prose") — so a number
 		// creeping back into the sentence reds here.
 		await expect(
-			owner.page.getByText("None of the connectors in the catalog match these filters.", {
-				exact: true,
-			}),
+			owner.page.getByText("No connectors match these filters.", { exact: true }),
 		).toBeVisible();
-		await expect(owner.page.getByRole("button", { name: "Reset filters" })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: "Clear filters" })).toBeVisible();
 	});
 
 	test("Reset filters from the empty state restores the whole board", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await search(owner.page).fill("zzz-no-such-connector");
-		await owner.page.getByRole("button", { name: "Reset filters" }).click();
+		await owner.page.getByRole("button", { name: "Clear filters" }).click();
 		await expect(groupHeading(owner.page, "Clouds")).toBeVisible();
 		await expect(search(owner.page)).toHaveValue("");
 	});
@@ -249,8 +256,12 @@ test.describe("Connectors — the board and its filter bar", () => {
 
 	test("the Status chips filter the board by health bucket", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		// The chip's accessible name is its label plus its facet count ("Coming soon 11").
-		await owner.page.getByRole("button", { name: /^Coming soon\b/ }).click();
+		// The option's accessible name is its label plus its facet count ("Coming soon, 11").
+		await openFacet(owner.page, "Status");
+		await owner.page.getByRole("option", { name: /^Coming soon\b/ }).click();
+		await owner.page.keyboard.press("Escape");
+		await expect(owner.page.getByRole("button", { name: "Status: Coming soon", exact: true })).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: "Clear Status", exact: true })).toBeVisible();
 		// Every remaining row is coming-soon, so nothing on the board offers a connect action.
 		await expect(owner.page.getByRole("button", { name: /^Connect / })).toHaveCount(0);
 		// A coming-soon row that is not a cloud: a cloud this deployment does not offer has no card
@@ -260,8 +271,9 @@ test.describe("Connectors — the board and its filter bar", () => {
 
 	test("the vendor combobox narrows the board to one organization", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByRole("textbox", { name: "All vendors", exact: true }).click();
-		await owner.page.getByRole("button", { name: /^Datadog, Inc\./ }).click();
+		await openFacet(owner.page, "Vendor");
+		await owner.page.getByRole("option", { name: /^Datadog, Inc\./ }).click();
+		await owner.page.keyboard.press("Escape");
 		await expect(
 			owner.page.getByRole("button", { name: "Connect Datadog", exact: true }),
 		).toBeVisible();

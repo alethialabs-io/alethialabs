@@ -21,7 +21,7 @@
 // "No channels yet" only once the org's channels were read and there are none.
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Plus, SearchX, Send, Trash2 } from "lucide-react";
+import { Plus, Send, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import {
 	type UseFormReturn,
@@ -51,7 +51,8 @@ import { FormRootError } from "@/components/forms/form-root-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
-import { ChannelsFilterBar } from "@/components/alerts/alerts-filter-bar";
+import { channelToolbarFacets } from "@/components/alerts/alerts-facets";
+import { DEFAULT_CHANNEL_FILTERS } from "@/components/alerts/alerts-query";
 import type { ChannelsView } from "@/components/alerts/alerts-filters";
 import { channelBadge, policyBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
@@ -65,11 +66,15 @@ import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { DiscardPrompt } from "@/components/confirm/use-unsaved-guard";
 import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useAlertChannelFilters } from "@/lib/stores/use-alerts-filters";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -147,7 +152,12 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 		channels.map((c) => c.id),
 	);
 	const { rows, facets, stale } = view;
+	const filters = useAlertChannelFilters((s) => s.filters);
+	const setFilter = useAlertChannelFilters((s) => s.set);
 	const resetFilters = useAlertChannelFilters((s) => s.reset);
+	// Three sections share the page, so `/` answers only the section in view (the scroll-spy's).
+	const inView = useAlertsSection((s) => s.active === "channels");
+	const { inputRef, shortcut } = useListSearchShortcut({ enabled: inView });
 
 	const remove = useActionMutation(deleteChannel, {
 		invalidates: alertsKeys(),
@@ -191,7 +201,18 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 				/>
 			) : (
 				<>
-					<ChannelsFilterBar facets={facets} action={addBtn} />
+					<ListToolbar
+						search={{
+							value: filters.search,
+							onChange: (value) => setFilter("search", value),
+							placeholder: "Filter channels by name or transport…",
+							inputRef,
+							shortcut,
+						}}
+						facets={channelToolbarFacets(filters, setFilter, facets)}
+						reset={{ count: countActiveFilters(filters, DEFAULT_CHANNEL_FILTERS), onReset: resetFilters }}
+						actions={addBtn}
+					/>
 
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
@@ -211,16 +232,7 @@ export function ChannelsPanel({ hub, view, onOpenPolicy }: ChannelsPanelProps) {
 								// The shared empty state, not a line of muted text: the zero-result answer
 								// is the same component on every console list, and it carries the way out
 								// (the audit's F10 reads `[data-slot="empty"]` for exactly this, #4939).
-								<EmptyState
-									icon={<SearchX />}
-									title="No channels match"
-									description="No channel matches these filters."
-									action={
-										<Button variant="outline" size="sm" onClick={resetFilters}>
-											Reset filters
-										</Button>
-									}
-								/>
+								<FilterEmpty noun="channels" onClear={resetFilters} />
 							) : (
 								/*
 								 * A single-select rail, so it is a listbox of options — not a stack of

@@ -3,32 +3,31 @@
 
 // The Alerts hub's loading shapes (#6125, RUBRIC B2). One file so the route's skeleton and each
 // panel's own pending render are the same shapes as the hub they stand in for: a SectionHeading row
-// (title + one description line, Docs on the right), the panel's filter bar, then a policy/channel
+// (title + one description line, Docs on the right), the panel's one-row `ListToolbar`, then a policy/channel
 // master-detail — the rail beside the detail — or the Activity ledger's four-column table.
 //
 // No "use client": the route renders it as its `<Suspense>` fallback from the server, and the panels
 // render it from the client.
 
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
 
 /** Which of the hub's three bodies a skeleton stands in for. */
 export type AlertsPanelKind = "policies" | "channels" | "activity";
 
-/** The filter bar row: the search field and its chips, and (on a master-detail) the add button. */
-function FilterBarSkeleton({ action }: { action: boolean }) {
-	return (
-		<div className="mb-4 flex flex-wrap items-center gap-2.5">
-			<Skeleton className="h-8 w-56 rounded-md" />
-			<Skeleton className="h-8 w-24 rounded-md" />
-			<Skeleton className="h-8 w-24 rounded-md" />
-			{action && <Skeleton className="ml-auto h-8 w-28 rounded-md" />}
-		</div>
-	);
-}
+/**
+ * Each panel's `ListToolbar` parts (alerts-facets.ts): a search, its facets, and — on a
+ * master-detail — the add button on the right.
+ */
+const TOOLBAR_PARTS: Record<AlertsPanelKind, { facets: number; actions: number }> = {
+	policies: { facets: 3, actions: 1 },
+	channels: { facets: 2, actions: 1 },
+	activity: { facets: 1, actions: 0 },
+};
 
 /**
- * One panel's body while its read is pending: the filter bar and the master-detail (or, for
+ * One panel's body while its read is pending: the toolbar and the master-detail (or, for
  * Activity, the ledger table) at the sizes they render. Never the panel's empty copy — a read that
  * has not answered has not said there is nothing.
  */
@@ -36,14 +35,14 @@ export function AlertsPanelSkeleton({ kind }: { kind: AlertsPanelKind }) {
 	if (kind === "activity") {
 		return (
 			<div aria-hidden data-slot="alerts-panel-skeleton">
-				<FilterBarSkeleton action={false} />
+				<ListToolbarSkeleton {...TOOLBAR_PARTS.activity} />
 				<DataTableSkeleton columns={4} rows={5} />
 			</div>
 		);
 	}
 	return (
 		<div aria-hidden data-slot="alerts-panel-skeleton">
-			<FilterBarSkeleton action />
+			<ListToolbarSkeleton {...TOOLBAR_PARTS[kind]} />
 			<div className="flex flex-wrap items-start gap-4">
 				<div className="min-w-[290px] flex-1 overflow-hidden rounded-xl border border-border/60">
 					<div className="px-4 py-3">

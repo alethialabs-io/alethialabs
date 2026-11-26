@@ -150,6 +150,18 @@ describe("EvidenceClient — four renders, never confused", () => {
 		expect(screen.queryByText("No environments yet")).toBeNull();
 	});
 
+	it("the filters are one ListToolbar row: the search, then the funnel, with no Reset while nothing is set", async () => {
+		rpc.handlers["evidence.page"] = () => new Promise(() => {});
+		renderPage(result(1));
+		await settle();
+		const search = screen.getByRole("textbox", { name: "Filter by project or environment…" });
+		const row = search.closest('[data-slot="filter-search"]')?.parentElement;
+		expect(row).not.toBeNull();
+		// The funnel rides in the same row as the page's `extra`, after the search.
+		expect(row?.contains(screen.getByRole("button", { name: "Filter & sort" }))).toBe(true);
+		expect(screen.queryByRole("button", { name: /^Reset ·/ })).toBeNull();
+	});
+
 	it("zero environments is onboarding", async () => {
 		renderPage(result(0));
 		await settle();

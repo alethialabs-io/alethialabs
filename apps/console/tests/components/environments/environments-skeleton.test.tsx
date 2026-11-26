@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// #6819 (RUBRIC B2): the Environments skeleton is the page's own shape — the toolbar with its two
-// actions, the list's real filter bar, and the table with its real column count and ONE row, the
+// #6819 (RUBRIC B2): the Environments skeleton is the page's own shape — the one-row toolbar
+// (search, two facets, two actions; #7738), and the table with its real column count and ONE row, the
 // page every project has until it gets a second environment. Synchronous, pending to assistive
 // tech, and not operable.
 
@@ -34,11 +34,15 @@ describe("EnvironmentsSkeleton", () => {
 		expect(root(container)).toHaveAttribute("inert");
 	});
 
-	it("draws the toolbar, the list's own filter bar, and the table with one row", () => {
+	it("draws the one-row toolbar (search, two facets, two actions; no description) and the table with one row", () => {
 		const { container } = render(<EnvironmentsSkeleton />);
 		const el = root(container);
-		expect(el.querySelector('[data-slot="page-toolbar-skeleton"]')).not.toBeNull();
-		expect(el.querySelector('input[aria-label="Search environments"]')).toHaveValue("");
+		expect(el.querySelector('[data-slot="page-toolbar-skeleton"]')).toBeNull();
+		const toolbar = el.querySelector('[data-slot="list-toolbar-skeleton"]');
+		expect(toolbar).not.toBeNull();
+		expect(toolbar?.querySelectorAll('[data-part="search"]')).toHaveLength(1);
+		expect(toolbar?.querySelectorAll('[data-part="facet"]')).toHaveLength(2);
+		expect(toolbar?.querySelectorAll('[data-part="action"]')).toHaveLength(2);
 		expect(el.querySelectorAll("th")).toHaveLength(ENVIRONMENT_COLUMN_COUNT);
 		expect(el.querySelectorAll('[data-slot="data-table-skeleton-row"]')).toHaveLength(1);
 	});

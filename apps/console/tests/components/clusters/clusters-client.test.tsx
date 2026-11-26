@@ -179,7 +179,7 @@ describe("ClustersClient — pending, refused, failed and empty are distinct", (
 		h.query = { ...h.query, isLoading: false, data: page([], 3) };
 		act(() => useClustersFilters.getState().set("statuses", ["failed"]));
 		renderList();
-		expect(screen.getByText("No clusters match these filters")).toBeInTheDocument();
+		expect(screen.getByText("No clusters match these filters.")).toBeInTheDocument();
 		expect(screen.queryByText("No clusters under management")).toBeNull();
 		await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useClustersFilters.getState().filters.statuses).toEqual([]);
@@ -197,8 +197,11 @@ describe("ClustersClient — the table", () => {
 		expect(screen.getByRole("button", { name: "Open staging in shop" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Open production in search" })).toBeInTheDocument();
 		expect(screen.getByRole("columnheader", { name: /project/i })).toBeInTheDocument();
-		// No count anywhere in the toolbar (lib/query/README.md → "Counts").
-		expect(document.querySelector('[data-slot="page-toolbar"]')?.textContent).not.toMatch(/\d/);
+		// One row, no description line, and no count anywhere in it (lib/query/README.md → "Counts").
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
+		const row = document.querySelector('[data-slot="filter-search"]')?.parentElement;
+		expect(row?.textContent ?? "").not.toMatch(/\d/);
+		expect(screen.queryByText(/Every cluster this organization/)).toBeNull();
 	});
 
 	it("pages by keyset: a further page is the footer's Load more, never page numbers", async () => {
@@ -289,12 +292,24 @@ describe("ClustersClient — the filter standard", () => {
 		expect(h.inputs.at(-1)).toEqual({ clouds: ["aws"] });
 	});
 
-	it("offers the four statuses with their counts, from the read's facets", () => {
+	it("offers the four statuses with their counts, from the read's facets", async () => {
 		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
 		renderList();
-		for (const label of ["Needs attention", "In progress", "Healthy", "Unverified"]) {
-			expect(screen.getByRole("button", { name: new RegExp(label) })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Status" }));
+		const counts: Record<string, number> = { "Needs attention": 1, "In progress": 0, Healthy: 2, Unverified: 0 };
+		for (const [label, count] of Object.entries(counts)) {
+			expect(await screen.findByRole("option", { name: `${label}, ${count}` })).toBeInTheDocument();
 		}
+	});
+
+	it("a selected status names itself on the trigger, and its own × clears just that facet", async () => {
+		h.search = new URLSearchParams("statuses=failed&regions=eu-central-1");
+		h.query = { ...h.query, isLoading: false, data: page([cluster("c1", "production")]) };
+		renderList();
+		expect(screen.getByRole("button", { name: "Status: Needs attention" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Clear Status" }));
+		expect(useClustersFilters.getState().filters.statuses).toEqual([]);
+		expect(useClustersFilters.getState().filters.regions).toEqual(["eu-central-1"]);
 	});
 });
 

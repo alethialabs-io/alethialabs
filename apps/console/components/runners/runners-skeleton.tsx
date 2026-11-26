@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { PoolCardSkeleton } from "@/components/runners/pool-card";
@@ -11,7 +12,8 @@ import { VersionsPanelSkeletonBody } from "@/components/runners/versions-panel";
 /**
  * The runners page while its reads are prefetched — the page's OWN layout (RUBRIC B2): the same two
  * columns, the Pools section only where the page renders one (a self-managed deployment), the
- * Versions panel's frame, then the "Runners" heading row, the filter bar's row and the card grid.
+ * Versions panel's frame, then the "Runners" heading, the one-row `ListToolbar` (search, five facets, Add runner) and the
+ * card grid.
  *
  * Rendered only once the server knows the viewer is entitled to the page (`page.tsx`): a plan
  * without BYO runners renders the upsell instead, so this never promises a grid that will not come
@@ -35,11 +37,9 @@ export function RunnersSkeleton({ hosted }: { hosted: boolean }) {
 				<VersionsPanelSkeletonBody />
 			</div>
 			<div className="min-w-0 space-y-4">
-				<div className="flex items-center justify-between">
-					<Skeleton className="h-6 w-28" />
-					<Skeleton className="h-9 w-28 rounded-md" />
-				</div>
-				<Skeleton className="h-9 w-full rounded-md" />
+				<Skeleton className="h-6 w-28" />
+				{/* The one-row toolbar: search, five facets, and the Add runner action on the right. */}
+				<ListToolbarSkeleton facets={5} actions={1} />
 				<div className={RUNNERS_GRID}>
 					{[1, 2, 3, 4].map((i) => (
 						<RunnerCardSkeleton key={i} />

@@ -16,9 +16,10 @@
 
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { cn } from "@repo/ui/utils";
-import { CircleCheck, SearchX, ShieldCheck } from "lucide-react";
+import { CircleCheck, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef } from "react";
@@ -37,11 +38,13 @@ import {
 } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf } from "@/lib/rpc/refusal";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useApprovalsFilters } from "@/lib/stores/use-approvals-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { buildApprovalColumns } from "./approval-columns";
 import { ApprovalSheet } from "./approval-sheet";
-import { ApprovalsFilterBar } from "./approvals-filter-bar";
+import { approvalToolbarFacets } from "./approvals-facets";
 import { ApprovalsPhoneList } from "./approvals-phone-list";
 import {
 	CLEARED_APPROVALS_FILTERS,
@@ -49,10 +52,6 @@ import {
 	isDefaultApprovalsView,
 	normalizeApprovalsQuery,
 } from "./approvals-query";
-
-/** The toolbar's description (spec §1.3, Copy). */
-const APPROVALS_DESCRIPTION =
-	"Requests from the Alethia CLI, connected agents and service tokens to deploy or destroy. Each one needs a person.";
 
 /** The minimum height of the list's whole-region states, so a state change does not jump the page. */
 const REGION = "min-h-[60vh]";
@@ -73,6 +72,7 @@ export function ApprovalsList() {
 	const set = useApprovalsFilters((s) => s.set);
 	const replace = useApprovalsFilters((s) => s.replace);
 	const reset = useApprovalsFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	// A filter change drops `?selected=`: the open request was chosen under the old filters.
 	const urlRead = useFilterUrlSync(useApprovalsFilters, DEFAULT_APPROVALS_FILTERS, undefined, {
 		resetParams: FILTER_DEPENDENT_PARAMS,
@@ -136,7 +136,6 @@ export function ApprovalsList() {
 	if (firstRun) {
 		return (
 			<>
-				<PageToolbar description={APPROVALS_DESCRIPTION} />
 				<EmptyState
 					className={REGION}
 					data-state="first-run"
@@ -161,9 +160,20 @@ export function ApprovalsList() {
 
 	return (
 		<div className="space-y-6" aria-busy={busy}>
-			{/* No count: the list standard carries no list sizes; totals live only in the facet options. */}
-			<PageToolbar description={APPROVALS_DESCRIPTION} />
-			<ApprovalsFilterBar filters={filters} onFilter={set} onReset={reset} facets={list.facets ?? undefined} />
+			{/* One row: search, facets, Reset · N. No count (totals live only in the facet options) and no
+			    description line (polish-wave spec §3). */}
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (value) => set("search", value),
+					placeholder: "Search project, environment or digest…",
+					ariaLabel: "Search approval requests",
+					inputRef,
+					shortcut,
+				}}
+				facets={approvalToolbarFacets(filters, set, list.facets ?? undefined)}
+				reset={{ count: countActiveFilters(filters, DEFAULT_APPROVALS_FILTERS), onReset: reset }}
+			/>
 			{noMatch ? (
 				isDefaultApprovalsView(filters) ? (
 					<EmptyState
@@ -180,19 +190,15 @@ export function ApprovalsList() {
 						}
 					/>
 				) : (
-					<EmptyState
-						className="min-h-[40vh]"
-						data-state="no-match"
-						icon={<SearchX />}
-						level={2}
-						title="No requests match these filters"
-						description="Try a different status, operation or environment, or clear the filters."
-						action={
-							<Button variant="outline" size="sm" onClick={() => replace(CLEARED_APPROVALS_FILTERS)}>
-								Clear filters
-							</Button>
-						}
-					/>
+					// "Clear filters" clears EVERY filter, Status included — Reset goes back to Waiting.
+					<div data-state="no-match">
+						<FilterEmpty
+							className="min-h-[40vh]"
+							level={2}
+							noun="requests"
+							onClear={() => replace(CLEARED_APPROVALS_FILTERS)}
+						/>
+					</div>
 				)
 			) : (
 				<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>

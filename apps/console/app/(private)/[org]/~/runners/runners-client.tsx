@@ -20,6 +20,7 @@
 
 import { lookup } from "@/lib/typed-object";
 import { EmptyState } from "@repo/ui/empty";
+import { FilterEmpty } from "@repo/ui/filter-bar";
 import { AddRunnerButton } from "@/components/runners/add-runner-button";
 import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
@@ -32,7 +33,6 @@ import {
 } from "@/components/runners/runners-toolbar";
 import { RUNNERS_COLUMNS, RUNNERS_GRID } from "@/components/runners/runners-layout";
 import { VersionsPanel } from "@/components/runners/versions-panel";
-import type { CloudFilterOption } from "@/components/filters/cloud-filter";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import {
@@ -49,7 +49,6 @@ import { ANY_CLOUD } from "@/lib/queries/runners";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
-import { Button } from "@repo/ui/button";
 import { Server } from "lucide-react";
 import { useMemo } from "react";
 
@@ -97,7 +96,7 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 	// Only the labels are resolved here: the server counts values, and what a provider or a version
 	// is CALLED is a client constant.
 	const facets = useMemo(() => {
-		const clouds: CloudFilterOption[] = (list.facets?.clouds ?? []).map((o) => ({
+		const clouds: RunnerFacetOption[] = (list.facets?.clouds ?? []).map((o) => ({
 			value: o.value,
 			label:
 				o.value === ANY_CLOUD
@@ -145,9 +144,10 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 					</>
 				) : (
 					<>
-						<SectionHeading title="Runners" actions={<AddRunnerButton />} />
+						<SectionHeading title="Runners" />
 
 						<RunnersToolbar
+							actions={<AddRunnerButton />}
 							cloudOptions={facets.clouds}
 							regionOptions={facets.regions}
 							versionOptions={facets.versions}
@@ -171,16 +171,7 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 				) : firstRun ? (
 					<EmptyRunners />
 				) : rows.length === 0 ? (
-					<EmptyState
-						title="No runners match your filters."
-						description="Change the search or the filters above, or clear them to see every runner."
-						action={
-							<Button size="sm" variant="outline" onClick={resetFilters}>
-								Clear filters
-							</Button>
-						}
-						className="py-12"
-					/>
+					<FilterEmpty noun="runners" onClear={resetFilters} className="py-12" />
 				) : (
 					/* The filter standard's `isPlaceholderData` dim: these cards are the PREVIOUS
 					   query's answer, kept so the grid does not blank on a filter change and

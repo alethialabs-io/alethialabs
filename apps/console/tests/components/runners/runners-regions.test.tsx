@@ -155,7 +155,7 @@ describe("the grid's filtered-empty state (R6 C-14)", () => {
 		useRunnerFilters.setState({ filters: { ...DEFAULT_RUNNER_FILTERS, statuses: ["DRAINING"] } });
 		h.grid = grid({ rows: [], universeEmpty: false });
 		render(<RunnersClient hosted />);
-		expect(screen.getByText("No runners match your filters.")).toBeTruthy();
+		expect(screen.getByText("No runners match these filters.")).toBeTruthy();
 		expect(screen.queryByText("No runners yet")).toBeNull();
 		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useRunnerFilters.getState().filters).toEqual(DEFAULT_RUNNER_FILTERS);
