@@ -173,3 +173,45 @@ describe("revoking a token", () => {
 		await waitFor(() => expect(actions.revokeConsoleServiceToken).toHaveBeenCalledWith({ tokenId: CI_DEPLOY.id }));
 	});
 });
+
+// #7713: the release gate's audit could not click a row's Revoke at 1280px — Playwright reported the
+// app shell's page-content wrapper intercepting the click. Nothing covered the row: the table's
+// wrapper clips its x-axis by default (`@repo/ui/table`), eight unwrapped columns ran past the frame,
+// and the last column — Edit and Revoke — was cut off while still reading as visible and enabled, so
+// the click landed on the wrapper's padding behind it. jsdom has no layout, so this cannot measure
+// the overflow; it pins the two structural answers that make the column reachable at any width, and
+// rules out the other candidate (a closed sheet or dialog leaving a layer mounted). The geometry is
+// measured by the audit legs (`destructive.spec.ts`, `inert.spec.ts`).
+describe("the row actions stay reachable (#7713)", () => {
+	it("a table wider than its frame scrolls to the actions column instead of clipping it", () => {
+		page.current = answered([CI_DEPLOY]);
+		renderPage();
+		const table = screen.getByRole("table");
+		expect(table.closest('[data-slot="table-container"]')).toHaveAttribute("data-scroll", "true");
+		// The actions are the row's LAST cell — the one an overflow cuts off first.
+		const row = within(table).getByText("ci-deploy").closest("tr");
+		if (!row) throw new Error("ci-deploy row missing");
+		const cells = within(row).getAllByRole("cell");
+		const last = cells[cells.length - 1];
+		if (!last) throw new Error("ci-deploy row has no cells");
+		expect(within(last).getByRole("button", { name: "Revoke ci-deploy" })).toBeInTheDocument();
+	});
+
+	it("the unbounded name lists wrap rather than widening the table", () => {
+		page.current = answered([CI_DEPLOY]);
+		renderPage();
+		const table = screen.getByRole("table");
+		expect(within(table).getByText("Deploys without approval")).toHaveClass("whitespace-normal");
+		expect(within(table).getByText("web / staging").closest("ul")).toHaveClass("whitespace-normal");
+		expect(within(table).getByText("Read, Plan, Deploy")).toHaveClass("whitespace-normal");
+	});
+
+	it("with every sheet and dialog closed, no overlay is mounted over the page, and Revoke opens its confirmation", async () => {
+		page.current = answered([CI_DEPLOY]);
+		renderPage();
+		expect(document.querySelector('[data-slot$="overlay"], [role="dialog"], [role="alertdialog"]')).toBeNull();
+		// user-event (by default) refuses a click on an element with `pointer-events: none` in its ancestry.
+		await userEvent.setup().click(within(screen.getByRole("table")).getByRole("button", { name: "Revoke ci-deploy" }));
+		expect(await screen.findByRole("alertdialog")).toHaveTextContent("Revoke ci-deploy?");
+	});
+});
