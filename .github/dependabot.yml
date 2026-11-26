@@ -104,6 +104,24 @@ updates:
       react-zod-overrides:
         patterns: ["react", "react-dom", "@types/react", "@types/react-dom", "zod"]
         update-types: [minor, patch]
+      # Next.js moves as ONE unit across every workspace, in its own PR (#7736). `next` is pinned to
+      # the same exact version in apps/console, apps/marketing, apps/blog, apps/docs, apps/admin and
+      # packages/brand (dev dependency), with `eslint-config-next` and `@next/eslint-plugin-next`
+      # (packages/eslint-config) pinned beside it. A bump that lands in some apps and not others
+      # leaves the rest on the old release while looking done, which matters most for a security
+      # release (the 2026-11-03 advisories were fixed in 16.4.5; every app is on 16.4.6). One npm
+      # entry at `/` covers every workspace package, so one group is one PR touching all of them.
+      #
+      # A group applies to VERSION updates unless it says otherwise, so a SECURITY update to `next`
+      # would arrive as its own PR outside `nextjs` (see `react-zod-overrides` above). `nextjs-security`
+      # is the same pattern for security updates, so those move together too. Both must stay ABOVE
+      # `npm-minor-patch`.
+      nextjs:
+        patterns: ["next", "eslint-config-next", "@next/*"]
+        update-types: [minor, patch]
+      nextjs-security:
+        applies-to: security-updates
+        patterns: ["next", "eslint-config-next", "@next/*"]
       npm-minor-patch:
         update-types: [minor, patch]
 
