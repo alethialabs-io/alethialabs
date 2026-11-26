@@ -184,6 +184,14 @@ export const NOT_A_MEASUREMENT = {
 			"for S3 to check and no verdict derived from it to go stale.",
 		issue: "#4397",
 	},
+	"e2e-ai-soak.yml": {
+		why:
+			"A temporary real-model soak that no-ops from 2026-12-12 (its window job compares the date). It " +
+			"uploads playwright-report-ai-soak-<tier>, but NO repo file consumes it: the per-run token usage " +
+			"and cost go to the job summary for a person to read, and no verdict is derived from either. Like " +
+			"the nightly it checks out ref: dev, so the specs that run are dev's on the default branch's timer.",
+		issue: "#4397",
+	},
 	"programme.yml": {
 		why:
 			"Its output is a pull request, not an artifact. It is also already immune to this defect class: " +
