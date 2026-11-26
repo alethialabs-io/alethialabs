@@ -130,7 +130,8 @@ export function ServiceTokensPage({ canManageAgents }: { canManageAgents: boolea
 					) : (
 						<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
 							<div className="hidden md:block">
-								<DataTable columns={columns} keyset={list} skeletonRows={3} />
+								{/* The last column is the row's Edit and Revoke: it scrolls into reach rather than being clipped (#7713). */}
+								<DataTable columns={columns} keyset={list} skeletonRows={3} scrollX />
 							</div>
 							<div className="md:hidden">
 								{list.isPending ? null : (
