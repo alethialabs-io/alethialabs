@@ -20,6 +20,13 @@ import { cn } from "@repo/ui/utils";
 import type { UsageMetric } from "@/components/settings/usage/usage-reads";
 
 /**
+ * The org usage panel's standing row: the plan and its period on the left, the action they call for
+ * (Upgrade to Pro / Manage billing) on the right. Shared with `UsageSkeleton`, so the placeholder row
+ * takes exactly the box the real one does.
+ */
+export const USAGE_STANDING_ROW = "flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pb-2";
+
+/**
  * The usage surface's ONE count rendering — a whole number with thousands separators.
  *
  * Why this is a bare `.toLocaleString()` and not a `@repo/format` call: the package has no count

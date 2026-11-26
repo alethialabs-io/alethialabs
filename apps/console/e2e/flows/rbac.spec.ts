@@ -21,9 +21,10 @@
 // pending, suspended — became the STATUS FACET'S option counts, computed over the same unfiltered
 // rows. The tabs went the same way: "Pending" and "Suspended" are facet options now, not buttons.
 // So did the role <select>, which the console filter standard bans from a filter bar; it is a facet
-// too. And the table's empty state is `EmptyState` ("No matching members"), not DataTable's bare
-// "No results." — the assertions below name what the page renders today, and `membersReady` is the
-// one precondition every members test shares so a fifth rename cannot half-land again.
+// too. And the table's filtered empty state is `FilterEmpty` ("No members match these filters."),
+// not DataTable's bare "No results." — the assertions below name what the page renders today, and
+// `membersReady` is the one precondition every members test shares so a fifth rename cannot
+// half-land again.
 
 import { test, expect } from "../fixtures/qa";
 import { scanA11y } from "../helpers/a11y";
@@ -121,9 +122,9 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 
 	test("the toolbar and filter bar render — and NO stat strip does", async ({ owner }) => {
 		await membersReady(owner);
-		// What the strip used to say, said once: the toolbar carries the description and the count,
-		// and the figures are the Status facet's option counts.
-		await expect(owner.page.getByText("Organization members and pending invitations.")).toBeVisible();
+		// What the strip used to say is the Status facet's option counts now. The page opens on ONE
+		// toolbar row (polish-wave spec §3, #7739): no description line above it.
+		await expect(owner.page.getByText("Organization members and pending invitations.")).toHaveCount(0);
 		// Filter inputs by role, never placeholder — a placeholder query also matches the hidden
 		// streamed copy of the bar (#5777, #5800). FilterSearch names the input by its placeholder.
 		await expect(owner.page.getByRole("textbox", { name: "Search name or email…", exact: true })).toBeVisible();
@@ -169,13 +170,13 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await expect(owner.page.getByRole("option", { name: /Pending/ })).toBeVisible();
 		await owner.page.getByRole("option", { name: /Pending/ }).click();
 		await owner.page.keyboard.press("Escape");
-		await expect(owner.page.getByText("No matching members")).toBeVisible();
+		await expect(owner.page.getByText("No members match these filters.")).toBeVisible();
 	});
 
 	test("search that matches nothing shows the empty state", async ({ owner }) => {
 		await membersReady(owner);
 		await owner.page.getByRole("textbox", { name: "Search name or email…", exact: true }).fill(`zzz-none-${Date.now()}`);
-		await expect(owner.page.getByText("No matching members")).toBeVisible();
+		await expect(owner.page.getByText("No members match these filters.")).toBeVisible();
 	});
 
 	test("filtering by a role nobody holds (Viewer) shows the empty state", async ({ owner }) => {
@@ -185,7 +186,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await facetTrigger(owner.page, /^Role/).click();
 		await owner.page.getByRole("option", { name: /Viewer/ }).click();
 		await owner.page.keyboard.press("Escape");
-		await expect(owner.page.getByText("No matching members")).toBeVisible();
+		await expect(owner.page.getByText("No members match these filters.")).toBeVisible();
 	});
 
 	test("the Suspended facet option is empty on a fresh org", async ({ owner }) => {
@@ -193,7 +194,7 @@ test.describe("RBAC — Members (Hobby owner)", () => {
 		await facetTrigger(owner.page, /^Status/).click();
 		await owner.page.getByRole("option", { name: /Suspended/ }).click();
 		await owner.page.keyboard.press("Escape");
-		await expect(owner.page.getByText("No matching members")).toBeVisible();
+		await expect(owner.page.getByText("No members match these filters.")).toBeVisible();
 	});
 
 	test("a11y: members page has no critical axe violations", async ({ owner }) => {
@@ -421,7 +422,10 @@ test.describe("RBAC — Roles", () => {
 		// the four built-ins. The presence checks above run first, so the absence below cannot pass on
 		// a page that never rendered.
 		await expect(owner.page.locator("main [data-list-item]")).toHaveCount(4);
-		await expect(owner.page.locator('[data-slot="page-toolbar"] [data-slot="count-pill"]')).toHaveCount(0);
+		// The page opens on ONE toolbar row now, not a `page-toolbar` (#7739): the pill is absent from
+		// the whole page, so the check is not vacuous on a page that no longer has that toolbar.
+		await expect(owner.page.locator('main [data-slot="count-pill"]')).toHaveCount(0);
+		await expect(owner.page.locator('main [data-slot="page-toolbar"]')).toHaveCount(0);
 	});
 
 	test("default detail panel shows the Owner built-in role (read-only)", async ({ owner }) => {

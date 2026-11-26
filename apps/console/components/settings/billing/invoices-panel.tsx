@@ -17,7 +17,7 @@
 // a server-paged list is the thing this standard exists to stop. No count pill either: the console
 // carries no list counts (README → "Counts").
 
-import { CircleDot, ReceiptText } from "lucide-react";
+import { CircleDot } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { DataTable } from "@/components/data-table";
 import { RegionRefusal, refusalOf } from "@/components/settings/billing/read-state";
@@ -28,11 +28,9 @@ import { orpc } from "@/lib/rpc/client";
 import type { InvoiceInfo } from "@/lib/rpc/procedures/billing";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
-import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
-import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import { type DateRange, DEFAULT_PRESET, presetRange } from "@repo/ui/range";
 import { cn } from "@repo/ui/utils";
@@ -104,50 +102,48 @@ export function InvoicesPanel() {
 	return (
 		<SettingsSection title="Invoices">
 			<div aria-busy={busy}>
-				<FilterBar>
-					<FacetFilter
-						label="Status"
-						icon={CircleDot}
-						options={INVOICE_STATUS_OPTIONS.map((o) => ({
-							value: o.value,
-							label: o.label,
-							hint: String(counts[o.value] ?? 0),
-						}))}
-						value={filters.statuses}
-						onChange={(next) => set("statuses", next)}
-						searchPlaceholder="Filter status…"
-						emptyText="No statuses."
-					/>
-					<QuickRangeFilter
-						label={rangeFilterLabel(choice, ALL_TIME_LABEL)}
-						value={range}
-						onChange={(r, label) => set("range", rangeFromPick(r, label))}
-						unbounded={{ label: ALL_TIME_LABEL, onSelect: () => set("range", "") }}
-					/>
-					<DateRangeFilter
-						value={range}
-						onChange={(r) => set("range", rangeWindowValue(r))}
-						emptyLabel={choice.kind === "default" ? NO_WINDOW_LABEL : undefined}
-					/>
-					<FilterBarReset count={activeFilters} onReset={reset} />
-				</FilterBar>
+				{/* No search (see the header): the row is the Status facet, then the paid-date range in
+				    `extra` — its "All time" unbounded choice is this page's own variation. */}
+				<ListToolbar
+					facets={[
+						{
+							label: "Status",
+							icon: CircleDot,
+							options: INVOICE_STATUS_OPTIONS.map((o) => ({
+								value: o.value,
+								label: o.label,
+								hint: String(counts[o.value] ?? 0),
+							})),
+							value: filters.statuses,
+							onChange: (next: string[]) => set("statuses", next),
+							searchPlaceholder: "Filter status…",
+							emptyText: "No statuses.",
+						},
+					]}
+					extra={
+						<>
+							<QuickRangeFilter
+								label={rangeFilterLabel(choice, ALL_TIME_LABEL)}
+								value={range}
+								onChange={(r, label) => set("range", rangeFromPick(r, label))}
+								unbounded={{ label: ALL_TIME_LABEL, onSelect: () => set("range", "") }}
+							/>
+							<DateRangeFilter
+								value={range}
+								onChange={(r) => set("range", rangeWindowValue(r))}
+								emptyLabel={choice.kind === "default" ? NO_WINDOW_LABEL : undefined}
+							/>
+						</>
+					}
+					reset={{ count: activeFilters, onReset: reset }}
+				/>
 
 				{refusal ? (
 					<RegionRefusal refusal={refusal} />
 				) : invoices.universeEmpty === false && invoices.rows.length === 0 && !invoices.isPlaceholderData ? (
 					// The org has invoices and none match: offer the way back (R6 F-25), as Activity
 					// does. Decided by the server's `universeEmpty`, not by whether a filter is set.
-					<EmptyState
-						className="bg-surface-sunken"
-						icon={<ReceiptText />}
-						title="No invoices match these filters."
-						description="Clear the filters to see every invoice."
-						action={
-							<Button variant="outline" size="sm" onClick={reset}>
-								Clear filters
-							</Button>
-						}
-					/>
+					<FilterEmpty noun="invoices" onClear={reset} />
 				) : (
 					// Loading (placeholder rows), the first-run empty row, a failed first page (the
 					// table's region error with a retry — never "no invoices yet", which reads as a

@@ -11,7 +11,7 @@
 // AccordionForm RoleSheet and deleted here, each through `useActionMutation`; an `access` hint
 // refreshes the page when someone else changes a role. Authoring is gated on customRoles.
 
-import { Lock, Pencil, Plus, SearchX, Shield, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus, Shield, Trash2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -32,6 +32,7 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { ListFooter } from "@/components/list/list-footer";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { useRoleCatalogQuery } from "@/lib/query/use-roles-query";
 import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { orpc } from "@/lib/rpc/client";
@@ -40,10 +41,8 @@ import { useRolesFilters } from "@/lib/stores/use-settings-filters";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { Spinner } from "@repo/ui/spinner";
 import { cn } from "@repo/ui/utils";
 import {
@@ -74,7 +73,6 @@ import {
 	RAIL_ROW_CLASS,
 	RAIL_ROW_COUNT_CLASS,
 	RAIL_ROW_NAME_CLASS,
-	ROLES_DESCRIPTION,
 	ROLES_GRID_CLASS,
 } from "./roles-parts";
 import { RolesNoAccess } from "./roles-no-access";
@@ -197,6 +195,9 @@ export function RolesManager() {
 			hrefWithParamPatch(window.location.pathname, window.location.search, selectionPatch(id || null)),
 		);
 	const [sheetOpen, setSheetOpen] = useState(false);
+	// `/` focuses the search while this page is mounted (polish-wave spec §3); before the early
+	// returns below, as every hook must be.
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const [editingRole, setEditingRole] = useState<RoleRow | null>(null);
 	const [deleting, setDeleting] = useState<RoleRow | null>(null);
 	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close.
@@ -277,9 +278,36 @@ export function RolesManager() {
 
 	return (
 		<div>
-			<PageToolbar
-				className="mb-4"
-				description={ROLES_DESCRIPTION}
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (v) => set("search", v),
+					placeholder: "Search roles…",
+					inputRef,
+					shortcut,
+				}}
+				facets={[
+					{
+						label: "Kind",
+						icon: Shield,
+						options: ROLE_KIND_OPTIONS.map((o) => ({
+							value: o.value,
+							label: o.label,
+							// From the first page's facet pass, over the unfiltered universe; unstated until it lands.
+							hint: o.value in kindCounts ? String(kindCounts[o.value]) : undefined,
+						})),
+						value: filters.kinds,
+						onChange: (next: string[]) => set("kinds", next),
+						searchPlaceholder: "Filter kind…",
+						emptyText: "No kinds.",
+					},
+				]}
+				extra={
+					searching && isPlaceholderData ? (
+						<Spinner className="size-3.5 text-text-tertiary" />
+					) : undefined
+				}
+				reset={{ count: activeFilters, onReset: reset }}
 				actions={
 					<DisabledReason reason={createReason}>
 						<Button size="sm" onClick={openCreate}>
@@ -290,52 +318,13 @@ export function RolesManager() {
 				}
 			/>
 
-			<FilterBar
-				end={
-					searching && isPlaceholderData ? (
-						<Spinner className="size-3.5 text-text-tertiary" />
-					) : undefined
-				}
-			>
-				<FilterSearch
-					value={filters.search}
-					onChange={(v) => set("search", v)}
-					placeholder="Search roles…"
-					className="w-[240px] max-w-[380px] flex-1"
-				/>
-				<FacetFilter
-					label="Kind"
-					icon={Shield}
-					options={ROLE_KIND_OPTIONS.map((o) => ({
-						value: o.value,
-						label: o.label,
-						// From the first page's facet pass, over the unfiltered universe; unstated until it lands.
-						hint: o.value in kindCounts ? String(kindCounts[o.value]) : undefined,
-					}))}
-					value={filters.kinds}
-					onChange={(next) => set("kinds", next)}
-					searchPlaceholder="Filter kind…"
-					emptyText="No kinds."
-				/>
-				<FilterBarReset count={activeFilters} onReset={reset} />
-			</FilterBar>
-
 			{/* Zero results: the shared empty state IN PLACE OF the master-detail, not a muted
 			    line in each rail bucket. The detail pane would otherwise keep showing a role the
 			    filters just excluded (`selected` falls back to the first built-in), and the audit's
 			    F10 reads `[data-slot="empty"]` for exactly this state (#4939). */}
 			{noMatches ? (
-				<EmptyState
-					className="border"
-					icon={<SearchX />}
-					title="No roles match"
-					description="No built-in or custom role matches these filters."
-					action={
-						<Button variant="outline" size="sm" onClick={reset}>
-							Clear filters
-						</Button>
-					}
-				/>
+				// The universe always holds the built-ins, so no match is always a FILTERED empty.
+				<FilterEmpty noun="roles" onClear={reset} />
 			) : (
 			<div
 				className={cn(

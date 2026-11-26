@@ -5,7 +5,7 @@
 // skeleton, so the two cannot disagree about the layout they promise.
 
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /** One agent card: the frame and the two rows `AgentCard` draws. */
@@ -27,15 +27,11 @@ function AgentCardSkeleton() {
 	);
 }
 
-/** The connected-agents board while its read is pending: toolbar, filter bar and six cards. */
+/** The connected-agents board while its read is pending: the one toolbar row (search, Status) and six cards. */
 export function ConnectedAgentsSkeleton() {
 	return (
 		<SkeletonRoot data-skeleton="connected-agents" className="space-y-4">
-			<PageToolbarSkeleton />
-			<div className="flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-9 w-[220px] rounded-md" />
-				<Skeleton className="h-9 w-24 rounded-md" />
-			</div>
+			<ListToolbarSkeleton facets={1} />
 			<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
 				{Array.from({ length: 6 }, (_, i) => (
 					<AgentCardSkeleton key={i} />

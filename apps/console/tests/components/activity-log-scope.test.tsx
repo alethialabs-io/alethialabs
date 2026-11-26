@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Component test for the scope-aware Activity feed: when pinned to a project, the feed forces the
-// project's id onto the query, hides the redundant Project facet + Export, and shows the scope
-// caption. At the org scope the Project facet is back and no scope is forced.
+// project's id onto the query and hides the redundant Project facet + Export. There is no scope
+// caption any more (#7739, polish-wave spec §3): the topbar's Project switcher names it. At the org scope the Project facet is back and no scope is forced.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render as rtlRender, screen, waitFor } from "@testing-library/react";
@@ -78,7 +78,7 @@ beforeEach(() => {
 });
 
 describe("ActivityLog — project scope", () => {
-	it("forces the project's id, hides the Project facet + Export, and captions the scope", async () => {
+	it("forces the project's id, hides the Project facet + Export, and draws no description line", async () => {
 		render(<ActivityLog projectId="s1" />);
 
 		// Forced scope: the first query carries the project id as SCOPE, not as the Project
@@ -87,11 +87,12 @@ describe("ActivityLog — project scope", () => {
 		expect(getActivityLog.mock.calls[0][0]).toMatchObject({ projectId: "s1" });
 		expect(getActivityLog.mock.calls[0][0]).not.toHaveProperty("resourceIds");
 
-		// Redundant controls are gone; the caption names the project.
+		// Redundant controls are gone, and so is the old "Activity in <project>." caption.
+		expect(await screen.findByPlaceholderText("Search actor, action or resource…")).toBeInTheDocument();
 		expect(screen.queryByText("Project")).toBeNull();
 		expect(screen.queryByRole("button", { name: /export csv/i })).toBeNull();
-		expect(await screen.findByText(/activity in/i)).toBeInTheDocument();
-		expect(screen.getByText("api")).toBeInTheDocument();
+		expect(screen.queryByText(/activity in/i)).toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
 	});
 });
 

@@ -108,14 +108,11 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="space-y-2">
-			{/* No page title — the breadcrumb and the sidebar already say "Usage", and the old
-			    "Project usage" heading said nothing more. What the toolbar carries instead is the
-			    scope boundary a reader of this page actually needs, and the link that resolves it.
-			    That sentence used to be a paragraph at the FOOT of the page carrying a second copy
-			    of the same link; one statement, one link, at the top where the boundary applies. */}
+			{/* No page title and no description line (polish-wave spec §3) — the breadcrumb and the
+			    sidebar already say "Usage". The row carries only the link to the org page, where
+			    seats, plan limits and provisioned-runner hours are billed. */}
 			<PageToolbar
 				className="pb-2"
-				description="Seats, plan limits and provisioned-runner hours are billed org-wide, not per project."
 				actions={
 					// A plain `<Link>` — see the sibling note in usage-panel.tsx: a "go and read the
 					// other page" affordance is styled as text, not as this page's action.
