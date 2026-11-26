@@ -63,7 +63,7 @@ describe("decideApproval writes the reason", () => {
 		const fake = fakeExecutor(
 			new Map<unknown, unknown[][]>([
 				[applyApprovals, [[row]]],
-				[jobs, [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null }], [], []]],
+				[jobs, [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }], [], []]],
 				[orgAgentPolicy, [[]]],
 				[projectEnvironments, [[{ stage: "staging", name: "staging" }]]],
 			]),

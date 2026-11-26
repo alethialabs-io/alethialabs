@@ -109,6 +109,12 @@ export const jobs = pgTable(
 		// plan_binding.go). NULL on a DEPLOY a system origin queued with no plan (auto-heal, the
 		// build chain), which plans afresh on the runner. lib/approvals/plan-binding.ts reads it.
 		plan_sha256: text(),
+		// A PLAN job that plans a teardown (`tofu plan -destroy`) instead of an apply (#7455). Its saved
+		// plan is what a DESTROY bound to it applies, and its `plan_sha256` is that file's digest. The
+		// mode is part of the binding both ways: the console and the runner refuse a DEPLOY that names
+		// a destroy plan and a DESTROY that names any other plan (lib/approvals/plan-binding.ts,
+		// apps/runner/internal/agent/plan_binding.go). Only a PLAN may carry it (`jobs_destroy_plan_is_plan`).
+		destroy_plan: boolean().notNull().default(false),
 		claimed_at: timestamp({ withTimezone: true }),
 		started_at: timestamp({ withTimezone: true }),
 		completed_at: timestamp({ withTimezone: true }),
@@ -213,6 +219,11 @@ export const jobs = pgTable(
 		check(
 			"jobs_plan_sha256_hex",
 			sql`plan_sha256 IS NULL OR plan_sha256 ~ '^[0-9a-f]{64}$'`,
+		),
+		// A destroy plan is a PLAN job; no other job type plans a teardown.
+		check(
+			"jobs_destroy_plan_is_plan",
+			sql`NOT destroy_plan OR job_type = 'PLAN'`,
 		),
 	],
 );

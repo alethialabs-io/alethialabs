@@ -63,9 +63,9 @@ same `idempotency_key` returns the first result.
 | Tool | Scope | Arguments | Returns |
 | --- | --- | --- | --- |
 | `scan_repo` | `plan` | `repo`, `idempotency_key` | The `job_id` of a scan that infers what a repository needs. The repository is cloned and parsed, never run. The same key returns the same job. |
-| `plan` | `plan` | `project_id`, `environment_id`, `idempotency_key` | The `job_id` of a plan of what the design would create or change. It changes nothing in the cloud. The same key returns the same job. |
+| `plan` | `plan` | `project_id`, `environment_id`, `destroy` (optional), `idempotency_key` | The `job_id` of a plan of the design's changes, or with `destroy: true` of a teardown. It changes nothing. The same key returns the same job. |
 | `request_apply` | `apply` | `plan_job_id`, `reason` (optional) | An approval request for that plan: `approval_id`, `status`, `approve_url`, `digest_prefix`, `expires_at` and `job_id`. |
-| `request_destroy` | `destroy` | `project_id`, `environment_id`, `reason` (optional) | The same, for destroying the environment as it was last deployed. |
+| `request_destroy` | `destroy` | `project_id`, `environment_id`, `reason` (optional) | The same, to apply the latest `destroy: true` plan. |
 | `cancel_job` | `plan` | `job_id` | The job's status after the cancel. A finished job stays as it is. |
 | `send_feedback` | none | `text`, `missing_capability` (optional) | Whether the Alethia team received it. On a self-managed installation there is no team inbox, so it answers `false`. |
 

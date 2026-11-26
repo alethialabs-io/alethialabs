@@ -52,7 +52,7 @@ function pending(overrides: Record<string, unknown> = {}) {
 }
 
 /** A current plan, as the binding reads it: succeeded, nothing since, no newer plan. */
-const currentPlan = (): unknown[][] => [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null }], [], []];
+const currentPlan = (): unknown[][] => [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }], [], []];
 
 function setup(approval: unknown[], opts: { differentApprover?: boolean; plan?: unknown[][]; envName?: string } = {}) {
 	return fakeExecutor(
@@ -191,7 +191,7 @@ describe("what can be decided", () => {
 	});
 
 	it("an approval whose plan is no longer current is marked superseded", async () => {
-		const f = setup([pending()], { plan: [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null }], [{ id: "later" }]] });
+		const f = setup([pending()], { plan: [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }], [{ id: "later" }]] });
 		const result = await decideApproval(f.db, decider(), APPROVAL, { decision: "approve" }, NOW);
 		expect(result.ok).toBe(false);
 		expect(f.writes.map((w) => w.values)).toEqual([expect.objectContaining({ status: "superseded" })]);
@@ -199,12 +199,13 @@ describe("what can be decided", () => {
 
 	it("a destroy is approved only with the environment's name typed", async () => {
 		const destroy = pending({ operation: "destroy" });
-		const applied = (): unknown[][] => [[{ id: "deploy", plan_job_id: "plan", plan_sha256: DIGEST, created_at: NOW }], []];
-		const wrong = setup([destroy], { plan: applied(), envName: "production-eu" });
+		// A destroy is approved against a current destroy-mode plan (#7455).
+		const destroyPlan = (): unknown[][] => [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: true }], [], []];
+		const wrong = setup([destroy], { plan: destroyPlan(), envName: "production-eu" });
 		expect(
 			await codeOf(decideApproval(wrong.db, decider(), APPROVAL, { decision: "approve", confirmEnvironmentName: "production" }, NOW)),
 		).toBe("confirmation_mismatch");
-		const right = setup([destroy], { plan: applied(), envName: "production-eu" });
+		const right = setup([destroy], { plan: destroyPlan(), envName: "production-eu" });
 		expect(
 			(await decideApproval(right.db, decider(), APPROVAL, { decision: "approve", confirmEnvironmentName: "production-eu" }, NOW)).ok,
 		).toBe(true);

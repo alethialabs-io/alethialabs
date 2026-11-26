@@ -35,7 +35,7 @@ vi.mock("@/lib/ai/mcp/approval-store", () => ({
 	findOwnApproval: vi.fn(),
 	requestOwnApproval: vi.fn(),
 	readOwnOrgApproval: vi.fn(),
-	appliedPlanFor: vi.fn(),
+	destroyPlanFor: vi.fn(),
 }));
 vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
 vi.mock("@/lib/ai/mcp/feedback", () => ({ sendAgentFeedback: vi.fn() }));

@@ -1,0 +1,2 @@
+ALTER TABLE "jobs" ADD COLUMN "destroy_plan" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "jobs" ADD CONSTRAINT "jobs_destroy_plan_is_plan" CHECK (NOT destroy_plan OR job_type = 'PLAN');
