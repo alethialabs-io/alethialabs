@@ -1802,12 +1802,13 @@ const BOUNDED_RULES = new Set(["page-slice", "render-window", "client-table", "k
 export const LIST_LEDGER_DIR = "apps/console/list-standard";
 
 /**
- * The ceiling on bounded decisions, counted in FILES. The epic names seven bounded lists (roles, SSO
+ * The ceiling on bounded decisions, counted in FILES. The epic named seven bounded lists (roles, SSO
  * providers, alert policies, alert channels, classification dimensions, the connectors catalog,
- * evidence's per-environment roll-up) plus the agent suggestion carousel measured here. A NINTH
- * bounded list is a reviewed line here.
+ * evidence's per-environment roll-up) plus the agent suggestion carousel measured here. Evidence's
+ * roll-up left the set when its posture table moved onto the keyset contract (#7755), and the
+ * ceiling came down with it. An EIGHTH bounded list is a reviewed line here.
  */
-export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 8 });
+export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 7 });
 
 /** The paging primitives themselves — they implement the machinery the census bans elsewhere. */
 const LIST_PRIMITIVES = new Set([

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Evidence route prefetches EXACTLY what the client reads on first paint (#6126, RUBRIC B1): the
-// `evidence.page` read for the LINK's filters, normalized the way the client normalizes them, and the
-// first page of the `evidence.waivers` log under its one stable query `{}`, through the in-process
-// read router — and hands down only those reads. The shell's reads, which share the
+// first page of the `evidence.page` walk (under the infinite key `useKeysetList` reads, #7755) for the
+// LINK's filters, normalized the way the client normalizes them, and the first page of the
+// `evidence.waivers` log under its one stable query `{}`, through the in-process read router — and
+// hands down only those reads. The shell's reads, which share the
 // per-request QueryClient, travel through the `[org]` layout's own boundary, not this one. A
 // prefetch that FAILED is not handed down at all, so the client reads again and renders the error or
 // the refusal it gets, instead of hydrating a failure.
@@ -50,7 +51,7 @@ beforeEach(() => {
 	// A shell read the [org] layout prefetched into the same per-request client.
 	qc.setQueryData([["workspace", "projects"], { type: "query" }], [{ id: "p1" }]);
 	h.client = qc;
-	h.handlers["evidence.page"] = async (input) => ({ asked: input });
+	h.handlers["evidence.page"] = async (input) => ({ asked: input, nextCursor: null });
 	h.handlers["evidence.waivers"] = async (input) => ({ items: [], nextCursor: null, asked: input });
 });
 
@@ -71,16 +72,17 @@ describe("EvidenceRoute — first-paint prefetch", () => {
 		const keys = state.queries.map((q) => q.queryKey);
 		expect(keys).toHaveLength(2);
 		expect(keys).toEqual(
-			expect.arrayContaining([[["evidence", "page"], { input, type: "query" }], WAIVERS_KEY]),
+			expect.arrayContaining([[["evidence", "page"], { input, type: "infinite" }], WAIVERS_KEY]),
 		);
+		// The posture walk's page one only, asked with no cursor: later pages are the browser's.
 		const page = state.queries.find((q) => String(q.queryKey[0]) === "evidence,page");
-		expect(page?.state.data).toEqual({ asked: input });
+		expect(page?.state.data).toEqual({ pages: [{ asked: input, nextCursor: null }], pageParams: [null] });
 	});
 
 	it("a pristine link prefetches the unfiltered read — the key the client asks for first", async () => {
 		const state = await dehydratedFor({});
 		expect(state.queries.map((q) => q.queryKey)).toEqual(
-			expect.arrayContaining([[["evidence", "page"], { input: {}, type: "query" }]]),
+			expect.arrayContaining([[["evidence", "page"], { input: {}, type: "infinite" }]]),
 		);
 	});
 
@@ -98,7 +100,7 @@ describe("EvidenceRoute — first-paint prefetch", () => {
 			throw new Error("boom");
 		};
 		const state = await dehydratedFor({});
-		expect(state.queries.map((q) => q.queryKey)).toEqual([[["evidence", "page"], { input: {}, type: "query" }]]);
+		expect(state.queries.map((q) => q.queryKey)).toEqual([[["evidence", "page"], { input: {}, type: "infinite" }]]);
 		expect(h.calls, "no retry holds the first byte").toHaveLength(2);
 	});
 });

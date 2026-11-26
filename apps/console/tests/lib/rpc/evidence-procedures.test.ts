@@ -6,11 +6,13 @@
 //
 // Mocked boundary: the actor, the PDP and the roll-up query. Real: the procedure, the `query` base
 // (its refusal mapping and actor binding), oRPC's input validation, and the deriveGroups /
-// facet-count / provider-bucketing logic — so the result is shaped exactly as the client sees it.
+// facet-count / provider-bucketing logic and the keyset page cut (lib/queries/evidence-posture.ts) —
+// so the result is shaped exactly as the client sees it.
 // Pinned: the roll-up is asked for the ADDRESSED org over exactly the projects the PDP says the
 // reader may view; the personal scope is read like any org (no "No environments yet" for a person
 // with environments); the facet shaping; untrusted provider strings cannot widen the filter;
-// malformed input never reaches the database; a scope refusal is a typed FORBIDDEN.
+// malformed input — a bad cursor or an oversized limit included — never reaches the database; a
+// scope refusal is a typed FORBIDDEN.
 
 import { createRouterClient, ORPCError } from "@orpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,7 +98,8 @@ describe("evidence.page — what it asks for", () => {
 
 		const result = await client.page({});
 		expect(queryOrgEvidence).toHaveBeenCalledWith("user-1", ["p1", "p2"]);
-		expect(result.summary.environments).toBe(1);
+		expect(result.universeEmpty).toBe(false);
+		expect(result.rows.flatMap((g) => g.rows).map((r) => r.environmentId)).toEqual(["e1"]);
 	});
 
 	it("a reader who may view no project gets an empty roll-up asked over no projects", async () => {
@@ -107,10 +110,31 @@ describe("evidence.page — what it asks for", () => {
 });
 
 describe("evidence.page — result shape", () => {
-	it("passes the summary through", async () => {
-		const ev = rollup([mkRow({ id: "e1" })]);
-		queryOrgEvidence.mockResolvedValue(ev);
-		expect((await client.page({})).summary).toEqual(ev.summary);
+	it("is a keyset page: project groups, an exact end, facets and universeEmpty on page one", async () => {
+		queryOrgEvidence.mockResolvedValue(rollup([mkRow({ id: "e1" }), mkRow({ id: "e2", projectId: "p2", projectName: "other" })]));
+		const page = await client.page({});
+		expect(page.rows.map((g) => g.id)).toEqual(["p2", "p1"]);
+		expect(page.nextCursor).toBeNull();
+		expect(page.universeEmpty).toBe(false);
+		expect(page.facets).not.toBeNull();
+	});
+
+	it("a minted cursor goes back through the input schema and reads the next page", async () => {
+		const P1 = "00000000-0000-4000-8000-000000000001";
+		const P2 = "00000000-0000-4000-8000-000000000002";
+		queryOrgEvidence.mockResolvedValue(
+			rollup([mkRow({ id: "e1", projectId: P1, projectName: "a" }), mkRow({ id: "e2", projectId: P2, projectName: "b" })]),
+		);
+		const first = await client.page({ limit: 1 });
+		expect(first.rows.map((g) => g.id)).toEqual([P1]);
+		const second = await client.page({ limit: 1, cursor: first.nextCursor ?? undefined });
+		expect(second.rows.map((g) => g.id)).toEqual([P2]);
+		expect(second.nextCursor).toBeNull();
+		expect(second.facets).toBeNull();
+	});
+
+	it("nothing visible is the universe-empty page (the onboarding render)", async () => {
+		expect(await client.page({})).toMatchObject({ rows: [], nextCursor: null, universeEmpty: true });
 	});
 
 	it("lists every enum cloud as a provider option (zero counts included), no 'other' by default", async () => {
@@ -121,7 +145,7 @@ describe("evidence.page — result shape", () => {
 				mkRow({ id: "e3", provider: "hetzner" }),
 			]),
 		);
-		const { providerOptions } = await client.page({});
+		const providerOptions = (await client.page({})).facets?.providerOptions ?? [];
 		expect(providerOptions.map((o) => o.value)).toEqual([...CLOUD_FILTER_VALUES]);
 		const byValue = new Map(providerOptions.map((o) => [o.value, o.count]));
 		expect(byValue.get("aws")).toBe(2);
@@ -133,7 +157,7 @@ describe("evidence.page — result shape", () => {
 		queryOrgEvidence.mockResolvedValue(
 			rollup([mkRow({ id: "e1", provider: null }), mkRow({ id: "e2", provider: "mixed" })]),
 		);
-		const { providerOptions } = await client.page({});
+		const providerOptions = (await client.page({})).facets?.providerOptions ?? [];
 		expect(providerOptions.find((o) => o.value === "other")).toEqual({
 			value: "other",
 			label: "Other",
@@ -152,21 +176,21 @@ describe("evidence.page — filtering", () => {
 	it("narrows rows to the selected clouds; facet counts stay over the unfiltered roll-up", async () => {
 		queryOrgEvidence.mockResolvedValue(rollup(rows));
 		const result = await client.page({ providers: ["aws"] });
-		expect(result.resultCount).toBe(1);
-		expect(result.providerOptions.find((o) => o.value === "aws")?.count).toBe(1);
-		expect(result.total).toBe(3);
+		expect(result.rows.flatMap((g) => g.rows).map((r) => r.environmentId)).toEqual(["e1"]);
+		expect(result.facets?.providerOptions.find((o) => o.value === "aws")?.count).toBe(1);
+		expect(result.facets?.providerOptions.find((o) => o.value === "gcp")?.count).toBe(1);
 	});
 
 	it("selects the null/unknown-provider bucket via 'other'", async () => {
 		queryOrgEvidence.mockResolvedValue(rollup(rows));
 		const result = await client.page({ providers: ["other"] });
-		expect(result.groups.flatMap((g) => g.rows).map((r) => r.environmentId)).toEqual(["e3"]);
+		expect(result.rows.flatMap((g) => g.rows).map((r) => r.environmentId)).toEqual(["e3"]);
 	});
 
 	it("ignores unknown provider and status strings (untrusted input cannot widen the filter)", async () => {
 		queryOrgEvidence.mockResolvedValue(rollup(rows));
 		const result = await client.page({ providers: ["not-a-cloud"], status: ["not-a-status"] });
-		expect(result.resultCount).toBe(3);
+		expect(result.rows.flatMap((g) => g.rows)).toHaveLength(3);
 	});
 });
 
@@ -176,6 +200,8 @@ describe("evidence.page — refusals and input", () => {
 		await expect(client.page({ stages: Array.from({ length: 33 }, () => "production") })).rejects.toBeInstanceOf(
 			ORPCError,
 		);
+		await expect(client.page({ cursor: "not-a-cursor" })).rejects.toBeInstanceOf(ORPCError);
+		await expect(client.page({ limit: 101 })).rejects.toBeInstanceOf(ORPCError);
 		expect(queryOrgEvidence).not.toHaveBeenCalled();
 	});
 
