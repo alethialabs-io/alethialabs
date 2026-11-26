@@ -4542,6 +4542,17 @@ function selfTest() {
 	ok("--run without --import-live means nothing and says so", parseCliArgs(["--run=r"]).error?.includes("only mean something with --import-live"));
 	ok("--import-live and --write cannot both be asked for", parseCliArgs(["--import-live=x", "--run=r", "--commit=c", "--write"]).error?.includes("cannot both"));
 	ok("...and the existing modes are unchanged", parseCliArgs([]).mode === "check" && parseCliArgs(["--write"]).mode === "write" && parseCliArgs(["--nope"]).error?.includes("unrecognised"));
+	ok("--step-summary --not-run=interaction parses into a section list", JSON.stringify(parseCliArgs(["--step-summary=d", "--not-run=interaction"]).notRun) === JSON.stringify(["interaction"]));
+	ok("...an unknown section name is an ERROR, not a silent skip", parseCliArgs(["--step-summary=d", "--not-run=interactoin"]).error?.includes("does not define"));
+	ok("...skipping every section is an ERROR", parseCliArgs(["--step-summary=d", `--not-run=${Object.keys(LIVE_SECTIONS).join(",")}`]).error?.includes("every section"));
+	ok("...and --not-run without --step-summary means nothing and says so", parseCliArgs(["--not-run=interaction"]).error?.includes("only means something with --step-summary"));
+	{
+		const note = notRunNote(new Set(["interaction"]));
+		ok("the not-run note names the section's predicates, derived from LIVE_SECTIONS", /`interaction` \(\*\*F10\*\*, \*\*F8\*\*, \*\*F9\*\*, \*\*R8\*\*\)/.test(note), note);
+		ok("...and no note at all when nothing is skipped", notRunNote(new Set()) === "");
+		const kept = withoutSections({ routes: { records: [] }, interaction: { records: [] } }, new Set(["interaction"]));
+		ok("withoutSections drops only the declared sections", JSON.stringify(Object.keys(kept)) === JSON.stringify(["routes"]));
+	}
 	ok("--filter-surfaces parses, and cannot be combined with another mode", parseCliArgs(["--filter-surfaces"]).mode === "filter-surfaces" && parseCliArgs(["--filter-surfaces", "--write"]).error?.includes("cannot both"));
 
 	// THE LIVE F8-F10 SUBJECT SET, on the REAL tree. What `filters.spec.ts` measures over must be the
@@ -4674,6 +4685,35 @@ function selfTest() {
  * @param {typeof LIVE_DEBT} [liveDebt]  injectable for the same reason `buildView()` takes it
  * @returns {string} markdown
  */
+/**
+ * The baseline runs minus the sections a job declared it does not run. Without this, a section the
+ * job never measured would render every one of its predicates as `not measured this run` AND count
+ * them as MOVED in the headline (`F8 3 → —`), which reads as a change on the page.
+ *
+ * @param {Record<string, unknown>} runs
+ * @param {Set<string>} notRun
+ */
+export function withoutSections(runs, notRun) {
+	return Object.fromEntries(Object.entries(runs ?? {}).filter(([k]) => !notRun.has(k)));
+}
+
+/**
+ * The line that says which sections, and so which predicates, this summary says NOTHING about.
+ * Derived from LIVE_SECTIONS and NOT_SCORED_STATICALLY, never typed, so it cannot name a stale set.
+ *
+ * @param {Set<string>} notRun
+ * @returns {string}
+ */
+export function notRunNote(notRun) {
+	if (notRun.size === 0) return "";
+	const owned = livePredicateSections();
+	const parts = [...notRun].sort().map((k) => {
+		const ids = [...owned].filter(([, sec]) => sec === k).map(([id]) => id).sort();
+		return `\`${k}\` (${ids.map((id) => `**${id}**`).join(", ")})`;
+	});
+	return `Not run by this job, so not in the table above and not measured here: ${parts.join("; ")}. Another job measures ${notRun.size === 1 ? "it" : "them"} — this summary is silent about ${notRun.size === 1 ? "it" : "them"}, not clean.`;
+}
+
 export function renderStepSummary(fresh, baseline, liveDebt = LIVE_DEBT) {
 	// A MISSING OR EMPTY `records` ARRAY RAISES — it is never treated as "no failures". This is the
 	// same refusal `importLive` makes, for the same reason, and it is the whole defect class this
@@ -4812,6 +4852,9 @@ export const USAGE = [
 	"  --step-summary=<dir>  print the per-predicate failure table for a run's `ui-audit`",
 	"                        artifact, against the committed baseline. Writes nothing;",
 	"                        the audit job appends it to $GITHUB_STEP_SUMMARY.",
+	"  --not-run=<a,b>       with --step-summary only: LIVE_SECTIONS this job does not run.",
+	"                        Their artifacts are not required, their baseline rows are left",
+	"                        out of the table, and the summary names them as unmeasured.",
 	"",
 	"  --import-live=<dir>   rewrite apps/console/ui-conformance-live.json from a CI run's",
 	"                        `ui-audit` artifact. <dir> is the unpacked artifact (or the",
@@ -4832,7 +4875,7 @@ export const USAGE = [
  */
 export function parseCliArgs(argv) {
 	const MODES = { "--write": "write", "--json": "json", "--self-test": "self-test", "--filter-surfaces": "filter-surfaces", "--help": "help", "-h": "help" };
-	const VALUED = ["--import-live", "--run", "--commit", "--step-summary", "--explain"];
+	const VALUED = ["--import-live", "--run", "--commit", "--step-summary", "--explain", "--not-run"];
 	if (argv.length === 0) return { mode: "check", error: null };
 
 	/** @type {Record<string, string>} */
@@ -4875,10 +4918,17 @@ export function parseCliArgs(argv) {
 	}
 	if ("--step-summary" in values) {
 		if (distinct.length > 0) return { mode: null, error: `--step-summary and ${distinct.join(" and ")} cannot both be asked for` };
-		const extra = Object.keys(values).filter((k) => k !== "--step-summary");
+		const extra = Object.keys(values).filter((k) => k !== "--step-summary" && k !== "--not-run");
 		if (extra.length > 0) return { mode: null, error: `${extra.join(" and ")} only mean something with --import-live` };
-		return { mode: "step-summary", error: null, dir: values["--step-summary"] };
+		const notRun = "--not-run" in values ? values["--not-run"].split(",").map((x) => x.trim()) : [];
+		const unknownSections = notRun.filter((k) => !Object.hasOwn(LIVE_SECTIONS, k));
+		if (unknownSections.length > 0) {
+			return { mode: null, error: `--not-run names ${unknownSections.join(", ")}, which LIVE_SECTIONS does not define (it has ${Object.keys(LIVE_SECTIONS).join(", ")})` };
+		}
+		if (notRun.length >= Object.keys(LIVE_SECTIONS).length) return { mode: null, error: "--not-run names every section — a summary of nothing is not one" };
+		return { mode: "step-summary", error: null, dir: values["--step-summary"], notRun: [...new Set(notRun)] };
 	}
+	if ("--not-run" in values) return { mode: null, error: "--not-run only means something with --step-summary" };
 	const orphans = Object.keys(values);
 	if (orphans.length > 0) return { mode: null, error: `${orphans.join(" and ")} only mean something with --import-live` };
 	if (distinct.length > 1) return { mode: null, error: `${distinct.join(" and ")} cannot both be asked for` };
@@ -4925,6 +4975,7 @@ if (invokedDirectly) {
 		const candidates = [path.join(base, "test-results"), base];
 		/** @type {Record<string, unknown>} */
 		const fresh = {};
+		const notRun = new Set(parsed.notRun ?? []);
 		for (const [key, section] of Object.entries(LIVE_SECTIONS)) {
 			const leaf = path.basename(section.artifact);
 			const found = candidates.map((d) => path.join(d, leaf)).find((f) => {
@@ -4934,6 +4985,17 @@ if (invokedDirectly) {
 					return false;
 				}
 			});
+			// A section the CALLER declared it does not run (`--not-run`) is skipped by declaration,
+			// in the job's own YAML where a reviewer reads it — not inferred from a missing file. An
+			// artifact that IS present contradicts the declaration, and that refuses rather than
+			// silently ignoring a measurement the run did make.
+			if (notRun.has(key)) {
+				if (found !== undefined) {
+					console.error(`audit-report: --not-run names \`${key}\`, but ${found} is present. Drop it from --not-run so the summary reads it.`);
+					process.exit(1);
+				}
+				continue;
+			}
 			// A MISSING ARTIFACT IS NOT AN EMPTY ONE. Reporting "0 failures" for a section whose file
 			// never arrived is the exact shape this whole job exists to stop — a summary that reads
 			// like good news because nothing was measured.
@@ -4961,7 +5023,9 @@ if (invokedDirectly) {
 			console.error(`audit-report: could not read ${LIVE_JSON} (${err instanceof Error ? err.message : String(err)}).`);
 			process.exit(1);
 		}
-		console.log(renderStepSummary(fresh, baselineRuns));
+		console.log(renderStepSummary(fresh, withoutSections(baselineRuns, notRun)));
+		const skippedNote = notRunNote(notRun);
+		if (skippedNote) console.log(`\n${skippedNote}`);
 		process.exit(0);
 	}
 
