@@ -262,6 +262,22 @@ describe("BillingPanel", () => {
 		expect(within(notice).getByText(/ask a member with the billing permission/i)).toBeInTheDocument();
 	});
 
+	it("a Paddle past-due notice says the features stay on through the grace, and offers the portal", async () => {
+		reads.summary.mockResolvedValue(
+			summary({
+				status: "past_due",
+				state: "past_due",
+				provider: "paddle",
+				canManage: false,
+				pastDueGraceEndsAt: "2026-12-02T00:00:00.000Z",
+			}),
+		);
+		renderWithReads(<BillingPanel />);
+		const notice = await screen.findByTestId("billing-past-due");
+		expect(within(notice).getByText(/paid features stay on until/i)).toBeInTheDocument();
+		expect(within(notice).getByRole("button", { name: /update the payment method/i })).toBeInTheDocument();
+	});
+
 	it("an active subscription shows no past-due notice", async () => {
 		reads.summary.mockResolvedValue(summary());
 		renderWithReads(<BillingPanel />);
