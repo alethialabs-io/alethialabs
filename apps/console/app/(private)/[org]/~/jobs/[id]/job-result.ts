@@ -119,9 +119,10 @@ function readPlanCost(raw: unknown): PlanOutcome["cost"] {
 // OpenTofu puts them is unreadable, and only a plan that passes this is counted.
 //
 // ONE ABSENCE IS A REAL ANSWER. OpenTofu's plan JSON omits `resource_changes` when it is empty, and
-// the runner then stores the whole plan document instead of `{ resource_changes }`
-// (apps/runner/internal/agent/runner.go, the PLAN metadata block). A plan document — it carries
-// `format_version` — with no changes key is a plan with nothing to change, not an unreadable one.
+// the runner then stores `{ format_version }` instead of `{ resource_changes }` (an older runner
+// stored the whole plan document; apps/runner/internal/agent/plan_metadata.go, noChangePlanResult).
+// A plan result that carries `format_version` with no changes key is a plan with nothing to change,
+// not an unreadable one.
 const countablePlanSchema = z.object({
 	resource_changes: z.array(z.object({ change: z.object({ actions: z.array(z.string()) }) })).optional(),
 	format_version: z.string().optional(),
