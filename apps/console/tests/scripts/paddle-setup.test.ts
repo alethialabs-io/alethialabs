@@ -7,16 +7,19 @@
 // prices are the catalog's amounts (USD with an EUR override for the euro area); a drifted amount
 // or override is replaced (new price, old archived), never PATCHed; the environment follows the key
 // prefix and a live key needs `--live`; the destination's secret reaches a 0600 file and never the
-// output; the webhook event list is pinned.
+// output; the webhook event list is pinned; the env names printed are the ones the console reads
+// (lib/billing/paddle/env-names.ts); `--client-token` keeps exactly one Paddle.js token.
 
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aiPlanUnitAmountCents, planUnitAmountCents } from "@repo/plan-catalog";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AI_CREDIT_PACKS } from "../../lib/billing/ai-credits";
+import { PADDLE_PRICE_ENV, PADDLE_PRODUCT_ENV } from "../../lib/billing/paddle/env-names";
 import { runCheckCli } from "../../scripts/paddle-check";
 import {
+	CLIENT_TOKEN_NAME,
+	catalogEnvLines,
 	computePlan,
 	createPaddleClient,
 	DESIRED_PRICES,
@@ -28,11 +31,13 @@ import {
 	type Observed,
 	PADDLE_WEBHOOK_EVENTS,
 	type PaddleClient,
+	type PaddleClientToken,
 	type PaddleKeyEnv,
 	type PaddleNotificationSetting,
 	type PaddlePrice,
 	type PaddleProduct,
 	type PriceCreateBody,
+	priceEnvVar,
 	readState,
 	resolveKey,
 	runSetup,
@@ -48,6 +53,7 @@ interface FakeAccount {
 	products: PaddleProduct[];
 	prices: PaddlePrice[];
 	notifications: PaddleNotificationSetting[];
+	clientTokens: PaddleClientToken[];
 	/** Every write, in order, as "<verb> <id>". */
 	writes: string[];
 	/** The tax mode a created price reads back as (Paddle resolves `account_setting`). */
@@ -56,7 +62,7 @@ interface FakeAccount {
 
 /** An empty account. */
 function emptyAccount(): FakeAccount {
-	return { products: [], prices: [], notifications: [], writes: [], resolvedTaxMode: "location" };
+	return { products: [], prices: [], notifications: [], clientTokens: [], writes: [], resolvedTaxMode: "location" };
 }
 
 /** A PaddleClient over `acct`, mimicking Paddle's id prefixes and its tax-mode resolution. */
@@ -124,6 +130,13 @@ function fakeClient(acct: FakeAccount): PaddleClient {
 			s.active = body.active;
 			acct.writes.push(`notification.update ${id}`);
 			return s;
+		},
+		listClientTokens: async () => acct.clientTokens.filter((t) => t.status === "active"),
+		createClientToken: async (body) => {
+			const t: PaddleClientToken = { id: nextId("ctkn"), token: `test_${String(n).padStart(4, "0")}`, status: "active", ...body };
+			acct.clientTokens.push(t);
+			acct.writes.push(`client_token.create ${t.id}`);
+			return t;
 		},
 	};
 }
@@ -217,7 +230,7 @@ describe("keys and environments", () => {
 
 describe("computePlan", () => {
 	it("on an empty account creates every product and price and nothing else", () => {
-		const obs: Observed = { products: new Map(), prices: new Map(), notifications: [], webhookUrl: undefined };
+		const obs: Observed = { products: new Map(), prices: new Map(), notifications: [], webhookUrl: undefined, manageClientToken: false, clientTokens: [] };
 		const plan = computePlan(obs);
 		expect(plan.errors).toEqual([]);
 		expect(plan.actions.filter((a) => a.kind === "product.create").map((a) => a.summary)).toHaveLength(DESIRED_PRODUCTS.length);
@@ -226,15 +239,18 @@ describe("computePlan", () => {
 	});
 
 	it("plans the notification destination only when a URL is given", () => {
-		const obs: Observed = { products: new Map(), prices: new Map(), notifications: [], webhookUrl: URL };
+		const obs: Observed = { products: new Map(), prices: new Map(), notifications: [], webhookUrl: URL, manageClientToken: false, clientTokens: [] };
 		expect(computePlan(obs).actions.filter((a) => a.kind === "notification.create")).toHaveLength(1);
 	});
 
-	it("reports the USD-only credit packs as a note, not a blocker", () => {
-		const obs: Observed = { products: new Map(), prices: new Map(), notifications: [], webhookUrl: undefined };
-		const plan = computePlan(obs);
+	it("reports an active price whose key left the catalog as a note, and never touches it", async () => {
+		const acct = await converged();
+		const pro = activePrice(acct, "alethia_pro_monthly");
+		acct.prices.push({ ...pro, id: "pri_old_pack", custom_data: { alethia_key: "alethia_ai_credits_s" } });
+		const plan = computePlan(await readState(fakeClient(acct), undefined));
 		expect(plan.errors).toEqual([]);
-		expect(plan.notes.join("\n")).toMatch(/alethia_ai_credits_s/);
+		expect(plan.actions).toEqual([]);
+		expect(plan.notes.join("\n")).toMatch(/alethia_ai_credits_s is active \(pri_old_pack\)/);
 	});
 
 	it("blocks on two active products with one tag", async () => {
@@ -276,9 +292,6 @@ describe("--plan and --apply", () => {
 		expect(pro.quantity).toEqual({ minimum: 1, maximum: 100 });
 		expect(pro.custom_data).toMatchObject({ alethia_tax_mode: "account_setting" });
 		expect(activePrice(acct, "alethia_ai_max_monthly").unit_price.amount).toBe(String(aiPlanUnitAmountCents("ai_max")));
-		const pack = activePrice(acct, "alethia_ai_credits_s");
-		expect(pack.billing_cycle).toBeNull();
-		expect(pack.unit_price_overrides).toEqual([]);
 		const tagged = acct.products.map((p) => p.custom_data?.alethia).sort();
 		expect(tagged).toEqual(DESIRED_PRODUCTS.map((d) => d.tag).sort());
 		expect(acct.products.every((p) => p.tax_category === "saas")).toBe(true);
@@ -288,11 +301,21 @@ describe("--plan and --apply", () => {
 		const acct = emptyAccount();
 		await run(acct, ["--apply"]);
 		const out = lines.join("\n");
-		expect(out).toContain(`PADDLE_PRICE_PRO=${activePrice(acct, "alethia_pro_monthly").id}`);
+		expect(out).toContain(`PADDLE_PRICE_TEAM=${activePrice(acct, "alethia_pro_monthly").id}`);
 		expect(out).toMatch(/PADDLE_PRICE_AI_PLUS=pri_/);
 		expect(out).toMatch(/PADDLE_PRICE_AI_MAX=pri_/);
-		expect(out).toMatch(/PADDLE_PRICE_CREDITS_S=pri_/);
 		expect(out).toMatch(/PADDLE_PRODUCT_RUNNER_MINUTES=pro_/);
+		expect(out).toMatch(/PADDLE_PRODUCT_AI_CREDITS=pro_/);
+		expect(out).not.toMatch(/PADDLE_PRICE_PRO=|PADDLE_PRICE_CREDITS_/);
+	});
+
+	it("every env name it prints is one the console's config reads", async () => {
+		const acct = await converged();
+		const obs = await readState(fakeClient(acct), undefined, true);
+		const printed = catalogEnvLines(obs).map((l) => l.split("=")[0]);
+		const read = new Set([...Object.values(PADDLE_PRICE_ENV), ...Object.values(PADDLE_PRODUCT_ENV), "NEXT_PUBLIC_PADDLE_CLIENT_TOKEN"]);
+		expect(printed.filter((name) => !read.has(name ?? ""))).toEqual([]);
+		expect(DESIRED_PRICES.map(priceEnvVar)).toContain("PADDLE_PRICE_TEAM");
 	});
 
 	it("replaces a price whose amount drifted: new price first, then the old one archived, never PATCHed", async () => {
@@ -330,8 +353,8 @@ describe("--plan and --apply", () => {
 
 	it("treats a price not created as account_setting as drift", async () => {
 		const acct = await converged();
-		const p = activePrice(acct, "alethia_ai_credits_m");
-		p.custom_data = { alethia_key: "alethia_ai_credits_m" };
+		const p = activePrice(acct, "alethia_ai_plus_monthly");
+		p.custom_data = { alethia_key: "alethia_ai_plus_monthly" };
 		p.tax_mode = "external";
 		const plan = computePlan(await readState(fakeClient(acct), undefined));
 		expect(plan.actions[0]).toMatchObject({ kind: "price.create", replaces: [p.id] });
@@ -366,6 +389,45 @@ describe("notification destination", () => {
 		expect(acct.writes).toEqual(["notification.update ntfset_x"]);
 		expect(acct.notifications[0]?.subscribed_events.map((e) => e.name)).toEqual([...PADDLE_WEBHOOK_EVENTS]);
 		expect(acct.notifications[0]?.active).toBe(true);
+	});
+});
+
+describe("client-side token", () => {
+	it("--client-token creates one token, prints it as NEXT_PUBLIC_PADDLE_CLIENT_TOKEN, and a second apply changes nothing", async () => {
+		const acct = await converged();
+		expect(await run(acct, ["--apply", "--client-token"])).toBe(0);
+		expect(acct.clientTokens).toHaveLength(1);
+		expect(acct.clientTokens[0]?.name).toBe(CLIENT_TOKEN_NAME);
+		expect(lines.join("\n")).toContain(`NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=${acct.clientTokens[0]?.token}`);
+		acct.writes = [];
+		expect(await run(acct, ["--apply", "--client-token"])).toBe(0);
+		expect(acct.writes).toEqual([]);
+	});
+
+	it("is not planned (nor listed) without --client-token", async () => {
+		const acct = await converged();
+		const client = fakeClient(acct);
+		let listed = false;
+		const spy: PaddleClient = {
+			...client,
+			listClientTokens: async () => {
+				listed = true;
+				return [];
+			},
+		};
+		expect(computePlan(await readState(spy, undefined)).actions).toEqual([]);
+		expect(listed).toBe(false);
+	});
+
+	it("blocks on two active tokens with the name, and ignores revoked ones", async () => {
+		const acct = await converged();
+		const base = { name: CLIENT_TOKEN_NAME, description: null };
+		acct.clientTokens.push({ ...base, id: "ctkn_a", token: "test_a", status: "revoked" });
+		acct.clientTokens.push({ ...base, id: "ctkn_b", token: "test_b", status: "active" });
+		expect(computePlan(await readState(fakeClient(acct), undefined, true)).actions).toEqual([]);
+		acct.clientTokens.push({ ...base, id: "ctkn_c", token: "test_c", status: "active" });
+		expect(await run(acct, ["--apply", "--client-token"])).toBe(1);
+		expect(acct.writes).toEqual([]);
 	});
 });
 
@@ -446,7 +508,7 @@ describe("pinned constants", () => {
 		expect(EUROZONE_COUNTRIES).not.toContain("PL");
 	});
 
-	it("catalog amounts equal @repo/plan-catalog and AI_CREDIT_PACKS", () => {
+	it("catalog amounts equal @repo/plan-catalog", () => {
 		const byKey = new Map(DESIRED_PRICES.map((d) => [d.key, d]));
 		expect(byKey.get("alethia_pro_monthly")).toMatchObject({ usd: planUnitAmountCents("team"), eur: planUnitAmountCents("team", "eur") });
 		expect(byKey.get("alethia_ai_plus_monthly")).toMatchObject({
@@ -457,9 +519,7 @@ describe("pinned constants", () => {
 			usd: aiPlanUnitAmountCents("ai_max"),
 			eur: aiPlanUnitAmountCents("ai_max", "eur"),
 		});
-		for (const pack of AI_CREDIT_PACKS) {
-			expect(byKey.get(`alethia_ai_credits_${pack.id}`)).toMatchObject({ usd: pack.amountCents, eur: null, billingCycle: null });
-		}
-		expect(DESIRED_PRICES).toHaveLength(3 + AI_CREDIT_PACKS.length);
+		// Credit packs are non-catalog lines on PADDLE_PRODUCT_AI_CREDITS (lib/billing/paddle/checkout.ts).
+		expect(DESIRED_PRICES).toHaveLength(3);
 	});
 });
