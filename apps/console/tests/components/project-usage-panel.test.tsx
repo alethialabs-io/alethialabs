@@ -20,7 +20,12 @@ import type {
 vi.mock("@/lib/rpc/client", async () => ({
 	orpc: (await import("./settings/billing-rpc-fake")).fakeOrpc,
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// The over-time window and metric are URL state (R6 C-32): the link the panel reads is `url.search`.
+const url = vi.hoisted(() => ({ search: "" }));
+vi.mock("next/navigation", () => ({
+	useRouter: () => ({ push: vi.fn() }),
+	useSearchParams: () => new URLSearchParams(url.search),
+}));
 vi.mock("@/lib/stores/use-workspace-store", () => ({ useActiveOrgSlug: () => "acme" }));
 
 import { ProjectUsagePanel } from "@/components/settings/usage/project-usage-panel";
@@ -53,6 +58,7 @@ function factValue(label: string): HTMLElement {
 }
 
 beforeEach(() => {
+	url.search = "";
 	resetReads();
 	reads.project.mockResolvedValue(usage);
 	reads.projectOverTime.mockResolvedValue(overTime);

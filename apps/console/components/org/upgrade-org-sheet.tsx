@@ -30,7 +30,7 @@
 // sentence for each comes from `salesClosedCopy` (components/billing/launch-copy.ts) — the same
 // words the public pricing page shows. Announced: "Pro is available from 15 Feb 2027". Closed: "Pro isn't on sale yet".
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -128,6 +128,7 @@ interface UpgradeOrgSheetProps {
  */
 export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheetProps) {
 	const router = useRouter();
+	const queryClient = useQueryClient();
 	const fetchWorkspace = useWorkspaceStore((s) => s.fetchWorkspace);
 	const { viewer } = useViewer();
 	const ownerEmail = viewer?.email ?? "";
@@ -355,6 +356,7 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 				}
 			}
 			await fetchWorkspace();
+			invalidateBilling();
 			toast.success("You're on Pro — invite your team.");
 			setView("invite");
 		} catch (e) {
@@ -379,9 +381,25 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 		}
 	}
 
-	/** Close + refresh so the upgraded plan/entitlements reflect everywhere. */
+	/**
+	 * Every billing read (plan, subscription, payment methods, invoices, usage figures priced by the
+	 * plan) is re-read after a payment (R6 F-10). They used to wait for the org's change stream to
+	 * say the subscription moved, so a page open behind the sheet could show the old plan until the
+	 * webhook's hint arrived.
+	 */
+	function invalidateBilling() {
+		void queryClient.invalidateQueries({ queryKey: orpc.billing.key() });
+	}
+
+	/**
+	 * Close + refresh so the upgraded plan/entitlements reflect everywhere. The billing reads are
+	 * invalidated in the client cache; `router.refresh()` stays for the routes whose plan gate is
+	 * decided on the SERVER (a `FeatureUpsell` rendered by the page itself), which no client
+	 * invalidation can reach.
+	 */
 	function finish() {
 		fetchWorkspace();
+		invalidateBilling();
 		handleOpenChange(false);
 		router.refresh();
 	}

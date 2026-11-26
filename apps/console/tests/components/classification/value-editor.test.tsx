@@ -102,3 +102,39 @@ describe("ValueEditor — field messages (F-17)", () => {
 		expect(minimum.getAttribute("aria-describedby")).toBe(message.id);
 	});
 });
+
+// R6 F-16: a typed value is not dropped by Cancel, Escape or an outside click. Closing a dirty editor
+// asks the console's one discard question first; a pristine one closes at once.
+describe("ValueEditor — unsaved edits (R6 F-16)", () => {
+	/** Renders the create dialog, open, with a spy for its close. */
+	function renderWithClose() {
+		const onOpenChange = vi.fn();
+		const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		render(
+			<QueryClientProvider client={qc}>
+				<ValueEditor dimensionId="d1" dimensionLabel="Environment" open onOpenChange={onOpenChange} />
+			</QueryClientProvider>,
+		);
+		return onOpenChange;
+	}
+
+	it("a pristine editor closes on Cancel without asking", async () => {
+		const user = userEvent.setup();
+		const onOpenChange = renderWithClose();
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+		expect(screen.queryByText("Discard this value?")).toBeNull();
+	});
+
+	it("a dirty editor asks first; Discard closes it, keeping editing does not", async () => {
+		const user = userEvent.setup();
+		const onOpenChange = renderWithClose();
+		await user.type(screen.getByLabelText("Label"), "Production");
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(onOpenChange).not.toHaveBeenCalledWith(false);
+		expect(await screen.findByText("Discard this value?")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Discard" }));
+		expect(onOpenChange).toHaveBeenCalledWith(false);
+	});
+});

@@ -24,6 +24,7 @@ import { Switch } from "@repo/ui/switch";
 import { Check, ShieldCheck } from "lucide-react";
 import { useEffect, useId } from "react";
 import { useForm, useWatch } from "react-hook-form";
+import { DiscardPrompt, useUnsavedGuard } from "@/components/confirm/use-unsaved-guard";
 import { z } from "zod";
 import type { ValueDTO } from "@/app/server/actions/classification/dimensions";
 import { FormRootError } from "@/components/forms/form-root-error";
@@ -156,175 +157,198 @@ export function ValueEditor({
 		save.mutate({ ...data, value: data.value || slugifyOrEmpty(data.label) });
 	};
 	const dirty = form.formState.isDirty;
+	// A typed label or a set policy is not dropped by a stray Escape, an outside click or Cancel
+	// (R6 F-16): closing a dirty editor asks first, with the console's one discard question — the
+	// one the dimension sheet beside this dialog asks.
+	const { guard, prompt } = useUnsavedGuard(form);
+	/** Closes the editor, asking first while there are unsaved edits; held while a save is in flight. */
+	const requestClose = () => {
+		if (save.isPending) return;
+		guard(() => onOpenChange(false));
+	};
 	const minApprovalsError = form.formState.errors.enforcement?.min_approvals?.message;
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-[440px]">
-				<DialogHeader>
-					<DialogDescription className="font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
-						Value · {dimensionLabel}
-					</DialogDescription>
-					<DialogTitle className="font-display text-ui-xl">
-						{isEdit ? "Edit value" : "New value"}
-					</DialogTitle>
-				</DialogHeader>
+		<>
+			<Dialog
+				open={open}
+				onOpenChange={(next) => {
+					if (next) onOpenChange(true);
+					else requestClose();
+				}}
+			>
+				<DialogContent className="sm:max-w-[440px]">
+					<DialogHeader>
+						<DialogDescription className="font-mono text-ui-3xs uppercase tracking-[0.14em] text-text-tertiary">
+							Value · {dimensionLabel}
+						</DialogDescription>
+						<DialogTitle className="font-display text-ui-xl">
+							{isEdit ? "Edit value" : "New value"}
+						</DialogTitle>
+					</DialogHeader>
 
-				{/* noValidate: the number field's native min/max would otherwise stop the submit with the
-				    browser's own bubble before the schema runs, so the field's message never showed (F-17). */}
-				<form noValidate onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-					<div className="flex gap-3">
-						<div className="flex-1">
-							<label htmlFor={labelFieldId} className="mb-1.5 block text-xs font-medium">
-								Label
-							</label>
-							<Input
-								id={labelFieldId}
-								autoFocus
-								placeholder="Production"
-								aria-invalid={form.formState.errors.label ? true : undefined}
-								aria-describedby={form.formState.errors.label ? labelErrorId : undefined}
-								{...form.register("label")}
-								onChange={(e) => {
-									form.setValue("label", e.target.value, { shouldDirty: true });
-									if (!isEdit && !form.formState.dirtyFields.value) {
-										form.setValue("value", slugifyOrEmpty(e.target.value));
-									}
-								}}
-							/>
-							{form.formState.errors.label?.message && (
-								<p id={labelErrorId} className="mt-1 text-ui-xs text-destructive">{form.formState.errors.label.message}</p>
-							)}
-						</div>
-						<div className="flex-1">
-							<label htmlFor={slugFieldId} className="mb-1.5 block text-xs font-medium">
-								Slug
-							</label>
-							<Input
-								id={slugFieldId}
-								placeholder="prod"
-								aria-invalid={form.formState.errors.value ? true : undefined}
-								aria-describedby={form.formState.errors.value ? slugErrorId : undefined}
-								className="font-mono text-xs"
-								{...form.register("value")}
-							/>
-							{form.formState.errors.value?.message && (
-								<p id={slugErrorId} className="mt-1 text-ui-xs text-destructive">{form.formState.errors.value.message}</p>
-							)}
-						</div>
-					</div>
-
-					{/* Promotion enforcement — the label drives policy. */}
-					<div className="rounded-md border">
-						<div className="flex items-center justify-between gap-4 p-3">
-							<div className="flex items-start gap-2">
-								<ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-text-tertiary" />
-								<div>
-									<div className="flex items-center gap-1.5 text-ui-sm font-medium">
-										<span id={enforceLabelId}>Enforce promotion gates</span>
-										<InfoHint>
-											When an environment is tagged with this value, promotions{" "}
-											<em>into</em> that environment require these gates — on top of the
-											environment{"'"}s own protection rules. The classification becomes
-											the policy.
-										</InfoHint>
-									</div>
-									<p className="mt-0.5 text-ui-xs text-text-tertiary">
-										Applies to any environment carrying this value.
-									</p>
-								</div>
-							</div>
-							<Switch
-								aria-labelledby={enforceLabelId}
-								checked={enforceOn}
-								onCheckedChange={setEnforce}
-							/>
-						</div>
-
-						{enforceOn && enforcement && (
-							<div className="space-y-3 border-t p-3">
-								<div className="flex items-center justify-between gap-4">
-									<div id={approvalLabelId} className="text-ui-sm">
-										Require manual approval
-									</div>
-									<Switch
-										aria-labelledby={approvalLabelId}
-										checked={enforcement.require_approval}
-										onCheckedChange={(v) =>
-											form.setValue("enforcement.require_approval", v, {
-												shouldDirty: true,
-											})
+					{/* noValidate: the number field's native min/max would otherwise stop the submit with the
+					    browser's own bubble before the schema runs, so the field's message never showed (F-17). */}
+					<form noValidate onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+						<div className="flex gap-3">
+							<div className="flex-1">
+								<label htmlFor={labelFieldId} className="mb-1.5 block text-xs font-medium">
+									Label
+								</label>
+								<Input
+									id={labelFieldId}
+									autoFocus
+									placeholder="Production"
+									aria-invalid={form.formState.errors.label ? true : undefined}
+									aria-describedby={form.formState.errors.label ? labelErrorId : undefined}
+									{...form.register("label")}
+									onChange={(e) => {
+										form.setValue("label", e.target.value, { shouldDirty: true });
+										if (!isEdit && !form.formState.dirtyFields.value) {
+											form.setValue("value", slugifyOrEmpty(e.target.value));
 										}
-									/>
-								</div>
-								<div className="flex items-center justify-between gap-4">
-									<div className="flex items-center gap-1.5 text-ui-sm">
-										<span id={verifyLabelId}>Require verify pass</span>
-										<InfoHint>
-											The elench verify gate must pass on the promotion{"'"}s plan (no
-											unwaived hard control failures).
-										</InfoHint>
-									</div>
-									<Switch
-										aria-labelledby={verifyLabelId}
-										checked={enforcement.require_verify_pass}
-										onCheckedChange={(v) =>
-											form.setValue("enforcement.require_verify_pass", v, {
-												shouldDirty: true,
-											})
-										}
-									/>
-								</div>
-								{enforcement.require_approval && (
-									<div>
-										<div className="flex items-center justify-between gap-4">
-											<label htmlFor={minApprovalsId} className="text-ui-sm">
-												Minimum approvals
-											</label>
-											<Input
-												id={minApprovalsId}
-												type="number"
-												min={1}
-												max={10}
-												className="h-8 w-16 text-center text-ui-sm"
-												aria-invalid={minApprovalsError ? true : undefined}
-												aria-describedby={minApprovalsError ? minApprovalsErrorId : undefined}
-												{...form.register("enforcement.min_approvals", {
-													valueAsNumber: true,
-												})}
-											/>
-										</div>
-										{minApprovalsError && (
-											<p id={minApprovalsErrorId} className="mt-1 text-right text-ui-xs text-destructive">
-												{minApprovalsError}
-											</p>
-										)}
-									</div>
+									}}
+								/>
+								{form.formState.errors.label?.message && (
+									<p id={labelErrorId} className="mt-1 text-ui-xs text-destructive">{form.formState.errors.label.message}</p>
 								)}
 							</div>
-						)}
-					</div>
+							<div className="flex-1">
+								<label htmlFor={slugFieldId} className="mb-1.5 block text-xs font-medium">
+									Slug
+								</label>
+								<Input
+									id={slugFieldId}
+									placeholder="prod"
+									aria-invalid={form.formState.errors.value ? true : undefined}
+									aria-describedby={form.formState.errors.value ? slugErrorId : undefined}
+									className="font-mono text-xs"
+									{...form.register("value")}
+								/>
+								{form.formState.errors.value?.message && (
+									<p id={slugErrorId} className="mt-1 text-ui-xs text-destructive">{form.formState.errors.value.message}</p>
+								)}
+							</div>
+						</div>
 
-					<FormRootError form={form} />
-					<DialogFooter>
-						{/* Held while the save is in flight, as the dimension sheet's is: closing
-						    mid-save would leave a toast about a dialog that is gone. */}
-						<Button
-							type="button"
-							variant="outline"
-							onClick={() => onOpenChange(false)}
-							disabled={save.isPending}
-						>
-							Cancel
-						</Button>
-						{/* An edit with nothing changed has nothing to save; a new value always does. */}
-						<Button type="submit" disabled={save.isPending || !label || (isEdit && !dirty)}>
-							{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
-							Save value
-						</Button>
-					</DialogFooter>
-				</form>
-			</DialogContent>
-		</Dialog>
+						{/* Promotion enforcement — the label drives policy. */}
+						<div className="rounded-md border">
+							<div className="flex items-center justify-between gap-4 p-3">
+								<div className="flex items-start gap-2">
+									<ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-text-tertiary" />
+									<div>
+										<div className="flex items-center gap-1.5 text-ui-sm font-medium">
+											<span id={enforceLabelId}>Enforce promotion gates</span>
+											<InfoHint>
+												When an environment is tagged with this value, promotions{" "}
+												<em>into</em> that environment require these gates — on top of the
+												environment{"'"}s own protection rules. The classification becomes
+												the policy.
+											</InfoHint>
+										</div>
+										<p className="mt-0.5 text-ui-xs text-text-tertiary">
+											Applies to any environment carrying this value.
+										</p>
+									</div>
+								</div>
+								<Switch
+									aria-labelledby={enforceLabelId}
+									checked={enforceOn}
+									onCheckedChange={setEnforce}
+								/>
+							</div>
+
+							{enforceOn && enforcement && (
+								<div className="space-y-3 border-t p-3">
+									<div className="flex items-center justify-between gap-4">
+										<div id={approvalLabelId} className="text-ui-sm">
+											Require manual approval
+										</div>
+										<Switch
+											aria-labelledby={approvalLabelId}
+											checked={enforcement.require_approval}
+											onCheckedChange={(v) =>
+												form.setValue("enforcement.require_approval", v, {
+													shouldDirty: true,
+												})
+											}
+										/>
+									</div>
+									<div className="flex items-center justify-between gap-4">
+										<div className="flex items-center gap-1.5 text-ui-sm">
+											<span id={verifyLabelId}>Require verify pass</span>
+											<InfoHint>
+												The elench verify gate must pass on the promotion{"'"}s plan (no
+												unwaived hard control failures).
+											</InfoHint>
+										</div>
+										<Switch
+											aria-labelledby={verifyLabelId}
+											checked={enforcement.require_verify_pass}
+											onCheckedChange={(v) =>
+												form.setValue("enforcement.require_verify_pass", v, {
+													shouldDirty: true,
+												})
+											}
+										/>
+									</div>
+									{enforcement.require_approval && (
+										<div>
+											<div className="flex items-center justify-between gap-4">
+												<label htmlFor={minApprovalsId} className="text-ui-sm">
+													Minimum approvals
+												</label>
+												<Input
+													id={minApprovalsId}
+													type="number"
+													min={1}
+													max={10}
+													className="h-8 w-16 text-center text-ui-sm"
+													aria-invalid={minApprovalsError ? true : undefined}
+													aria-describedby={minApprovalsError ? minApprovalsErrorId : undefined}
+													{...form.register("enforcement.min_approvals", {
+														valueAsNumber: true,
+													})}
+												/>
+											</div>
+											{minApprovalsError && (
+												<p id={minApprovalsErrorId} className="mt-1 text-right text-ui-xs text-destructive">
+													{minApprovalsError}
+												</p>
+											)}
+										</div>
+									)}
+								</div>
+							)}
+						</div>
+
+						<FormRootError form={form} />
+						<DialogFooter>
+							{/* Held while the save is in flight, as the dimension sheet's is: closing
+							    mid-save would leave a toast about a dialog that is gone. */}
+							<Button
+								type="button"
+								variant="outline"
+								onClick={requestClose}
+								disabled={save.isPending}
+							>
+								Cancel
+							</Button>
+							{/* An edit with nothing changed has nothing to save; a new value always does. */}
+							<Button type="submit" disabled={save.isPending || !label || (isEdit && !dirty)}>
+								{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
+								Save value
+							</Button>
+						</DialogFooter>
+					</form>
+				</DialogContent>
+			</Dialog>
+			<DiscardPrompt
+				{...prompt}
+				title={isEdit ? "Discard changes to this value?" : "Discard this value?"}
+				description="Your edits have not been saved. Closing drops them."
+				confirmLabel="Discard"
+			/>
+		</>
 	);
 }
