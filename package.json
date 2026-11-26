@@ -41,6 +41,7 @@
     "check:shared-surface": "node scripts/check-shared-surface.mjs",
     "check:secure-context-apis": "node scripts/check-secure-context-apis.mjs",
     "check:single-keydown": "node scripts/check-single-keydown.mjs",
+    "check:cloud-availability": "node scripts/check-cloud-availability.mjs",
     "check:cli-surface": "node scripts/check-cli-surface.mjs",
     "check:go-arch-filenames": "node scripts/check-go-arch-filenames.mjs",
     "check:console-test-inputs": "node scripts/check-console-test-inputs.mjs",
