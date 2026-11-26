@@ -17,6 +17,13 @@ on:
   schedule:
     # 04:20 UTC daily — after the day's merges have settled on dev.
     - cron: "20 4 * * *"
+    # The AI SOAK (epic #7840): three more runs a day until 2026-12-12, while the Anthropic
+    # workspace's promotional credit lasts. These crons run ONLY the soak jobs below (the `soak-*`
+    # jobs), never the nightly leg, and the `soak-window` job stops them on the end date. Remove these
+    # three lines and the soak jobs after 2026-12-12.
+    - cron: "40 1 * * *"
+    - cron: "40 9 * * *"
+    - cron: "40 15 * * *"
   workflow_dispatch:
     inputs:
       ref:
@@ -24,9 +31,11 @@ on:
         required: false
         default: dev
 
+# One group per trigger, so a soak run never cancels the nightly or another soak. Not cancelled in
+# progress: a real-model run that has started has already spent its tokens.
 concurrency:
-  group: e2e-ai-nightly
-  cancel-in-progress: true
+  group: e2e-ai-nightly-${{ github.event.schedule || 'dispatch' }}
+  cancel-in-progress: false
 
 # ── The job this workflow EXISTS to run (#2506). ──
 #
@@ -108,7 +117,8 @@ jobs:
   e2e-live:
     name: E2E (browser · real model)
     needs: preflight
-    if: needs.preflight.outputs.has_key == 'true'
+    # The nightly leg: its own cron, or a manual dispatch — never a soak cron.
+    if: needs.preflight.outputs.has_key == 'true' && (github.event_name != 'schedule' || github.event.schedule == '20 4 * * *')
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -202,3 +212,225 @@ jobs:
           name: playwright-report-elench-live
           path: apps/console/playwright-report/
           retention-days: 14
+
+  # ── The AI soak (epic #7840) — temporary, ends 2026-12-12 ──────────────────────────────────────
+  #
+  # Wider and more expensive than the nightly leg above, on purpose: the console's AI features
+  # against real models across the tiers the product routes to, while promotional credit that
+  # expires on 2026-12-12 lasts. Per tier leg (ai_plus, ai_max) the `elench-live` project runs with
+  # the persona org granted that tier, on the ENTERPRISE edition with Stripe's TEST key — the hosted
+  # shape, where tiers, holds and metering are real — and each leg writes its token usage and
+  # cost-of-serve to the job summary. Once a day the tool-choice eval runs with each model.
+  #
+  # It runs ONLY on its three crons. A manual dispatch of this workflow runs the nightly leg alone,
+  # so it stays what .claude/hooks/guard-spend.sh prices it as (C-AI, cents); a `gh run rerun` of a
+  # SOAK run does not — it spends about USD 5 of the promotional credit and is still charged C-AI.
+  #
+  # THE END DATE IS ENFORCED HERE, not remembered: on or after SOAK_END_DATE (UTC) this job answers
+  # `run=false` and every soak job is skipped, so nothing spends.
+  soak-window:
+    name: AI soak window (before 2026-12-12?)
+    needs: preflight
+    if: needs.preflight.outputs.has_key == 'true' && github.event_name == 'schedule' && github.event.schedule != '20 4 * * *'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    env:
+      SOAK_END_DATE: "2026-12-12"
+    steps:
+      - id: check
+        run: |
+          today=$(date -u +%F)
+          if [[ "$today" < "$SOAK_END_DATE" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The AI soak ended on $SOAK_END_DATE (today is $today, UTC). Nothing runs; remove the soak crons and jobs."
+            echo "The AI soak window closed on $SOAK_END_DATE — this run spent nothing." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  soak:
+    name: AI soak (browser · real model)
+    needs: soak-window
+    # A skipped soak-window (the nightly cron, a dispatch, no key) SHOULD skip this — stated, not implied.
+    if: success() && (needs.soak-window.outputs.run == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [ai_plus, ai_max]
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: alethia
+          POSTGRES_PASSWORD: alethia-dev-secret
+          POSTGRES_DB: alethia
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alethia"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The ENTERPRISE edition — the hosted shape. The nightly runs community, where tenancy collapses
+      # to the person (lib/auth/scope.ts: `orgId === userId`) and no org can hold an AI tier, so the
+      # Plus/Max advisor routing this soak exists to exercise could not be reached there. ee/dist is
+      # built below and guarded, exactly as release-gate.yml's legs do. The rest mirrors the nightly
+      # (see the comments in e2e-ai-nightly.yml, e.g. the auth rate limiter off on bare localhost).
+      ALETHIA_EDITION: enterprise
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+      BETTER_AUTH_SECRET: not-a-secret-e2e-placeholder
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+      ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+      ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+      DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
+      ALETHIA_AUTH_RATE_LIMIT: "0"
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # The HOSTED billing shape, in Stripe TEST mode (the same secret release-gate.yml's stripe legs
+      # use). Without a billing provider the console is self-host: `assertAiAllowed` charges nothing
+      # and writes no `ai_usage_ledger` row, so neither the tier caps, the hold/settle path, nor the
+      # per-run cost summary below would be exercised. With it, they are — as in production.
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      # The PRODUCTION routing (lib/config/ai.ts defaults), stated explicitly so a changed default
+      # cannot quietly change what the soak spends on.
+      AI_EXECUTOR_MODEL: anthropic/claude-haiku-4-5
+      AI_ADVISOR_MODEL_PLUS: anthropic/claude-sonnet-4-6
+      AI_ADVISOR_MODEL_MAX: anthropic/claude-opus-4-8
+      # The tier the specs seed the persona org at (e2e/helpers/ai-tier.ts).
+      AI_SOAK_TIER: ${{ matrix.tier }}
+      # The real terms for this account; see e2e-ai-nightly.yml (#2373 fails closed without them).
+      ALETHIA_AI_ANTHROPIC_DPA: "Anthropic Commercial Terms of Service and Data Processing Addendum"
+      ALETHIA_AI_ANTHROPIC_TRANSFER: "EU Standard Contractual Clauses, per the Anthropic DPA"
+      ALETHIA_AI_ANTHROPIC_RETENTION: "Per the Anthropic Commercial Terms — inputs and outputs retained only for the period stated there"
+      ALETHIA_AI_ANTHROPIC_NO_TRAINING: "Anthropic Commercial Terms exclude training on inputs and outputs"
+    steps:
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || 'dev' }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        run: pnpm -C apps/console run db:migrate
+      - name: Build @alethia/ee (the console resolves EE scope only when its dist exists)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the soak silently runs community scope
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — the console would refuse the enterprise edition"
+            exit 1
+          }
+      - name: Build the console
+        run: pnpm -C apps/console run build
+      - name: Install Playwright (Chromium + OS deps)
+        run: bash scripts/ci/playwright-install.sh
+      - name: Guard — elench-live project must match at least one test
+        run: |
+          list=$(pnpm -F console exec playwright test --project=elench-live --list 2>&1) || { echo "$list"; exit 1; }
+          echo "$list"
+          echo "$list" | grep -qE "Total: [1-9][0-9]* test" || { echo "::error::--project=elench-live matched 0 tests"; exit 1; }
+      - name: Run the real-model journeys (${{ matrix.tier }})
+        run: pnpm -F console exec playwright test --project=elench-live
+      # Read back what this run cost from the console's own ledger — the same rows the credit guard
+      # sums. A turn that failed before metering leaves no row, so this is a floor, not a ceiling.
+      - name: Token usage and cost (job summary)
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          TIER: ${{ matrix.tier }}
+        run: |
+          {
+            echo "### AI soak usage — $TIER"
+            echo
+            echo "| model | kind | rows | input tokens | cached input | output tokens | cost (USD) |"
+            echo "|---|---|---:|---:|---:|---:|---:|"
+            psql "$ALETHIA_DATABASE_URL" -At -F ' | ' -c "
+              select coalesce(model, '(unmetered)'), kind, count(*),
+                     coalesce(sum(input_tokens), 0), coalesce(sum(cached_input_tokens), 0),
+                     coalesce(sum(output_tokens), 0),
+                     to_char(coalesce(sum(cost_micros), 0) / 1e6, 'FM999990.0000')
+              from ai_usage_ledger group by 1, 2 order by 1, 2" | sed 's/^/| /; s/$/ |/'
+            echo
+            total=$(psql "$ALETHIA_DATABASE_URL" -At -c "select to_char(coalesce(sum(cost_micros), 0) / 1e6, 'FM999990.0000') from ai_usage_ledger")
+            echo "**Total cost-of-serve this leg: USD ${total}** (a floor: a turn that failed before it was metered is not counted)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Playwright report
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-ai-soak-${{ matrix.tier }}
+          path: apps/console/playwright-report/
+          retention-days: 14
+
+  # The behaviour eval (tool traces, not prose) with each model as the executor: does every model the
+  # product can route to still pick the right tool from the production tool definitions?
+  #
+  # Once a day (the 09:40 soak only), not on every soak: the three-model eval is
+  # the largest single cost here (~USD 3 a pass, most of it Opus/Sonnet), and three a day would put
+  # the soak at roughly 1.5x the credit that is left. See the epic's budget table.
+  soak-eval:
+    name: AI soak (tool-choice eval · ${{ matrix.model }})
+    needs: soak-window
+    if: success() && (needs.soak-window.outputs.run == 'true' && github.event.schedule == '40 9 * * *')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        model:
+          - anthropic/claude-haiku-4-5
+          - anthropic/claude-sonnet-4-6
+          - anthropic/claude-opus-4-8
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AI_EXECUTOR_MODEL: ${{ matrix.model }}
+      AI_EVAL_USAGE_FILE: /tmp/ai-eval-usage.json
+      # Never connected to (the eval stubs every tool's execute), but modules it imports read them.
+      ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+      ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+      BETTER_AUTH_SECRET: not-a-secret-e2e-placeholder
+    steps:
+      - id: checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || 'dev' }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Behaviour eval (${{ matrix.model }})
+        run: pnpm -C apps/console run test:ai-eval
+      - name: Token usage and cost (job summary)
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        env:
+          MODEL: ${{ matrix.model }}
+        run: |
+          {
+            echo "### Tool-choice eval usage — $MODEL"
+            echo
+            if [ -s "$AI_EVAL_USAGE_FILE" ]; then
+              echo "| case | input tokens | cached input | output tokens | cost (USD) |"
+              echo "|---|---:|---:|---:|---:|"
+              jq -r '.cases[] | "| \(.name) | \(.inputTokens) | \(.cachedInputTokens) | \(.outputTokens) | \(.costUsd) |"' "$AI_EVAL_USAGE_FILE"
+              echo
+              echo "**Total: USD $(jq -r '.totalCostUsd' "$AI_EVAL_USAGE_FILE")**"
+            else
+              echo "No usage file was written (the eval did not reach a model)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
