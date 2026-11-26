@@ -34,6 +34,10 @@
 // knows is kept. So a statement is covered in the merge iff some shard executed it — which is the
 // definition the unsharded run applies across its own test files.
 //
+// ONE DEPARTURE FROM VITEST'S MERGE, and why: a file's records from shards that never executed it are
+// set aside, and used only if no shard executed it (see wasExecuted). Vitest's plain union adds phantom
+// statements from the statically built map of an unloaded file; the equivalence run measured it.
+//
 // Whether that equality holds on the real suite is an empirical question, and ci.yml's
 // `ts-shard-equivalence` dispatch answers it: it runs the suite unsharded on the same commit and
 // `compareCoverage` below fails on any per-file covered/total difference.
@@ -200,7 +204,7 @@ export function listShards({ dir, shards, env, project }) {
  *
  * @param {{index: number, total: number, dir: string}} shard one entry from listShards
  * @param {string} projectAbsDir
- * @returns {{index: number, coverage: Record<string, unknown>, files: number, statements: {covered: number, total: number}}}
+ * @returns {{index: number, coverage: Record<string, unknown>, files: number, fileList: string[], statements: {covered: number, total: number}}}
  */
 export function loadShardCoverage(shard, projectAbsDir) {
 	const label = `shard ${shard.index}/${shard.total}`;
@@ -225,7 +229,7 @@ export function loadShardCoverage(shard, projectAbsDir) {
 		statements.covered += v.covered;
 		statements.total += v.total;
 	}
-	return { index: shard.index, coverage, files: Object.keys(coverage).length, statements };
+	return { index: shard.index, coverage, files: Object.keys(coverage).length, fileList: Object.keys(coverage), statements };
 }
 
 /**
@@ -252,11 +256,43 @@ export function readShards({ dir, shards, projectAbsDir, env, project }) {
 export async function createMerger() {
 	const mod = await import("istanbul-lib-coverage");
 	const lib = mod.default ?? mod;
-	const map = lib.createCoverageMap({});
+	const executed = lib.createCoverageMap({});
+	const neverRun = lib.createCoverageMap({});
 	return {
-		add: (coverage) => map.merge(coverage),
-		toJSON: () => /** @type {Record<string, unknown>} */ (map.toJSON()),
+		add: (coverage) => {
+			for (const [file, rec] of Object.entries(coverage)) {
+				(wasExecuted(rec) ? executed : neverRun).merge({ [file]: rec });
+			}
+		},
+		toJSON: () => {
+			const out = /** @type {Record<string, unknown>} */ (executed.toJSON());
+			for (const [file, rec] of Object.entries(neverRun.toJSON())) if (!(file in out)) out[file] = rec;
+			return out;
+		},
 	};
+}
+
+/**
+ * True when this shard ran any of the file: a hit on any statement, function or branch arm.
+ *
+ * WHY THE MERGE SPLITS ON THIS (found by the ts-shard-equivalence run of 2026-11-26). A shard that
+ * never loads a file still reports it, because coverage.include lists the whole universe; vitest's v8
+ * provider then builds that file's statement map from a static transform
+ * (getCoverageMapForUncoveredFiles), which does not draw exactly the same statement boundaries as the
+ * map built from the shard that executed it. istanbul's merge keys by source location and keeps a
+ * location only one side knows, so the union gained phantom statements: 30544/37045 merged against
+ * 30544/37041 unsharded, in three files. The unsharded run only ever uses the static map for a file NO
+ * test loads, so this merge does the same: executed records merge with each other, and a file's
+ * never-executed records are used only when no shard executed it.
+ *
+ * @param {unknown} rec one file's coverage record
+ * @returns {boolean}
+ */
+export function wasExecuted(rec) {
+	const r = /** @type {{s?: Record<string, number>, f?: Record<string, number>, b?: Record<string, number[]>}} */ (rec ?? {});
+	if (Object.values(r.s ?? {}).some((h) => h > 0)) return true;
+	if (Object.values(r.f ?? {}).some((h) => h > 0)) return true;
+	return Object.values(r.b ?? {}).some((arms) => Array.isArray(arms) && arms.some((h) => h > 0));
 }
 
 /**

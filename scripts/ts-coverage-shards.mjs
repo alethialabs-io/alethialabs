@@ -44,6 +44,7 @@ import {
 	listShards,
 	loadShardCoverage,
 	mergeCoverage,
+	wasExecuted,
 	parseShardCount,
 	parseShardSpec,
 	renderManifest,
@@ -131,14 +132,22 @@ async function runMerge(o) {
 	const mergedDirs = measure(merged, projectAbsDir);
 	const whole = sumDirs(mergedDirs);
 
-	// A union merge can only ADD: every shard reports the full `coverage.include` universe, so the
-	// merged statement total is at least any shard's, and a statement covered in a shard is covered in
-	// the merge. A merge that shrinks either number is a merge bug, and the gate must not read it.
+	// What a correct merge can never do: lose a COVERED statement (a statement executed in a shard is
+	// executed in the merge), or lose a FILE (every shard reports the whole coverage.include universe).
+	// The TOTAL may legitimately be below a shard's: a shard that never loaded a file reports a
+	// statically built statement map for it, which the merge replaces with the executed one (see
+	// wasExecuted in scripts/lib/ts-coverage-merge.mjs). Either loss is a merge bug, so refuse it.
 	for (const s of read) {
-		if (whole.total < s.statements.total || whole.covered < s.statements.covered) {
+		if (whole.covered < s.statements.covered) {
 			throw new ShardMergeError(
-				`the merge (${whole.covered}/${whole.total}) is SMALLER than shard ${s.index}/${shards} alone (${s.statements.covered}/${s.statements.total}) — a union cannot shrink; refusing to write it`,
+				`the merge covers ${whole.covered} statements, FEWER than shard ${s.index}/${shards} alone (${s.statements.covered}) — a merge cannot lose a covered statement; refusing to write it`,
 			);
+		}
+	}
+	for (const s of read) {
+		const missing = (s.fileList ?? []).filter((f) => !(f in merged));
+		if (missing.length) {
+			throw new ShardMergeError(`the merge is missing ${missing.length} file(s) shard ${s.index}/${shards} reported (e.g. ${missing[0]}); refusing to write it`);
 		}
 	}
 
@@ -297,6 +306,20 @@ async function runSelfTest() {
 	check("merging one complete map is the identity on covered/total", compareCoverage(one, s1).differences.length === 0);
 	const unsharded = { [A]: rec(A, [1, 0, 2], 1, [1, 3]), [B]: rec(B, [0, 0]) };
 	check("the merge of the shards compares EQUAL to the run that executed both halves", compareCoverage(m, unsharded).differences.length === 0, JSON.stringify(compareCoverage(m, unsharded)));
+
+	// The defect the 2026-11-26 equivalence run measured: a shard that never loaded a file reports a
+	// statically built map with a statement the executed map does not draw. A plain union kept it
+	// (37045 vs 37041 total). The executed records win, in either shard order.
+	const ran = { [A]: rec(A, [1, 0, 1], 1, [1, 0]) };
+	const idle = { [A]: rec(A, [0, 0, 0, 0]) };
+	for (const [name, order] of [["executed first", [ran, idle]], ["never-run first", [idle, ran]]]) {
+		const mm = await mergeCoverage(order);
+		check(`an unloaded shard's static map adds no phantom statement (${name})`, Object.keys(mm[A].statementMap).length === 3, JSON.stringify(Object.keys(mm[A].statementMap)));
+		check(`...and the merge equals the executing run (${name})`, compareCoverage(mm, ran).differences.length === 0, JSON.stringify(compareCoverage(mm, ran)));
+	}
+	const nobody = await mergeCoverage([{ [B]: rec(B, [0, 0, 0]) }, { [B]: rec(B, [0, 0, 0]) }]);
+	check("a file no shard executed keeps its static map, at zero", Object.keys(nobody[B].statementMap).length === 3 && Object.values(nobody[B].s).every((h) => h === 0));
+	check("wasExecuted reads statements, functions and branch arms", wasExecuted(rec(A, [0], 0, [0, 1])) && wasExecuted(rec(A, [0], 1)) && wasExecuted(rec(A, [2])) && !wasExecuted(rec(A, [0, 0])));
 
 	process.stdout.write("\n the CLI end to end — fingerprint, merge, refuse\n");
 	const tmp = mkdtempSync(path.join(tmpdir(), "tscov-shards-cli-"));
