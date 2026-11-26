@@ -63,6 +63,8 @@ vi.mock("@/lib/billing/events/store", () => ({
 			return null;
 		},
 		businessOwner: async () => null,
+		// The record check has its own tests (apply-billing-event.test.ts); here every org has one.
+		orgHasRecordOf: async () => true,
 		withLockedRow: async (
 			orgId: string,
 			fn: (row: null, write: (p: Record<string, unknown>) => Promise<void>) => Promise<unknown>,

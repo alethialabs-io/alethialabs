@@ -15,6 +15,8 @@ import {
 	paddleStatusToBillingStatus,
 	parseCustomData,
 	parsePaddleEnvelope,
+	TRANSACTION_READ_EVENT_TYPE,
+	transactionReadEvent,
 } from "@/lib/billing/paddle/events";
 import {
 	adjustmentData,
@@ -226,6 +228,23 @@ describe("transaction events", () => {
 		expect(none).toMatchObject({ item: null });
 	});
 
+	it("transaction.billed moves the mirror only, so an unpaid invoice is mirrored before it is paid (#7672)", () => {
+		expect(
+			normalize(envelope("transaction.billed", transactionData({ status: "billed", subscription_id: null }))),
+		).toMatchObject({
+			kind: "transaction_updated",
+			transactionId: "txn_01test",
+			transaction: { status: "billed", invoiceNumber: "325-10566" },
+		});
+	});
+
+	it("subscription.created carries the transaction that created it; other types do not need one", () => {
+		const created = normalize(envelope("subscription.created", subscriptionData({ transaction_id: "txn_01test" })));
+		expect(created).toMatchObject({ kind: "subscription_upserted", transactionId: "txn_01test" });
+		const updated = normalize(envelope("subscription.updated", subscriptionData()));
+		expect(updated).toMatchObject({ kind: "subscription_upserted", transactionId: null });
+	});
+
 	it("transaction.payment_failed and transaction.paid / past_due keep the snapshot", () => {
 		expect(normalize(envelope("transaction.payment_failed", transactionData({ status: "past_due" })))).toMatchObject({
 			kind: "transaction_payment_failed",
@@ -246,6 +265,33 @@ describe("transaction events", () => {
 				envelope("transaction.completed", transactionData({ details: { totals: { subtotal: "1.5", tax: "0", total: "1" } } })),
 			),
 		).toThrow(PaddlePayloadError);
+	});
+});
+
+describe("transactionReadEvent (the mirror backfill)", () => {
+	it("is a mirror-only event watermarked at the transaction's own updated_at", () => {
+		const ev = transactionReadEvent(
+			transactionData({
+				status: "billed",
+				updated_at: "2026-11-20T08:00:00.000Z",
+				custom_data: { organizationId: ORG, kind: "plan" },
+			}),
+		);
+		expect(ev).toMatchObject({
+			kind: "transaction_updated",
+			eventType: TRANSACTION_READ_EVENT_TYPE,
+			eventId: "read:txn_01test:2026-11-20T08:00:00.000Z",
+			organizationId: ORG,
+			transactionId: "txn_01test",
+			subscriptionId: "sub_01test",
+			customerId: "ctm_01test",
+			transaction: { status: "billed", customData: { organizationId: ORG, kind: "plan" } },
+		});
+		expect(ev.occurredAt.toISOString()).toBe("2026-11-20T08:00:00.000Z");
+	});
+
+	it("throws PaddlePayloadError without updated_at, since nothing else can order it against a webhook", () => {
+		expect(() => transactionReadEvent(transactionData())).toThrow(PaddlePayloadError);
 	});
 });
 
