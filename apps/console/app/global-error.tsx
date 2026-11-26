@@ -10,7 +10,8 @@
 import { useEffect } from "react";
 import { brandFontVariables } from "@repo/brand/fonts";
 import { captureException } from "@/lib/analytics/track";
-import { ErrorState } from "@/components/errors/error-state";
+import { AlethiaMark } from "@repo/brand/lockup";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 import "./globals.css";
 
@@ -33,6 +34,7 @@ export default function GlobalError({
 			>
 				<ErrorState
 					fullPage
+					mark={<AlethiaMark />}
 					code="Error"
 					title="Something went wrong"
 					description="The application failed to load. Please try again."

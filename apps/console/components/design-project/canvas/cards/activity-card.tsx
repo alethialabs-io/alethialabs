@@ -7,7 +7,7 @@ import { useMemo } from "react";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge } from "@repo/ui/status-badge";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { ListFooter } from "@/components/list/list-footer";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { useKeysetList } from "@/lib/query/use-keyset-list";

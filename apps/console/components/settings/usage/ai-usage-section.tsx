@@ -21,7 +21,7 @@ import { ArrowUpRight, Zap } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { CreditPackDialog } from "@/components/billing/credit-pack-dialog";
 import { UpgradeAiSheet } from "@/components/billing/upgrade-ai-sheet";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	RegionRefusal,
 	refusalOf,

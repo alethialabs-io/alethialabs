@@ -31,7 +31,7 @@ import {
 } from "@/app/server/actions/org-settings";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { useLeavePageGuard } from "@/components/confirm/use-unsaved-guard";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { OrgLogoUpload } from "@/components/org/org-logo-upload";
 import { GeneralRefusal } from "@/components/settings/general/general-states";
 import { viaAuth } from "@/components/settings/members/auth-action";

@@ -51,7 +51,7 @@ import { useState } from "react";
 import { setUsageHardCap } from "@/app/server/actions/billing";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	RegionRefusal,
 	refusalOf,

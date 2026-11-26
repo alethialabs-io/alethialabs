@@ -24,7 +24,7 @@ import {
   revokeGrant,
 } from "@/app/server/actions/grants";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { manageReason } from "@/components/errors/manage-gate";
 import { FormRootError } from "@/components/forms/form-root-error";
 import { isForbiddenRead } from "@/components/settings/members/people-reads";

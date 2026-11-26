@@ -25,7 +25,7 @@ import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { manageReason } from "@/components/errors/manage-gate";
 import { FEATURE_UPSELLS } from "@/components/settings/upgrade/feature-catalog";
 import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { isForbiddenRead } from "@/components/settings/members/people-reads";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";

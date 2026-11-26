@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useRouter } from "next/navigation";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 
 /**
  * The SSO page when its bootstrap read FAILED (not refused): a region error in the page's body with
