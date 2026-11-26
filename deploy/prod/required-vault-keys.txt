@@ -41,3 +41,8 @@ ALETHIA_CRED_ENCRYPTION_KEY
 OPENFGA_DB_PASSWORD
 ALETHIA_STORAGE_ACCESS_KEY_ID
 ALETHIA_STORAGE_SECRET_ACCESS_KEY
+
+# The Cloudflare Access team domain and application AUD apps/admin verifies the Access token against
+# (apps/admin/lib/auth/access-jwt.ts, #7765). Either one empty ⇒ admin admits nobody in production.
+CF_ACCESS_TEAM_DOMAIN
+CF_ACCESS_AUD
