@@ -36,7 +36,7 @@ import {
 import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { FormRootError } from "@/components/forms/form-root-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";

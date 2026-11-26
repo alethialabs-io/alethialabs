@@ -38,7 +38,7 @@ import { useId, useLayoutEffect, useState } from "react";
 import { type Control, Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { setProtectionRules } from "@/app/server/actions/protection";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";

@@ -46,7 +46,7 @@ import {
 	toChannelInput,
 } from "@/components/alerts/channel-form";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { FormRootError } from "@/components/forms/form-root-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";

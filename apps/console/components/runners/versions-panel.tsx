@@ -12,7 +12,7 @@ import { Card } from "@repo/ui/card";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";

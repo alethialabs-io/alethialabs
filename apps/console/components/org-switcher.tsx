@@ -5,7 +5,7 @@
 import { Check, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { OrgAvatar } from "@/components/org/org-avatar";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";

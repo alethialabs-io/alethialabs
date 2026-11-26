@@ -18,7 +18,7 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { formatDuration, formatRelative } from "@repo/format";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { CARD_EMPTY } from "@/components/overview/card-empty";
 import type { ProvisionJobStatus, ProvisionJobType } from "@/lib/db/schema/enums";
 import { JOB_TYPES } from "@/lib/jobs/format";

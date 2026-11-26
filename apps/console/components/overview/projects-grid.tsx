@@ -17,7 +17,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { Table, TableBody } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
 import type { ProjectListItem } from "@/app/server/actions/projects";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { ListFooter } from "@/components/list/list-footer";
 import { useViewer } from "@/components/providers/viewer-provider";

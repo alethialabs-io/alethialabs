@@ -38,7 +38,7 @@ import { useMembersQuery } from "@/lib/query/use-activity-query";
 import { normalizeActivityQuery } from "@/lib/query/activity-query";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { COMMUNITY_ENTITLEMENTS } from "@/lib/billing/plan";

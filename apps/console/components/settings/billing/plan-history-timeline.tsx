@@ -11,7 +11,7 @@
 // without the billing permission, whose read is always refused.
 
 import { useQuery } from "@tanstack/react-query";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { ClockText } from "@/components/settings/usage/clock-text";

@@ -25,7 +25,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Link2, Lock, X } from "lucide-react";
 import { type RefObject, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useViewer } from "@/components/providers/viewer-provider";
 import { orpc } from "@/lib/rpc/client";
 import type { ApprovalSheet as ApprovalSheetData } from "@/lib/rpc/procedures/approvals";

@@ -10,7 +10,7 @@ import { savePreviewConfig } from "@/app/server/actions/preview";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { useLeavePageGuard } from "@/components/confirm/use-unsaved-guard";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { FormRootError } from "@/components/forms/form-root-error";
 import { GeneralRefusal } from "@/components/settings/general/general-states";
 import { RepositorySelector } from "@/components/repository-selector";

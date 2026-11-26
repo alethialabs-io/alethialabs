@@ -10,7 +10,8 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { captureException } from "@/lib/analytics/track";
-import { ErrorState } from "@/components/errors/error-state";
+import { AlethiaMark } from "@repo/brand/lockup";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 
 export default function AppError({
@@ -28,6 +29,7 @@ export default function AppError({
 	return (
 		<ErrorState
 			fullPage
+			mark={<AlethiaMark />}
 			code="Error"
 			title="Something went wrong"
 			description="An unexpected error occurred. You can try again, or head back home."

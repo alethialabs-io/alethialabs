@@ -90,7 +90,7 @@ the first would let the second spread as the fix.
 | **T3** | `notFound()` has a `not-found.tsx` in its own chain | the page calls `notFound()`, the nearest `not-found.tsx` is scoped to the same resource, **and it can fire** — no layout at that resource's own segment throws past it | `does-not-call-not-found` |
 | **T4** | the page declares metadata | `hasMetadata` — on the page, or on its own layout for a client page | never — a redirect still owns a title |
 | **T5** | the empty state renders through `EmptyState` | driven against an empty org, the rendered empty region resolves to `@repo/ui/empty` | `no-empty-state` (the page has no list, tab or panel that can be empty) |
-| **T6** | the error state renders through the shared error component | fault-injected, the page renders `components/errors/error-state` | `redirect-only` |
+| **T6** | the error state renders through the shared error component | fault-injected, the page renders `@repo/ui/error-state` | `redirect-only` |
 | **T7** | permission-denied renders a real state | as the `operator` persona — which is the restricted one, and the `member`/`viewer` persona is not; see below — a forbidden page renders a deliberate state, not a blank | `no-restricted-surface` |
 
 **T1 is "the nearest one", not "one exists".** Next.js gives a page the closest ancestor-or-self

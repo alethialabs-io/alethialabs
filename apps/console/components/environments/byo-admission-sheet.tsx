@@ -27,7 +27,7 @@ import { useEffect, useId } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import { setByoAdmissionEnforce } from "@/app/server/actions/projects";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { byoAdmissionReportComplete } from "@/lib/gitops/byo-admission-report";
 import { orpc } from "@/lib/rpc/client";
