@@ -34,7 +34,7 @@ import {
 	InputOTPGroup,
 	InputOTPSlot,
 } from "@repo/ui/input-otp";
-import { ArrowRight, KeyRound, Loader2, Lock } from "lucide-react";
+import { ArrowRight, KeyRound, Lock } from "lucide-react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -397,6 +397,7 @@ function ProviderButton({
 			variant="outline"
 			onClick={() => onSelect(provider)}
 			disabled={isLoading}
+			pending={loadingProvider === provider}
 			// The three-up tiles take tighter padding and gap: at the card's desktop width a tile is
 			// ~105px, and the default 16px sides left "Bitbucket" ~47px of the ~60px it needs.
 			className={
@@ -405,11 +406,7 @@ function ProviderButton({
 					: "h-[46px] w-full min-w-0 gap-[9px] border-border-strong text-ui-md hover:border-ring hover:bg-surface-muted"
 			}
 		>
-			{loadingProvider === provider ? (
-				<Loader2 className="size-[17px] animate-spin" />
-			) : (
-				<ProviderIcon provider={provider} size={17} decorative mono={false} />
-			)}
+			<ProviderIcon provider={provider} size={17} decorative mono={false} />
 			<span className={compact ? "min-w-0 truncate max-[399px]:sr-only" : "min-w-0 truncate"}>
 				{lookup(PROVIDER_LABELS, provider)}
 			</span>
@@ -449,13 +446,12 @@ function LeadMethodButton({
 			type="button"
 			onClick={() => onSelect(method)}
 			disabled={isLoading}
+			pending={spinning}
 			variant="outline"
 			aria-label={`Continue with ${name} (last used)`}
 			className="relative h-[46px] w-full min-w-0 gap-[9px] border-ring bg-surface-muted text-ui-md hover:bg-surface-muted"
 		>
-			{spinning ? (
-				<Loader2 className="size-[17px] animate-spin" />
-			) : method === "email" ? (
+			{method === "email" ? (
 				<KeyRound className="size-4 opacity-80" />
 			) : (
 				<ProviderIcon provider={method} size={17} decorative mono={false} />
@@ -1287,11 +1283,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 							<Button
 								type="submit"
 								disabled={isLoading}
+								pending={loadingProvider === "sso"}
 								className="h-[46px] px-4 text-sm"
 							>
-								{loadingProvider === "sso" ? (
-									<Loader2 className="size-4 animate-spin" aria-hidden="true" />
-								) : null}
 								Continue
 							</Button>
 						</div>
@@ -1332,13 +1326,11 @@ function PrimaryButton({
 	return (
 		<Button
 			{...props}
+			pending={loading ?? false}
 			className="group relative h-[46px] w-full text-sm"
 		>
 			{loading ? (
-				<>
-					<Loader2 className="mr-1 size-4 animate-spin" />
-					{loadingLabel}
-				</>
+				loadingLabel
 			) : (
 				<>
 					{children}

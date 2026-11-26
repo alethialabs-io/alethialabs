@@ -6,7 +6,7 @@ import type React from "react";
 import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { CheckCircle, Loader2, XCircle } from "lucide-react";
+import { CheckCircle, XCircle } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import {
 	deviceApprovalScopes,
@@ -291,26 +291,12 @@ function CliLoginContent() {
 						    revokes an approval as well as pre-empting one, and its own failure is
 						    surfaced honestly by `declineDevice`. */}
 						{approvable ? (
-							<Button onClick={approveDevice} disabled={busy}>
-								{stage === "approving" ? (
-									<>
-										<Loader2 className="h-4 w-4 animate-spin" />
-										Approving…
-									</>
-								) : (
-									"Approve"
-								)}
+							<Button onClick={approveDevice} disabled={busy} pending={stage === "approving"}>
+								{stage === "approving" ? "Approving…" : "Approve"}
 							</Button>
 						) : null}
-						<Button variant="ghost" onClick={declineDevice} disabled={busy}>
-							{stage === "declining" ? (
-								<>
-									<Loader2 className="h-4 w-4 animate-spin" />
-									Recording…
-								</>
-							) : (
-								"This isn't me"
-							)}
+						<Button variant="ghost" onClick={declineDevice} disabled={busy} pending={stage === "declining"}>
+							{stage === "declining" ? "Recording…" : "This isn't me"}
 						</Button>
 					</div>
 
