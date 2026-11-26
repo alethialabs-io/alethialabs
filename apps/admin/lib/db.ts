@@ -6,8 +6,8 @@
 // per-owner app role here; the SUPPORT_STAFF_EMAILS allowlist behind Cloudflare Access is
 // the trust boundary (see lib/auth/staff.ts). Reads the same Postgres as the console via
 // ALETHIA_DATABASE_URL; the console owns the schema + migrations. The drizzle schema is
-// the shared support tables (@repo/support/schema) plus the minimal organization/user
-// refs the joins need (./db-schema).
+// the shared support tables (@repo/support/schema) plus read-only refs to the console-owned
+// tables the joins need (@repo/platform/console-refs, held to the console schema by a test).
 
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { env } from "next-runtime-env";
@@ -21,7 +21,7 @@ import {
 	organization,
 	organizationBilling,
 	user,
-} from "./db-schema";
+} from "@repo/platform/console-refs";
 
 const schema = {
 	...supportSchema,

@@ -12,7 +12,7 @@ import {
 	organization,
 	organizationBilling,
 	user,
-} from "@/lib/db-schema";
+} from "@repo/platform/console-refs";
 
 export interface OrgListRow {
 	id: string;

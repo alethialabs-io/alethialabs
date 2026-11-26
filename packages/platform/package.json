@@ -6,7 +6,8 @@
   "exports": {
     "./schema": "./src/schema.ts",
     "./enums": "./src/enums.ts",
-    "./types": "./src/types.ts"
+    "./types": "./src/types.ts",
+    "./console-refs": "./src/console-refs.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

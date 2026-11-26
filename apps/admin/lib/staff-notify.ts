@@ -13,7 +13,7 @@ import { eq } from "drizzle-orm";
 import { env } from "next-runtime-env";
 import { supportCases } from "@repo/support/schema";
 import { getServiceDb } from "@/lib/db";
-import { organization } from "@/lib/db-schema";
+import { organization } from "@repo/platform/console-refs";
 import {
 	sendCaseAssignedEmail,
 	sendCaseClosedEmail,
