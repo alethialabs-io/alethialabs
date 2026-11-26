@@ -110,9 +110,9 @@ describe("environmentHref", () => {
 		);
 	});
 
-	it("drops what names something inside the environment being left: the page and the selection", () => {
+	it("drops what names something inside the environment being left: the selection", () => {
 		expect(
-			environmentHref("/acme/shop/architecture", "selected=node_9&page=3&view=list", "env_2"),
+			environmentHref("/acme/shop/architecture", "selected=node_9&view=list", "env_2"),
 		).toBe("/acme/shop/architecture?view=list&environment_id=env_2");
 	});
 });

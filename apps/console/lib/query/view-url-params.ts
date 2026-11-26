@@ -16,16 +16,19 @@
 // A value is accepted only when it is a short identifier (letters, digits, `-`, `_`). Anything
 // else reads as absent, so a hand-edited link can select a step or an overlay and nothing more.
 //
-// A LIST page has three more pieces of view state, and they are decoded here for the same reason
+// A LIST page has two more pieces of view state, and they are decoded here for the same reason
 // (#6814):
-//   ?page=<n>          which page of the rows, 1-based; the first page is the absent param
 //   ?selected=<id>     which row is open beside the list (a detail pane or sheet)
 //   ?range=<value>     the time window, on a page that keeps it out of its filter store
 //
-// None of them is a filter-store key: a page number and a selected row mean something only for
-// the filters they were chosen under, so `useFilterUrlSync` is told to drop them when a filter
-// changes (`resetParams`), and neither counts on "Reset · N". Every decoder is total — an
-// unreadable value is the default view, never an error and never a view nobody chose.
+// Neither is a filter-store key. A selected row means something only for the filters it was
+// chosen under, so `useFilterUrlSync` is told to drop it when a filter changes (`resetParams`),
+// and it does not count on "Reset · N". Every decoder is total — an unreadable value is the
+// default view, never an error and never a view nobody chose.
+//
+// There is no `?page=`. It was a third piece until LST-14 (#7496): lists page by keyset cursor
+// (lib/query/README.md → "Paging"), and the cursor is the infinite query's pageParam, never a URL
+// param. An old link that still carries `?page=` is read by nothing.
 
 import type { ParamReader } from "@/lib/query/filter-url-codec";
 import { parseRangeFilter, type RangeFilter } from "@/lib/query/range-filter";
@@ -36,17 +39,14 @@ export const WIZARD_PARAM = "wizard";
 /** The param naming the step on screen. */
 export const STEP_PARAM = "step";
 
-/** The param naming the page of a list's rows. */
-export const PAGE_PARAM = "page";
-
 /** The param naming the row open beside a list. */
 export const SELECTION_PARAM = "selected";
 
 /** The param naming a list's time window. */
 export const RANGE_PARAM = "range";
 
-/** The params `useFilterUrlSync` is handed as `resetParams` on a paged list with a detail pane. */
-export const FILTER_DEPENDENT_PARAMS: readonly string[] = [PAGE_PARAM, SELECTION_PARAM];
+/** The params `useFilterUrlSync` is handed as `resetParams` on a list with a detail pane. */
+export const FILTER_DEPENDENT_PARAMS: readonly string[] = [SELECTION_PARAM];
 
 /** A set of param changes: a string sets the param, `null` removes it. */
 export type ParamPatch = Readonly<Record<string, string | null>>;
@@ -121,25 +121,6 @@ export function applyParamPatch(search: string, patch: ParamPatch): string {
 export function hrefWithParamPatch(pathname: string, search: string, patch: ParamPatch): string {
 	const next = applyParamPatch(search, patch);
 	return next === "" ? pathname : `${pathname}?${next}`;
-}
-
-/** The highest page number the codec reads or writes (six digits). */
-const MAX_PAGE = 999_999;
-
-/**
- * The 1-based page the URL names. Absent, not a whole number, below 1 or above the cap all read
- * as the first page.
- */
-export function pageFromUrl(params: ParamReader, name: string = PAGE_PARAM): number {
-	const raw = params.get(name);
-	if (raw === null || !/^[1-9][0-9]{0,5}$/.test(raw)) return 1;
-	return Number.parseInt(raw, 10);
-}
-
-/** The patch that shows `page`. The first page removes the param, so a pristine list keeps a clean URL. */
-export function pagePatch(page: number, name: string = PAGE_PARAM): ParamPatch {
-	const whole = Number.isFinite(page) ? Math.floor(page) : 1;
-	return { [name]: whole <= 1 || whole > MAX_PAGE ? null : String(whole) };
 }
 
 /** The id of the row the URL says is open, or `null` when it names none or the value is not an identifier. */
