@@ -63,9 +63,9 @@ same `idempotency_key` returns the first result.
 | Tool | Scope | Arguments | Returns |
 | --- | --- | --- | --- |
 | `scan_repo` | `plan` | `repo`, `idempotency_key` | The `job_id` of a scan that infers what a repository needs. The repository is cloned and parsed, never run. The same key returns the same job. |
-| `plan` | `plan` | `project_id`, `environment_id`, `idempotency_key` | The `job_id` of a plan of what the design would create or change. It changes nothing in the cloud. The same key returns the same job. |
+| `plan` | `plan` | `project_id`, `environment_id`, `destroy` (optional), `idempotency_key` | The `job_id` of a plan of what the design would create or change. With `destroy: true`, a plan of what tearing the environment down would remove. It changes nothing in the cloud. The same key returns the same job. |
 | `request_apply` | `apply` | `plan_job_id`, `reason` (optional) | An approval request for that plan: `approval_id`, `status`, `approve_url`, `digest_prefix`, `expires_at` and `job_id`. |
-| `request_destroy` | `destroy` | `project_id`, `environment_id`, `reason` (optional) | The same, for destroying the environment as it was last deployed. |
+| `request_destroy` | `destroy` | `project_id`, `environment_id`, `reason` (optional) | The same, for destroying the environment. The approval is for the environment's latest destroy plan, so call `plan` with `destroy: true` first. |
 | `cancel_job` | `plan` | `job_id` | The job's status after the cancel. A finished job stays as it is. |
 | `send_feedback` | none | `text`, `missing_capability` (optional) | Whether the Alethia team received it. On a self-managed installation there is no team inbox, so it answers `false`. |
 
@@ -79,6 +79,10 @@ No tool approves. An apply or a destroy runs only after you approve it in the co
    For a destroy, you type the environment's name.
 3. The agent calls `request_apply` again with the same plan. Only now does the deploy start. The tool
    returns `status: "consumed"` and the `job_id`. Calling it again returns the same job.
+
+A destroy runs the same way, against a destroy plan: the agent calls `plan` with `destroy: true`,
+waits for it, and then calls `request_destroy`. The destroy removes exactly what that plan lists. If
+the environment changes after the destroy plan, the agent must plan the destroy again.
 
 An approval covers one plan, for the client that asked for it, once. It expires after the time your
 organization set (60 minutes by default). A newer plan, or a change to the environment, voids it.

@@ -65,13 +65,15 @@ describe("verifyRunnerMayReadJob", () => {
 		await expect(verifyRunnerMayReadJob(RUNNER, PLAN)).resolves.toEqual({ error: null, access: "owner" });
 	});
 
-	it("admits the runner whose in-flight DEPLOY of the same org names this plan, asking exactly that", async () => {
+	it("admits the runner whose in-flight DEPLOY or DESTROY of the same org names this plan, asking exactly that", async () => {
 		mockDb([{ runner_id: "runner-plan", job_type: "PLAN", org_id: "org-1" }], [{ id: "deploy-1" }]);
 
 		await expect(verifyRunnerMayReadJob(RUNNER, PLAN)).resolves.toEqual({ error: null, access: "applies_plan" });
 
+		// A DESTROY bound to a destroy plan downloads that plan the same way (#7455). Which kind of plan
+		// each may apply is checked by the runner and at insert, not here.
 		const params = paramsOf(db.wheres[1]);
-		expect(params).toEqual(expect.arrayContaining([PLAN, RUNNER, "org-1", "DEPLOY", "CLAIMED", "PROCESSING"]));
+		expect(params).toEqual(expect.arrayContaining([PLAN, RUNNER, "org-1", "DEPLOY", "DESTROY", "CLAIMED", "PROCESSING"]));
 	});
 
 	it("refuses a plan no in-flight DEPLOY of this runner names", async () => {
@@ -111,6 +113,7 @@ describe("GET /api/jobs/[id] for the runner applying the plan", () => {
 			environment_id: "e1",
 			configuration_hash: "c".repeat(64),
 			plan_sha256: "d".repeat(64),
+			destroy_plan: false,
 		};
 		mockDb([{ runner_id: "runner-plan", job_type: "PLAN", org_id: "org-1" }], [{ id: "deploy-1" }], [narrowed]);
 

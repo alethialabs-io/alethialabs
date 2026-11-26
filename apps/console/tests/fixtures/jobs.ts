@@ -31,6 +31,7 @@ export function makeJob(overrides: Partial<JobWithMeta> = {}): JobWithMeta {
 		plan_job_id: null,
 		approval_id: null,
 		plan_sha256: null,
+		destroy_plan: false,
 		claimed_at: null,
 		started_at: null,
 		completed_at: null,

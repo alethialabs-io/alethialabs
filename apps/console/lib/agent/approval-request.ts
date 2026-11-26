@@ -16,7 +16,7 @@ import { type ApprovalView, viewOf } from "@/lib/approvals/read";
 import { ApprovalError } from "@/lib/approvals/refusal";
 import { requestApproval } from "@/lib/approvals/request";
 import type { ApplyOperation } from "@/lib/approvals/types";
-import { appliedPlanFor } from "@/lib/ai/mcp/approval-store";
+import { destroyPlanFor } from "@/lib/ai/mcp/approval-store";
 import { currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
 import { withActorScope } from "@/lib/db";
@@ -31,8 +31,8 @@ export interface InAppApplyInput {
 
 /**
  * What the model passes to `request_destroy`: the shared input (lib/ai/mcp/surface.ts). It names the
- * environment, not a plan; the server binds the destroy to the plan the environment's last successful
- * deploy applied, as the engine requires (lib/approvals/binding.ts).
+ * environment, not a plan; the server binds the destroy to the environment's current destroy plan,
+ * as the engine requires (lib/approvals/binding.ts).
  */
 export interface InAppDestroyInput {
 	project_id: string;
@@ -107,7 +107,7 @@ export async function requestInAppApply(input: InAppApplyInput): Promise<InAppAp
 
 /**
  * `request_destroy` for the in-product agent: records a pending approval to destroy the environment
- * `input.environment_id`, bound to the plan its last successful deploy applied (the same lookup the
+ * `input.environment_id`, bound to the environment's current destroy plan (the same lookup the
  * connected agents' tool uses, lib/ai/mcp/approval-store.ts). Refuses outside a chat turn.
  */
 export async function requestInAppDestroy(input: InAppDestroyInput): Promise<InAppApprovalOutput> {
@@ -124,7 +124,7 @@ export async function requestInAppDestroy(input: InAppDestroyInput): Promise<InA
 	return record(
 		actor,
 		"destroy",
-		() => appliedPlanFor(actor, ids.data.project_id, ids.data.environment_id),
+		() => destroyPlanFor(actor, ids.data.project_id, ids.data.environment_id),
 		input.reason,
 	);
 }

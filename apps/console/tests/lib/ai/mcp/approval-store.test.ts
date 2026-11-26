@@ -13,15 +13,15 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/approvals/read", () => ({ readApproval: vi.fn(), viewOf: vi.fn() }));
 vi.mock("@/lib/approvals/request", () => ({ requestApproval: vi.fn() }));
 vi.mock("@/lib/approvals/context", () => ({ readEnvironment: vi.fn() }));
-vi.mock("@/lib/approvals/binding", () => ({ appliedState: vi.fn() }));
+vi.mock("@/lib/approvals/binding", () => ({ currentDestroyPlan: vi.fn() }));
 
 import {
-	appliedPlanFor,
+	destroyPlanFor,
 	findOwnApproval,
 	readOwnOrgApproval,
 	requestOwnApproval,
 } from "@/lib/ai/mcp/approval-store";
-import { appliedState } from "@/lib/approvals/binding";
+import { currentDestroyPlan } from "@/lib/approvals/binding";
 import { readEnvironment } from "@/lib/approvals/context";
 import { type ApprovalView, readApproval, viewOf } from "@/lib/approvals/read";
 import { ApprovalError } from "@/lib/approvals/refusal";
@@ -120,11 +120,11 @@ describe("readOwnOrgApproval", () => {
 	});
 });
 
-describe("appliedPlanFor", () => {
+describe("destroyPlanFor", () => {
 	it("refuses not_found, reading nothing, when the actor may not view the project", async () => {
 		const can = pdpAllowing(false);
 		scopeTo(txAnswering());
-		await expect(appliedPlanFor(ACTOR, "proj-1", "env-1")).rejects.toMatchObject({ code: "not_found" });
+		await expect(destroyPlanFor(ACTOR, "proj-1", "env-1")).rejects.toMatchObject({ code: "not_found" });
 		expect(can).toHaveBeenCalledWith(ACTOR, "view", { type: "project", id: "proj-1" });
 		expect(withActorScope).not.toHaveBeenCalled();
 	});
@@ -133,31 +133,28 @@ describe("appliedPlanFor", () => {
 		pdpAllowing(true);
 		scopeTo(txAnswering());
 		vi.mocked(readEnvironment).mockResolvedValue(null);
-		const refusal = appliedPlanFor(ACTOR, "proj-1", "env-other");
+		const refusal = destroyPlanFor(ACTOR, "proj-1", "env-other");
 		await expect(refusal).rejects.toBeInstanceOf(ApprovalError);
 		await expect(refusal).rejects.toMatchObject({ code: "not_found" });
-		expect(appliedState).not.toHaveBeenCalled();
+		expect(currentDestroyPlan).not.toHaveBeenCalled();
 	});
 
-	it("refuses plan_not_approvable when nothing reviewed was deployed there", async () => {
+	it("refuses plan_not_approvable when the environment has no current destroy plan", async () => {
 		pdpAllowing(true);
 		scopeTo(txAnswering());
 		vi.mocked(readEnvironment).mockResolvedValue({ id: "env-1" } as never);
-		vi.mocked(appliedState).mockResolvedValue({ deployJobId: "d1", planJobId: null, planSha256: null, createdAt: new Date() });
-		await expect(appliedPlanFor(ACTOR, "proj-1", "env-1")).rejects.toMatchObject({ code: "plan_not_approvable" });
-
-		vi.mocked(appliedState).mockResolvedValue(null);
-		await expect(appliedPlanFor(ACTOR, "proj-1", "env-1")).rejects.toMatchObject({ code: "plan_not_approvable" });
+		vi.mocked(currentDestroyPlan).mockResolvedValue(null);
+		await expect(destroyPlanFor(ACTOR, "proj-1", "env-1")).rejects.toMatchObject({ code: "plan_not_approvable" });
 	});
 
-	it("answers the plan the environment's latest deploy applied", async () => {
+	it("answers the environment's current destroy plan", async () => {
 		pdpAllowing(true);
 		const tx = txAnswering();
 		scopeTo(tx);
 		vi.mocked(readEnvironment).mockResolvedValue({ id: "env-1" } as never);
-		vi.mocked(appliedState).mockResolvedValue({ deployJobId: "d1", planJobId: "plan-9", planSha256: "abc", createdAt: new Date() });
-		expect(await appliedPlanFor(ACTOR, "proj-1", "env-1")).toBe("plan-9");
+		vi.mocked(currentDestroyPlan).mockResolvedValue({ planJobId: "dplan-9" });
+		expect(await destroyPlanFor(ACTOR, "proj-1", "env-1")).toBe("dplan-9");
 		expect(readEnvironment).toHaveBeenCalledWith(tx, "proj-1", "env-1");
-		expect(appliedState).toHaveBeenCalledWith(tx, "env-1");
+		expect(currentDestroyPlan).toHaveBeenCalledWith(tx, "env-1");
 	});
 });

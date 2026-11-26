@@ -63,7 +63,8 @@ type stageDeployPayload struct {
 	GitProviders map[string]string `json:"git_providers,omitempty"`
 }
 
-// stageDestroyPayload reconstructs provisioner.DestroyParams.
+// stageDestroyPayload reconstructs provisioner.DestroyParams for a teardown (DryRun=false) or a
+// destroy-mode plan (DryRun=true), the same split stageDeployPayload makes for deploy and plan.
 type stageDestroyPayload struct {
 	ProjectConfig        *types.ProjectConfig        `json:"project_config"`
 	CloudAccountID       string                      `json:"cloud_account_id"`
@@ -73,6 +74,13 @@ type stageDestroyPayload struct {
 	CategoriesDir        string                      `json:"categories_dir"`
 	StateConsoleURL      string                      `json:"state_console_url"`
 	JobID                string                      `json:"job_id"`
+	// DryRun plans the teardown (RunDestroyPlan), saving the plan file at PlanOutFile under the
+	// workdir; the stage hands its bytes back in result.json. Nothing is destroyed.
+	DryRun      bool   `json:"dry_run,omitempty"`
+	PlanOutFile string `json:"plan_out_file,omitempty"`
+	// PlanFile is the reviewed destroy plan, already checked against the job's digest by the parent;
+	// the teardown applies exactly it (RunDestroy with PlanFile).
+	PlanFile string `json:"plan_file,omitempty"`
 }
 
 // stageChartScanPayload reconstructs a chart-safety scan. The chart is already cloned by
@@ -271,6 +279,9 @@ func spendPolicyFromEnv() provisioner.SpendPolicy {
 	return p
 }
 
+// buildDestroyPayload projects DestroyParams inputs into a serializable payload, blanking the git
+// token (it crosses via env) and carrying the json:"-" fields explicitly. The plan fields are set by
+// the caller: DryRun/PlanOutFile for a destroy plan, PlanFile for a teardown bound to one.
 func buildDestroyPayload(vc *types.ProjectConfig, provider, templatesDir, categoriesDir,
 	stateConsoleURL, jobID string) stageDestroyPayload {
 	cfg := *vc
@@ -344,13 +355,19 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 	return writeStageResult(workDir, res, err)
 }
 
-// runDestroyStage reconstructs DestroyParams and runs RunDestroy.
+// runDestroyStage reconstructs DestroyParams and runs RunDestroy, or RunDestroyPlan when the payload
+// is a destroy-mode plan (DryRun), writing the plan JSON into result.json for the parent.
 func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecrets, workDir string, stdout, stderr io.Writer) error {
 	vc := p.ProjectConfig
 	vc.CloudAccountID = p.CloudAccountID
 	vc.ConnectorCredentials = p.ConnectorCredentials
 
+	if p.DryRun {
+		return runDestroyPlanStage(ctx, p, sec, workDir, stdout, stderr)
+	}
+
 	err := provisioner.RunDestroy(ctx, provisioner.DestroyParams{
+		PlanFile:      p.PlanFile,
 		ProjectConfig: vc,
 		Provider:      p.Provider,
 		TemplatesDir:  p.TemplatesDir,
@@ -373,6 +390,45 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 		TalosMint: mintFromTalosconfig,
 	})
 	return writeStageResult(workDir, stageResult{}, err)
+}
+
+// runDestroyPlanStage runs RunDestroyPlan for a destroy-mode PLAN job. The saved plan file lands at
+// p.PlanOutFile and the plan JSON in result.json's PlanResult, the shape the apply plan's stage
+// writes, so the parent reads both the same way. A plan JSON that cannot be re-encoded fails the
+// stage: a destroy plan with no readable changes is not one anyone can review.
+func runDestroyPlanStage(ctx context.Context, p stageDestroyPayload, sec stageSecrets, workDir string, stdout, stderr io.Writer) error {
+	plan, err := provisioner.RunDestroyPlan(ctx, provisioner.DestroyParams{
+		DryRun:        true,
+		PlanOutFile:   p.PlanOutFile,
+		ProjectConfig: p.ProjectConfig,
+		Provider:      p.Provider,
+		TemplatesDir:  p.TemplatesDir,
+		CategoriesDir: p.CategoriesDir,
+		StateBackend:  &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		Stdout:        stdout,
+		Stderr:        stderr,
+	})
+	if err != nil {
+		return writeStageResult(workDir, stageResult{}, err)
+	}
+	var planJSON map[string]interface{}
+	raw, err := json.Marshal(plan)
+	if err == nil {
+		err = json.Unmarshal(raw, &planJSON)
+	}
+	if err != nil {
+		return writeStageResult(workDir, stageResult{}, fmt.Errorf("encode the destroy plan: %w", err))
+	}
+	// The saved plan crosses back inside result.json, as the apply plan's PlanFileBytes do, so the
+	// parent never opens a path the (for BYO IaC, untrusted) stage could have pointed elsewhere.
+	planBytes, err := os.ReadFile(p.PlanOutFile)
+	if err != nil {
+		return writeStageResult(workDir, stageResult{}, fmt.Errorf("read the saved destroy plan: %w", err))
+	}
+	_ = os.Remove(p.PlanOutFile)
+	res := stageResult{}
+	res.PlanResult, _ = json.Marshal(provisioner.PlanResult{PlanJSON: planJSON, PlanFileBytes: planBytes})
+	return writeStageResult(workDir, res, nil)
 }
 
 // buildDriftPayload projects a BYO drift run into a serializable payload (the git/state
