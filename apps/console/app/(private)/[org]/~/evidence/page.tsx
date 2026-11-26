@@ -29,9 +29,10 @@ function isEvidenceRead(query: Pick<Query, "queryKey" | "state">): boolean {
 
 /**
  * Evidence route — the org-wide day-2 "keep proving it" roll-up (#6126, ADR 0005 D1). Decodes the
- * link's filters (the URL half of the filter standard) and prefetches EXACTLY the `evidence.page`
- * read the client asks for on first paint, in-process through the read router — so the tenant is
- * the org this address names, and a shared filtered link hydrates into the view it shows.
+ * link's filters (the URL half of the filter standard) and prefetches EXACTLY the two reads the
+ * client asks for on first paint — the `evidence.page` roll-up for those filters and the first page
+ * of the `evidence.waivers` log — in-process through the read router, so the tenant is the org this
+ * address names, and a shared filtered link hydrates into the view it shows.
  *
  * Awaited, because the first paint IS the data; `loading.tsx` covers the window. A prefetch that
  * fails is not dehydrated: the client then shows its skeleton, reads once more in the browser, and
@@ -46,14 +47,33 @@ export default async function EvidenceRoute({
 }) {
 	const input = normalizeEvidenceQuery(filtersFromSearchParams(await searchParams));
 	const queryClient = getQueryClient();
-	await queryClient.prefetchQuery({
-		...serverOrpc().evidence.page.queryOptions({ input }),
-		retry: false,
-	});
+	const rpc = serverOrpc();
+	await Promise.all([
+		queryClient.prefetchQuery({
+			...rpc.evidence.page.queryOptions({ input }),
+			retry: false,
+		}),
+		queryClient.prefetchInfiniteQuery({ ...waiversFirstPage(rpc), retry: false }),
+	]);
 
 	return (
 		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isEvidenceRead })}>
 			<EvidenceClient />
 		</HydrationBoundary>
 	);
+}
+
+/**
+ * The recorded-waivers log's first page as an infinite query, built the way `useKeysetList` builds it
+ * (lib/query/use-keyset-list.ts) for `EvidenceWaivers`' one stable query `{}`: the cursor is the page
+ * param, so the key is the filter alone and the client reads this entry on hydration instead of
+ * fetching on mount (B1 — the panel painted its pending lines until hydration after #7529 gave the
+ * log its own read).
+ */
+function waiversFirstPage(rpc: ReturnType<typeof serverOrpc>) {
+	return rpc.evidence.waivers.infiniteOptions({
+		input: (cursor: string | null) => (cursor === null ? {} : { cursor }),
+		initialPageParam: null,
+		getNextPageParam: (last) => last.nextCursor,
+	});
 }
