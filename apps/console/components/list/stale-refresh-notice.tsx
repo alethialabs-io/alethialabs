@@ -11,9 +11,9 @@ import { cn } from "@repo/ui/utils";
  * a retry (R6 C-35). Live updates make every change a refetch, so this is the common failure, and
  * replacing good rows with a full error for it would be worse than the failure.
  *
- * One component for the list regions that are not a `DataTable` (the runners grid, the evidence
- * posture), worded as `DataTable`'s own stale notice is, so a grid, a grouped table and a table tell
- * it the same way. Built from a ghost `Button` and a named ink tier, so it adds no colour of its own.
+ * One component for every list region that has one: `DataTable` (with the `data-table-stale` slot),
+ * the runners grid and the evidence posture, so a grid, a grouped table and a table tell it the
+ * same way. Built from a ghost `Button` and a named ink tier, so it adds no colour of its own.
  * Polite (`role="status"`): nothing the viewer had has gone away.
  */
 export function StaleRefreshNotice({
