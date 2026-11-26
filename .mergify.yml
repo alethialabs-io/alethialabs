@@ -212,3 +212,18 @@ pull_request_rules:
     actions:
       queue:
         name: dev
+
+# The "Version packages" PR (head changeset-release/dev, opened by version-packages.yml) is rebuilt
+# whenever a new changeset lands on dev, and a rebuild restarts its CI and drops it from the queue.
+# At normal priority it waits behind every PR queued before it, so on a busy day a later changeset
+# lands first and rebuilds it again: on 2026-11-26 #7754 was rebuilt twice in two hours while queued,
+# holding back the release that publishes the packages behind it. High priority lets it enter the
+# next batch as soon as it is green, which is the shortest window a later changeset has to restart it.
+# It goes ahead of PRs still waiting, not of batches already running (no allow_checks_interruption):
+# no CI already spent is thrown away. Mergify reads this from main, so it binds after a promotion.
+priority_rules:
+  - name: the Version packages PR goes first
+    conditions:
+      - base = dev
+      - head ~= ^changeset-release/
+    priority: high
