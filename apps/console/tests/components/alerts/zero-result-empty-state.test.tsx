@@ -5,8 +5,9 @@
 //
 // The audit's F10 found `~/alerts` rendering no `[data-slot="empty"]` for a search token that
 // matched nothing, and two hand-rolled "No … match these filters." lines instead. Both halves are
-// asserted here: the shared component is what renders (by its slot, the thing F10 reads), and the
-// hand-rolled line is gone. The Reset action is asserted by its EFFECT on the filter store, not by
+// asserted here: the shared component is what renders (by its slot, the thing F10 reads) — since
+// #7738 the shared FILTERED form, `FilterEmpty` ("No <noun> match these filters." + Clear filters) —
+// and no "no results" line is left outside it. The Reset action is asserted by its EFFECT on the filter store, not by
 // its presence — a button that renders and resets nothing is exactly R8's inert control.
 
 import { render, screen } from "@testing-library/react";
@@ -135,10 +136,10 @@ describe("alerts rails: a filter that matches nothing", () => {
 		);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
-		expect(screen.getByText("No channels match")).toBeInTheDocument();
-		expect(screen.queryByText(/no channels match these filters\./i)).toBeNull();
+		expect(screen.getByText("No channels match these filters.").closest('[data-slot="empty"]')).not.toBeNull();
+		expect(handRolledNoResults(container)).toEqual([]);
 
-		await user.click(screen.getByRole("button", { name: "Reset filters" }));
+		await user.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useAlertChannelFilters.getState().filters.search).toBe("");
 	});
 
@@ -151,10 +152,10 @@ describe("alerts rails: a filter that matches nothing", () => {
 		);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
-		expect(screen.getByText("No policies match")).toBeInTheDocument();
-		expect(screen.queryByText(/no policies match these filters\./i)).toBeNull();
+		expect(screen.getByText("No policies match these filters.").closest('[data-slot="empty"]')).not.toBeNull();
+		expect(handRolledNoResults(container)).toEqual([]);
 
-		await user.click(screen.getByRole("button", { name: "Reset filters" }));
+		await user.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useAlertPolicyFilters.getState().filters.search).toBe("");
 	});
 
@@ -164,12 +165,12 @@ describe("alerts rails: a filter that matches nothing", () => {
 		const { container } = render(<ActivityPanel view={noMatchingActivity} />);
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
-		expect(screen.getByText("No activity matches")).toBeInTheDocument();
+		expect(screen.getByText("No deliveries match these filters.").closest('[data-slot="empty"]')).not.toBeNull();
 		// Run 35848311879's F10 FAIL on ~/alerts was this table's empty ROW — the one hand-rolled
 		// message left once both rails used the shared state. Read the way F10 reads it.
 		expect(handRolledNoResults(container)).toEqual([]);
 
-		await user.click(screen.getByRole("button", { name: "Reset filters" }));
+		await user.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useAlertActivityFilters.getState().filters.search).toBe("");
 	});
 
@@ -177,7 +178,7 @@ describe("alerts rails: a filter that matches nothing", () => {
 		const { container } = render(<ActivityPanel view={noActivity} />);
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
 		expect(screen.getByText("No activity yet")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Reset filters" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
 		expect(handRolledNoResults(container)).toEqual([]);
 	});
 });
