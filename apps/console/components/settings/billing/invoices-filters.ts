@@ -15,6 +15,11 @@
 // default ("") is ALL TIME, with no bound: invoices are rare, and someone opening their invoice
 // history expects all of it.
 
+import {
+	INVOICE_DISPLAY_STATUSES,
+	type InvoiceDisplayStatus,
+	isInvoiceDisplayStatus,
+} from "@/lib/billing/invoice-status";
 import { parseRangeFilter } from "@/lib/query/range-filter";
 import type { InvoiceFacets } from "@/lib/queries/billing";
 import type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
@@ -47,14 +52,16 @@ export const NO_WINDOW_LABEL = "Pick dates";
 
 /** The status facet's options (grayscale — no domain color). Mirrors `InvoiceInfo["status"]`. */
 export const INVOICE_STATUS_OPTIONS = [
+	{ value: "open", label: "Due" },
+	{ value: "overdue", label: "Overdue" },
 	{ value: "paid", label: "Paid" },
 	{ value: "refunded", label: "Refunded" },
 	{ value: "void", label: "Void" },
-] as const;
+] as const satisfies readonly { value: InvoiceDisplayStatus; label: string }[];
 
 /** Type guard narrowing a facet string to a concrete InvoiceInfo status. */
 export function isInvoiceStatus(s: string): s is InvoiceInfo["status"] {
-	return s === "paid" || s === "refunded" || s === "void";
+	return isInvoiceDisplayStatus(s);
 }
 
 /**
@@ -84,7 +91,7 @@ export function normalizeInvoiceQuery(
  * yet) count nothing.
  */
 export function invoiceStatusCounts(facets: InvoiceFacets | null): Record<string, number> {
-	const counts: Record<string, number> = { paid: 0, refunded: 0, void: 0 };
+	const counts: Record<string, number> = Object.fromEntries(INVOICE_DISPLAY_STATUSES.map((s) => [s, 0]));
 	for (const option of facets?.status ?? []) counts[option.value] = option.count;
 	return counts;
 }

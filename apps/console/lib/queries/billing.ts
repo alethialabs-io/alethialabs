@@ -36,13 +36,18 @@ import "server-only";
 // exists — no `limit + 1` probe needed.
 
 import type { SQL } from "drizzle-orm";
-import { and, count, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import type { InvoiceListFilters } from "@/lib/billing/invoices";
 import { getStripe } from "@/lib/billing/stripe";
 import { getServiceDb } from "@/lib/db";
 import { type Invoice, invoice, type PaddleTransaction, paddleTransaction } from "@/lib/db/schema";
-import type { InvoiceStatus } from "@/lib/db/schema/enums";
+import {
+	type InvoiceDisplayStatus,
+	isInvoiceDisplayStatus,
+	isLocalInvoiceStatus,
+	PADDLE_INVOICE_STATUSES,
+} from "@/lib/billing/invoice-status";
 import type { FacetOption } from "./facets";
 import {
 	encodeKeysetCursor,
@@ -84,27 +89,19 @@ const PADDLE_LISTED_AT: SQL = keysetSortKey(
 );
 
 /**
- * The Paddle statuses that are invoices — the same two Paddle's own list asks for
- * (lib/billing/paddle/documents.ts `listPaddleDocuments`). A draft, ready or past-due
- * transaction has no invoice yet; a canceled one never will.
+ * {@link paddleInvoiceStatus} in SQL, so the status filter and facet read the same answer as the
+ * badge. Kept in step with it by the tests (tests/lib/queries/billing.test.ts).
  */
-const PADDLE_INVOICE_STATUSES = ["billed", "completed"] as const;
+const PADDLE_STATUS_SQL: SQL<string> = sql<string>`case
+	when ${paddleTransaction.refundedAt} is not null or ${paddleTransaction.chargebackAt} is not null then 'refunded'
+	when ${paddleTransaction.status} in ('paid', 'completed') then 'paid'
+	when ${paddleTransaction.status} = 'past_due' then 'overdue'
+	when ${paddleTransaction.status} = 'canceled' then 'void'
+	else 'open' end`;
 
-/**
- * A Paddle invoice's status on the list's closed `invoice_status` scale: `refunded` once an
- * approved refund or a chargeback was recorded against it (money went back either way), else
- * `paid`. Never `void` — Paddle has no voided invoice. The SQL twin is {@link PADDLE_STATUS_SQL}.
- */
-export function paddleInvoiceStatus(row: Pick<PaddleTransaction, "refundedAt" | "chargebackAt">): InvoiceStatus {
-	return row.refundedAt !== null || row.chargebackAt !== null ? "refunded" : "paid";
-}
-
-/** {@link paddleInvoiceStatus} in SQL, so the status filter and facet read the same answer. */
-const PADDLE_STATUS_SQL: SQL<string> = sql<string>`case when ${paddleTransaction.refundedAt} is not null or ${paddleTransaction.chargebackAt} is not null then 'refunded' else 'paid' end`;
-
-/** A facet value read back from {@link PADDLE_STATUS_SQL}, on the closed scale. */
-function paddleFacetStatus(value: string): InvoiceStatus {
-	return value === "refunded" ? "refunded" : "paid";
+/** A facet value read back from {@link PADDLE_STATUS_SQL}, on the displayed scale. */
+function paddleFacetStatus(value: string): InvoiceDisplayStatus {
+	return isInvoiceDisplayStatus(value) ? value : "open";
 }
 
 /** A row's keyset position, by the same fallbacks as the two listed-at expressions. */
@@ -146,7 +143,7 @@ async function invoiceFirstPage(orgId: string): Promise<{ facets: InvoiceFacets;
 			.where(paddleScope(orgId))
 			.groupBy(PADDLE_STATUS_SQL),
 	]);
-	const counts = new Map<InvoiceStatus, number>();
+	const counts = new Map<InvoiceDisplayStatus, number>();
 	for (const c of local) counts.set(c.status, (counts.get(c.status) ?? 0) + c.n);
 	for (const c of paddle) {
 		const status = paddleFacetStatus(c.status);
@@ -156,11 +153,15 @@ async function invoiceFirstPage(orgId: string): Promise<{ facets: InvoiceFacets;
 	return { facets: { status }, universeEmpty: status.every((c) => c.count === 0) };
 }
 
-/** The scope of the org's Paddle invoices: its own mirrored, billed or completed transactions. */
+/**
+ * The scope of the org's Paddle invoices: its own mirrored transactions Paddle issued an invoice
+ * for — open, overdue, paid, and canceled ones that had been billed (shown as void).
+ */
 function paddleScope(orgId: string): SQL | undefined {
 	return and(
 		eq(paddleTransaction.organizationId, orgId),
 		inArray(paddleTransaction.status, [...PADDLE_INVOICE_STATUSES]),
+		or(ne(paddleTransaction.status, "canceled"), isNotNull(paddleTransaction.billedAt)),
 	);
 }
 
@@ -176,7 +177,12 @@ export async function queryInvoicesPage(
 	request: KeysetPageRequest,
 ): Promise<KeysetListPage<InvoiceListRow, InvoiceFacets>> {
 	const local: (SQL | undefined)[] = [eq(invoice.organizationId, orgId)];
-	if (filters.status?.length) local.push(inArray(invoice.status, filters.status));
+	if (filters.status?.length) {
+		// `open` and `overdue` are Paddle-only states: a filter of only those matches no local row,
+		// and must not reach Postgres as an `invoice_status` value it would reject.
+		const stored = filters.status.filter(isLocalInvoiceStatus);
+		local.push(stored.length ? inArray(invoice.status, stored) : sql`false`);
+	}
 	if (filters.paidFrom) local.push(gte(invoice.paidAt, new Date(filters.paidFrom)));
 	if (filters.paidTo) local.push(lte(invoice.paidAt, new Date(filters.paidTo)));
 	local.push(keysetAfter(INVOICE_LISTED_AT, invoice.id, request.cursor));

@@ -20,6 +20,7 @@ import type Stripe from "stripe";
 import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { alertOperator } from "@/lib/billing/operator-alert";
 import { type FacturaOutcome, requestFactura } from "@/lib/billing/factura/issue";
+import { type InvoiceDisplayStatus, isLocalInvoiceStatus } from "@/lib/billing/invoice-status";
 import { getServiceDb } from "@/lib/db";
 import { type Invoice, invoice } from "@/lib/db/schema";
 import type { InvoiceStatus } from "@/lib/db/schema/enums";
@@ -144,7 +145,8 @@ export async function setInvoiceStatus(
 
 /** Filters for the invoices list (all optional; combined with AND). */
 export interface InvoiceListFilters {
-	status?: InvoiceStatus[];
+	/** Displayed statuses; `open`/`overdue` are Paddle-only and match no row of this table. */
+	status?: InvoiceDisplayStatus[];
 	/** ISO date — only invoices paid on/after this instant. */
 	paidFrom?: string;
 	/** ISO date — only invoices paid on/before this instant. */
@@ -162,7 +164,9 @@ export async function listOrgInvoices(
 ): Promise<Invoice[]> {
 	const where = [eq(invoice.organizationId, orgId)];
 	if (filters.status?.length) {
-		where.push(inArray(invoice.status, filters.status));
+		const stored = filters.status.filter(isLocalInvoiceStatus);
+		if (stored.length === 0) return [];
+		where.push(inArray(invoice.status, stored));
 	}
 	if (filters.paidFrom) where.push(gte(invoice.paidAt, new Date(filters.paidFrom)));
 	if (filters.paidTo) where.push(lte(invoice.paidAt, new Date(filters.paidTo)));
