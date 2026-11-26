@@ -9,7 +9,7 @@ import {
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { FieldValues, Path, UseFormReturn } from "react-hook-form";
 import { toast } from "sonner";
 import { ROOT_SERVER_ERROR, applyFieldErrors } from "@/lib/actions/form-errors";
@@ -98,6 +98,12 @@ function isBrowserOffline(): boolean {
  *   called, and each attempt brings that dialog back), a refusal → the caller's inline alert when it renders one
  *   (`onRefusal`), everything else → one toast with a human message (never raw validator text,
  *   F013);
+ * - offers **Retry** on that toast when trying again is safe and could help (#7741): an
+ *   `unexpected` server failure, and a `network` failure where nothing was sent. Retry re-invokes
+ *   this mutation with the same variables, through the same double-submit guard as `submit`. A
+ *   refusal, a validation or entitlement message, and a `network` failure whose request DID leave
+ *   the browser get no Retry: the first three would only be refused again, and the last may
+ *   already have applied, so its sentence asks the person to check before trying again.
  * - treats a call that got no server answer as a failure of kind `network`. When the browser is
  *   offline the action is not called at all. When the call itself rejects, the optimistic patch
  *   is rolled back, the person is told the change could not be confirmed, and the declared keys
@@ -106,6 +112,12 @@ function isBrowserOffline(): boolean {
  * `networkMode` is `"always"` so that TanStack runs the mutation while offline instead of
  * holding it until the connection returns: a held mutation would send the request later, after
  * the person had moved on.
+ *
+ * THE STANDARD FAILURE PATH (polish-wave spec §4). Callers do not write `toast.error`: pass `form`
+ * and field errors land under their fields (`form-errors.ts`); everything else is the one toast
+ * above. A caller that still toasts from a per-call `mutate(variables, { onError })` keeps working —
+ * TanStack runs that callback after this hook's own — but it now shows a second toast for the same
+ * failure, so the hand-written one should be deleted rather than copied to a new caller.
  */
 export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 	action: (variables: V) => Promise<ActionResult<T>>,
@@ -114,6 +126,11 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 	const queryClient = useQueryClient();
 	/** Set synchronously by `submit`, because `isPending` only changes on the next render. */
 	const inFlight = useRef(false);
+	/**
+	 * The current `submit`, read by a failure toast's Retry. A ref because the toast outlives the
+	 * render that raised it, and Retry must run the guard as it stands when it is pressed.
+	 */
+	const submitRef = useRef<(variables: V) => void>(() => {});
 
 	const mutation = useMutation<T, ActionFailure, V, Snapshot>({
 		networkMode: "always",
@@ -141,7 +158,7 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 			}
 			return { entries };
 		},
-		onError: (failure, _variables, snapshot) => {
+		onError: (failure, variables, snapshot) => {
 			inFlight.current = false;
 			// Newest first: two patches on one key restore the value from BEFORE the first one.
 			for (const entry of [...(snapshot?.entries ?? [])].reverse()) {
@@ -149,7 +166,7 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 			}
 			// Next's control flow (a redirect) is rethrown by `toActionFailure` and is not a failure.
 			if (!(failure instanceof ActionFailure)) return;
-			handleFailure(failure.error, options);
+			handleFailure(failure.error, options, () => submitRef.current(variables));
 		},
 		onSuccess: (data, variables) => {
 			const message =
@@ -181,14 +198,23 @@ export function useActionMutation<T, V, F extends FieldValues = FieldValues>(
 		},
 		[mutate, isPending],
 	);
+	useEffect(() => {
+		submitRef.current = submit;
+	}, [submit]);
 
 	return { ...mutation, submit };
 }
 
-/** The toast policy: one treatment per error kind. */
+/** The toast's Retry action, re-invoking the failed mutation with its variables. */
+function retryAction(retry: () => void): { action: { label: string; onClick: () => void } } {
+	return { action: { label: "Retry", onClick: retry } };
+}
+
+/** The toast policy: one treatment per error kind; `retry` re-runs the failed call. */
 function handleFailure<T, V, F extends FieldValues>(
 	error: ActionError,
 	options: ActionMutationOptions<T, V, F>,
+	retry: () => void,
 ): void {
 	switch (error.kind) {
 		case "validation":
@@ -227,10 +253,12 @@ function handleFailure<T, V, F extends FieldValues>(
 			toast.error(describeActionError(error));
 			return;
 		case "network":
-			// Offline before the call, or a call that got no answer: the sentence says which.
-			toast.error(describeActionError(error));
+			// Offline before the call, or a call that got no answer: the sentence says which. Only
+			// the first is safe to retry — an unanswered call may already have applied.
+			if (error.sent) toast.error(describeActionError(error));
+			else toast.error(describeActionError(error), retryAction(retry));
 			return;
-		default:
-			toast.error(describeActionError(error));
+		case "unexpected":
+			toast.error(describeActionError(error), retryAction(retry));
 	}
 }

@@ -40,7 +40,8 @@ const config = {
 	},
 	reactStrictMode: true,
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
-	transpilePackages: ["@repo/brand"],
+	// `@repo/ui` for the error and 404 pages (`app/error.tsx`, `not-found.tsx`, `global-error.tsx`).
+	transpilePackages: ["@repo/brand", "@repo/ui"],
 	// Every page is also served as Markdown, at its URL plus `.md` (the form agents and llms.txt use)
 	// or `.mdx`. Both reach app/llms.mdx, which answers from the same loader as the HTML page, so a
 	// hidden page has no Markdown URL either. The first match wins, so the `index` forms come first:
