@@ -37,7 +37,17 @@ describe("defineAction", () => {
 		const result = await rename(async () => {
 			throw new ActionRefusal("conflict", "A project with that name already exists.");
 		})({ name: "Acme" });
-		expect(result).toEqual({ ok: false, error: { kind: "conflict", message: "A project with that name already exists." } });
+		expect(result).toStrictEqual({ ok: false, error: { kind: "conflict", message: "A project with that name already exists." } });
+	});
+
+	it("#7643: carries a refusal's domain code onto the result, beside its message", async () => {
+		const result = await rename(async () => {
+			throw new ActionRefusal("not-found", "That approval was not found.", undefined, "not_found");
+		})({ name: "Acme" });
+		expect(result).toStrictEqual({
+			ok: false,
+			error: { kind: "not-found", message: "That approval was not found.", code: "not_found" },
+		});
 	});
 
 	it("#6128: maps a server-decided field refusal to field errors, like a schema failure", async () => {
