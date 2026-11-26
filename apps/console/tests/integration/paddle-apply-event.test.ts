@@ -27,19 +27,51 @@ import type {
 	TransactionCompletedEvent,
 } from "@/lib/billing/provider/types";
 import { getServiceDb } from "@/lib/db";
-import { aiCreditGrant, organization, organizationBilling, paddleTransaction } from "@/lib/db/schema";
+import { aiCreditGrant, commerceOrder, organization, organizationBilling, paddleTransaction, user } from "@/lib/db/schema";
 import type { PaddleTransactionCustomData } from "@/types/jsonb.types";
 import { describeIfDb } from "./db";
 
 const touchedOrgs: string[] = [];
 const touchedTxns: string[] = [];
+const touchedUsers: string[] = [];
 
-/** Inserts a fresh organization (tracked for teardown). */
-async function seedOrg(): Promise<string> {
+/**
+ * Inserts a fresh organization (tracked for teardown). Unless `customer` is null it also gets a
+ * billing row holding that Paddle customer — the record that ties an org named only by custom_data
+ * to the fixtures' events (`ctm_it`).
+ */
+async function seedOrg(customer: string | null = "ctm_it"): Promise<string> {
 	const id = randomUUID();
 	touchedOrgs.push(id);
 	await getServiceDb().insert(organization).values({ id, name: `paddle-it-${id.slice(0, 8)}` });
+	if (customer) await getServiceDb().insert(organizationBilling).values({ organizationId: id, paddleCustomerId: customer });
 	return id;
+}
+
+/** A Paddle `commerce_order` of `orgId` naming `transactionId`, as the checkout records one. */
+async function seedPaddleOrder(orgId: string, transactionId: string): Promise<void> {
+	const placedBy = randomUUID();
+	touchedUsers.push(placedBy);
+	const db = getServiceDb();
+	await db.insert(user).values({ id: placedBy, email: `paddle-it-${placedBy}@example.test` });
+	await db.insert(commerceOrder).values({
+		organizationId: orgId,
+		placedByUserId: placedBy,
+		capacity: "organization",
+		authorityAttestation: "owner",
+		billingCountry: "DE",
+		billingAddress: { line1: "1 Str.", line2: null, city: "Berlin", postalCode: "10115", region: null, country: "DE" },
+		vatIdCommunicated: false,
+		totalMinorUnits: 1900,
+		currency: "usd",
+		productId: "team",
+		periodDays: 30,
+		renewsAutomatically: true,
+		cancellationNoticeDays: 0,
+		documentVersions: { documents: [] },
+		provider: "paddle",
+		paddleTransactionId: transactionId,
+	});
 }
 
 /** A unique Paddle-style id. */
@@ -131,7 +163,11 @@ describeIfDb("applyBillingEvent over Postgres", () => {
 		if (touchedTxns.length > 0) {
 			await db.delete(aiCreditGrant).where(inArray(aiCreditGrant.paddle_transaction_id, touchedTxns));
 		}
-		if (touchedOrgs.length > 0) await db.delete(organization).where(inArray(organization.id, touchedOrgs));
+		if (touchedOrgs.length > 0) {
+			await db.delete(commerceOrder).where(inArray(commerceOrder.organizationId, touchedOrgs));
+			await db.delete(organization).where(inArray(organization.id, touchedOrgs));
+		}
+		if (touchedUsers.length > 0) await db.delete(user).where(inArray(user.id, touchedUsers));
 	});
 
 	it("inserts, refuses an older event, and cancels", async () => {
@@ -157,13 +193,14 @@ describeIfDb("applyBillingEvent over Postgres", () => {
 	});
 
 	it("switches a row left by a dead Stripe subscription to Paddle", async () => {
-		const org = await seedOrg();
+		const org = await seedOrg(null);
 		const stripeSub = `sub_stripe_${randomUUID()}`;
 		await getServiceDb().insert(organizationBilling).values({
 			organizationId: org,
 			plan: "community",
 			status: "canceled",
 			stripeSubscriptionId: stripeSub,
+			paddleCustomerId: "ctm_it",
 		});
 		const sub = pid("sub");
 		expect((await applyBillingEvent(upsert(org, sub), deps())).outcome).toBe("applied");
@@ -222,6 +259,30 @@ describeIfDb("applyBillingEvent over Postgres", () => {
 		expect((await grants()).map((g) => g.credits)).toEqual([0]);
 		const [mirror] = await getServiceDb().select().from(paddleTransaction).where(eq(paddleTransaction.paddleTransactionId, txn));
 		expect(mirror?.refundedAt).toEqual(at(100));
+	});
+
+	it("mirrors a custom_data org's transaction only when its customer or a Paddle order of its own names it", async () => {
+		const bare = await seedOrg(null);
+		const ordered = await seedOrg(null);
+		const elsewhere = await seedOrg(null);
+		const d = deps();
+		const unrecorded = pid("txn");
+		expect(await applyBillingEvent(completed(unrecorded, { organizationId: bare, kind: "plan" }), d)).toEqual({
+			outcome: "refused",
+			reason: "unrecorded_org",
+		});
+		const viaOrder = pid("txn");
+		await seedPaddleOrder(ordered, viaOrder);
+		expect((await applyBillingEvent(completed(viaOrder, { organizationId: ordered, kind: "plan" }), d)).outcome).toBe("applied");
+		// Another org's order for the transaction is not a record of this org.
+		const theirs = pid("txn");
+		await seedPaddleOrder(ordered, theirs);
+		expect((await applyBillingEvent(completed(theirs, { organizationId: elsewhere, kind: "plan" }), d)).outcome).toBe("refused");
+		const mirrored = await getServiceDb()
+			.select({ id: paddleTransaction.paddleTransactionId, org: paddleTransaction.organizationId })
+			.from(paddleTransaction)
+			.where(inArray(paddleTransaction.paddleTransactionId, [unrecorded, viaOrder, theirs]));
+		expect(mirrored).toEqual([{ id: viaOrder, org: ordered }]);
 	});
 
 	it("never writes a business id another org already holds", async () => {
