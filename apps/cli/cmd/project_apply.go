@@ -44,9 +44,10 @@ change, and then asks before it deploys exactly that plan. A preview that does n
 the command with a non-zero exit, and nothing is deployed. Pass --yes to skip the question,
 which a script or an agent must.
 
-To deploy a preview you already read, pass --latest-plan (the project's most recent preview) or
---plan-job-id. The DEPLOY job runs on a runner: add --wait to stay until it finishes, and
---timeout to bound each wait. The job id is in the result either way.
+To deploy a preview you already read, pass --latest-plan (the project's most recent preview; a
+destroy plan from "project preview --destroy" is skipped) or --plan-job-id. The DEPLOY job runs
+on a runner: add --wait to stay until it finishes, and --timeout to bound each wait. The job id
+is in the result either way.
 
 A deploy from the CLI needs a person's approval of the plan it applies. The control plane says
 so when the deploy is sent; the command then asks for an approval, prints the console page where
@@ -191,6 +192,17 @@ func previewBeforeDeploy(ctx context.Context, p *Printer, c projectJobClient, de
 	params.JobType = string(types.JobTypePlan)
 	params.PlanJobID = ""
 	p.Note("A deploy applies a reviewed plan, so this previews the environment first.")
+	return awaitPreview(ctx, p, c, params, timeout, "deploy", func(planID string, err error) error {
+		return fmt.Errorf("the preview this deploy would apply (PLAN job %s) did not finish successfully, so nothing was deployed: %w", planID, err)
+	})
+}
+
+// awaitPreview queues the PLAN job params describe, waits for it to finish (bounded by timeout
+// when it is set), prints what it would change on stderr and returns it. A plan that does not
+// succeed is failed(planID, cause), whose class is the wait's (failed, timed out, interrupted), so
+// the exit code says which. forWhat finishes "there is no plan to …" when no job was named. The preview a deploy makes first and the destroy plan a destroy makes
+// for its approval are both this.
+func awaitPreview(ctx context.Context, p *Printer, c projectJobClient, params api.QueueJobParams, timeout time.Duration, forWhat string, failed func(planID string, err error) error) (jobRef, error) {
 	resp, err := c.QueueJobFull(params)
 	if err != nil {
 		return jobRef{}, err
@@ -198,13 +210,13 @@ func previewBeforeDeploy(ctx context.Context, p *Printer, c projectJobClient, de
 	entries := queuedJobEntries(resp, params.JobType)
 	if len(entries) == 0 {
 		return jobRef{}, clierr.New(clierr.CodeInternal,
-			"the control plane accepted the preview and named no job, so there is no plan to deploy")
+			"the control plane accepted the preview and named no job, so there is no plan to "+forWhat)
 	}
 	plan := entries[0]
 	announceQueuedJob(p, c, &plan)
 	job, err := awaitJob(ctx, c, plan.ID, waitOptions{Timeout: timeout, JobType: params.JobType, Progress: p})
 	if err != nil {
-		return jobRef{}, fmt.Errorf("the preview this deploy would apply (PLAN job %s) did not finish successfully, so nothing was deployed: %w", plan.ID, err)
+		return jobRef{}, failed(plan.ID, err)
 	}
 	writePlanSummary(p, job)
 	return jobRef{ID: plan.ID}, nil
@@ -320,11 +332,58 @@ func planJobToApply(c jobLister, projectID, id string, latest bool) (jobRef, err
 	if !latest {
 		return jobRef{ID: id}, nil
 	}
+	return latestPlanOfKind(c, projectID, "", applyPlanKind)
+}
+
+// planKind is which PLAN jobs a `--latest-plan` chooses among, and how its refusals word them. A
+// deploy takes the most recent apply plan and a destroy the most recent destroy plan (#7455): the
+// control plane refuses a deploy of a destroy plan (`plan_is_destroy_plan`) and an approval of a
+// destroy against an apply plan, so picking across the two kinds is a wrong answer either way.
+type planKind struct {
+	// destroy picks destroy plans when true and apply plans when false.
+	destroy bool
+	// noun names the job in a refusal: "PLAN job" or "destroy plan".
+	noun string
+	// produce is the command that makes one, for the refusal of a project that has none.
+	produce string
+	// use says what the plan is for, for the refusal of one that has not succeeded.
+	use string
+}
+
+// applyPlanKind is what `project deploy --latest-plan` takes: the project's most recent PLAN job
+// that is not a destroy plan.
+var applyPlanKind = planKind{
+	noun:    "PLAN job",
+	produce: "alethia project preview --wait",
+	use:     "a deploy may only apply a plan that SUCCEEDED",
+}
+
+// destroyPlanKind is what `project destroy --latest-plan` takes: the project's most recent destroy
+// plan.
+var destroyPlanKind = planKind{
+	destroy: true,
+	noun:    "destroy plan",
+	produce: "alethia project preview --destroy --wait",
+	use:     "a destroy may only be approved against a destroy plan that SUCCEEDED",
+}
+
+// latestPlanOfKind is the `--latest-plan` resolution behind planJobToApply and
+// destroyPlanToApprove: the project's most recent PLAN job of kind, announced with the shared job
+// label. Plans of the other kind are passed over, and that is the only thing passed over: the
+// most recent plan of the right kind is the answer whatever its status, and one that has not
+// succeeded is refused by name (see planJobToApply for why skipping it would be wrong).
+//
+// envID, when set, also passes over a plan whose frozen config snapshot names another environment
+// (the jobs list does not carry a job's environment column). A destroy sets it: its approval binds
+// the destroy plan's environment, so another environment's plan would be approved by a person and
+// then refused. A deploy leaves it empty, as it always has; the control plane refuses a deploy of
+// another environment's plan before anyone is asked.
+func latestPlanOfKind(c jobLister, projectID, envID string, kind planKind) (jobRef, error) {
 	if projectID == "" {
 		// Without a project the narrowing below drops the project field entirely — `set()` keeps
 		// only non-empty fields, so `--type PLAN` is the only filter left and the match is every
 		// PLAN job in the org. `--latest-plan` would then resolve another project's plan and the
-		// deploy would fail on a hash mismatch a long way from the cause.
+		// job would fail a long way from the cause.
 		return jobRef{}, refusal(clierr.CodeMissingArgument, "alethia project list",
 			"--latest-plan needs a project: pass --project (by name or id)")
 	}
@@ -333,20 +392,29 @@ func planJobToApply(c jobLister, projectID, id string, latest bool) (jobRef, err
 	if err != nil {
 		return jobRef{}, err
 	}
-	if len(matches) == 0 {
-		return jobRef{}, refusal(clierr.CodeNotFound, "alethia project preview --wait",
-			"--latest-plan: no PLAN job for this project in the last %d jobs — "+
-				"queue one with `alethia project preview`, or name one with --plan-job-id",
-			jobSelectorPageSize)
+	for _, plan := range matches {
+		if plan.DestroyPlan != kind.destroy {
+			continue
+		}
+		if planEnv, _ := plan.ConfigSnapshot["environment_id"].(string); envID != "" && planEnv != "" && planEnv != envID {
+			continue
+		}
+		if !strings.EqualFold(plan.Status, string(types.JobStatusSuccess)) {
+			return jobRef{}, refusal(clierr.CodeConflict, "alethia jobs get "+plan.ID,
+				"--latest-plan: the most recent %s for this project is %s and its status is %s — "+
+					"%s, so wait for it or name another with --plan-job-id",
+				kind.noun, plan.ID, plan.Status, kind.use)
+		}
+		return jobRef{ID: plan.ID, Summary: jobOptionLabel(plan)}, nil
 	}
-	plan := matches[0]
-	if !strings.EqualFold(plan.Status, string(types.JobStatusSuccess)) {
-		return jobRef{}, refusal(clierr.CodeConflict, "alethia jobs get "+plan.ID,
-			"--latest-plan: the most recent PLAN job for this project is %s and its status is %s — "+
-				"a deploy may only apply a plan that SUCCEEDED, so wait for it or name another with --plan-job-id",
-			plan.ID, plan.Status)
+	scope := "this project"
+	if envID != "" {
+		scope = "this project and environment"
 	}
-	return jobRef{ID: plan.ID, Summary: jobOptionLabel(plan)}, nil
+	return jobRef{}, refusal(clierr.CodeNotFound, kind.produce,
+		"--latest-plan: no %s for %s in the last %d jobs — "+
+			"queue one with `%s`, or name one with --plan-job-id",
+		kind.noun, scope, jobSelectorPageSize, strings.TrimSuffix(kind.produce, " --wait"))
 }
 
 // registerDeployFlags registers the flags of `project deploy` on cmd. The deprecated `project
@@ -356,7 +424,7 @@ func registerDeployFlags(cmd *cobra.Command) {
 	jobRunnerFlags(cmd, &projectApplyRunnerRef, &projectApplyRunnerID)
 	cmd.Flags().StringVar(&projectApplyPlanJobID, "plan-job-id", "", "Apply a prior PLAN job, by id (prefer --latest-plan)")
 	cmd.Flags().BoolVar(&projectApplyLatestPlan, "latest-plan", false,
-		"Apply the project's most recent PLAN job instead of naming one (works with --no-input)")
+		"Apply the project's most recent PLAN job instead of naming one; destroy plans are skipped (works with --no-input)")
 	cmd.Flags().StringVar(&projectApplyEnv, "env", "", jobEnvFlagUsage)
 	addProjectWaitFlags(cmd, &projectApplyWait)
 	addDryRunFlag(cmd)

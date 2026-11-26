@@ -4,10 +4,14 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
@@ -33,6 +37,11 @@ var (
 	// projectDestroyNoWait is --no-wait: when the destroy needs a person's approval, print where to
 	// give it and exit 9 instead of waiting.
 	projectDestroyNoWait bool
+	// projectDestroyPlanJobID and projectDestroyLatestPlan name the destroy plan (#7455) the
+	// destroy's approval is asked for. Neither: the destroy plans the teardown itself when an
+	// approval is needed.
+	projectDestroyPlanJobID  string
+	projectDestroyLatestPlan bool
 )
 
 // destroyTreeClient is what `project destroy --cascade` needs from the control plane before it
@@ -56,11 +65,15 @@ vcluster placements) are still placed on that cluster, destroying it is refused,
 destroy them first, or pass --cascade. --cascade prints every environment it will destroy, in
 order — the tenants first, the cluster's owner last — and asks before it queues anything.
 
-A destroy from the CLI needs a person's approval, given against the plan the environment's current
-state was deployed from. The control plane says so when the destroy is sent; the command then
-asks for an approval, prints the console page where a person approves it and the plan digest that
-page must show, and waits for the decision before it queues the destroy. --no-wait (and agent
-mode) prints the page and exits 9 instead; run the same destroy again once it is approved. A
+A destroy from the CLI needs a person's approval of a destroy plan: a plan of the teardown,
+made by "alethia project preview --destroy", that deletes nothing itself. The destroy then tears
+down exactly that plan. The control plane says an approval is needed when the destroy is sent.
+The command then takes the plan you named (--latest-plan, the project's most recent destroy plan
+of this environment, or --plan-job-id), or, with neither, plans the teardown itself, waits for
+it and prints what it would delete. It asks for the approval of that plan, prints the console
+page where a person approves it and the plan digest that page must show, and waits for the
+decision before it queues the destroy. --no-wait (and agent mode) prints the page and exits 9
+instead; the message names the command that destroys exactly that plan once it is approved. A
 rejected approval exits 5, an expired or superseded one 7. A --cascade destroy is never approved
 this way: start it from the console.`,
 	Args: cobra.NoArgs,
@@ -103,14 +116,40 @@ func destroyProject(cmd *cobra.Command, client destroyClient, token string) erro
 	}
 	params.Cascade = projectDestroyCascade
 	run := projectJobRun{Params: params, Wait: projectDestroyWait, DryRun: cmdmeta.DryRunRequested(cmd)}
+	if projectDestroyCascade && (projectDestroyPlanJobID != "" || projectDestroyLatestPlan) {
+		return refusal(clierr.CodeInvalidUsage, "drop --plan-job-id and --latest-plan; a cascade that needs an approval is started from the console",
+			"--cascade destroys several environments and one destroy plan covers one, so a cascade "+
+				"takes no --plan-job-id or --latest-plan")
+	}
 	if !projectDestroyCascade {
+		// Resolved BEFORE the confirmation, so a named plan that cannot be used is refused before
+		// anyone types the project's name.
+		plan, err := destroyPlanToApprove(client, params, projectDestroyPlanJobID, projectDestroyLatestPlan)
+		if err != nil {
+			return err
+		}
+		announceResolvedJob(plan, "approving against")
 		// A cascade is refused for want of an approval in any case: one approval covers one
 		// environment, so the control plane's refusal is passed through as it is.
 		run.Approval = &projectJobApproval{
 			Client:    client,
 			Operation: api.ApprovalOperationDestroy,
-			PlanJobID: func() (string, error) { return appliedPlanJobID(client, params.ConfigurationID, params.EnvironmentID) },
-			Wait:      approvalWait{NoWait: projectDestroyNoWait, Timeout: projectDestroyWait.Timeout},
+			PlanJobID: func() (string, error) {
+				if plan.ID != "" {
+					return plan.ID, nil
+				}
+				ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+				defer stop()
+				made, err := previewBeforeDestroy(ctx, printerFor(cmd), client, params, projectDestroyWait.Timeout)
+				return made.ID, err
+			},
+			Wait: approvalWait{
+				NoWait:  projectDestroyNoWait,
+				Timeout: projectDestroyWait.Timeout,
+				RerunFor: func(planJobID string) string {
+					return "run " + destroyRerun(params, projectDestroyProjectRef, projectDestroyEnv, planJobID)
+				},
+			},
 		}
 	}
 
@@ -142,21 +181,32 @@ func destroyProject(cmd *cobra.Command, client destroyClient, token string) erro
 	return destroyQueueError(finishProjectJob(cmd, client, run), projectDestroyCascade)
 }
 
-// appliedPlanJobID names the plan an environment's current state was deployed from, which is the
-// plan a destroy's approval is given against: the plan of the environment's most recent successful
-// DEPLOY. envID empty is the project's default environment.
+// destroyPlanToApprove answers "which destroy plan is this destroy's approval asked for" from the
+// two inputs that can name one: the id a caller already holds, or `--latest-plan` (the project's
+// most recent destroy plan of the target environment). Neither is an empty ref, and the destroy
+// then plans the teardown itself, but only once the control plane says an approval is needed
+// (previewBeforeDestroy): a destroy that needs none never pays for a plan.
 //
-// The jobs list does not carry a job's environment, so a DEPLOY is matched on the environment id its
-// frozen config snapshot records. Only the most recent page of jobs is read; a deploy older than
-// that is not found, and the refusal says where the destroy can be started instead.
-func appliedPlanJobID(c interface {
+// The kind of plan is checked by the control plane too: an approval of a destroy is refused
+// against an apply plan (`plan_not_approvable`), so a wrong --plan-job-id is refused there, before
+// anyone is asked to approve it.
+func destroyPlanToApprove(c interface {
 	envLister
 	jobLister
-}, projectID, envID string) (string, error) {
+}, params api.QueueJobParams, id string, latest bool) (jobRef, error) {
+	if id != "" && latest {
+		return jobRef{}, refusal(clierr.CodeInvalidUsage, "",
+			"--plan-job-id and --latest-plan both name the destroy plan: pass one "+
+				"(--latest-plan takes the project's most recent destroy plan)")
+	}
+	if !latest {
+		return jobRef{ID: strings.TrimSpace(id)}, nil
+	}
+	envID := params.EnvironmentID
 	if envID == "" {
-		envs, err := c.ListEnvironments(projectID)
+		envs, err := c.ListEnvironments(params.ConfigurationID)
 		if err != nil {
-			return "", fmt.Errorf("find the environment this destroy needs an approval for: %w", err)
+			return jobRef{}, fmt.Errorf("find the environment this destroy plan is for: %w", err)
 		}
 		for _, e := range envs {
 			if e.IsDefault {
@@ -164,25 +214,39 @@ func appliedPlanJobID(c interface {
 			}
 		}
 	}
-	deploys, err := narrowJobs(c, jobSelector{
-		jobType: string(types.JobTypeDeploy), status: string(types.JobStatusSuccess), project: projectID,
-	}, jobScope{})
-	if err != nil {
-		return "", err
+	return latestPlanOfKind(c, params.ConfigurationID, envID, destroyPlanKind)
+}
+
+// previewBeforeDestroy makes the destroy plan a destroy's approval is asked for when the caller
+// named none: a PLAN job with destroy_plan for the same project, environment and runner as the
+// destroy. It waits for it to finish and prints what it would delete. A destroy plan that does not
+// succeed stops the destroy with an error that names it, and nothing is destroyed.
+func previewBeforeDestroy(ctx context.Context, p *Printer, c projectJobClient, destroy api.QueueJobParams, timeout time.Duration) (jobRef, error) {
+	params := destroy
+	params.JobType = string(types.JobTypePlan)
+	params.DestroyPlan = true
+	params.Cascade = false
+	params.PlanJobID = ""
+	params.ApprovalID = ""
+	p.Note("A destroy from the CLI is approved against a destroy plan, so this plans the teardown first. It deletes nothing.")
+	return awaitPreview(ctx, p, c, params, timeout, "approve the destroy against", func(planID string, err error) error {
+		return fmt.Errorf("the destroy plan this destroy would be approved against (PLAN job %s) did not finish successfully, so nothing was destroyed: %w", planID, err)
+	})
+}
+
+// destroyRerun is the command that destroys exactly this plan once its approval is approved: the
+// same project and environment, the destroy plan named, and --yes because the name was already
+// typed.
+func destroyRerun(params api.QueueJobParams, projectRef, env, planJobID string) string {
+	project := projectRef
+	if project == "" {
+		project = params.ConfigurationID
 	}
-	// Newest first, and only the newest counts: it is the deploy the environment's state came from.
-	// One with no plan (a system re-apply) cannot be approved against, so the search stops there.
-	for _, d := range deploys {
-		if envID != "" && d.ConfigSnapshot["environment_id"] == envID {
-			if d.PlanJobID != "" {
-				return d.PlanJobID, nil
-			}
-			break
-		}
+	line := "alethia project destroy --project " + project
+	if env != "" {
+		line += " --env " + env
 	}
-	return "", refusal(clierr.CodeApprovalRequired, "destroy it from the console, where your click is the approval",
-		"this destroy needs a person's approval, given against the plan the environment was deployed from, "+
-			"and no successful deploy of it with a plan is among the last %d jobs", jobSelectorPageSize)
+	return line + " --plan-job-id " + planJobID + " --yes"
 }
 
 // projectConfirmName is what the person types to confirm a destroy: the project's name, or its id
@@ -256,4 +320,8 @@ func init() {
 	addDryRunFlag(projectDestroyCmd)
 	projectDestroyCmd.Flags().BoolVar(&projectDestroyCascade, "cascade", false, "Also destroy the environments placed on this environment's cluster, tenants first; prints them all and confirms first")
 	addApprovalNoWaitFlag(projectDestroyCmd, &projectDestroyNoWait)
+	projectDestroyCmd.Flags().StringVar(&projectDestroyPlanJobID, "plan-job-id", "",
+		"Ask for the approval of this destroy plan, by id (prefer --latest-plan)")
+	projectDestroyCmd.Flags().BoolVar(&projectDestroyLatestPlan, "latest-plan", false,
+		"Ask for the approval of the project's most recent destroy plan of this environment (from `project preview --destroy`)")
 }

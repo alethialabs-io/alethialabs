@@ -180,9 +180,10 @@ export const jobWire = createSelectSchema(jobs, {
 	// The reviewed plan's digest (AGT-S0b) — what the runner checks the applied plan against. Not on
 	// the frozen CLI wire, for the same reason as `approval_id`: the Go strict decoder would refuse it.
 	plan_sha256: true,
-	// Whether a PLAN plans a teardown (#7455). Not on the frozen CLI wire, for the same reason as
-	// `plan_sha256`: the Go strict decoder would refuse it until the CLI learns destroy plans.
-	destroy_plan: true,
+	// `destroy_plan` (#7455) IS on the wire (#7795): `project deploy --latest-plan` skips a destroy
+	// plan and `project destroy --latest-plan` takes only one, and a QUEUED destroy plan has no
+	// execution metadata yet to tell it apart by. The CLI decodes jobs leniently, so an older CLI
+	// ignores the field.
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */
