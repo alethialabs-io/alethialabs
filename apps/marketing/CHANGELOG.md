@@ -1,5 +1,13 @@
 # marketing
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [0c2b83c]
+  - @repo/legal@0.1.2
+  - @repo/brand@0.1.2
+
 ## 0.1.2
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # blog
 
+## 0.0.3
+
+### Patch Changes
+
+- @repo/brand@0.1.2
+
 ## 0.0.2
 
 ### Patch Changes
