@@ -1,5 +1,15 @@
 # console
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies [c714998]
+- Updated dependencies [a185e2c]
+  - @repo/ui@0.3.0
+  - @repo/platform@0.3.0
+  - @repo/brand@0.2.1
+
 ## 0.1.3
 
 ### Patch Changes

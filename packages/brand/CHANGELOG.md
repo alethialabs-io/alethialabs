@@ -1,5 +1,12 @@
 # @repo/brand
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [c714998]
+  - @repo/ui@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
