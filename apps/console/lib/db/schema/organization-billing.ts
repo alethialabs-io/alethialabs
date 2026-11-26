@@ -143,6 +143,15 @@ export const organizationBilling = pgTable("organization_billing", {
 	// exactly-once claim for the "welcome to your plan" email, so it never re-sends
 	// on renewals/updates (see syncSubscriptionToBilling). Null until first activation.
 	welcomedAt: timestamp({ withTimezone: true }),
+	// ── Local-trial notices (lib/billing/trial/notices.ts) ─────────────────────────
+	// The exactly-once claims for the two emails a LOCAL (Paddle-era, provider-less) trial is sent:
+	// the reminder before it ends and the notice once it has. Each holds the trial end
+	// (`current_period_end`) the email was claimed for, not a bare "sent" time, so the claim is per
+	// TRIAL: a new or extended trial has a different end and is owed its own email, and a retry of
+	// the same trial is not. NULL until claimed. A Stripe trial never touches these — Stripe's
+	// `trial_will_end` and `subscription.deleted` events drive its emails.
+	trialEndingNoticeFor: timestamp({ withTimezone: true }),
+	trialEndedNoticeFor: timestamp({ withTimezone: true }),
 	createdAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 	updatedAt: timestamp({ withTimezone: true }).defaultNow().notNull(),
 }, (t) => [

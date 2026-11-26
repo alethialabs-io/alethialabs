@@ -116,6 +116,8 @@ const teamRow: OrganizationBilling = {
 	vatId: null,
 	billingState: null,
 	welcomedAt: null,
+	trialEndingNoticeFor: null,
+	trialEndedNoticeFor: null,
 	createdAt: new Date(0),
 	updatedAt: new Date(0),
 };
