@@ -21,7 +21,12 @@
 import { NextResponse } from "next/server";
 import { ZodError, z } from "zod";
 import { isPlatformProvisionAuthorized } from "@/lib/auth/internal-auth";
-import { type PrivacyCaseRow, userExists } from "@/lib/privacy/case-steps";
+import { log } from "@/lib/observability/log";
+import {
+	type PrivacyCaseRow,
+	PrivacyStepRefusal,
+	userExists,
+} from "@/lib/privacy/case-steps";
 
 /**
  * The operator-plane gate. Answers the refusal to return, or null when the caller is the staff app.
@@ -67,22 +72,27 @@ export function serializeCase(c: PrivacyCaseRow) {
 	};
 }
 
+/** What an unexpected failure is answered with: its own text was written for no reader. */
+export const STEP_FAILED = "The step could not be completed; the console log has the cause. Reload the case before trying again.";
+
 /**
- * Turns a step's refusal into a response. The steps throw plain `Error`s whose messages are written
- * for the operator ("Identity is not verified…", "only one extension is available"), so those are
- * a 409 carrying the message; a malformed argument is a 400. Anything else propagates and is a 500.
+ * Turns a step's failure into a response. A {@link PrivacyStepRefusal} carries a sentence written
+ * for the operator ("Identity is not verified…", "only one extension is available") and keeps it; a
+ * malformed argument is a 400. ANYTHING ELSE — a database error, a bug — is logged here and answered
+ * with {@link STEP_FAILED}, because its message was written for nobody and may describe internals.
  */
 export function stepRefusal(err: unknown): NextResponse {
+	if (err instanceof PrivacyStepRefusal) {
+		return NextResponse.json({ error: err.message }, { status: 409 });
+	}
 	if (err instanceof ZodError) {
 		return NextResponse.json(
 			{ error: err.issues[0]?.message ?? "invalid request" },
 			{ status: 400 },
 		);
 	}
-	if (err instanceof Error) {
-		return NextResponse.json({ error: err.message }, { status: 409 });
-	}
-	throw err;
+	log.error("[privacy] a platform privacy step failed", { err });
+	return NextResponse.json({ error: STEP_FAILED }, { status: 409 });
 }
 
 /** The JSON answer every read uses: never cached, because a case changes under every step. */

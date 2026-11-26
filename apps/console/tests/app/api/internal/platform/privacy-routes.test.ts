@@ -24,10 +24,16 @@ const steps = vi.hoisted(() => ({
 	refuseCase: vi.fn(),
 	userExists: vi.fn(),
 }));
+/** The steps' refusal type, standing in for the real module's (hoisted with the mock). */
+const { PrivacyStepRefusal } = vi.hoisted(() => ({
+	PrivacyStepRefusal: class PrivacyStepRefusal extends Error {},
+}));
+vi.mock("@/lib/observability/log", () => ({ log: { error: vi.fn() } }));
 vi.mock("@/lib/privacy/case-steps", async () => {
 	const { z } = await import("zod");
 	return {
 		...steps,
+		PrivacyStepRefusal,
 		PRIVACY_CASE_KINDS: [
 			"access",
 			"export",
@@ -44,6 +50,7 @@ vi.mock("@/lib/privacy/case-steps", async () => {
 import { GET as getList, POST as openCase } from "@/app/api/internal/platform/privacy/cases/route";
 import { GET as getCase } from "@/app/api/internal/platform/privacy/cases/[reference]/route";
 import { POST as takeStep } from "@/app/api/internal/platform/privacy/cases/[reference]/[step]/route";
+import { STEP_FAILED } from "@/app/api/internal/platform/privacy/shared";
 
 const SECRET = "s3cret";
 const STAFF = "99999999-9999-4999-8999-999999999999";
@@ -239,13 +246,30 @@ describe("POST /privacy/cases/<ref>/<step>", () => {
 		).toBe(409);
 		expect(steps.markIdentityVerified).not.toHaveBeenCalled();
 
-		steps.extendCase.mockRejectedValue(new Error("only one extension is available."));
+		steps.extendCase.mockRejectedValue(
+			new PrivacyStepRefusal("only one extension is available."),
+		);
 		const res = await takeStep(
 			req(`/cases/${REF}/extend`, { actorUserId: STAFF, reason: "complex request" }),
 			ctx("extend"),
 		);
 		expect(res.status).toBe(409);
 		expect(await res.json()).toEqual({ error: "only one extension is available." });
+	});
+
+	it("answers an unexpected failure with a generic sentence, never its own text", async () => {
+		steps.caseByReference.mockResolvedValue(caseRow({ identityVerifiedAt: new Date() }));
+		steps.performErasure.mockRejectedValue(
+			new Error('relation "privacy_case" violates constraint at 10.0.0.5'),
+		);
+		const res = await takeStep(
+			req(`/cases/${REF}/fulfil-erasure`, { actorUserId: STAFF }),
+			ctx("fulfil-erasure"),
+		);
+		expect(res.status).toBe(409);
+		const body: unknown = await res.json();
+		expect(body).toEqual({ error: STEP_FAILED });
+		expect(JSON.stringify(body)).not.toContain("10.0.0.5");
 	});
 });
 

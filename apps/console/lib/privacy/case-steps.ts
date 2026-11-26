@@ -30,7 +30,7 @@ import {
 	subjectHash,
 } from "@/app/server/actions/privacy/ledger";
 import { PRIVACY_RESPONSE_DAYS as RESPONSE_DAYS } from "@/app/server/actions/privacy/response-period";
-import { getServiceDb } from "@/lib/db";
+import { getServiceDb, type Tx } from "@/lib/db";
 import {
 	privacyCase,
 	privacyCaseEvent,
@@ -73,6 +73,16 @@ export const referenceSchema = z
 	.regex(/^DSR-[0-9A-F]{8}$/, "Not a privacy request reference.");
 
 /**
+ * A step declining to act, with a sentence written for the operator ("Identity is not verified…",
+ * "only one extension is available"). Distinct from every other error so a caller can show THIS
+ * message and nothing else: an unexpected failure — a database error — carries text nobody wrote for
+ * a reader, and the staff route answers it with a generic sentence instead.
+ */
+export class PrivacyStepRefusal extends Error {
+	override name = "PrivacyStepRefusal";
+}
+
+/**
  * Loads a case by reference, or null when nothing matches. Says nothing about who may act on it.
  *
  * A reference the schema rejects throws, because that is a malformed argument and not a lookup
@@ -93,7 +103,7 @@ export type PrivacyCaseRow = NonNullable<Awaited<ReturnType<typeof caseByReferen
 /** Refuses an extension reason too short to tell the subject why the request is complex. */
 export function assertExtensionReason(reason: string): void {
 	if (reason.trim().length < MIN_EXTENSION_REASON) {
-		throw new Error(
+		throw new PrivacyStepRefusal(
 			"An extension must state why the request is complex — the subject has to be told.",
 		);
 	}
@@ -102,14 +112,14 @@ export function assertExtensionReason(reason: string): void {
 /** Refuses a legal-hold basis too short for the subject to be told what it is. */
 export function assertHoldReason(reason: string): void {
 	if (reason.trim().length < MIN_EXTENSION_REASON) {
-		throw new Error("A legal hold must state its basis — the subject is entitled to know it.");
+		throw new PrivacyStepRefusal("A legal hold must state its basis — the subject is entitled to know it.");
 	}
 }
 
 /** Refuses refusal grounds too short to carry the reason and the right to complain. */
 export function assertRefusalReason(reason: string): void {
 	if (reason.trim().length < MIN_REFUSAL_REASON) {
-		throw new Error(
+		throw new PrivacyStepRefusal(
 			"A refusal must state its grounds. The subject has to be told why, and that they may " +
 				"complain to the supervisory authority.",
 		);
@@ -215,7 +225,7 @@ export async function extendCase(
 ): Promise<{ dueAt: Date }> {
 	assertExtensionReason(reason);
 	if (c.extendedAt) {
-		throw new Error("This request has already been extended; only one extension is available.");
+		throw new PrivacyStepRefusal("This request has already been extended; only one extension is available.");
 	}
 	const dueAt = new Date(c.dueAt.getTime() + EXTENSION_DAYS * 86_400_000);
 	await getServiceDb()
@@ -303,6 +313,27 @@ export type ErasureFulfilment =
 	  };
 
 /**
+ * Applies `set` to the case only while it is undecided, inside the caller's transaction, and refuses
+ * when that changed nothing — the case was decided after it was loaded, by a concurrent step.
+ */
+async function claimUndecided(
+	tx: Tx,
+	c: PrivacyCaseRow,
+	set: Partial<typeof privacyCase.$inferInsert>,
+): Promise<void> {
+	const claimed = await tx
+		.update(privacyCase)
+		.set(set)
+		.where(and(eq(privacyCase.id, c.id), isNull(privacyCase.decidedAt)))
+		.returning({ id: privacyCase.id });
+	if (claimed.length === 0) {
+		throw new PrivacyStepRefusal(
+			`Request ${c.reference} has already been decided; it takes no further step.`,
+		);
+	}
+}
+
+/**
  * Performs the erasure on an already-authorized case, and leaves the tombstone behind.
  *
  * Everything happens in ONE transaction with the tombstone and the ledger entry that describe it,
@@ -330,13 +361,13 @@ export async function performErasure(
 	now: Date,
 ): Promise<ErasureFulfilment> {
 	if (!c.identityVerifiedAt) {
-		throw new Error(
+		throw new PrivacyStepRefusal(
 			"Identity is not verified. Nothing is destroyed until we know who asked — an erasure " +
 				"performed on an unverified request is itself a data breach.",
 		);
 	}
 	if (c.kind !== "erasure") {
-		throw new Error(`Request ${c.reference} is a ${c.kind} request, not an erasure.`);
+		throw new PrivacyStepRefusal(`Request ${c.reference} is a ${c.kind} request, not an erasure.`);
 	}
 
 	const plan = buildErasurePlan({ legalHoldReason: c.legalHoldReason });
@@ -352,10 +383,11 @@ export async function performErasure(
 				erasedAt: now,
 				scope,
 			});
-			await tx
-				.update(privacyCase)
-				.set({ scope, state: "in_review", updatedAt: now })
-				.where(eq(privacyCase.id, c.id));
+			await claimUndecided(
+				tx,
+				c,
+				{ scope, state: "in_review", updatedAt: now },
+			);
 			await recordEvent(
 				c.id,
 				"legal_hold_applied",
@@ -376,7 +408,7 @@ export async function performErasure(
 	// erasure is a manual one. Running the plan with a missing subject would delete nothing and
 	// report success — the exact failure #4854 removed.
 	if (!c.subjectUserId) {
-		throw new Error(
+		throw new PrivacyStepRefusal(
 			`Request ${c.reference} names no account, so no row can be matched to the subject. It has ` +
 				"to be fulfilled by hand and recorded on the case; this step would erase nothing and " +
 				"report that it had.",
@@ -412,6 +444,18 @@ export async function performErasure(
 			return { outcome: "refused_live_resources", message, residency };
 		}
 
+		// The decision is taken FIRST, and only if nobody has taken it: two fulfils of one case — two
+		// operators, a double click, a retried request — both loaded the case undecided, and without
+		// this the second would run every statement again, write a second tombstone and a second
+		// "Erasure performed". The UPDATE row-locks the case, so the second transaction waits for the
+		// first, then finds `decided_at` set and changes nothing; it is refused and rolls back.
+		await claimUndecided(tx, c, {
+			scope,
+			state: "fulfilled",
+			decidedAt: now,
+			decidedByUserId: actorUserId,
+			updatedAt: now,
+		});
 		const execution = await applyErasurePlan(tx, plan, subject);
 		await tx.insert(privacyErasureTombstone).values({
 			subjectEmailSha256: c.subjectEmailSha256,
@@ -420,16 +464,6 @@ export async function performErasure(
 			erasedAt: now,
 			scope,
 		});
-		await tx
-			.update(privacyCase)
-			.set({
-				scope,
-				state: "fulfilled",
-				decidedAt: now,
-				decidedByUserId: actorUserId,
-				updatedAt: now,
-			})
-			.where(eq(privacyCase.id, c.id));
 		await recordEvent(
 			c.id,
 			"erasure_performed",
