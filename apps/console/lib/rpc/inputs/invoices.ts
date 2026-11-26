@@ -6,8 +6,8 @@
 // arrangement (`./jobs.ts`).
 
 import { presetRange } from "@repo/ui/range";
+import type { InvoiceDisplayStatus } from "@/lib/billing/invoice-status";
 import type { InvoiceListFilters } from "@/lib/billing/invoices";
-import type { InvoiceStatus } from "@/lib/db/schema/enums";
 import { JOBS_RANGE_PRESETS } from "@/lib/rpc/inputs/jobs";
 
 /** The relative paid-date windows the read resolves: the shared quick-range preset ids. */
@@ -18,7 +18,7 @@ export type InvoicePaidWithin = (typeof INVOICE_PAID_WITHIN)[number];
 
 /** Optional filters for the invoices list (period range + status). */
 export interface InvoiceListParams {
-	status?: InvoiceStatus[];
+	status?: InvoiceDisplayStatus[];
 	/**
 	 * A relative window ("the last 30 days"), resolved against the clock at READ time (#6731). It
 	 * travels as the preset, never as resolved bounds, so a shared link reopened next month shows
