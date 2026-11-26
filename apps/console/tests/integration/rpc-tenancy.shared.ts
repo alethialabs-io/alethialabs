@@ -391,9 +391,9 @@ function stringField(out: unknown, field: string): string | undefined {
 	return typeof value === "string" ? value : undefined;
 }
 
-/** Whether an evidence page (`{ groups: [{ rows: [{ environmentId }] }] }`) lists this environment. */
+/** Whether an evidence page (`{ rows: [{ rows: [{ environmentId }] }] }` — project groups) lists this environment. */
 function listsEnvironment(out: unknown, environmentId: string): boolean {
-	const groups = field(out, "groups");
+	const groups = field(out, "rows");
 	if (!Array.isArray(groups)) return false;
 	return groups.some((g: unknown) => hasElement(field(g, "rows"), "environmentId", environmentId));
 }

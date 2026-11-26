@@ -30,13 +30,13 @@ const { EvidenceWaivers } = await import("@/components/evidence/evidence-waivers
 const { useEvidenceFilters } = await import("@/lib/stores/use-evidence-filters");
 import type { EvidenceWaiverRow } from "@/lib/queries/evidence";
 import { decodeKeysetCursor, keysetPageInMemory, type KeysetListPage } from "@/lib/queries/keyset";
-import type { EvidenceResult } from "@/lib/rpc/procedures/evidence";
+import type { EvidencePosturePage } from "@/lib/queries/evidence-posture";
 
 /** The key the route prefetches for a link with no filters. */
-const FIRST_KEY = [["evidence", "page"], { input: {}, type: "query" }];
+const FIRST_KEY = [["evidence", "page"], { input: {}, type: "infinite" }];
 
-/** A result listing one environment ("payments-prod") with no proof yet. */
-function result(environments: number): EvidenceResult {
+/** Page one of the posture walk: one environment ("payments-prod") with no proof yet, or none. */
+function result(environments: number): EvidencePosturePage {
 	const rows =
 		environments === 0
 			? []
@@ -56,34 +56,22 @@ function result(environments: number): EvidenceResult {
 					},
 				];
 	return {
-		groups: rows.length ? [{ key: "p1", label: "payments", rows, provider: "aws" }] : [],
-		resultCount: rows.length,
-		total: rows.length,
-		waivers: [],
-		summary: {
-			environments: rows.length,
-			verified: 0,
-			warning: 0,
-			failing: 0,
-			notEvaluable: 0,
-			unverified: rows.length,
-			inSync: 0,
-			drifted: 0,
-			driftUnknown: rows.length,
-			activeWaivers: 0,
-			criticalHighVulns: 0,
-			securityUnknown: rows.length,
-		},
-		statusOptions: [],
-		stageOptions: [],
-		providerOptions: [],
+		rows: rows.length ? [{ id: "p1", key: "p1", label: "payments", rows, provider: "aws", waivers: [] }] : [],
+		nextCursor: null,
+		facets: { statusOptions: [], stageOptions: [], providerOptions: [] },
+		universeEmpty: rows.length === 0,
 	};
 }
 
+/** The infinite query's cached shape for a walk that has read `pages`. */
+function walked(...pages: EvidencePosturePage[]) {
+	return { pages, pageParams: pages.map((_, i) => (i === 0 ? null : `cursor-${i}`)) };
+}
+
 /** Renders the page with its read hydrated. */
-function renderPage(seed: EvidenceResult) {
+function renderPage(seed: EvidencePosturePage) {
 	const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: false } } });
-	qc.setQueryData(FIRST_KEY, seed);
+	qc.setQueryData(FIRST_KEY, walked(seed));
 	const wrapper = ({ children }: { children: ReactNode }) => (
 		<QueryClientProvider client={qc}>{children}</QueryClientProvider>
 	);
