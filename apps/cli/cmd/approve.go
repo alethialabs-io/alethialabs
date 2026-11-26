@@ -47,6 +47,9 @@ type approvalWait struct {
 	// Rerun is the command line that picks the approval up once it is decided, for the hint of a
 	// command that did not wait. Empty says "run this command again".
 	Rerun string
+	// RerunFor, when set, builds Rerun from the plan the approval was asked for. A destroy uses it,
+	// because the destroy plan it is approved against may only exist once the approval is needed.
+	RerunFor func(planJobID string) string
 }
 
 // approvalRequired reports whether err is the control plane refusing a deploy or a destroy until a
@@ -95,7 +98,11 @@ func obtainApproval(ctx context.Context, p *Printer, c approvalClient, planJobID
 		"This %s needs a person's approval. Approve it at %s — the page must show plan %s with a digest starting %s.",
 		operation, page, planJobID, a.DigestPrefix))
 	if w.NoWait || p.Mode.Agent {
-		return "", approvalPending(a, page, w.Rerun)
+		rerun := w.Rerun
+		if w.RerunFor != nil {
+			rerun = w.RerunFor(planJobID)
+		}
+		return "", approvalPending(a, page, rerun)
 	}
 	return awaitApprovalDecision(ctx, p, c, a, page, w.Timeout)
 }
@@ -193,6 +200,10 @@ func approvalWaitEnded(cause error, id, page string, timeout time.Duration) erro
 // that it needs a person's approval, obtains one for planJobID and queues it again with the approved
 // id. planJobID is resolved only when it is needed: a caller that can queue without an approval
 // never pays for the lookup. A nil approvals client passes the refusal through unchanged.
+//
+// An approval always names a plan: a deploy the plan it applies, a destroy the destroy plan it
+// tears down (#7455). A planJobID that resolves to no plan is refused here, before any approval is
+// asked for, rather than sent to the control plane as an approval of nothing.
 func queueWithApproval[T any](
 	ctx context.Context,
 	p *Printer,
@@ -209,6 +220,10 @@ func queueWithApproval[T any](
 	plan, perr := planJobID()
 	if perr != nil {
 		return out, perr
+	}
+	if strings.TrimSpace(plan) == "" {
+		return out, refusal(clierr.CodeApprovalRequired, "",
+			"this %s needs a person's approval of a plan, and no plan was named for it to be approved against; nothing was queued", operation)
 	}
 	id, aerr := obtainApproval(ctx, p, approvals, plan, operation, w)
 	if aerr != nil {
