@@ -13,6 +13,9 @@ export interface TrialEndedEmailProps {
 	planLabel: string;
 	/** When the trial ended, e.g. "Jul 6, 2026". */
 	trialEndLabel?: string;
+	/** Why it ended: a card-less Stripe trial with no payment method added (the default), or a local
+	 *  trial (lib/billing/trial/local.ts) that ran out with no subscription started. */
+	reason?: "no_payment_method" | "not_subscribed";
 	/** Absolute link to subscribe. */
 	billingUrl?: string;
 }
@@ -20,13 +23,15 @@ export interface TrialEndedEmailProps {
 export const subject = "Your Alethia trial has ended";
 
 /** Sent on customer.subscription.deleted when a card-less trial ran out with no payment method
- *  (lib/billing/trial/end.ts) — says the organization is on Hobby now, that nothing was deleted,
- *  and how to subscribe. Never sent for a customer's own cancellation, which gets the
+ *  (lib/billing/trial/end.ts), and by the trial-notice sweep (lib/billing/trial/notices.ts) when a
+ *  local trial ran out with no subscription — says the organization is on Hobby now, that nothing
+ *  was deleted, and how to subscribe. Never sent for a customer's own cancellation, which gets the
  *  subscription-canceled email instead. */
 export function TrialEndedEmail({
 	orgName,
 	planLabel,
 	trialEndLabel,
+	reason = "no_payment_method",
 	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: TrialEndedEmailProps) {
 	return (
@@ -41,9 +46,9 @@ export function TrialEndedEmail({
 				Your trial has ended.
 			</Heading>
 			<Text className="a-text-2" style={text.body}>
-				The Alethia {planLabel} trial for <strong>{orgName}</strong> has ended, and no
-				payment method was added. The organization is now on the free Hobby plan, and
-				Hobby&apos;s limits apply from today. You were not charged.
+				The Alethia {planLabel} trial for <strong>{orgName}</strong> has ended, and{" "}
+				{reason === "not_subscribed" ? "no subscription was started" : "no payment method was added"}.
+				The organization is now on the free Hobby plan, and Hobby&apos;s limits apply from today. You were not charged.
 			</Text>
 
 			<SummaryTable

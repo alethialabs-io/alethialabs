@@ -15,20 +15,26 @@ export interface TrialEndingEmailProps {
 	trialEndLabel: string;
 	/** Whether a payment method is already on file — then the plan continues and nothing is asked. */
 	paymentMethodOnFile?: boolean;
-	/** Absolute link to add a payment method. */
+	/** Whether keeping the plan means SUBSCRIBING rather than adding a card to an existing
+	 *  subscription — a local trial (lib/billing/trial/local.ts) has no subscription to add one to. */
+	subscribeToKeep?: boolean;
+	/** Absolute link to add a payment method (or subscribe). */
 	billingUrl?: string;
 }
 
 export const subject = "Your Alethia trial ends soon";
 
-/** Sent on customer.subscription.trial_will_end (~3 days out). Without a payment method on file it
- *  asks for one, because the card-less trial then ends and the organization returns to Hobby with its
- *  data kept; with one on file it says the plan continues. */
+/** Sent ~3 days before a trial ends: on customer.subscription.trial_will_end for a Stripe trial, and
+ *  by the trial-notice sweep (lib/billing/trial/notices.ts) for a local trial. Without a payment
+ *  method on file it asks for one (or, for a local trial, a subscription), because the trial then
+ *  ends and the organization returns to Hobby with its data kept; with one on file it says the plan
+ *  continues. */
 export function TrialEndingEmail({
 	orgName,
 	planLabel,
 	trialEndLabel,
 	paymentMethodOnFile = false,
+	subscribeToKeep = false,
 	billingUrl = "https://alethialabs.io/dashboard/settings/billing",
 }: TrialEndingEmailProps) {
 	return (
@@ -52,7 +58,8 @@ export function TrialEndingEmail({
 			) : (
 				<Text className="a-text-2" style={text.body}>
 					Your Alethia {planLabel} trial for <strong>{orgName}</strong> ends on{" "}
-					<strong>{trialEndLabel}</strong>. Add a payment method to keep {planLabel}.
+					<strong>{trialEndLabel}</strong>.{" "}
+					{subscribeToKeep ? `Subscribe to keep ${planLabel}.` : `Add a payment method to keep ${planLabel}.`}{" "}
 					Otherwise the organization moves to the free Hobby plan when the trial ends.
 				</Text>
 			)}
@@ -65,7 +72,7 @@ export function TrialEndingEmail({
 			/>
 
 			{paymentMethodOnFile ? null : (
-				<Callout label="If you don't add a payment method">
+				<Callout label={subscribeToKeep ? "If you don't subscribe" : "If you don't add a payment method"}>
 					Your organization moves to the free Hobby plan when the trial ends, and the
 					Hobby limits apply. Nothing is deleted: your projects, members and
 					configuration stay, and you can subscribe at any time.
@@ -73,7 +80,11 @@ export function TrialEndingEmail({
 			)}
 
 			<Button href={billingUrl} className="a-btn" style={primaryButton}>
-				{paymentMethodOnFile ? "Manage billing →" : "Add payment method →"}
+				{paymentMethodOnFile
+					? "Manage billing →"
+					: subscribeToKeep
+						? `Subscribe to ${planLabel} →`
+						: "Add payment method →"}
 			</Button>
 		</EmailLayout>
 	);
