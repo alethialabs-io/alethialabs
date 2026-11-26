@@ -22,7 +22,7 @@ CI uses no credentials and no `id-token`.
 | `alethia-books-archive-<account>` (S3) | Object Lock **COMPLIANCE, 4018 days (11 years)**, versioning, SSE-KMS with a Bucket Key, all four public-access blocks, `BucketOwnerEnforced`, `prevent_destroy`. Its one lifecycle rule aborts incomplete multipart uploads. Nothing expires. |
 | Bucket policy | TLS only. Answers only the admins, `books-monthly` and `console-books-writer`. Denies delete, retention, legal-hold, governance-bypass and bucket-configuration changes to everyone except the admins. |
 | `alias/alethia-books-archive` (KMS) | Key rotation is on, the deletion window is 30 days, `prevent_destroy`. The key policy denies `ScheduleKeyDeletion`, `DisableKey` and `PutKeyPolicy` to everyone except the admins. |
-| `books-monthly` (IAM role) | Trusts the account's **existing** GitHub OIDC provider (which `infra/backup-account` owns), and only for `repo:alethialabs-io/books:environment:books`. It can put under `records/` and get and list under `inbound/` and `records/`. It can use KMS through S3 only, and `GetSecretValue` on `alethia/books/connectors` only. |
+| `books-monthly` (IAM role) | Trusts the account's **existing** GitHub OIDC provider (which `infra/backup-account` owns), and only for `repo:alethialabs-io@293964056/books@1470091729:environment:books`. It can put under `records/` and get and list under `inbound/` and `records/`. It can use KMS through S3 only, and `GetSecretValue` on `alethia/books/connectors` only. |
 | `console-books-writer` (IAM user, `/alethia-books/`) | Can put under `inbound/console/` only, and only from the production box's addresses (`aws:SourceIp`). It cannot read, list or delete. **There is no access key in this stack.** |
 | `alethia/books/connectors` (Secrets Manager) | A shell with no value. Its resource policy lets only `books-monthly` and the admins read it, and only the admins replace, delete or re-policy it. |
 | `alethia-books-archive-monthly` (budget) | USD 5 a month. It counts only this stack's resources, through the `role = books-archive` tag (see [Cost](#cost)). |
@@ -91,7 +91,7 @@ these in the summary:
 
 - `COMPLIANCE / 4018 days`.
 - The writer has only `s3:PutObject` on `inbound/console/*`.
-- The trust subject is `repo:alethialabs-io/books:environment:books`.
+- The trust subject is `repo:alethialabs-io@293964056/books@1470091729:environment:books`.
 
 `mint-console-writer-key.sh` creates the writer's key and merges it into the production vault
 `alethia/prod/env` as `BOOKS_ARCHIVE_ACCESS_KEY_ID` and `BOOKS_ARCHIVE_SECRET_ACCESS_KEY`. The key
