@@ -239,6 +239,10 @@ export async function POST(req: Request) {
 		// #5249: DESTROY only. Opt-in to destroying the environments placed on the target's Fabric
 		// too, tenants first. STRICTLY `true` — a string "false" or a 1 is not a yes to a teardown.
 		const cascade = body?.cascade === true;
+		// PLAN only (#7455): plan a teardown instead of an apply. STRICTLY `true`, like `cascade`; on any
+		// other job type it is refused below rather than ignored, so a caller never believes it asked
+		// for something it did not get.
+		const destroyPlan = body?.destroy_plan === true;
 		// DEPLOY and DESTROY only: the approval this request presents. Absent (or null) is "none",
 		// and the actions are then called exactly as before. Anything else that is not a UUID is
 		// refused here rather than passed on as if no approval had been named.
@@ -265,6 +269,13 @@ export async function POST(req: Request) {
 					error:
 						"job_type must be one of: DEPLOY, DESTROY, PLAN, DESTROY_RUNNER",
 				},
+				{ status: 400 },
+			);
+		}
+
+		if (destroyPlan && jobType !== "PLAN") {
+			return NextResponse.json(
+				{ error: "destroy_plan applies to PLAN jobs only" },
 				{ status: 400 },
 			);
 		}
@@ -533,11 +544,19 @@ export async function POST(req: Request) {
 			const result = await runWithActor(actor, async () => {
 				switch (jobType) {
 					case "PLAN":
-						return planProject(
-							configuration_id,
-							assigned_runner_id || null,
-							environment_id || null,
-						);
+						return destroyPlan
+							? planProject(
+									configuration_id,
+									assigned_runner_id || null,
+									environment_id || null,
+									null,
+									{ destroy: true },
+								)
+							: planProject(
+									configuration_id,
+									assigned_runner_id || null,
+									environment_id || null,
+								);
 					case "DEPLOY":
 						// The approval id is the SIXTH argument; the fifth is the approval card's
 						// idempotency key, which a CLI call never has.

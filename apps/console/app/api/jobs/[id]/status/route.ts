@@ -32,7 +32,7 @@ import {
 	recordSecurityPosture,
 } from "@/lib/addons/inspection-persistence";
 import { captureServer } from "@/lib/analytics/server";
-import { receiptPlanDigest } from "@/lib/approvals/plan-binding";
+import { destroyPlanFileDigest, receiptPlanDigest } from "@/lib/approvals/plan-binding";
 import { anchorReceipt } from "@/lib/evidence/receipt-anchor";
 import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { emitAlertEventSafe } from "@/lib/alerts/emit";
@@ -167,6 +167,7 @@ export async function PUT(
 					cloud_identity_id: jobs.cloud_identity_id,
 					config_snapshot: jobs.config_snapshot,
 					execution_metadata: jobs.execution_metadata,
+					destroy_plan: jobs.destroy_plan,
 					provider: jobs.provider,
 					traceparent: jobs.traceparent,
 					created_at: jobs.created_at,
@@ -180,8 +181,14 @@ export async function PUT(
 			// on the row: what a DEPLOY of this plan copies, and what the applying runner checks the
 			// downloaded plan against (lib/approvals/plan-binding.ts). Stamped once. A failure leaves the
 			// column empty, and the DEPLOY then reads the same digest from the receipt.
+			//
+			// A destroy-mode plan has no verify receipt: its digest is the one the runner recorded for the
+			// plan file it stored (#7455). There is no fallback for it, so a failed stamp leaves the destroy
+			// plan with no digest, and a destroy cannot be approved against it — the closed direction.
 			if (job && status === "SUCCESS" && job.job_type === "PLAN") {
-				const digest = receiptPlanDigest(job.execution_metadata);
+				const digest = job.destroy_plan
+					? destroyPlanFileDigest(job.execution_metadata)
+					: receiptPlanDigest(job.execution_metadata);
 				if (digest) {
 					await db
 						.update(jobs)

@@ -80,7 +80,11 @@ export interface ApplyTarget {
 	 * DESTROY, or the BUILD whose success queues a DEPLOY of the same snapshot.
 	 */
 	jobId: string;
-	/** The reviewed PLAN job a DEPLOY applies, when the caller named one. */
+	/**
+	 * The reviewed PLAN job a DEPLOY applies, when the caller named one. On a DESTROY, a destroy plan
+	 * the caller named, which must then be the one its approval names; a destroy that consumes an
+	 * approval is stamped with the approval's destroy plan either way (gate.ts).
+	 */
 	planJobId?: string;
 	/**
 	 * Set on a DESTROY queued because another environment's destroy cascaded to this one: the
@@ -104,7 +108,8 @@ export interface ApplyAuthorization {
  *   `approvalId` must name one that a person approved, that has not expired or been used, that the
  *   same credential requested for this org, project, environment and operation, and whose plan digest
  *   is still the environment's current one (lib/approvals/binding.ts). It is consumed here, and the
- *   job records it (`jobs.approval_id`).
+ *   job records it (`jobs.approval_id`). A DESTROY that consumes one is also stamped with the destroy
+ *   plan it names (`plan_job_id`, `plan_sha256`), which the runner then tears down and nothing else.
  * - A system origin is allowed the one operation it names (lib/approvals/gate.ts), with no approval.
  *
  * Answers the approval the job consumed, or null when it needed none.

@@ -9,7 +9,7 @@
 import "server-only";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { readEnvironment } from "@/lib/approvals/context";
-import { appliedState } from "@/lib/approvals/binding";
+import { currentDestroyPlan } from "@/lib/approvals/binding";
 import { type ApprovalView, readApproval, viewOf } from "@/lib/approvals/read";
 import { ApprovalError } from "@/lib/approvals/refusal";
 import { requestApproval } from "@/lib/approvals/request";
@@ -67,12 +67,12 @@ export async function readOwnOrgApproval(actor: Actor, approvalId: string): Prom
 }
 
 /**
- * The plan a destroy of `environmentId` is approved against: the reviewed plan its latest successful
- * deploy applied (lib/approvals/binding.ts). Refuses `not_found` when the actor may not view the
- * project or the environment is not one of its environments, and `plan_not_approvable` when nothing
- * reviewed was deployed there.
+ * The plan a destroy of `environmentId` is approved against: the environment's latest succeeded
+ * destroy plan, while it is still current (lib/approvals/binding.ts, #7455). Refuses `not_found` when
+ * the actor may not view the project or the environment is not one of its environments, and
+ * `plan_not_approvable` when there is no current destroy plan to name.
  */
-export async function appliedPlanFor(
+export async function destroyPlanFor(
 	actor: Actor,
 	projectId: string,
 	environmentId: string,
@@ -86,13 +86,13 @@ export async function appliedPlanFor(
 		if (!environment) {
 			throw new ApprovalError("not_found", "That environment was not found in this organization.");
 		}
-		const applied = await appliedState(tx, environmentId);
-		if (!applied?.planJobId) {
+		const plan = await currentDestroyPlan(tx, environmentId);
+		if (!plan) {
 			throw new ApprovalError(
 				"plan_not_approvable",
-				"Nothing deployed from a reviewed plan is recorded for this environment, so there is no state an approval can name. A person can destroy it from the console.",
+				"This environment has no current destroy plan, so there is no teardown an approval can name. A destroy is approved against a destroy plan of the environment, queued after the last change to it. A person can also destroy it from the console.",
 			);
 		}
-		return applied.planJobId;
+		return plan.planJobId;
 	});
 }

@@ -18,15 +18,16 @@ export async function GET(
 	const { id: jobId } = await params;
 
 	try {
-		// A runner reads a job it owns, or the PLAN its in-flight DEPLOY applies — otherwise any valid
+		// A runner reads a job it owns, or the PLAN its in-flight DEPLOY or DESTROY applies — otherwise any valid
 		// runner token could enumerate every org's job rows.
 		const read = await verifyRunnerMayReadJob(runnerId, jobId);
 		if (read.error) return read.error;
 
 		const db = getServiceDb();
 		if (read.access === "applies_plan") {
-			// The applying runner checks the plan's outcome and the configuration it was made from;
-			// it is given those fields, not the plan job's snapshot or metadata.
+			// The applying runner checks the plan's outcome, its kind (an apply plan for a DEPLOY, a
+			// destroy plan for a DESTROY) and the configuration it was made from; it is given those
+			// fields, not the plan job's snapshot or metadata.
 			const [plan] = await db
 				.select({
 					id: jobs.id,
@@ -36,6 +37,7 @@ export async function GET(
 					environment_id: jobs.environment_id,
 					configuration_hash: jobs.configuration_hash,
 					plan_sha256: jobs.plan_sha256,
+					destroy_plan: jobs.destroy_plan,
 				})
 				.from(jobs)
 				.where(eq(jobs.id, jobId))
