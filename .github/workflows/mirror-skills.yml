@@ -1,0 +1,67 @@
+name: Mirror skills
+
+# Publishes the public Claude Code plugin marketplace at alethialabs-io/skills, generated from
+# .claude/skills/ here. The monorepo stays the one place skills are edited; the mirror is a build
+# output, like alethia-cli (mirror-cli.yml). Which skills go out, and why the rest do not, is in
+# .github/mirror/build-skills.sh.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".claude/skills/**"
+      - ".github/mirror/build-skills.sh"
+      - ".github/workflows/mirror-skills.yml"
+      - "LICENSE"
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-skills
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout monorepo
+        uses: actions/checkout@v7
+
+      - name: Mint mirror token (GitHub App)
+        id: token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: skills
+
+      - name: Build staging tree
+        run: |
+          set -euo pipefail
+          bash .github/mirror/build-skills.sh "$RUNNER_TEMP/skills"
+          echo "STAGE=$RUNNER_TEMP/skills" >> "$GITHUB_ENV"
+
+      - name: Push to mirror
+        env:
+          # GitHub App token scoped to the skills repo (minted above).
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/alethialabs-io/skills.git" "$RUNNER_TEMP/repo"
+          cd "$RUNNER_TEMP/repo"
+          # Replace the working tree with the staging snapshot (keep .git). The old July copy of
+          # the skills that lived here is replaced wholesale; its history stays in git.
+          find . -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
+          cp -a "$STAGE/." .
+          git config user.name "alethialabs-io"
+          git config user.email "contact@borislav.me"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Mirror already up to date — nothing to push."
+          else
+            git commit -m "Sync from alethialabs-io/alethialabs@${GITHUB_SHA:0:12}"
+            git push origin HEAD:main
+          fi
