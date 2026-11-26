@@ -17,6 +17,7 @@ import { ErrorState } from "@repo/ui/error-state";
 import { orgHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
 
+/** The project segment's 404: names the project, and leads back to the org's project list. */
 export default function ProjectNotFound() {
 	// `/{org}/{project}/…` — the org segment resolved, so the way back is its project list.
 	const org = usePathname().split("/").filter(Boolean)[0];
@@ -24,7 +25,7 @@ export default function ProjectNotFound() {
 		<ErrorState
 			code="404"
 			title="Project not found"
-			description="This project doesn't exist, or you don't have access to it."
+			description="The address may be mistyped, or the project was renamed or deleted. It may also be one you don't have access to."
 			actions={
 				// The only way out of this page — an `<a href>` — is announced as a link, as on the
 				// other two 404 boundaries: `@repo/ui/button` gives a `render` element with an
