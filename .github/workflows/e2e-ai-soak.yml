@@ -153,6 +153,11 @@ jobs:
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
       ALETHIA_AUTH_RATE_LIMIT: "0"
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # The HOSTED billing shape, in Stripe TEST mode (the same secret release-gate.yml's stripe legs
+      # use). Without a billing provider the console is self-host: `assertAiAllowed` charges nothing
+      # and writes no `ai_usage_ledger` row, so neither the tier caps, the hold/settle path, nor the
+      # per-run cost summary below would be exercised. With it, they are — as in production.
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
       # The PRODUCTION routing (lib/config/ai.ts defaults), stated explicitly so a changed default
       # cannot quietly change what the soak spends on.
       AI_EXECUTOR_MODEL: anthropic/claude-haiku-4-5

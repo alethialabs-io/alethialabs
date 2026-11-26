@@ -18,9 +18,11 @@ let orgSlug = "";
 
 /** Send a message through the support chat's composer. */
 async function askSupport(page: Page, text: string): Promise<void> {
-	const composer = page.getByPlaceholder("Ask a question, or describe what's not working…");
-	await composer.fill(text);
-	await composer.press("Enter");
+	// The support chat's composer is the generic AgentChat one: a textbox named "Message" and an
+	// explicit "Submit" button (Enter in a bare fill did not send — measured on the first live run).
+	const main = page.getByRole("main");
+	await main.getByRole("textbox", { name: "Message" }).fill(text);
+	await main.getByRole("button", { name: "Submit" }).click();
 }
 
 test.describe(`Support Ask AI with a REAL model · ${soakTier()}`, () => {
