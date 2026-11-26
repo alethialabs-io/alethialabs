@@ -11,7 +11,7 @@ import {
 	getSortedRowModel,
 	useReactTable,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, CircleAlert } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 
 import { RegionError } from "@repo/ui/region-error";
@@ -21,8 +21,8 @@ import {
 	DataTableSkeletonRows,
 } from "@/components/skeletons/data-table-skeleton";
 import { ListFooter } from "@/components/list/list-footer";
+import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
 import type { KeysetList } from "@/lib/query/use-keyset-list";
-import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import {
 	Table,
@@ -142,33 +142,6 @@ interface DataTableServerProps<TData extends { id?: string }, TValue> extends Da
 type DataTableProps<TData extends { id?: string }, TValue> =
 	| DataTableClientProps<TData, TValue>
 	| DataTableServerProps<TData, TValue>;
-
-/**
- * The notice a table shows when a refetch failed behind rows it already has: the rows are still
- * the last good answer, so they stay, and this line says they may be out of date. With
- * live-by-default invalidation every update is a refetch, so this is the COMMON failure, and
- * replacing a good table with a full error for it would be worse than the failure.
- *
- * Built from what the table already uses (its border, a ghost `Button`, a named ink tier), so it
- * adds no colour of its own. Polite (`role="status"`): nothing the viewer had has gone away.
- */
-function StaleRefreshNotice({ onRetry }: { onRetry: () => void }) {
-	return (
-		<div
-			data-slot="data-table-stale"
-			role="status"
-			className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-1.5 text-ui-sm text-text-secondary"
-		>
-			<span className="flex items-center gap-2">
-				<CircleAlert className="size-3.5 shrink-0" aria-hidden />
-				{"Couldn't refresh — showing earlier data"}
-			</span>
-			<Button variant="ghost" size="xs" onClick={onRetry}>
-				Try again
-			</Button>
-		</div>
-	);
-}
 
 /**
  * THE console table shell.
@@ -370,7 +343,9 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 	return (
 		<div className={cn("space-y-3", className)}>
 			<div className={DATA_TABLE_FRAME} data-state={bodyState}>
-				{staleRefresh ? <StaleRefreshNotice onRetry={retry} /> : null}
+				{staleRefresh ? (
+					<StaleRefreshNotice slot="data-table-stale" onRetry={retry} className="border-b px-4 py-1.5" />
+				) : null}
 				{scrollHeight ? (
 					<ScrollArea className={scrollHeight}>{tableEl}</ScrollArea>
 				) : (

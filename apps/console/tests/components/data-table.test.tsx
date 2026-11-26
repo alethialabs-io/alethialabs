@@ -98,6 +98,25 @@ describe("DataTable server mode", () => {
 		expect(container.querySelector('[data-slot="data-table-stale"]')).toBeNull();
 	});
 
+	it("failed REFRESH behind loaded rows: the rows stay under the shared stale-refresh notice", () => {
+		const refetch = vi.fn();
+		const { container } = render(
+			<DataTable
+				columns={COLUMNS}
+				keyset={list(rows(3), {
+					query: { isLoading: false, isError: true, data: { pages: [] }, error: new Error("x"), refetch },
+				})}
+			/>,
+		);
+		expect(screen.getAllByRole("row")).toHaveLength(4);
+		const notice = container.querySelector('[data-slot="data-table-stale"]');
+		expect(notice).not.toBeNull();
+		expect(notice).toHaveAttribute("role", "status");
+		expect(screen.getByText("Couldn't refresh — showing earlier data")).toBeInTheDocument();
+		screen.getByRole("button", { name: "Try again" }).click();
+		expect(refetch).toHaveBeenCalled();
+	});
+
 	it("an empty answer is the empty row, with no footer", () => {
 		render(<DataTable columns={COLUMNS} keyset={list([], { hasMore: false })} emptyMessage="No things match" />);
 		expect(screen.getByText("No things match")).toBeInTheDocument();
