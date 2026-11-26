@@ -206,8 +206,8 @@ describe("the delivery ledger pages by keyset", () => {
 		await loadMoreUntil(user, "Delivery 74");
 
 		act(() => useAlertActivityFilters.getState().set("status", ["failed"]));
-		expect(await screen.findByText("No activity matches")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Reset filters" }));
+		expect(await screen.findByText("No deliveries match these filters.")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Clear filters" }));
 
 		expect(useAlertActivityFilters.getState().filters.status).toEqual([]);
 		expect(await screen.findByText("Delivery 1")).toBeInTheDocument();
@@ -220,7 +220,7 @@ describe("the delivery ledger pages by keyset", () => {
 		h.handlers["alerts.deliveries"] = serveLedger([]);
 		const { container } = renderLedger();
 		expect(await screen.findByText("No activity yet")).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Reset filters" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
 		expect(container.querySelector('[data-slot="list-footer"]')).toBeNull();
 	});
 });

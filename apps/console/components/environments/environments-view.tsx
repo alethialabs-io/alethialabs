@@ -34,9 +34,10 @@ import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { cn } from "@repo/ui/utils";
-import { ArrowUpFromLine, Layers, Plus, SearchX, TriangleAlert } from "lucide-react";
+import { ArrowUpFromLine, Layers, Plus, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { deleteEnvironment } from "@/app/server/actions/projects";
@@ -63,24 +64,25 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { JOB_ACTION } from "@/lib/copy/vocabulary";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { type KeysetList, useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import type { EnvironmentFacetSet, EnvironmentFacts } from "@/lib/queries/environments";
 import { envHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
 import type { EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
 import { readRefusalOf } from "@/lib/rpc/refusal";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEnvironmentsFilters } from "@/lib/stores/use-environments-filters";
 import { ActivePromotionPanel } from "./active-promotion-panel";
 import { ConsistencyMatrix } from "./consistency-matrix";
 import { type EnvironmentRow, buildEnvironmentColumns } from "./environment-columns";
 import { mayHoldResources } from "./environment-status";
-import { EnvironmentsFilterBar } from "./environments-filter-bar";
+import { environmentToolbarFacets } from "./environments-facets";
 import { DEFAULT_ENVIRONMENT_FILTERS, normalizeEnvironmentsQuery } from "./environments-query";
 import { ENVIRONMENTS_REGION, EnvironmentsSkeleton } from "./environments-skeleton";
 import { PromotionDetailOverlay } from "./promotion-detail-overlay";
 import { PromotionsHistory } from "./promotions-history";
 
 /** The page's one line of supporting copy (the breadcrumb already names the page). */
-const DESCRIPTION = "Isolated instances of this project's services.";
 
 /**
  * What the delete confirmation says before anything is sent: the rule the server applies
@@ -185,6 +187,7 @@ function EnvironmentsBody({
 	const filters = useEnvironmentsFilters((s) => s.filters);
 	const set = useEnvironmentsFilters((s) => s.set);
 	const reset = useEnvironmentsFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const [createOpen, setCreateOpen] = useState(false);
 	const [duplicateFrom, setDuplicateFrom] = useState<EnvRow | null>(null);
 	const [promoteOpen, setPromoteOpen] = useState(false);
@@ -271,6 +274,9 @@ function EnvironmentsBody({
 	// The table renders the joined rows; the paging state (footer, stale notice) is the list's own.
 	const table = useMemo(() => ({ ...list, rows }), [list, rows]);
 	const firstPageFailed = list.query.isError && list.query.data === undefined;
+	// The toolbar's filters show over a list that has (or may have) environments to filter — never
+	// over the failed read or the empty project, whose own states say what to do instead.
+	const filtering = !firstPageFailed && list.universeEmpty !== true;
 
 	// The columns are built once per project and permission, so a cell keeps its identity (an open
 	// row menu, a switch in flight) while the read refreshes under it. Every handler only sets state,
@@ -305,9 +311,24 @@ function EnvironmentsBody({
 
 	return (
 		<div className="space-y-8">
-			{/* No count: the list standard carries no list sizes (lib/query/README.md → "Counts"). */}
-			<PageToolbar
-				description={DESCRIPTION}
+			{/* One row: search, facets, Reset · N, then the page's actions on the right. No count
+			    (lib/query/README.md → "Counts") and no description line (polish-wave spec §3). The
+			    filters show only over a list that has environments to filter; the actions always do. */}
+			<ListToolbar
+				search={
+					filtering
+						? {
+								value: filters.search,
+								onChange: (value) => set("search", value),
+								placeholder: "Search environments by name…",
+								ariaLabel: "Search environments",
+								inputRef,
+								shortcut,
+							}
+						: undefined
+				}
+				facets={filtering ? environmentToolbarFacets(filters, set, list.facets ?? undefined) : undefined}
+				reset={filtering ? { count: countActiveFilters(filters, DEFAULT_ENVIRONMENT_FILTERS), onReset: reset } : undefined}
 				actions={
 					<>
 						<DisabledReason reason={manageDenied}>
@@ -433,24 +454,8 @@ function EnvironmentsBody({
 					/>
 				) : (
 					<>
-						<EnvironmentsFilterBar
-							filters={filters}
-							onFilter={set}
-							onReset={reset}
-							facets={list.facets ?? undefined}
-						/>
 						{list.universeEmpty === false && list.rows.length === 0 ? (
-							<EmptyState
-								level={2}
-								icon={<SearchX />}
-								title="No environments match these filters"
-								description="Every environment is excluded by the current search, stage or status selection."
-								action={
-									<Button variant="outline" size="sm" onClick={reset}>
-										Clear filters
-									</Button>
-								}
-							/>
+							<FilterEmpty level={2} noun="environments" onClear={reset} />
 						) : (
 							<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
 								<DataTable columns={columns} keyset={table} />

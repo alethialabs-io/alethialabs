@@ -2,31 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Runners filter bar — the console filter standard (#578): FilterSearch + the shared
-// CloudFilter + always-visible chip groups (status / operator) + facet popovers
-// (region / version) + the mono Reset. Reads/writes the page's zustand filter store
-// (use-runner-filters); the page owns URL sync + debounce. The local Chip/ChipGroup
-// this file used to define were promoted to @repo/ui/filter-chip (prop-compatible)
-// and are consumed from there now.
+// The runners list's one-row toolbar — the console filter standard (#578) on `ListToolbar`
+// (polish-wave spec §3, #7738): search, then the Cloud, Status, Operator, Region and Version
+// facets, the mono `Reset · N`, and the section's own buttons pushed right. Reads/writes the page's
+// zustand filter store (use-runner-filters); the page owns URL sync + debounce. Every facet count
+// was tallied over the UNFILTERED runner set, so a selected option never disappears.
 
-import { Globe, Tag } from "lucide-react";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterChipGroup } from "@repo/ui/filter-chip";
-import { FilterSearch } from "@repo/ui/filter-search";
-import { CloudFilter, type CloudFilterOption } from "@/components/filters/cloud-filter";
+import { Activity, Cloud, Globe, Tag, UserCog } from "lucide-react";
+import type { ReactNode } from "react";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { DEFAULT_RUNNER_FILTERS } from "@/components/runners/runners-query";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { useRunnerFilters } from "@/lib/stores/use-runner-filters";
-
-/** Active filter selections for the runners grid (sans search). Empty = "no filter". */
-export interface RunnerFilters {
-	clouds: string[];
-	statuses: string[];
-	operators: string[];
-	regions: string[];
-	versions: string[];
-}
 
 const STATUS_OPTIONS = [
 	{ value: "ONLINE", label: "Online" },
@@ -48,82 +36,76 @@ export interface RunnerFacetOption {
 	count: number;
 }
 
+/**
+ * The runners toolbar. Mounted once per page: it binds `/` to its search. `actions` are the
+ * section's own buttons (Add runner), drawn at the far right of the row.
+ */
 export function RunnersToolbar({
 	cloudOptions,
 	regionOptions,
 	versionOptions,
+	actions,
 }: {
-	cloudOptions: CloudFilterOption[];
+	cloudOptions: RunnerFacetOption[];
 	regionOptions: RunnerFacetOption[];
 	versionOptions: RunnerFacetOption[];
+	actions?: ReactNode;
 }) {
 	const filters = useRunnerFilters((s) => s.filters);
 	const set = useRunnerFilters((s) => s.set);
 	const reset = useRunnerFilters((s) => s.reset);
-
-	const toggle = (key: keyof RunnerFilters, value: string) => {
-		const arr = filters[key];
-		set(
-			key,
-			arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value],
-		);
-	};
+	const { inputRef, shortcut } = useListSearchShortcut();
 
 	return (
-		<FilterBar
-			end={
-				<FilterBarReset
-					count={countActiveFilters(filters, DEFAULT_RUNNER_FILTERS)}
-					onReset={reset}
-				/>
-			}
-		>
-			<FilterSearch
-				value={filters.search}
-				onChange={(v) => set("search", v)}
-				placeholder="Search runners by name…"
-				ariaLabel="Search runners"
-			/>
-			<CloudFilter
-				value={filters.clouds}
-				onChange={(next) => set("clouds", next)}
-				options={cloudOptions}
-			/>
-			<FilterChipGroup
-				inline
-				options={STATUS_OPTIONS}
-				selected={filters.statuses}
-				onToggle={(v) => toggle("statuses", v)}
-			/>
-			<FilterChipGroup
-				inline
-				options={OPERATOR_OPTIONS}
-				selected={filters.operators}
-				onToggle={(v) => toggle("operators", v)}
-			/>
-			<FacetFilter
-				label="Region"
-				icon={Globe}
-				options={regionOptions.map((o) => ({
-					value: o.value,
-					label: o.label,
-					hint: String(o.count),
-				}))}
-				value={filters.regions}
-				onChange={(next) => set("regions", next)}
-			/>
-			<FacetFilter
-				label="Version"
-				icon={Tag}
-				options={versionOptions.map((o) => ({
-					value: o.value,
-					label: o.label,
-					hint: String(o.count),
-				}))}
-				value={filters.versions}
-				onChange={(next) => set("versions", next)}
-			/>
-		</FilterBar>
+		<ListToolbar
+			search={{
+				value: filters.search,
+				onChange: (v) => set("search", v),
+				placeholder: "Search runners by name…",
+				ariaLabel: "Search runners",
+				inputRef,
+				shortcut,
+			}}
+			facets={[
+				{
+					label: "Cloud",
+					icon: Cloud,
+					options: cloudOptions,
+					value: filters.clouds,
+					onChange: (next) => set("clouds", next),
+				},
+				{
+					label: "Status",
+					icon: Activity,
+					options: STATUS_OPTIONS,
+					value: filters.statuses,
+					onChange: (next) => set("statuses", next),
+				},
+				{
+					label: "Operator",
+					icon: UserCog,
+					options: OPERATOR_OPTIONS,
+					value: filters.operators,
+					onChange: (next) => set("operators", next),
+				},
+				{
+					label: "Region",
+					icon: Globe,
+					options: regionOptions,
+					value: filters.regions,
+					onChange: (next) => set("regions", next),
+				},
+				{
+					label: "Version",
+					icon: Tag,
+					options: versionOptions,
+					value: filters.versions,
+					onChange: (next) => set("versions", next),
+				},
+			]}
+			reset={{ count: countActiveFilters(filters, DEFAULT_RUNNER_FILTERS), onReset: reset }}
+			actions={actions}
+		/>
 	);
 }
 
