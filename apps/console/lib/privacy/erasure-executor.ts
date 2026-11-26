@@ -24,9 +24,11 @@
 //
 // `server-only`, and not `"use server"`: nothing here may become a POST-addressable action — every
 // export of a `"use server"` module is an endpoint whether or not the product calls it, and these
-// take the subject as a parameter. The one caller is `fulfilErasure`, which is gated on standing
-// over the CASE — an admin of the organization it was RAISED IN, and never the subject, who is not
-// the second party to their own erasure (see `actions/privacy/cases.ts`). It runs on the
+// take the subject as a parameter. The one caller is `performErasure` (`lib/privacy/case-steps.ts`),
+// reached two ways, each gated on standing over the CASE and never the subject, who is not the
+// second party to their own erasure: the console's `fulfilErasure` (an admin of the organization it
+// was RAISED IN — see `actions/privacy/cases.ts`), and the staff app's platform route for a
+// controller-level case (a platform admin — `app/api/internal/platform/privacy/`, #7222). It runs on the
 // RLS-bypassing service connection because an erasure crosses every tenancy boundary a subject's
 // rows sit behind.
 
