@@ -160,7 +160,11 @@ describe("a refusal explains itself", () => {
     await user.click(screen.getByText("Probe cluster"));
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Something went wrong on our side. Reference: ab12cd34"),
+      // The second argument is the toast's Retry action (#7741).
+      expect(toastError).toHaveBeenCalledWith(
+        "Something went wrong on our side. Reference: ab12cd34",
+        expect.objectContaining({ action: expect.objectContaining({ label: "Retry" }) }),
+      ),
     );
     expect(toastSuccess).not.toHaveBeenCalled();
   });
