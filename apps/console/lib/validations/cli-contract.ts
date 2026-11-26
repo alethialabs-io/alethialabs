@@ -180,6 +180,9 @@ export const jobWire = createSelectSchema(jobs, {
 	// The reviewed plan's digest (AGT-S0b) — what the runner checks the applied plan against. Not on
 	// the frozen CLI wire, for the same reason as `approval_id`: the Go strict decoder would refuse it.
 	plan_sha256: true,
+	// Whether a PLAN plans a teardown (#7455). Not on the frozen CLI wire, for the same reason as
+	// `plan_sha256`: the Go strict decoder would refuse it until the CLI learns destroy plans.
+	destroy_plan: true,
 });
 
 /** A job as returned in the list (GET /api/jobs) — adds joined display names. */

@@ -541,6 +541,8 @@ async function getIacEnvironment(
 				eq(jobs.project_id, projectId),
 				eq(jobs.environment_id, envId),
 				eq(jobs.job_type, "PLAN"),
+				// A destroy plan (#7455) lists what a teardown removes, not the design's inventory.
+				eq(jobs.destroy_plan, false),
 				eq(jobs.status, "SUCCESS"),
 			),
 		)
@@ -1036,7 +1038,8 @@ export async function readReviewPlan(
 			metadata: jobs.execution_metadata,
 		})
 		.from(jobs)
-		.where(and(inEnvironment, eq(jobs.job_type, "PLAN")))
+		// The board's plan is the latest APPLY plan: a destroy plan (#7455) is not a plan of the design.
+		.where(and(inEnvironment, eq(jobs.job_type, "PLAN"), eq(jobs.destroy_plan, false)))
 		.orderBy(desc(jobs.created_at), desc(jobs.id))
 		.limit(1);
 

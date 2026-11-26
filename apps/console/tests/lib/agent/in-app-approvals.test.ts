@@ -73,8 +73,8 @@ function policy(overrides: Record<string, unknown> = {}) {
 }
 
 /** A current plan as the binding reads it: succeeded with the digest, nothing since, no newer plan. */
-const currentPlan = (): unknown[][] => [
-	[{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null }],
+const currentPlan = (destroyPlan = false): unknown[][] => [
+	[{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: destroyPlan }],
 	[],
 	[],
 ];
@@ -124,6 +124,7 @@ function requestSetup(opts: { stage?: string; policy?: Record<string, unknown>[]
 							configuration_hash: "cfg",
 							plan_sha256: DIGEST,
 							execution_metadata: null,
+							destroy_plan: false,
 						},
 					],
 					// The request's binding check, then the view's.
@@ -138,13 +139,10 @@ function requestSetup(opts: { stage?: string; policy?: Record<string, unknown>[]
 	);
 }
 
-/** The environment's last successful deploy, as appliedState reads it: it applied PLAN. */
-const lastDeploy = () => [{ id: JOB, plan_job_id: PLAN, plan_sha256: DIGEST, created_at: PLANNED_AT }];
-
 /**
- * The executor a destroy request reads through: first the lookup of the plan the environment was
- * deployed from (the environment, then its last deploy), then the request itself, which checks that
- * deploy again and binds to it.
+ * The executor a destroy request reads through: first the lookup of the environment's current destroy
+ * plan (the environment, its latest succeeded destroy plan, nothing run since), then the request
+ * itself, which reads that destroy plan and binds to it, then the view's binding check.
  */
 function destroySetup(opts: { stage?: string; policy?: Record<string, unknown>[] } = {}) {
 	const env = [{ stage: opts.stage ?? "staging", name: "staging" }];
@@ -153,7 +151,8 @@ function destroySetup(opts: { stage?: string; policy?: Record<string, unknown>[]
 			[
 				jobs,
 				[
-					lastDeploy(),
+					[{ id: PLAN, created_at: PLANNED_AT }],
+					[],
 					[
 						{
 							id: PLAN,
@@ -164,15 +163,11 @@ function destroySetup(opts: { stage?: string; policy?: Record<string, unknown>[]
 							configuration_hash: "cfg",
 							plan_sha256: DIGEST,
 							execution_metadata: null,
+							destroy_plan: true,
 						},
 					],
-					// The request's own check, then the binding check (the deploy, no run queued since),
-					// then the view's binding check.
-					lastDeploy(),
-					lastDeploy(),
-					[],
-					lastDeploy(),
-					[],
+					...currentPlan(true),
+					...currentPlan(true),
 				],
 			],
 			[projectEnvironments, [env, env]],
@@ -282,7 +277,7 @@ describe("request_apply / request_destroy", () => {
 });
 
 describe("request_destroy names the environment, not a plan", () => {
-	it("binds the destroy to the plan the environment's last successful deploy applied", async () => {
+	it("binds the destroy to the environment's current destroy plan", async () => {
 		const fake = destroySetup();
 		scoped.db = fake.db;
 		const execute = operationTools().request_destroy.execute;
@@ -301,7 +296,7 @@ describe("request_destroy names the environment, not a plan", () => {
 		expect(fake.writes.some((w) => w.table === jobs)).toBe(false);
 	});
 
-	it("is refused when nothing reviewed was ever deployed there", async () => {
+	it("is refused when the environment has no current destroy plan", async () => {
 		const fake = fakeExecutor(
 			new Map<unknown, unknown[][]>([
 				[projectEnvironments, [[{ stage: "staging", name: "staging" }]]],
@@ -345,7 +340,7 @@ describe("queueing as the in-product agent (the queue gate)", () => {
 
 	/** The executor one gate call reads through. */
 	function gateSetup(opts: { approval?: Record<string, unknown>; policy?: Record<string, unknown>[]; cas?: unknown[] } = {}) {
-		const plan = [{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null }];
+		const plan = [{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }];
 		return fakeExecutor(
 			new Map<unknown, unknown[][]>([
 				[projectEnvironments, [[{ stage: "staging", name: "staging" }]]],

@@ -225,6 +225,8 @@ export async function queueEnvironmentAudit(
 				eq(jobs.project_id, projectId),
 				eq(jobs.environment_id, environmentId),
 				eq(jobs.job_type, "PLAN"),
+				// A destroy plan (#7455) describes tearing the environment down, not the design.
+				eq(jobs.destroy_plan, false),
 				eq(jobs.status, "SUCCESS"),
 			),
 		)

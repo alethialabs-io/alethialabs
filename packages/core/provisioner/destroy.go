@@ -69,6 +69,16 @@ type DestroyParams struct {
 	// REJECTED by RunDestroy: a flag whose whole purpose is "do not touch anything" must
 	// never be silently ignored by the call that tears real infrastructure down.
 	DryRun bool
+	// PlanOutFile, honored by RunDestroyPlan only, is where the saved destroy plan file is copied
+	// before the workdir is removed, so the caller can store it as the reviewed plan a later
+	// DESTROY applies. Empty keeps only the plan JSON.
+	PlanOutFile string
+	// PlanFile, honored by RunDestroy only, is a reviewed destroy plan (`tofu plan -destroy -out`)
+	// whose digest the caller has already checked. When set, the teardown applies exactly that plan
+	// (`tofu apply <plan>`) instead of running `tofu destroy`, and it is never retried: a second
+	// attempt would have to compute a new, unreviewed teardown. A placed environment (vcluster or
+	// namespace) owns no OpenTofu state, so a PlanFile for one is refused rather than ignored.
+	PlanFile string
 }
 
 // ErrDestroyPlanNoTofu reports that this environment owns no OpenTofu state, so there is no
@@ -102,6 +112,12 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// Alethia and only then fail, leaving the control plane out of step with the live cloud.
 	if vc.IacSource == nil && params.TemplatesDir == "" {
 		return fmt.Errorf("TemplatesDir is required")
+	}
+	// A reviewed destroy plan is an OpenTofu plan. A placed environment owns no OpenTofu state and
+	// its teardown runs no tofu, so it cannot apply one; running its teardown anyway would tear it
+	// down without the plan the caller bound the destroy to.
+	if params.PlanFile != "" && (vc.PlacementMode == types.PlacementModeVcluster || vc.PlacementMode == types.PlacementModeNamespace) {
+		return fmt.Errorf("a reviewed destroy plan was given, but this environment owns no OpenTofu state to apply it to: %w", ErrDestroyPlanNoTofu)
 	}
 
 	out := params.Stdout
@@ -174,6 +190,21 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// failed destroy, so on a customer's teardown the warning below is the only signal that
 	// something is still billing.
 	rel := releaseLoadBalancersBeforeDestroy(ctx, provider, vc, params.Provider, params.TalosMint, wd, out)
+
+	if params.PlanFile != "" {
+		// The reviewed teardown, and only it. No retry: tofu refuses to apply a saved plan twice once
+		// the state has moved, and the only other way to retry is a fresh `tofu destroy`, which is a
+		// teardown nobody reviewed. A failure here is reported, and the remedy is a new destroy plan.
+		fmt.Fprintln(out, "   Destroying Cloud Resources from the reviewed destroy plan (this may take 10-15 mins)...")
+		err = wd.tf.Apply(ctx, params.PlanFile)
+		if err := destroyOutcomeError(rel, err); err != nil {
+			return err
+		}
+		for _, line := range destroySuccessLines(rel) {
+			fmt.Fprintln(out, line)
+		}
+		return nil
+	}
 
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
 	err = wd.tf.Destroy(ctx, wd.varFile)
@@ -456,7 +487,28 @@ func RunDestroyPlan(ctx context.Context, params DestroyParams) (*tfjson.Plan, er
 	if plan == nil {
 		return nil, fmt.Errorf("tofu show -json produced no destroy plan")
 	}
+	if params.PlanOutFile != "" {
+		// Copied before the deferred cleanup removes the workdir. A plan that cannot be kept is a
+		// failure, not a plan JSON without its file: the caller asked for the file so a DESTROY can
+		// apply exactly it.
+		if err := copyPlanFile(planFile, params.PlanOutFile); err != nil {
+			return nil, fmt.Errorf("could not keep the destroy plan file: %w", err)
+		}
+	}
 	return plan, nil
+}
+
+// copyPlanFile copies the saved plan at src to dst with owner-only permissions; an empty plan is an
+// error, because an empty file has no digest a later DESTROY could be bound to.
+func copyPlanFile(src, dst string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	if len(b) == 0 {
+		return errors.New("the destroy plan file is empty")
+	}
+	return os.WriteFile(dst, b, 0o600)
 }
 
 // destroyWorkdir is an initialized OpenTofu workdir for a teardown: templates (or the BYO

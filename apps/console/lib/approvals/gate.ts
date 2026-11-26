@@ -212,17 +212,28 @@ async function consumeApproval(
 		if (!target.planJobId || target.planJobId !== approval.plan_job_id) {
 			invalid("That approval is for a different plan than this deploy applies.");
 		}
-		const [plan] = await db
-			.select({ plan_sha256: jobs.plan_sha256, execution_metadata: jobs.execution_metadata })
-			.from(jobs)
-			.where(eq(jobs.id, target.planJobId))
-			.limit(1);
-		if (!plan || planDigestOf(plan) !== approval.plan_sha256) {
-			invalid("The plan's digest is not the one that was approved. Plan again and request a new approval.");
-		}
+	} else if (target.planJobId && target.planJobId !== approval.plan_job_id) {
+		// A destroy is bound to the destroy plan its approval names (#7455). A caller that also names a
+		// plan must name that one.
+		invalid("That approval is for a different destroy plan than this destroy names.");
+	}
+	// The approved plan's digest, read again in this transaction: for a deploy the plan it applies,
+	// for a destroy the destroy plan it tears down. The kind is checked too (binding.ts) — a destroy
+	// is never stamped with an apply plan, nor a deploy with a destroy plan.
+	const [plan] = await db
+		.select({ plan_sha256: jobs.plan_sha256, execution_metadata: jobs.execution_metadata })
+		.from(jobs)
+		.where(eq(jobs.id, approval.plan_job_id))
+		.limit(1);
+	if (!plan || planDigestOf(plan) !== approval.plan_sha256) {
+		invalid(
+			operation === "destroy"
+				? "The destroy plan's digest is not the one that was approved. Run a new destroy plan and request a new approval."
+				: "The plan's digest is not the one that was approved. Plan again and request a new approval.",
+		);
 	}
 	const stale = await bindingStaleReason(db, approval, target.jobId);
-	if (stale) invalid(staleMessage(stale));
+	if (stale) invalid(staleMessage(stale, operation));
 
 	const consumed = await db
 		.update(applyApprovals)
@@ -243,6 +254,16 @@ async function consumeApproval(
 		.returning({ id: applyApprovals.id });
 	if (consumed.length === 0) invalid("That approval expired or was already used. Request a new one.");
 
-	await db.update(jobs).set({ approval_id: approvalId }).where(eq(jobs.id, target.jobId));
+	// A destroy is stamped with the destroy plan it was approved against, so the runner tears down that
+	// saved plan and refuses any other (apps/runner/internal/agent/plan_binding.go): the same two
+	// columns a deploy carries for the plan it applies. A deploy already carries them from its insert.
+	await db
+		.update(jobs)
+		.set(
+			operation === "destroy"
+				? { approval_id: approvalId, plan_job_id: approval.plan_job_id, plan_sha256: approval.plan_sha256 }
+				: { approval_id: approvalId },
+		)
+		.where(eq(jobs.id, target.jobId));
 	return { approvalId };
 }

@@ -30,14 +30,20 @@ type RunnerAPIClient struct {
 }
 
 type Job struct {
-	ID                string         `json:"id"`
-	UserID            string         `json:"user_id"`
-	CloudIdentityID   *string        `json:"cloud_identity_id"`
-	JobType           string         `json:"job_type"`
-	ClusterID         *string        `json:"cluster_id"`
-	ConfigurationID   *string        `json:"configuration_id"`
-	PlanJobID         *string        `json:"plan_job_id"`
-	PlanSHA256        *string        `json:"plan_sha256"` // digest of the reviewed plan; see plan_binding.go
+	ID              string  `json:"id"`
+	UserID          string  `json:"user_id"`
+	CloudIdentityID *string `json:"cloud_identity_id"`
+	JobType         string  `json:"job_type"`
+	ClusterID       *string `json:"cluster_id"`
+	ConfigurationID *string `json:"configuration_id"`
+	PlanJobID       *string `json:"plan_job_id"`
+	PlanSHA256      *string `json:"plan_sha256"` // digest of the reviewed plan; see plan_binding.go
+	// DestroyPlan marks a PLAN job that plans a teardown (`tofu plan -destroy`) rather than an
+	// apply. The plan it saves is what a bound DESTROY applies (plan_binding.go).
+	DestroyPlan bool `json:"destroy_plan"`
+	// ApprovalID is the person's approval this DEPLOY or DESTROY consumed, if any. A DESTROY that
+	// carries one must also carry its approved destroy plan (plan_binding.go).
+	ApprovalID        *string        `json:"approval_id"`
 	ConfigSnapshot    map[string]any `json:"config_snapshot"`
 	ConfigurationHash *string        `json:"configuration_hash"`
 	// VerifyOverride, when present, is an authorized waiver of failing verification
