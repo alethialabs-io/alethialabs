@@ -4,11 +4,10 @@ name: Release packages
 # (docs/contributing/releasing-packages.md). It runs when a promotion lands on main; a version that
 # is already on npm is skipped, so a run with no new version publishes nothing.
 #
-# Authentication: npm trusted publishing (this workflow's OIDC token) for every package that has
-# this workflow registered as its trusted publisher. The very first release of a package cannot use
-# it — npm attaches a trusted publisher only to a package that already exists — so until then
-# NODE_AUTH_TOKEN comes from the `npm-release` environment's NPM_TOKEN, which only `main` can read.
-# Once every package has its trusted publisher, that secret is deleted.
+# Authentication: npm trusted publishing (this workflow's OIDC token) only. Every published package
+# has this workflow registered as its trusted publisher, and no npm token is stored. A NEW package
+# cannot use it for its very first release (npm attaches a trusted publisher only to a package that
+# already exists); docs/contributing/releasing-packages.md says how to bootstrap one.
 #
 # `id-token: write` (provenance + trusted publishing) is reachable only from push to main and a
 # manual dispatch — never from a pull_request (scripts/check-workflow-oidc-isolation.mjs).
@@ -54,5 +53,3 @@ jobs:
         run: node scripts/release/stage-public-packages.mjs
       - name: Publish new versions (provenance; skips versions already on npm)
         run: node scripts/release/publish-public-packages.mjs
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

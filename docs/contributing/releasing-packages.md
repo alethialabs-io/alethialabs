@@ -82,8 +82,13 @@ Check it locally before a release with `pnpm release:pack` (it builds, stages an
 ## Authentication
 
 The release job authenticates with npm **trusted publishing**: npm trusts this repository's
-`release-packages.yml` workflow by its OIDC identity, so no npm token is stored anywhere. A package
-can only get a trusted publisher once it exists on npm, so the very first release of a package uses
-a short-lived granular token kept as `NPM_TOKEN` in the `npm-release` environment (which only `main`
-can read). After the first release, the package's trusted publisher is set on npmjs.com and the
-token is deleted.
+`release-packages.yml` workflow by its OIDC identity, so no npm token is stored anywhere. Every
+published package has the trusted publisher set on npmjs.com: GitHub Actions,
+`alethialabs-io/alethialabs`, workflow `release-packages.yml`, environment `npm-release`, with
+"Allow npm publish" ticked.
+
+A package can only get a trusted publisher once it exists on npm, so a NEW package's very first
+release needs a token. Create a short-lived granular npm token, store it as `NPM_TOKEN` in the
+`npm-release` environment (which only `main` can read), and add
+`NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` to the publish step for that one release. Then set the
+new package's trusted publisher, remove the line, delete the secret and revoke the token.
