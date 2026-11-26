@@ -75,6 +75,7 @@ function deps(over: Partial<HandlerDeps> = {}): HandlerDeps {
 		findOwnApproval: vi.fn(async () => null),
 		requestApproval: unexpected("requestApproval"),
 		readApproval: unexpected("readApproval"),
+		approvePath: vi.fn(async (_orgId: string, id: string) => `/acme/~/approvals?selected=${id}`),
 		appliedPlanFor: unexpected("appliedPlanFor"),
 		jobStatus: unexpected("jobStatus"),
 		jobLogPage: unexpected("jobLogPage"),
@@ -95,13 +96,46 @@ describe("request_apply", () => {
 		expect(result).toEqual({
 			approval_id: "apr-1",
 			status: "pending",
-			approve_url: "https://console.example/approvals/apr-1",
+			approve_url: "https://console.example/acme/~/approvals?selected=apr-1",
 			digest_prefix: "9f3c1a7e",
 			expires_at: "2026-11-24T12:00:00.000Z",
 			job_id: null,
 		});
 		expect(d.requestApproval).toHaveBeenCalledWith(ACTOR, { planJobId: PLAN, operation: "deploy", reason: "first" });
+		expect(d.approvePath).toHaveBeenCalledWith("org-1", "apr-1");
 		expect(d.queueDeploy).not.toHaveBeenCalled();
+	});
+
+	it("links the org's approvals list absolutely, on the caller's console origin", async () => {
+		// The MCP client shows the link outside the console, so it carries the origin; the path is the
+		// one the approvals API answers as `approve_path` for the caller's org.
+		const d = deps({
+			requestApproval: vi.fn(async () => approval("pending", { id: "apr-7" })),
+			approvePath: vi.fn(async () => "/acme%20co/~/approvals?selected=apr-7"),
+		});
+		const result = await createHandlers(d).request_apply.call(
+			{ plan_job_id: PLAN },
+			{ actor: ACTOR, appOrigin: "https://alethia.internal:8443" },
+		);
+		expect(result.approve_url).toBe("https://alethia.internal:8443/acme%20co/~/approvals?selected=apr-7");
+		expect(d.approvePath).toHaveBeenCalledWith("org-1", "apr-7");
+	});
+
+	it("falls back to the legacy /approvals/<id> link, which redirects, when the org has no slug", async () => {
+		const d = deps({
+			requestApproval: vi.fn(async () => approval("pending")),
+			approvePath: vi.fn(async () => "/approvals/apr-1"),
+		});
+		const result = await createHandlers(d).request_apply.call({ plan_job_id: PLAN }, CTX);
+		expect(result.approve_url).toBe("https://console.example/approvals/apr-1");
+	});
+
+	it("links the approval it started the job from, once consumed", async () => {
+		const d = deps({
+			findOwnApproval: vi.fn(async () => approval("consumed", { consumed_job_id: "deploy-1" })),
+		});
+		const result = await createHandlers(d).request_apply.call({ plan_job_id: PLAN }, CTX);
+		expect(result.approve_url).toBe("https://console.example/acme/~/approvals?selected=apr-1");
 	});
 
 	it("while the approval is still pending: answers pending again and queues nothing", async () => {
@@ -216,7 +250,12 @@ describe("request_destroy", () => {
 		);
 		expect(d.appliedPlanFor).toHaveBeenCalledWith(ACTOR, "proj-1", "env-1");
 		expect(d.requestApproval).toHaveBeenCalledWith(ACTOR, { planJobId: PLAN, operation: "destroy", reason: null });
-		expect(result).toMatchObject({ status: "pending", job_id: null });
+		expect(result).toMatchObject({
+			status: "pending",
+			job_id: null,
+			approve_url: "https://console.example/acme/~/approvals?selected=apr-1",
+		});
+		expect(d.approvePath).toHaveBeenCalledWith("org-1", "apr-1");
 		expect(d.queueDestroy).not.toHaveBeenCalled();
 	});
 
@@ -230,7 +269,11 @@ describe("request_destroy", () => {
 			{ project_id: "proj-1", environment_id: "env-1" },
 			CTX,
 		);
-		expect(result).toMatchObject({ status: "consumed", job_id: "destroy-1" });
+		expect(result).toMatchObject({
+			status: "consumed",
+			job_id: "destroy-1",
+			approve_url: "https://console.example/acme/~/approvals?selected=apr-1",
+		});
 		expect(d.findOwnApproval).toHaveBeenCalledWith(ACTOR, PLAN, "destroy");
 		expect(d.queueDestroy).toHaveBeenCalledTimes(1);
 		expect(d.queueDestroy).toHaveBeenCalledWith({ projectId: "proj-1", environmentId: "env-1", approvalId: "apr-1" });

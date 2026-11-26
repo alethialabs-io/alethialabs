@@ -30,7 +30,7 @@ import { destroyProject, planProject, provisionProject } from "@/app/server/acti
 import { cancelJob } from "@/app/server/actions/jobs";
 import { scanRepo } from "@/app/server/actions/scanner";
 import type { ActionResult } from "@/lib/actions/result";
-import { approvePath } from "@/lib/approvals/http";
+import { approvePathForOrg } from "@/lib/approvals/http";
 import type { ApprovalView } from "@/lib/approvals/read";
 import type { ApplyOperation } from "@/lib/approvals/types";
 import type { Actor } from "@/lib/authz/types";
@@ -60,6 +60,12 @@ export interface HandlerDeps {
 		input: { planJobId: string; operation: ApplyOperation; reason?: string | null },
 	): Promise<ApprovalView>;
 	readApproval(actor: Actor, approvalId: string): Promise<ApprovalView>;
+	/**
+	 * The console path a person opens to decide approval `approvalId` in org `orgId`: the org's
+	 * approvals list with its decision sheet open, or the legacy `/approvals/<id>` (which redirects)
+	 * when the org has no slug. The same path the approvals API answers as `approve_path`.
+	 */
+	approvePath(orgId: string, approvalId: string): Promise<string>;
 	appliedPlanFor(actor: Actor, projectId: string, environmentId: string): Promise<string>;
 	jobStatus(jobId: string): Promise<{ status: string; error_message: string | null }>;
 	jobLogPage(jobId: string, afterId: number, limit: number): Promise<JobLogPage>;
@@ -104,6 +110,7 @@ export const defaultHandlerDeps: HandlerDeps = {
 	findOwnApproval,
 	requestApproval: requestOwnApproval,
 	readApproval: readOwnOrgApproval,
+	approvePath: approvePathForOrg,
 	appliedPlanFor,
 	jobStatus: readJobStatus,
 	jobLogPage: readJobLogPage,
@@ -117,12 +124,22 @@ export const defaultHandlerDeps: HandlerDeps = {
 /** The output `request_apply` / `request_destroy` answer for `view`. */
 type ApprovalRequestResult = z.input<(typeof EXTERNAL_TOOLS)["request_apply"]["outputSchema"]>;
 
-/** `view` as the approval tools answer it, with the job it started when there is one. */
-function approvalResult(view: ApprovalView, ctx: HandlerContext, jobId: string | null): ApprovalRequestResult {
+/**
+ * `view` as the approval tools answer it, with the job it started when there is one. `approve_url` is
+ * absolute — the MCP client shows it outside the console — and is built on the caller's org, which is
+ * the org the approval belongs to (every approval read here is the caller's own).
+ */
+async function approvalResult(
+	deps: HandlerDeps,
+	view: ApprovalView,
+	ctx: HandlerContext,
+	jobId: string | null,
+): Promise<ApprovalRequestResult> {
+	const path = await deps.approvePath(ctx.actor.orgId, view.id);
 	return {
 		approval_id: view.id,
 		status: jobId ? "consumed" : view.status,
-		approve_url: new URL(approvePath(view.id), ctx.appOrigin).toString(),
+		approve_url: new URL(path, ctx.appOrigin).toString(),
 		digest_prefix: view.digest_prefix,
 		expires_at: view.expires_at,
 		job_id: jobId,
@@ -144,15 +161,15 @@ async function requestOrComplete(
 ): Promise<ApprovalRequestResult> {
 	const own = await deps.findOwnApproval(ctx.actor, planJobId, operation);
 	if (own?.status === "consumed" && own.consumed_job_id) {
-		return approvalResult(own, ctx, own.consumed_job_id);
+		return approvalResult(deps, own, ctx, own.consumed_job_id);
 	}
 	const view =
 		own?.status === "approved"
 			? own
 			: await deps.requestApproval(ctx.actor, { planJobId, operation, reason: reason ?? null });
-	if (view.status !== "approved") return approvalResult(view, ctx, null);
+	if (view.status !== "approved") return approvalResult(deps, view, ctx, null);
 	const { jobId } = await queue(view);
-	return approvalResult(view, ctx, jobId);
+	return approvalResult(deps, view, ctx, jobId);
 }
 
 /** The declared tools this module serves: the operations, the job tools, the scan and feedback. */
