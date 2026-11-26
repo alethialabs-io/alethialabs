@@ -67,6 +67,11 @@ const SEGMENT_LABELS: Record<string, string> = {
 	billing: "Billing",
 	usage: "Usage",
 	agent: "Agent",
+	// The three AGT-L2 settings pages. `tokens` and `connected` would fall back to "Tokens" and
+	// "Connected", which name neither page; the crumb is the only thing on screen that does.
+	agents: "Agents",
+	tokens: "Service tokens",
+	connected: "Connected agents",
 	// The support shell, added with #3733. Every other segment here was mapped because the
 	// fallback (`seg[0].toUpperCase() + seg.slice(1)`) does not read as a page name — and these
 	// six were the ones where that mattered least until the console stopped painting page titles.

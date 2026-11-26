@@ -35,6 +35,7 @@ const (
 	RouteOrgRunners                    = "/[org]/~/runners"
 	RouteOrgSettingsAccess             = "/[org]/~/settings/access"
 	RouteOrgSettingsActivity           = "/[org]/~/settings/activity"
+	RouteOrgSettingsAgents             = "/[org]/~/settings/agents"
 	RouteOrgSettingsBillingEarlyAccess = "/[org]/~/settings/billing/early-access"
 	RouteOrgSettingsBillingInvoices    = "/[org]/~/settings/billing/invoices"
 	RouteOrgSettingsBilling            = "/[org]/~/settings/billing"
@@ -57,7 +58,7 @@ const (
 	RouteCliLogin                      = "/cli/login"
 )
 
-// Routes is every pattern above, in manifest order — 43 routes.
+// Routes is every pattern above, in manifest order — 44 routes.
 var Routes = []string{
 	RouteOrgProjectArchitecture,
 	RouteOrgProjectClusters,
@@ -82,6 +83,7 @@ var Routes = []string{
 	RouteOrgRunners,
 	RouteOrgSettingsAccess,
 	RouteOrgSettingsActivity,
+	RouteOrgSettingsAgents,
 	RouteOrgSettingsBillingEarlyAccess,
 	RouteOrgSettingsBillingInvoices,
 	RouteOrgSettingsBilling,
