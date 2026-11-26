@@ -324,10 +324,8 @@ test.describe("Activity — the five filter keys round-trip through the URL (own
 		if (!userId || !orgId) {
 			throw new Error("ownerHobby persona has no userId/orgId — global-setup did not complete");
 		}
-		const project = await seedProject(
-			{ userId, orgId },
-			{ name: `e2e-activity-url-${Date.now()}` },
-		);
+		const projectName = `e2e-activity-url-${Date.now()}`;
+		const project = await seedProject({ userId, orgId }, { name: projectName });
 		const params = new URLSearchParams({
 			search: "grant",
 			actorIds: userId,
@@ -339,10 +337,19 @@ test.describe("Activity — the five filter keys round-trip through the URL (own
 		await expect(
 			owner.page.getByRole("textbox", { name: "Search actor, action or resource…", exact: true }),
 		).toHaveValue("grant", { timeout: 30_000 });
-		// A facet trigger renders a count badge only when something is selected, so "User 1" is
-		// a name that exists ONLY once the URL has been decoded into the store.
-		await expect(owner.page.getByRole("button", { name: /^member 1$/i })).toBeVisible();
-		await expect(owner.page.getByRole("button", { name: /^project 1$/i })).toBeVisible();
+		// Each of these names exists ONLY once the URL has been decoded into the store:
+		//   • Member and Project are `FacetFilter`s, which read `Name` alone until something is
+		//     selected, then name the selection (`Name: A`, #7737) beside a sibling `Clear <Name>`.
+		//     The project's label is the seeded name, so it is pinned exactly; the member's label is
+		//     the server's, so that one asserts the selected form.
+		//   • Events is a `GroupedFilterSheet`, whose trigger still carries a count badge.
+		await expect(
+			owner.page.getByRole("button", { name: `Project: ${projectName}`, exact: true }),
+		).toBeVisible();
+		await expect(owner.page.getByRole("button", { name: /^member: \S/i })).toBeVisible();
+		for (const facet of ["Member", "Project"]) {
+			await expect(owner.page.getByRole("button", { name: `Clear ${facet}`, exact: true })).toBeVisible();
+		}
 		await expect(owner.page.getByRole("button", { name: /^events 1$/i })).toBeVisible();
 	});
 
