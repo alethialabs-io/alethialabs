@@ -13,7 +13,7 @@
 import { headers } from "next/headers";
 import { env } from "next-runtime-env";
 import { getServiceDb } from "@/lib/db";
-import { user } from "@/lib/db-schema";
+import { user } from "@repo/platform/console-refs";
 import { eq } from "drizzle-orm";
 
 /** The identity of an authenticated support-staff member. */
