@@ -104,11 +104,46 @@ describeIfDb("Activity log keyset walk (LST-10)", () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 
+	it("answers universeEmpty on the first page only", async () => {
+		const first = await queryActivityPage(orgId, {}, { limit: LIMIT });
+		expect(first.universeEmpty).toBe(false);
+		const empty = await queryActivityPage(randomUUID(), {}, { limit: LIMIT });
+		expect(empty.universeEmpty).toBe(true);
+		const cursor = first.nextCursor === null ? undefined : (decodeKeysetCursor(first.nextCursor, "integer") ?? undefined);
+		const later = await queryActivityPage(orgId, {}, { limit: LIMIT, cursor });
+		expect(later.universeEmpty).toBeNull();
+	});
+});
+
+describeIfDb("Activity log keyset index (#7539)", () => {
+	// A LARGE org, which is what the index is for. On the walk's nine rows the planner may price
+	// "filter on the smaller (org_id, id) index, then sort nine rows" as cheaper than the ordered
+	// scan — CI did exactly that — and that choice says nothing about whether the index can serve
+	// the order. With a few thousand events in the org, ANALYZEd, sort-then-limit has to read and
+	// sort all of them, so the only plan without a Sort is the one this index makes possible.
+	const orgId = randomUUID();
+	const EVENTS = 3000;
+	const LIMIT = 50;
+
+	beforeAll(async () => {
+		const db = getServiceDb();
+		await db.execute(sql`
+			insert into authz_activity_log (org_id, actor_id, action, resource_type, decision, reason, ts)
+			select ${orgId}::uuid, gen_random_uuid(), 'org:update:' || g, 'project', true, 'lst-7539-plan',
+			       now() - make_interval(secs => g)
+			from generate_series(1, ${EVENTS}::integer) as g`);
+		await db.execute(sql`analyze authz_activity_log`);
+	});
+
+	afterAll(async () => {
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, orgId));
+	});
+
 	/**
 	 * The plan of the Activity rows pass's org + cursor + order shape, built from the same keyset
-	 * helpers `queryActivityPage` uses. Sequential and bitmap scans are switched off for the one
-	 * transaction, so on nine rows the planner still has to choose among index paths — and an
-	 * index that did not match the ORDER BY would show up as a Sort above it.
+	 * helpers `queryActivityPage` uses. Sequential and bitmap scans are off for the one transaction,
+	 * so the planner chooses among index paths only — and an index that did not match the ORDER BY
+	 * would show up as a Sort above it.
 	 */
 	async function planOf(cursor: { at: string; id: string } | undefined): Promise<string> {
 		return getServiceDb().transaction(async (tx) => {
@@ -126,24 +161,14 @@ describeIfDb("Activity log keyset walk (LST-10)", () => {
 		});
 	}
 
-	it("the first page and a cursor page are one index range scan in the contract's order, no sort (#7539)", async () => {
+	it("the first page and a cursor page are one index range scan in the contract's order, no sort", async () => {
 		const first = await planOf(undefined);
 		expect(first).toContain("idx_authz_activity_org_ts_ms_id");
 		expect(first).not.toMatch(/Sort/);
-		const later = await planOf({ at: new Date().toISOString(), id: "1" });
+		const later = await planOf({ at: new Date(Date.now() - 1000_000).toISOString(), id: "1" });
 		expect(later).toContain("idx_authz_activity_org_ts_ms_id");
 		expect(later).not.toMatch(/Sort/);
 		// The cursor bound is an index condition, not a filter over every row of the org.
 		expect(later).toMatch(/Index Cond: .*ROW\(date_trunc/);
-	});
-
-	it("answers universeEmpty on the first page only", async () => {
-		const first = await queryActivityPage(orgId, {}, { limit: LIMIT });
-		expect(first.universeEmpty).toBe(false);
-		const empty = await queryActivityPage(randomUUID(), {}, { limit: LIMIT });
-		expect(empty.universeEmpty).toBe(true);
-		const cursor = first.nextCursor === null ? undefined : (decodeKeysetCursor(first.nextCursor, "integer") ?? undefined);
-		const later = await queryActivityPage(orgId, {}, { limit: LIMIT, cursor });
-		expect(later.universeEmpty).toBeNull();
 	});
 });
