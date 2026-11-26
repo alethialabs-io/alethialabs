@@ -22,7 +22,7 @@ import { orpc } from "@/lib/rpc/client";
 import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import type { ExecutionMetadata, VerifyStatus } from "@/types/jsonb.types";
 import { ApprovalCountdown } from "./approval-countdown";
-import { CredentialGlyph, OperationTag, ProductionPill } from "./approval-marks";
+import { OperationTag, ProductionPill, RequesterMark } from "./approval-marks";
 import { requestedThrough, requesterName } from "./approval-vocabulary";
 
 /** A verify verdict as a status: its tier and its words. */
@@ -66,7 +66,7 @@ export function RequestSection({ approval }: { approval: ApprovalDetail }) {
 				<Fact term="Requested for">{approval.requester_name ?? "Unknown person"}</Fact>
 				<Fact term="Requested through">
 					<span className="flex items-center gap-1.5">
-						<CredentialGlyph credential={approval.requester_credential} />
+						<RequesterMark approval={approval} size={16} />
 						{through.name}
 					</span>
 					{through.kind ? <span className="mt-0.5 block text-ui-sm text-text-secondary">{through.kind}</span> : null}

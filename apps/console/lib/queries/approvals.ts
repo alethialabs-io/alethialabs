@@ -78,6 +78,11 @@ export interface ApprovalListItem {
 	requester_credential_name: string | null;
 	/** The raw credential reference (token id, or OAuth client id) the name was read from. */
 	requester_credential_ref: string | null;
+	/**
+	 * The icon the OAuth client registered in its own metadata document, for a connected agent; null
+	 * for every other credential. Drawn only for an app the agent catalogue does not know.
+	 */
+	requester_credential_icon: string | null;
 	created_at: string;
 	expires_at: string;
 	decided_at: string | null;
@@ -135,7 +140,7 @@ function filterConditions(filter: ApprovalListFilter): (SQL | undefined)[] {
 interface Names {
 	users: Map<string, string | null>;
 	tokens: Map<string, string>;
-	clients: Map<string, string | null>;
+	clients: Map<string, { name: string | null; icon: string | null }>;
 }
 
 /**
@@ -163,13 +168,16 @@ async function namesFor(orgId: string, rows: readonly ApplyApproval[]): Promise<
 					.where(and(inArray(cliServiceTokens.id, tokenIds), eq(cliServiceTokens.organization_id, orgId)))
 			: [],
 		clientIds.length
-			? db.select({ id: oauthClient.clientId, name: oauthClient.name }).from(oauthClient).where(inArray(oauthClient.clientId, clientIds))
+			? db
+					.select({ id: oauthClient.clientId, name: oauthClient.name, icon: oauthClient.icon })
+					.from(oauthClient)
+					.where(inArray(oauthClient.clientId, clientIds))
 			: [],
 	]);
 	return {
 		users: new Map(users.map((u) => [u.id, u.name])),
 		tokens: new Map(tokens.map((t) => [t.id, t.name])),
-		clients: new Map(clients.map((c) => [c.id, c.name])),
+		clients: new Map(clients.map((c) => [c.id, { name: c.name, icon: c.icon }])),
 	};
 }
 
@@ -211,8 +219,9 @@ async function listApprovals(
 				: a.requester_credential === "service_token"
 					? (names.tokens.get(ref) ?? null)
 					: a.requester_credential === "agent_oauth"
-						? (names.clients.get(ref) ?? null)
+						? (names.clients.get(ref)?.name ?? null)
 						: null;
+		const credentialIcon = ref !== null && a.requester_credential === "agent_oauth" ? (names.clients.get(ref)?.icon ?? null) : null;
 		items.push({
 			id: a.id,
 			status: view.status,
@@ -229,6 +238,7 @@ async function listApprovals(
 			requester_credential: a.requester_credential,
 			requester_credential_name: credentialName,
 			requester_credential_ref: ref,
+			requester_credential_icon: credentialIcon,
 			created_at: a.created_at.toISOString(),
 			expires_at: view.expires_at,
 			decided_at: view.decided_at,

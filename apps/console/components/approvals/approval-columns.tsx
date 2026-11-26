@@ -6,7 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { RelativeTime } from "@/components/jobs/columns";
 import type { ApprovalListItem } from "@/lib/queries/approvals";
 import { ApprovalCountdown } from "./approval-countdown";
-import { ApprovalStatusBadge, CredentialGlyph, OperationTag, ProductionPill } from "./approval-marks";
+import { ApprovalStatusBadge, OperationTag, ProductionPill, RequesterMark } from "./approval-marks";
 import { requestedThrough } from "./approval-vocabulary";
 
 /** The row's "what": the operation tag, project / environment, and the Production pill. */
@@ -29,7 +29,7 @@ function RequestedForCell({ row }: { row: ApprovalListItem }) {
 		<span className="flex min-w-0 flex-col">
 			<span className="truncate text-text-primary">{row.requester_name ?? "Unknown person"}</span>
 			<span className="flex items-center gap-1 text-ui-sm text-text-secondary">
-				<CredentialGlyph credential={row.requester_credential} />
+				<RequesterMark approval={row} />
 				<span className="truncate">{through.name}</span>
 			</span>
 		</span>
