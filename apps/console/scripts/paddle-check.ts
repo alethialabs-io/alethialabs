@@ -6,11 +6,11 @@
 //
 //   pnpm creds paddle-sandbox -- pnpm -C apps/console run paddle:check
 //   pnpm creds paddle-live -- pnpm -C apps/console run paddle:check -- --live \
-//     --webhook-url=<the console Paddle webhook URL, lane L3 route> [--json]
+//     --webhook-url=https://alethialabs.io/api/webhooks/paddle --client-token [--json]
 //
 // It reports the environment, each tagged product with its tax category, each catalog price with
 // its amounts, and every notification destination with whether its events are exactly
-// PADDLE_WEBHOOK_EVENTS. Each line is `key: value`; `--json` prints the same report as one JSON
+// PADDLE_WEBHOOK_EVENTS. With `--client-token` the Paddle.js client-side token counts too. Each line is `key: value`; `--json` prints the same report as one JSON
 // object. Exit 0 when the account matches paddle-setup's desired state (the setup plan is empty),
 // 1 when it does not, 2 on a usage error. A live key is refused unless `--live` is given.
 
@@ -29,6 +29,7 @@ import {
 	type PaddleEnvironment,
 	type PaddleKeyEnv,
 	priceDrift,
+	priceEnvVar,
 	readState,
 	resolveKey,
 } from "./paddle-setup";
@@ -74,8 +75,9 @@ export async function runCheck(
 	client: PaddleClient,
 	environment: PaddleEnvironment,
 	webhookUrl: string | undefined,
+	manageClientToken = false,
 ): Promise<CheckReport> {
-	const obs = await readState(client, webhookUrl);
+	const obs = await readState(client, webhookUrl, manageClientToken);
 	const plan = computePlan(obs);
 	const want = [...PADDLE_WEBHOOK_EVENTS].sort().join(",");
 	const destinations = (await client.listNotificationSettings()).map((n) => {
@@ -102,7 +104,7 @@ export async function runCheck(
 			const shown = match ?? active[0] ?? null;
 			const eur = shown?.unit_price_overrides.find((o) => o.unit_price.currency_code === "EUR");
 			return {
-				envVar: d.envVar,
+				envVar: priceEnvVar(d),
 				key: d.key,
 				id: match?.id ?? null,
 				usd: shown ? `${shown.unit_price.amount} ${shown.unit_price.currency_code}` : null,
@@ -147,10 +149,12 @@ export async function runCheckCli(
 	let live = false;
 	let json = false;
 	let webhookUrl: string | undefined;
+	let clientToken = false;
 	for (const a of argv) {
 		if (a === "--") continue;
 		else if (a === "--live") live = true;
 		else if (a === "--json") json = true;
+		else if (a === "--client-token") clientToken = true;
 		else if (a.startsWith("--webhook-url=")) webhookUrl = a.slice("--webhook-url=".length);
 		else {
 			log(`✗ Unknown argument: ${a}`);
@@ -169,7 +173,7 @@ export async function runCheckCli(
 	}
 	// The target environment is printed before anything is read (in JSON it is the `environment` field).
 	if (!json) log(`→ ${describeTarget(key.environment)}`);
-	const report = await runCheck(makeClient(key.key, key.environment), key.environment, webhookUrl);
+	const report = await runCheck(makeClient(key.key, key.environment), key.environment, webhookUrl, clientToken);
 	if (json) log(JSON.stringify(report, null, 2));
 	else for (const line of formatCheck(report)) log(line);
 	return report.matches ? 0 : 1;
