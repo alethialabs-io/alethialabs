@@ -2830,7 +2830,9 @@ CREATE TRIGGER privacy_tombstone_no_truncate
 --  1. READS. factura is ORG-BOUNDED for reads, the early_access_request arm: a row is visible from
 --     the org it was issued to (organization_id = current_org) and from the personal org
 --     (organization_id = current_owner). factura_series names no tenant and is read by nobody but
---     the issuer.
+--     the issuer. A manual document with no organization (L6b: the monthly фактура to Paddle) has
+--     organization_id NULL, which equals nothing, so no app-role session can read it: the operator
+--     reads it through the service role alone.
 --  2. WRITES. Service role only, on both tables: RLS with no write policy, and the app role's write
 --     grants revoked (the payment_holds idiom), so an app-role session cannot take a number, issue a
 --     document or attach a PDF.

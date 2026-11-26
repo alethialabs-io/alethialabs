@@ -40,11 +40,13 @@ function memoryStore(): FacturaStore & { rows: Factura[]; last: number } {
 			store.last = next;
 			const row: Factura = {
 				id: `f${next}`,
-				organizationId: insert.organizationId,
+				organizationId: insert.organizationId ?? null,
+				source: insert.source ?? "stripe",
+				manualKey: insert.manualKey ?? null,
 				number: insert.number,
 				kind: insert.kind,
 				originalFacturaId: null,
-				stripeInvoiceId: insert.stripeInvoiceId,
+				stripeInvoiceId: insert.stripeInvoiceId ?? null,
 				stripeRefundId: null,
 				issueDate: insert.issueDate,
 				chargeableDate: insert.chargeableDate,

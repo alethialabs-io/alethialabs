@@ -1910,7 +1910,31 @@ export interface FacturaSnapshot {
 	reason?: string | null;
 	/** Stripe's own number for the paid invoice, printed as a reference. */
 	stripeInvoiceNumber: string | null;
+	/**
+	 * Where the document came from (L6b). Absent on rows written before the `manual` source existed,
+	 * all of which are `stripe`. Decides the payment note printed on the document.
+	 */
+	source?: "stripe" | "manual";
+	/**
+	 * The VAT treatment the document was issued under (lib/billing/factura/vat-treatment.ts). Absent
+	 * on rows written before L6b, all of which are `unregistered` (Art. 113(9)).
+	 */
+	vatTreatment?: FacturaVatTreatment;
+	/** The VAT rate in percent when VAT is charged (Art. 114(1), point 11); absent or null otherwise. */
+	vatRatePercent?: number | null;
+	/** The operator's reference for a manual document (a contract or payout id), printed as such. */
+	reference?: string | null;
 }
+
+/**
+ * The VAT treatment of a фактура (lib/billing/factura/vat-treatment.ts):
+ *  - `unregistered`: the supplier is not VAT-registered; no VAT, Art. 113(9);
+ *  - `domestic`: a supply in Bulgaria by a registered supplier; VAT at the standard rate;
+ *  - `eu_reverse_charge`: a service to a business in another member state; no VAT, Art. 21(2), the
+ *    recipient accounts for it (reverse charge);
+ *  - `outside_scope`: a service to a business outside the EU; no VAT, Art. 21(2).
+ */
+export type FacturaVatTreatment = "unregistered" | "domestic" | "eu_reverse_charge" | "outside_scope";
 
 // ── Paddle Billing (L1) ───────────────────────────────────────────────────────
 
