@@ -23,7 +23,7 @@ import type {
 	SupportCaseStatus,
 	SupportCaseType,
 } from "@repo/support/enums";
-import { aiUsageLedger, organization, user } from "./db-schema";
+import { aiUsageLedger, organization, user } from "@repo/platform/console-refs";
 import type { getServiceDb } from "./db";
 
 type Db = ReturnType<typeof getServiceDb>;

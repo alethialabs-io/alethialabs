@@ -24,7 +24,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { assertPlatformAdmin } from "@/lib/auth/staff";
 import { getServiceDb } from "@/lib/db";
-import { organizationBilling } from "@/lib/db-schema";
+import { organizationBilling } from "@repo/platform/console-refs";
 import { withPlatformAudit } from "@/lib/platform/audit";
 import { setOrgPlan } from "@/lib/platform/console-client";
 import { MAX_GRANT_DAYS } from "./constants";
