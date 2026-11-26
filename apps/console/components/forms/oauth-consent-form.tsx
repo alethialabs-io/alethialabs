@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { Loader2 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@repo/ui/button";
@@ -127,20 +128,26 @@ export function OAuthConsentForm() {
 						type="button"
 						onClick={() => decide(false)}
 						disabled={isLoading}
-						pending={pending === "deny"}
 						variant="outline"
 						className="flex-1 h-12 text-sm font-medium"
 					>
-						{pending === "deny" ? "Denying…" : "Deny"}
+						{pending === "deny" ? (
+							<Loader2 className="w-4 h-4 animate-spin" />
+						) : (
+							"Deny"
+						)}
 					</Button>
 					<Button
 						type="button"
 						onClick={() => decide(true)}
 						disabled={isLoading}
-						pending={pending === "approve"}
 						className="flex-1 h-12 text-sm font-medium"
 					>
-						{pending === "approve" ? "Approving…" : "Approve"}
+						{pending === "approve" ? (
+							<Loader2 className="w-4 h-4 animate-spin" />
+						) : (
+							"Approve"
+						)}
 					</Button>
 				</div>
 			</div>
