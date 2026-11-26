@@ -10,7 +10,7 @@
 // rules here only decide what the screen OFFERS, so that what is shown is exactly what can be granted.
 
 import type { ConsentContext, ConsentOrg } from "@/lib/agents/consent-context";
-import { AGENT_SCOPES, type AgentScope } from "@/lib/approvals/types";
+import { AGENT_SCOPES, type AgentScope } from "@/lib/approvals/scopes";
 
 /** One organization on the screen: the read's answer plus the role's display name. */
 export interface ConsentOrgView extends ConsentOrg {
