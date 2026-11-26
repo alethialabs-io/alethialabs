@@ -15,10 +15,24 @@ you buy (as an individual or for an organization). The pricing page shows which 
 **Fix:** keep using the Hobby plan. It stays free, with no time limit. To hear when your market
 opens, write to sales@alethialabs.io.
 
-An organization in an EU country other than Bulgaria that has a VAT number can't be charged yet.
-Alethia can give such an organization complimentary Early Access instead: the paid plan with nothing
-charged and nothing owed. Billing starts only after the organization agrees to pay, and the free
-period is never charged. To ask for it, write to sales@alethialabs.io.
+## "Alethia cannot yet invoice a business in this country that has a VAT number."
+
+**Cause:** the organization is billed in an EU country other than Bulgaria and declared a VAT number.
+Alethia is not registered for VAT yet, so it can't invoice that organization.
+
+**Fix:** ask for complimentary Early Access instead. It gives the organization a paid plan with
+nothing to pay: nothing is charged or owed, now or later, and no part of the free period is ever
+charged.
+
+1. Select **Request complimentary Early Access** under the message. You can also open
+   `/<your-org>/~/settings/billing/early-access` in the console.
+2. Choose the plan: Team, AI Plus, or AI Max.
+3. Enter the VAT number. Alethia checks it against the EU's VIES register.
+4. Select **Request complimentary access**.
+
+Alethia reviews each request and replies by email to the organization's owner. You need the
+permission to manage billing to send a request. The page exists only on alethialabs.io, not on a
+self-hosted console.
 
 ## A purchase asks for more information first
 
@@ -29,6 +43,18 @@ The console shows one of these before it starts a purchase:
 | "Accept the current Terms of Service before subscribing." | Accept the terms when the console asks, then try again. |
 | "Tell us whether you are buying as an individual or on behalf of an organization …" | Choose one. The two carry different rights. |
 | "Add a billing address before subscribing." | Add the address on the **Billing** page. |
+| "Tell us whether the organization has a VAT number before subscribing." | Answer the VAT number question. Alethia asks it of organizations billed in an EU country other than Bulgaria. |
+| "Select the US state this purchase is billed in before subscribing." | Choose the state. A purchase billed in the United States needs one. |
+
+## "Alethia cannot take new purchases" from a state or country
+
+| Message | Cause |
+|---|---|
+| "Alethia cannot take new purchases billed to this US state at the moment. …" | This purchase would bring Alethia's sales in that state, in revenue or in number of sales, to the state's sales tax threshold. |
+| "Alethia cannot take new purchases from this country at the moment. …" | This purchase would cross a tax threshold: Bulgaria's VAT registration threshold, or the EU's EUR 10,000 limit on sales to buyers in other EU countries that have no VAT number. |
+
+**Fix:** keep using the Hobby plan. It stays free. To hear when purchases reopen, write to
+sales@alethialabs.io.
 
 ## "Couldn't start the purchase. Billing may not be configured on this deployment"
 
