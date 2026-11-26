@@ -30,9 +30,11 @@ function isEvidenceRead(query: Pick<Query, "queryKey" | "state">): boolean {
 /**
  * Evidence route — the org-wide day-2 "keep proving it" roll-up (#6126, ADR 0005 D1). Decodes the
  * link's filters (the URL half of the filter standard) and prefetches EXACTLY the two reads the
- * client asks for on first paint — the `evidence.page` roll-up for those filters and the first page
- * of the `evidence.waivers` log — in-process through the read router, so the tenant is the org this
- * address names, and a shared filtered link hydrates into the view it shows.
+ * client asks for on first paint — the first page of the `evidence.page` posture walk for those
+ * filters, under the infinite key `useKeysetList` reads (#7755), and the first page of the
+ * `evidence.waivers` log — in-process through the read router, so the tenant is the org this
+ * address names, and a shared filtered link hydrates into the view it shows. Later pages of either
+ * are the browser's.
  *
  * Awaited, because the first paint IS the data; `loading.tsx` covers the window. A prefetch that
  * fails is not dehydrated: the client then shows its skeleton, reads once more in the browser, and
@@ -49,10 +51,14 @@ export default async function EvidenceRoute({
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
 	await Promise.all([
-		queryClient.prefetchQuery({
-			...rpc.evidence.page.queryOptions({ input }),
-			retry: false,
-		}),
+		queryClient.prefetchInfiniteQuery(
+			rpc.evidence.page.infiniteOptions({
+				input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+				initialPageParam: null,
+				getNextPageParam: (last) => last.nextCursor,
+				retry: false,
+			}),
+		),
 		queryClient.prefetchInfiniteQuery({ ...waiversFirstPage(rpc), retry: false }),
 	]);
 

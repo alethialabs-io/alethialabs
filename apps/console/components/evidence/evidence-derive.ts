@@ -7,6 +7,7 @@
 // maps the returned `tone`/`iconKey` to grayscale Tailwind tokens + lucide icons.
 
 import { providerKey } from "@/components/evidence/evidence-query";
+import { compareSortText } from "@/lib/queries/keyset";
 import type {
 	EvidenceEnvRow,
 	EvidenceWaiver,
@@ -185,6 +186,34 @@ export function rowScore(row: EvidenceEnvRow): number {
 	return n;
 }
 
+/** Upper bound of a group's worst score in its sort text — `Number.MAX_SAFE_INTEGER`, 16 digits. */
+const SCORE_CEILING = Number.MAX_SAFE_INTEGER;
+
+/** How much of a project's name its sort text carries — far above any real name, under the cursor's bound. */
+const SORT_LABEL_MAX = 1024;
+
+/**
+ * A project group's position in the posture order, as ONE string: its most-urgent environment's
+ * score (inverted and zero-padded, so a byte-wise ascending compare puts the worst first), then its
+ * lower-cased name. Compared with {@link compareSortText} (UTF-8 bytes, the keyset text mode's
+ * comparator) and tie-broken by the project id, it is a TOTAL order — the one {@link deriveGroups}
+ * sorts by and the one the posture table's keyset cursor carries (lib/queries/evidence-posture.ts).
+ */
+export function groupSortText(group: Pick<RowGroup, "label" | "rows">): string {
+	const worst = Math.min(SCORE_CEILING, Math.max(0, ...group.rows.map(rowScore)));
+	const inverted = String(SCORE_CEILING - worst).padStart(String(SCORE_CEILING).length, "0");
+	return `${inverted} ${group.label.toLowerCase().slice(0, SORT_LABEL_MAX)}`;
+}
+
+/** The posture order over project groups: {@link groupSortText} byte-wise, then the project id. */
+export function compareGroups(a: RowGroup, b: RowGroup): number {
+	const byText = compareSortText(groupSortText(a), groupSortText(b));
+	if (byText !== 0) return byText;
+	const x = a.key.toLowerCase();
+	const y = b.key.toLowerCase();
+	return x < y ? -1 : x > y ? 1 : 0;
+}
+
 /** Filters rows by search + stages + status + providers, groups them by project, and sorts
  * each project's environments worst-first (name tiebreak) with the most-urgent project first. */
 export function deriveGroups(
@@ -225,9 +254,10 @@ export function deriveGroups(
 				a.environmentName.localeCompare(b.environmentName),
 		);
 	}
-	// Order the projects by their most-urgent environment, then by name.
-	const worst = (g: RowGroup) => Math.max(...g.rows.map(rowScore));
-	groups.sort((a, b) => worst(b) - worst(a) || a.label.localeCompare(b.label));
+	// Order the projects by their most-urgent environment, then by name, then by id — the ONE
+	// order the posture table's keyset pages walk (lib/queries/evidence-posture.ts), so a page cut
+	// and this sort can never disagree about which project comes next.
+	groups.sort(compareGroups);
 
 	return { groups, resultCount: filtered.length };
 }

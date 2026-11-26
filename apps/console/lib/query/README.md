@@ -256,7 +256,7 @@ cannot be silenced by deleting the surface. A deviation that genuinely cannot co
 in that script's `FILTER_STANDARD_DEBT` with an owner and a mechanism — it is empty today, and
 it is checked in both directions, so an entry that outlives its finding fails too.
 
-**Three surfaces resolve their query in memory, deliberately, and each says so.** A runner row is
+**Four surfaces resolve their query in memory, deliberately, and each says so.** A runner row is
 a composition of the RLS read (the org's own runners) and the service read (the platform's
 managed fleet, `[]` on hosted), not a table's row, so `queryRunnersPage()` narrows over the
 composed universe rather than in SQL and pages it in memory on the server through the keyset
@@ -264,10 +264,14 @@ contract, the org's default runner pinned first on page one (`lib/queries/runner
 way (the RLS read, the PDP's project visibility, drift and probe evidence) and the status it is
 filtered under is derived from all of it (`lib/queries/clusters.ts`); a project's environments are
 read once for the whole Environments page, whose other panels need every one of them
-(`lib/queries/environments.ts`). What does NOT change is step
+(`lib/queries/environments.ts`). An Evidence posture row is an environment joined with its latest
+verdict, drift scan, security scan and in-force waivers, ordered worst-first by a score derived from
+all of them, so `queryEvidencePosturePage()` orders the whole filtered roll-up and pages it in memory
+— a page's row is a PROJECT GROUP, keyed by the project id, under the keyset text mode
+(`lib/queries/evidence-posture.ts`, #7755). What does NOT change is step
 6: the facet pass is handed the whole universe and never the query, and
-`tests/lib/queries/runners-page.test.ts`, `clusters-page.test.ts` and `environments-page.test.ts`
-assert the option set does not shrink as the query narrows (and, for clusters, that it does shrink
+`tests/lib/queries/runners-page.test.ts`, `clusters-page.test.ts`, `environments-page.test.ts` and
+`evidence-posture-page.test.ts` assert the option set does not shrink as the query narrows (and, for clusters, that it does shrink
 to the project's rows when the scope narrows). Reach for this shape only when the universe is genuinely composed; a single table's
 list page filters in SQL.
 
