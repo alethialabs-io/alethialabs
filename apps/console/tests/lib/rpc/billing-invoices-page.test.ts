@@ -107,5 +107,8 @@ describe("paddleTransactionToInvoiceInfo", () => {
 	it("is not downloadable until Paddle has numbered it, and reads refunded after a refund", () => {
 		expect(paddleTransactionToInvoiceInfo({ ...PADDLE, invoiceNumber: null })).toMatchObject({ number: null, facturaIssued: false });
 		expect(paddleTransactionToInvoiceInfo({ ...PADDLE, refundedAt: new Date() }).status).toBe("refunded");
+		// A billed-but-unpaid invoice is due, not paid; a past-due one is overdue.
+		expect(paddleTransactionToInvoiceInfo({ ...PADDLE, status: "billed" }).status).toBe("open");
+		expect(paddleTransactionToInvoiceInfo({ ...PADDLE, status: "past_due" }).status).toBe("overdue");
 	});
 });
