@@ -1,5 +1,15 @@
 # admin
 
+## 0.1.3
+
+### Patch Changes
+
+- Updated dependencies [0c2b83c]
+- Updated dependencies [6e53e39]
+  - @repo/legal@0.1.2
+  - @repo/platform@0.2.0
+  - @repo/brand@0.1.2
+
 ## 0.1.2
 
 ### Patch Changes
