@@ -10,10 +10,13 @@
 // itself a suspension, so the route showed the generic settings skeleton while the specific one
 // waited. The answer now comes from the query cache, read without a request:
 //
-//   · known (the page or the picker has read it this session) — the exact layout;
-//   · not known (a hard load of this route) — the repository row, which is what the picker shows
-//     while it reads the list itself. A viewer with nothing linked sees that row give way to the
-//     panel; that one case is the cost of drawing at once instead of waiting.
+//   · known — the exact layout. The project settings layout (`[project]/settings/layout.tsx`)
+//     prefetches and hydrates the accounts above this boundary, so every render of this skeleton
+//     under it, a hard load included, has the answer;
+//   · not known (the layout's read failed) — the repository row, which is what the picker shows
+//     while it reads the list itself. A viewer with nothing linked then sees that row give way to
+//     the panel. Before the layout seeded the cache this was every navigation from a route that had
+//     not read the accounts (#7200's accepted cost); now it is only a failed read.
 
 import { useQuery } from "@tanstack/react-query";
 import { orpc } from "@/lib/rpc/client";
