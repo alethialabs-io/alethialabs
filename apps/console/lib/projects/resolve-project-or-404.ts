@@ -15,6 +15,7 @@
 
 import { headers } from "next/headers";
 import { redirect, unstable_rethrow } from "next/navigation";
+import { cache } from "react";
 import { resolveProjectId } from "@/app/server/actions/resolve";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import { signInHref } from "@/lib/auth/sign-in-href";
@@ -65,8 +66,22 @@ export function classifyProjectResolveFailure(e: unknown): ProjectResolveFailure
  * A lost session redirects to sign-in from here, with the address this request was for as the
  * destination (the path `proxy.ts` publishes; a server component is not given it). `redirect()`
  * throws, so that branch never returns. Every other failure is rethrown by the classifier.
+ *
+ * ONCE PER REQUEST (#7736). The `[project]` layout and the page below it both call this with the
+ * same slug in one render; React `cache()` makes the second call join the first's promise, so the
+ * classification above runs once and so does the lookup. What is memoised is the promise, so a
+ * redirect or a rethrown failure is the same answer to both callers, exactly as two separate calls
+ * would have answered.
+ *
+ * This memo is keyed on the slug alone, and that is sound only because of what one render holds:
+ * `currentActor()` builds the actor from the request's session cookie and the org the ADDRESS names
+ * (`lib/authz/guard.ts`), both fixed for the request. Its one other source, `runWithActor`
+ * (`lib/authz/actor-context.ts`), is bound by the MCP route handler, where there is no React render
+ * and `cache()` memoises nothing. Code that binds a different actor inside a render must call
+ * `resolveProjectId` directly: its lookup is keyed on `(user, org, slug)`
+ * (`lookupProjectIdInScope` in `app/server/actions/resolve.ts`), this one is not.
  */
-export async function resolveProjectOr404(slug: string): Promise<string | null> {
+export const resolveProjectOr404 = cache(async (slug: string): Promise<string | null> => {
 	try {
 		return await resolveProjectId(slug);
 	} catch (e) {
@@ -75,4 +90,4 @@ export async function resolveProjectOr404(slug: string): Promise<string | null> 
 		}
 		return null;
 	}
-}
+});
