@@ -38,10 +38,8 @@ import {
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { FEATURE_UPSELLS } from "@/components/settings/upgrade/feature-catalog";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
@@ -50,6 +48,7 @@ import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { authClient } from "@/lib/auth/client";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
 import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import { orpc } from "@/lib/rpc/client";
@@ -265,6 +264,9 @@ export function TeamsList({
 	);
 
 	const [creating, setCreating] = useState(false);
+	// `/` focuses the search while this page is mounted (polish-wave spec §3); called before the
+	// early returns below, as every hook must be.
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const [renaming, setRenaming] = useState<TeamRow | null>(null);
 	const [deleting, setDeleting] = useState<TeamRow | null>(null);
 	// The name the delete confirmation is RENDERING, which outlives `deleting` by one close (the
@@ -385,57 +387,57 @@ export function TeamsList({
 
 	return (
 		<div aria-busy={busy}>
-			<PageToolbar
-				className="mb-4"
-				description="Grant access to a group of members at once."
+			{/* With the upsell as the body there is nothing to filter, so the row carries only the
+			    disabled Create team (F017). */}
+			<ListToolbar
+				search={
+					upsellIsBody
+						? undefined
+						: {
+								value: filters.search,
+								onChange: (v) => set("search", v),
+								placeholder: "Search teams…",
+								inputRef,
+								shortcut,
+							}
+				}
+				facets={
+					upsellIsBody
+						? undefined
+						: [
+								{
+									label: "Size",
+									icon: Users,
+									options: TEAM_SIZE_OPTIONS.map((o) => ({
+										value: o.value,
+										label: o.label,
+										hint: String(counts[o.value] ?? 0),
+									})),
+									value: filters.sizes,
+									onChange: (next: string[]) => set("sizes", next),
+									searchPlaceholder: "Filter size…",
+									emptyText: "No sizes.",
+								},
+							]
+				}
+				reset={upsellIsBody ? undefined : { count: activeFilters, onReset: reset }}
 				actions={createAction}
 			/>
-
-			{!upsellIsBody && (
-				<FilterBar>
-					<FilterSearch
-						value={filters.search}
-						onChange={(v) => set("search", v)}
-						placeholder="Search teams…"
-						className="w-[240px] max-w-[380px] flex-1"
-					/>
-					<FacetFilter
-						label="Size"
-						icon={Users}
-						options={TEAM_SIZE_OPTIONS.map((o) => ({
-							value: o.value,
-							label: o.label,
-							hint: String(counts[o.value] ?? 0),
-						}))}
-						value={filters.sizes}
-						onChange={(next) => set("sizes", next)}
-						searchPlaceholder="Filter size…"
-						emptyText="No sizes."
-					/>
-					<FilterBarReset count={activeFilters} onReset={reset} />
-				</FilterBar>
-			)}
 
 			{/* table */}
 			{rows.length === 0 ? (
 				upsellIsBody ? (
 					<FeatureUpsell feature="teams" />
+				) : list.universeEmpty === false ? (
+					<FilterEmpty noun="teams" onClear={reset} />
 				) : (
 					<EmptyState
 						className="border border-border bg-surface-sunken"
 						icon={<Users />}
-						title={firstRun ? "No teams yet" : "No matching teams"}
-						description={
-							firstRun
-								? "Create one to grant access to a group of members at once."
-								: "No team matches these filters."
-						}
+						title="No teams yet"
+						description="Create one to grant access to a group of members at once."
 						action={
-							!firstRun ? (
-								<Button variant="outline" size="sm" onClick={reset}>
-									Clear filters
-								</Button>
-							) : createReason === null ? (
+							createReason === null ? (
 								<Button variant="outline" size="sm" onClick={() => setCreating(true)}>
 									<Plus size={13} />
 									Create team

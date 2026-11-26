@@ -4,8 +4,9 @@
 // Reusable route-loading skeletons. Each route's `loading.tsx` composes the shapes that match its
 // content so navigation shows instant structure during the server prefetch instead of a blank gap.
 //
-// The kit (#6117): `PageToolbarSkeleton` (`@repo/ui/page-toolbar`) for the row a page opens with,
-// `DataTableSkeleton` (`./data-table-skeleton`) for a table, `SettingsColumnsSkeleton` below for a
+// The kit (#6117): `ListToolbarSkeleton` (`@repo/ui/list-toolbar`) for a list page's one toolbar row
+// (search, facets, actions — polish-wave spec §3), `PageToolbarSkeleton` (`@repo/ui/page-toolbar`)
+// for the actions row of a page with no list, `DataTableSkeleton` (`./data-table-skeleton`) for a table, `SettingsColumnsSkeleton` below for a
 // two-up settings page, and the panel shape below. A form draws its own loading form from its own
 // layout (`AbuseFormSkeleton`, `SubmitCaseFormSkeleton`) — a generic field stack was 313px off one
 // (#6354). There is no title skeleton: the console has no page titles, and a skeleton that draws

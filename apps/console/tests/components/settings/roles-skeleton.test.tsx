@@ -52,8 +52,9 @@ describe("RolesSkeleton — the page's own parts", () => {
 		const field = render(<FilterSearch value="" onChange={() => {}} />).container.firstElementChild;
 		const fieldHeight = heightToken(field);
 		expect(fieldHeight).toBeDefined();
-		// The filter bar's first placeholder is the search box's.
-		const bar = container.querySelector('[data-slot="roles-skeleton-filter-bar"]');
+		// The toolbar row's first placeholder is the search box's.
+		const bar = container.querySelector('[data-slot="list-toolbar-skeleton"]');
+		expect(bar?.firstElementChild?.getAttribute("data-part")).toBe("search");
 		expect(heightToken(bar?.firstElementChild ?? null)).toBe(fieldHeight);
 	});
 

@@ -4,7 +4,7 @@
 // No "use client": the roles route's `loading.tsx` renders this, and it is a server component.
 
 import type { ReactNode } from "react";
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import {
@@ -59,18 +59,9 @@ function IconSlot({ size }: { size: number }) {
 }
 
 /**
- * The search box's placeholder. `FilterSearch` is a 36px (`h-9`) field, and the bar that stood in
- * for it was 32px, which put the whole master/detail 4px low (#6353). Same height, same width
- * classes.
- */
-function SearchSlot() {
-	return <Skeleton className="h-9 w-[240px] max-w-[380px] flex-1 rounded-sm" />;
-}
-
-/**
  * The loading form of the Roles page (`RolesManager`), drawn from the page's own parts
- * (`roles-parts.ts`) so it cannot drift from it (#6129, #6353 — RUBRIC B2): the toolbar (count,
- * one line, Create role), the filter bar (search, Kind), then the master/detail — the 260px rail
+ * (`roles-parts.ts`) so it cannot drift from it (#6129, #6353 — RUBRIC B2): the one toolbar row
+ * (`ListToolbarSkeleton` — search, Kind, then Create role on the right), then the master/detail — the 260px rail
  * with its two buckets, and the detail panel showing the role the page opens on.
  *
  * That role is the first built-in, a registry template, so the panel draws its real header and its
@@ -83,11 +74,7 @@ export function RolesSkeleton() {
 	const granted = new Set(role.permissionKeys);
 	return (
 		<div aria-busy data-slot="roles-skeleton">
-			<PageToolbarSkeleton className="mb-4" actions={1} />
-			<div aria-hidden data-slot="roles-skeleton-filter-bar" className="mb-4 flex flex-wrap items-center gap-2.5">
-				<SearchSlot />
-				<Skeleton className="h-8 w-28 rounded-md" />
-			</div>
+			<ListToolbarSkeleton facets={1} actions={1} />
 			<div aria-hidden data-slot="roles-skeleton-grid" className={ROLES_GRID_CLASS}>
 				<div data-slot="roles-skeleton-rail" className={RAIL_CLASS}>
 					<div className={RAIL_HEADING_CLASS}>

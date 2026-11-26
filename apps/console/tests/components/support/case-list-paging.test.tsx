@@ -214,7 +214,7 @@ describe("CaseList paging", () => {
 		// The filtered page landed (a filter is active) and the server says the scope holds nothing.
 		expect(casesAsked().at(-1)).toEqual({ bucket: "all", severity: ["urgent"] });
 		expect(screen.getByText("No cases yet")).toBeInTheDocument();
-		expect(screen.queryByText("No cases match these filters")).toBeNull();
+		expect(screen.queryByText("No cases match these filters.")).toBeNull();
 	});
 
 	it("a filtered empty in an org that has cases offers to reset the filters", async () => {
@@ -227,7 +227,7 @@ describe("CaseList paging", () => {
 
 		act(() => useSupportFilters.getState().set("severity", ["urgent"]));
 
-		expect(await screen.findByText("No cases match these filters")).toBeInTheDocument();
+		expect(await screen.findByText("No cases match these filters.")).toBeInTheDocument();
 		expect(screen.queryByText("No cases yet")).toBeNull();
 	});
 });

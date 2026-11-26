@@ -7,8 +7,8 @@
 // measured a 494px skeleton under an 807px abuse form, a 415px row stack over a 139px list, a 350px
 // thread panel over a 134px one, and a submit skeleton with no cards under two columns of them).
 //
-// - abuse: the form's frame, its toolbar copy, its three ruled sections field for field, and the
-//   description box's floor;
+// - abuse: the form's frame (no toolbar row — the description line is gone, polish-wave §3), its
+//   three ruled sections field for field, and the description box's floor;
 // - submit: the wizard's frame, the same stepper, step 1's heading and its five type cards in the
 //   same grid with the same copy, and the button row;
 // - my cases: the answered list is a real `ul`/`li` (an open-ended list, whose bottom edge a
@@ -120,25 +120,26 @@ describe("~/support/abuse: the skeleton is the form's layout (#6354, B2)", () =>
 	const real = () => render(<AbuseForm orgSlug="acme" defaultEmail="a@example.test" />).container.querySelector("form");
 	const skeleton = () => render(<AbuseFormSkeleton />).container.firstElementChild;
 
-	it("has the form's frame and its five parts, each in the part's own box", () => {
+	it("has the form's frame and its four parts, each in the part's own box", () => {
 		const form = real();
 		const sk = skeleton();
 		expect(classes(sk)).toEqual(classes(form));
-		// The toolbar, the three sections (two of them ruled), the submit row.
-		expect(kids(sk)).toHaveLength(5);
+		// The three sections (two of them ruled), the submit row.
+		expect(kids(sk)).toHaveLength(4);
 		expect(kids(sk).map((c) => classes(c))).toEqual(kids(form).map((c) => classes(c)));
 	});
 
-	it("carries the toolbar's real copy, so it wraps where the page's does", () => {
-		const copy = (root: Element | null) => root?.querySelector('[data-slot="page-toolbar-description"]')?.textContent;
-		expect(copy(skeleton())).toBeTruthy();
-		expect(copy(skeleton())).toBe(copy(real()));
+	it("draws no toolbar row and no description line, in the form or its skeleton (polish-wave §3)", () => {
+		for (const root of [real(), skeleton()]) {
+			expect(root?.querySelector('[data-slot="page-toolbar"], [data-slot="page-toolbar-skeleton"]')).toBeNull();
+			expect(root?.querySelector('[data-slot="page-toolbar-description"]')).toBeNull();
+		}
 	});
 
 	it("draws every section field for field: the controls, the hint and the reserved message lines", () => {
 		const form = real();
 		const sk = skeleton();
-		for (let i = 1; i <= 3; i++) {
+		for (let i = 0; i <= 2; i++) {
 			const r = kids(form)[i];
 			const s = kids(sk)[i];
 			expect(kids(s), `section ${i}'s field count`).toHaveLength(kids(r).length);
@@ -151,7 +152,7 @@ describe("~/support/abuse: the skeleton is the form's layout (#6354, B2)", () =>
 		expect(controls).toBe(5);
 		expect(sk?.querySelectorAll('[data-slot="skeleton"].h-9.w-full').length).toBe(controls);
 		// The resource field's hint line.
-		expect(kids(kids(sk)[1])[1].querySelector(".h-4")).not.toBeNull();
+		expect(kids(kids(sk)[0])[1].querySelector(".h-4")).not.toBeNull();
 	});
 
 	it("marks the fields a report can be filed without, and offers an evidence upload (G-15)", () => {
@@ -162,9 +163,9 @@ describe("~/support/abuse: the skeleton is the form's layout (#6354, B2)", () =>
 		);
 		expect(form?.querySelector('input[type="file"]')).not.toBeNull();
 		// The skeleton draws the evidence field where the form has it: last in the description section.
-		const field = kids(kids(skeleton())[2]).at(-1);
+		const field = kids(kids(skeleton())[1]).at(-1);
 		expect(field?.querySelector('[data-slot="skeleton"].h-8')).not.toBeNull();
-		const realField = kids(kids(form)[2]).at(-1);
+		const realField = kids(kids(form)[1]).at(-1);
 		for (const line of [ATTACHMENT_HINT, ATTACHMENTS_NOT_KEPT]) {
 			expect(realField?.textContent).toContain(line);
 			expect(field?.textContent).toContain(line);

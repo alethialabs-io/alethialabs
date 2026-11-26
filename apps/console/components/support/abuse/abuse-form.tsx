@@ -20,7 +20,6 @@ import { supportAbuseCategory } from "@/lib/db/schema/enums";
 import { SUPPORT_ABUSE_CATEGORY_LABELS } from "@/lib/validations/support";
 import type { WizardEnvironment, WizardLocation } from "@/lib/wizard/types";
 import { useWizardEngine } from "@/lib/wizard/use-wizard";
-import { PageToolbar } from "@repo/ui/page-toolbar";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -83,8 +82,6 @@ const HINT = "text-xs text-muted-foreground";
  * — the height its placeholder in the skeleton draws (`h-40`; a test holds the two together).
  */
 const DESCRIPTION_BOX = "min-h-40";
-const DESCRIPTION =
-	"Flag phishing, malware, spam, copyright, or other policy violations. Our trust & safety team reviews every report.";
 
 /** Who is filing the report, relative to the abusive resource. */
 const RELATIONSHIP_LABELS: Record<"third_party" | "affected_party", string> = {
@@ -153,7 +150,6 @@ export function AbuseForm({ orgSlug, defaultEmail, viewerId }: AbuseFormProps) {
 
 	return (
 		<form onSubmit={onSubmit} className={FORM} noValidate>
-			<PageToolbar description={DESCRIPTION} />
 			{wizard.restored ? <WizardRestoredNotice onStartOver={wizard.discard} /> : null}
 
 			<section className={SECTION}>
@@ -316,16 +312,14 @@ function EvidenceSkeleton() {
 }
 
 /**
- * The abuse-report route's loading form (#6354, B2): the form's own frame, its real line of copy
- * (static, so it wraps where the page's does), each section with its rule and each field at its
+ * The abuse-report route's loading form (#6354, B2): the form's own frame (no toolbar row: the
+ * page has no description line and no page-level action, polish-wave spec §3), each section with its rule and each field at its
  * control's height — the selects and inputs `h-9`, the description at its floor — and the submit
  * row. Built from the constants the form renders with, so the two cannot disagree.
  */
 export function AbuseFormSkeleton() {
 	return (
 		<SkeletonRoot className={FORM}>
-			<PageToolbar description={DESCRIPTION} />
-
 			<div className={SECTION}>
 				<FieldSkeleton control={cn("h-9", NARROW)} />
 				<FieldSkeleton control={cn("h-9", NARROW)} hint />

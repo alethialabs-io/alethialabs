@@ -33,16 +33,15 @@ import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useSsoFilters } from "@/lib/stores/use-settings-filters";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { Spinner } from "@repo/ui/spinner";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
@@ -99,6 +98,8 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 	const [deleting, setDeleting] = useState<SsoProviderRow | null>(null);
 	// The name the confirmation is RENDERING, which outlives `deleting` by one close.
 	const [deletingName, setDeletingName] = useState("");
+	// `/` focuses the search while this page is mounted (polish-wave spec §3).
+	const { inputRef, shortcut } = useListSearchShortcut();
 
 	// Filtered SERVER-SIDE by `sso.providers`. `isPlaceholderData` is the other half of the hook's
 	// `keepPreviousData` (lib/query/README.md, step 5): the rows stay while the next query loads,
@@ -142,8 +143,44 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 
 	return (
 		<div className="space-y-4" aria-busy={busy}>
-			<PageToolbar
-				description="Identity providers your members can sign in through."
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (v) => set("search", v),
+					placeholder: "Search providers…",
+					inputRef,
+					shortcut,
+				}}
+				facets={[
+					{
+						label: "Protocol",
+						icon: KeyRound,
+						options: SSO_TYPE_OPTIONS.map((o) => ({
+							value: o.value,
+							label: o.label,
+							hint: String(counts.types[o.value] ?? 0),
+						})),
+						value: filters.types,
+						onChange: (next: string[]) => set("types", next),
+						searchPlaceholder: "Filter protocol…",
+						emptyText: "No protocols.",
+					},
+					{
+						label: "Status",
+						icon: ShieldCheck,
+						options: SSO_STATUS_OPTIONS.map((o) => ({
+							value: o.value,
+							label: o.label,
+							hint: String(counts.statuses[o.value] ?? 0),
+						})),
+						value: filters.statuses,
+						onChange: (next: string[]) => set("statuses", next),
+						searchPlaceholder: "Filter status…",
+						emptyText: "No statuses.",
+					},
+				]}
+				extra={providersQuery.isFetching ? <Spinner className="size-3.5 text-text-tertiary" /> : undefined}
+				reset={{ count: activeFilters, onReset: reset }}
 				actions={
 					<DisabledReason reason={writeReason}>
 						<Button size="sm" onClick={connect}>
@@ -153,44 +190,6 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 					</DisabledReason>
 				}
 			/>
-
-			<FilterBar
-				end={providersQuery.isFetching ? <Spinner className="size-3.5 text-text-tertiary" /> : undefined}
-			>
-				<FilterSearch
-					value={filters.search}
-					onChange={(v) => set("search", v)}
-					placeholder="Search providers…"
-					className="w-[240px] max-w-[380px] flex-1"
-				/>
-				<FacetFilter
-					label="Protocol"
-					icon={KeyRound}
-					options={SSO_TYPE_OPTIONS.map((o) => ({
-						value: o.value,
-						label: o.label,
-						hint: String(counts.types[o.value] ?? 0),
-					}))}
-					value={filters.types}
-					onChange={(next) => set("types", next)}
-					searchPlaceholder="Filter protocol…"
-					emptyText="No protocols."
-				/>
-				<FacetFilter
-					label="Status"
-					icon={ShieldCheck}
-					options={SSO_STATUS_OPTIONS.map((o) => ({
-						value: o.value,
-						label: o.label,
-						hint: String(counts.statuses[o.value] ?? 0),
-					}))}
-					value={filters.statuses}
-					onChange={(next) => set("statuses", next)}
-					searchPlaceholder="Filter status…"
-					emptyText="No statuses."
-				/>
-				<FilterBarReset count={activeFilters} onReset={reset} />
-			</FilterBar>
 
 			{providersQuery.isError && providers === undefined ? (
 				// A failed read is not an empty list (B4).
@@ -202,33 +201,22 @@ export function SsoManager({ bootstrap: initial }: { bootstrap: SsoBootstrap }) 
 			) : providers === undefined ? (
 				// Pending, never empty: the empty state below is only ever an ANSWER (B3).
 				<PanelSkeleton lines={5} />
+			) : providers.length === 0 && activeFilters > 0 ? (
+				// Filtered empty: the universe holds providers, the filters exclude them all.
+				<FilterEmpty noun="identity providers" onClear={reset} />
 			) : providers.length === 0 ? (
 				<EmptyState
 					className="border border-border bg-surface"
 					icon={<KeyRound />}
-					title={
-						activeFilters > 0
-							? "No matching providers"
-							: "No identity provider connected"
-					}
-					description={
-						activeFilters > 0
-							? "No identity provider matches these filters."
-							: "Connect your IdP (Okta, Entra ID, OneLogin…) so your team signs in with SSO."
-					}
+					title="No identity provider connected"
+					description="Connect your IdP (Okta, Entra ID, OneLogin…) so your team signs in with SSO."
 					action={
-						activeFilters > 0 ? (
-							<Button variant="outline" size="sm" onClick={reset}>
-								Clear filters
+						<DisabledReason reason={writeReason}>
+							<Button size="sm" onClick={connect}>
+								<Plus size={13} />
+								Connect provider
 							</Button>
-						) : (
-							<DisabledReason reason={writeReason}>
-								<Button size="sm" onClick={connect}>
-									<Plus size={13} />
-									Connect provider
-								</Button>
-							</DisabledReason>
-						)
+						</DisabledReason>
 					}
 				/>
 			) : (

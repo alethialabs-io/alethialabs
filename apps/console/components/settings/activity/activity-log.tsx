@@ -33,10 +33,10 @@ import {
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
-import { useHydrated } from "@repo/ui/use-hydrated";
 import { useMembersQuery } from "@/lib/query/use-activity-query";
 import { normalizeActivityQuery } from "@/lib/query/activity-query";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { orpc } from "@/lib/rpc/client";
 import { RegionError } from "@repo/ui/region-error";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
@@ -50,11 +50,8 @@ import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
 import { GroupedFilterSheet } from "@repo/ui/grouped-filter-sheet";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -174,7 +171,8 @@ export function ActivityLog({
 		useActivityFilters.setState({ filters: linkFilters });
 	}, [linkFilters]);
 	const filters = urlRead ? storeFilters : linkFilters;
-	const hydrated = useHydrated();
+	// `/` focuses the search while this page is mounted (polish-wave spec §3).
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE, { urlRead });
 
 	// The default window is resolved ONCE — by the route when it prefetched (so the key matches the
@@ -355,38 +353,70 @@ export function ActivityLog({
 	});
 	const exporting = exportCsv.isPending;
 
-	// The topbar's project switcher reads the same projects query and may have fetched it by the
-	// time this feed hydrates; the server rendered "this project". Name it only once hydration is
-	// over, or React discards the page's server HTML with #418 (see `useHydrated`, #5786).
-	const projectName = projectId && hydrated ? lookups.projectName.get(projectId) : undefined;
-
 	// Refused while the page is open (the viewer's `view_activity` went away): the no-access render,
 	// never the failure below and never an empty feed (B4).
 	if (readRefusalOf(activity.query.error) === "forbidden") return <ActivityNoAccess />;
 
 	return (
 		<div aria-busy={busy}>
-			{/* The page opens with its toolbar, not a heading that repeats the breadcrumb (R6 E-28):
-			    one line saying what the feed is, and Export. No count: the feed is keyset-paged, so a
-			    figure could only be the rows LOADED so far, which reads as a total (#7481).
-			    Export dumps the WHOLE org log, so it only belongs on the org-scoped feed; when the plan
-			    or the role does not allow it, it is disabled WITH the reason (R6 E-09), which a
-			    disabled button's `title` never showed anyone. */}
-			<PageToolbar
-				className="mb-4"
-				description={
-					projectId ? (
-						<>
-							Activity in{" "}
-							<span className="font-medium text-text-secondary">
-								{projectName ?? "this project"}
-							</span>
-							.
-						</>
-					) : (
-						"Every recorded action and access decision in this organization."
-					)
+			{/* The page opens with its one toolbar row, not a heading that repeats the breadcrumb
+			    (R6 E-28) and no description line (polish-wave spec §3). No count: the feed is
+			    keyset-paged, so a figure could only be the rows LOADED so far, which reads as a total
+			    (#7481). Export dumps the WHOLE org log, so it only belongs on the org-scoped feed; when
+			    the plan or the role does not allow it, it is disabled WITH the reason (R6 E-09), which
+			    a disabled button's `title` never showed anyone. */}
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (v) => set("search", v),
+					placeholder: "Search actor, action or resource…",
+					inputRef,
+					shortcut,
+				}}
+				facets={[
+					{
+						// "Member", Settings' word for a person in the org (R6 E-25); the facet lists members.
+						label: "Member",
+						icon: Users,
+						options: userOptions,
+						value: filters.actorIds,
+						onChange: (next: string[]) => set("actorIds", next),
+						searchPlaceholder: "Search members…",
+						emptyText: "No members.",
+					},
+					// Project scope is locked when the feed is pinned to a project — hide the facet.
+					...(projectId
+						? []
+						: [
+								{
+									label: "Project",
+									icon: Boxes,
+									options: projectOptions,
+									value: filters.projectIds,
+									onChange: (next: string[]) => set("projectIds", next),
+									searchPlaceholder: "Search projects…",
+									emptyText: "No projects.",
+								},
+							]),
+				]}
+				dateRange={
+					<>
+						<QuickRangeFilter label={rangeLabel} value={range} onChange={(r, l) => applyRange(r, l)} />
+						<DateRangeFilter value={range} onChange={(r) => applyRange(r, null)} />
+					</>
 				}
+				extra={
+					<GroupedFilterSheet
+						label="Events"
+						icon={ListFilter}
+						groups={eventGroups}
+						value={filters.eventTokens}
+						onChange={(next) => set("eventTokens", next)}
+						title="Filter by event"
+						description="Show only the event types you care about."
+					/>
+				}
+				reset={{ count: activeFilters, onReset: reset }}
 				actions={
 					!projectId && exportEntitled !== null ? (
 						<DisabledReason
@@ -412,56 +442,6 @@ export function ActivityLog({
 					) : undefined
 				}
 			/>
-
-			<FilterBar>
-				<FilterSearch
-					value={filters.search}
-					onChange={(v) => set("search", v)}
-					placeholder="Search actor, action or resource…"
-					className="w-[240px] max-w-[380px] flex-1"
-				/>
-				<QuickRangeFilter
-					label={rangeLabel}
-					value={range}
-					onChange={(r, l) => applyRange(r, l)}
-				/>
-				<DateRangeFilter
-					value={range}
-					onChange={(r) => applyRange(r, null)}
-				/>
-				<FacetFilter
-					// "Member", Settings' word for a person in the org (R6 E-25); the facet lists members.
-					label="Member"
-					icon={Users}
-					options={userOptions}
-					value={filters.actorIds}
-					onChange={(next) => set("actorIds", next)}
-					searchPlaceholder="Search members…"
-					emptyText="No members."
-				/>
-				{/* Project scope is locked when the feed is pinned to a project — hide the facet. */}
-				{!projectId && (
-					<FacetFilter
-						label="Project"
-						icon={Boxes}
-						options={projectOptions}
-						value={filters.projectIds}
-						onChange={(next) => set("projectIds", next)}
-						searchPlaceholder="Search projects…"
-						emptyText="No projects."
-					/>
-				)}
-				<GroupedFilterSheet
-					label="Events"
-					icon={ListFilter}
-					groups={eventGroups}
-					value={filters.eventTokens}
-					onChange={(next) => set("eventTokens", next)}
-					title="Filter by event"
-					description="Show only the event types you care about."
-				/>
-				<FilterBarReset count={activeFilters} onReset={reset} />
-			</FilterBar>
 
 			{firstPageFailed ? (
 				// A failed FIRST load is an error, never an empty feed. Once rows are on screen a later

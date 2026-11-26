@@ -122,19 +122,19 @@ describe("roles: a search that matches nothing", () => {
 		const { container } = render(<RolesManager />, { wrapper: queryWrapper() });
 
 		expect(container.querySelector('[data-slot="empty"]')).not.toBeNull();
-		expect(screen.getByText("No roles match")).toBeInTheDocument();
+		expect(screen.getByText("No roles match these filters.")).toBeInTheDocument();
 		// The excluded role is not still on screen in the detail pane.
 		expect(screen.queryByText("Read-only access.")).toBeNull();
 
 		await user.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useRolesFilters.getState().filters.search).toBe("");
-		expect(screen.queryByText("No roles match")).toBeNull();
+		expect(screen.queryByText("No roles match these filters.")).toBeNull();
 	});
 
 	it("does not render it when the search matches a role", () => {
 		openOnSearch("view");
 		render(<RolesManager />, { wrapper: queryWrapper() });
-		expect(screen.queryByText("No roles match")).toBeNull();
+		expect(screen.queryByText("No roles match these filters.")).toBeNull();
 		expect(screen.getAllByText("Viewer").length).toBeGreaterThan(0);
 	});
 
@@ -146,7 +146,7 @@ describe("roles: a search that matches nothing", () => {
 				? settled(custom(5))
 				: { rows: [], isPending: false, isPlaceholderData: true };
 		render(<RolesManager />, { wrapper: queryWrapper() });
-		expect(screen.queryByText("No roles match")).toBeNull();
+		expect(screen.queryByText("No roles match these filters.")).toBeNull();
 	});
 
 	it("does not claim 'no match' before the first answer for a restored search", () => {
@@ -156,14 +156,16 @@ describe("roles: a search that matches nothing", () => {
 				? settled(custom(5))
 				: { rows: [], isPending: true, isPlaceholderData: false };
 		render(<RolesManager />, { wrapper: queryWrapper() });
-		expect(screen.queryByText("No roles match")).toBeNull();
+		expect(screen.queryByText("No roles match these filters.")).toBeNull();
 	});
 
 	it("states no count in the empty state — the console carries no list totals", () => {
 		openOnSearch("zqxvjk");
 		rolesQuery.answer = (search) => settled(search === undefined ? custom(5) : []);
 		render(<RolesManager />, { wrapper: queryWrapper() });
-		expect(screen.getByText("No built-in or custom role matches these filters.")).toBeInTheDocument();
+		const empty = screen.getByText("No roles match these filters.").closest('[data-slot="empty"]');
+		expect(empty).not.toBeNull();
+		expect(empty?.textContent).not.toMatch(/\d/);
 		expect(screen.queryByText(/None of the \d+/)).toBeNull();
 	});
 });
