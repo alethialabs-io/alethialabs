@@ -25,12 +25,7 @@ const { getServiceDb, chargesList } = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => ({ getServiceDb }));
 vi.mock("@/lib/billing/stripe", () => ({ getStripe: () => ({ charges: { list: chargesList } }) }));
 
-import {
-	type InvoiceListRow,
-	paddleInvoiceStatus,
-	queryInvoicesPage,
-	queryTransactionsPage,
-} from "@/lib/queries/billing";
+import { type InvoiceListRow, queryInvoicesPage, queryTransactionsPage } from "@/lib/queries/billing";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@/lib/queries/keyset";
 import { mockChainDb, type RecordedChain } from "./_list-query-db";
 
@@ -344,20 +339,54 @@ describe("queryInvoicesPage — Paddle invoices on the same page and the same cu
 		expect(page.facets?.status).toHaveLength(3);
 	});
 
-	it("the Paddle half reads only the org's billed and completed transactions", async () => {
+	it("the Paddle half reads the org's transactions Paddle invoiced, past-due ones included", async () => {
 		const { db, chains } = mockChainDb([[], [], [], []]);
 		getServiceDb.mockReturnValue(db);
 		await queryInvoicesPage("org-1", {}, { limit: 10 });
 		for (const chain of [chains[1], chains[3]]) {
-			expect(whereLeaves(chain)).toEqual(expect.arrayContaining(["org-1", "billed", "completed"]));
+			expect(whereLeaves(chain)).toEqual(
+				expect.arrayContaining(["org-1", "billed", "past_due", "paid", "completed", "canceled"]),
+			);
+			expect(whereLeaves(chain)).not.toContain("draft");
+			expect(whereLeaves(chain)).not.toContain("ready");
 		}
 	});
-});
 
-describe("paddleInvoiceStatus", () => {
-	it("is refunded after a refund or a chargeback, else paid", () => {
-		expect(paddleInvoiceStatus({ refundedAt: null, chargebackAt: null })).toBe("paid");
-		expect(paddleInvoiceStatus({ refundedAt: new Date(), chargebackAt: null })).toBe("refunded");
-		expect(paddleInvoiceStatus({ refundedAt: null, chargebackAt: new Date() })).toBe("refunded");
+	it("an open/overdue-only filter matches no Stripe-era row and never sends those values to its enum", async () => {
+		const { db, chains } = mockChainDb([[], [], [], []]);
+		getServiceDb.mockReturnValue(db);
+		await queryInvoicesPage("org-1", { status: ["open", "overdue"] }, { limit: 10 });
+		expect(whereLeaves(chains[0])).not.toContain("open");
+		expect(whereLeaves(chains[0])).not.toContain("overdue");
+		expect(whereLeaves(chains[1])).toEqual(expect.arrayContaining(["open", "overdue"]));
+	});
+
+	it("a mixed filter passes only the stored statuses to the Stripe-era pass", async () => {
+		const { db, chains } = mockChainDb([[], [], [], []]);
+		getServiceDb.mockReturnValue(db);
+		await queryInvoicesPage("org-1", { status: ["overdue", "paid"] }, { limit: 10 });
+		expect(whereLeaves(chains[0])).toContain("paid");
+		expect(whereLeaves(chains[0])).not.toContain("overdue");
+	});
+
+	it("the status facet carries the Paddle-only open and overdue options", async () => {
+		const { db } = mockChainDb([
+			[],
+			[],
+			[{ status: "paid", n: 1 }],
+			[
+				{ status: "open", n: 2 },
+				{ status: "overdue", n: 1 },
+			],
+		]);
+		getServiceDb.mockReturnValue(db);
+		const page = await queryInvoicesPage("org-1", {}, { limit: 10 });
+		expect(page.facets?.status).toEqual(
+			expect.arrayContaining([
+				{ value: "paid", label: null, count: 1 },
+				{ value: "open", label: null, count: 2 },
+				{ value: "overdue", label: null, count: 1 },
+			]),
+		);
 	});
 });

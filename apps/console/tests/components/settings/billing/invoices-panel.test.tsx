@@ -182,10 +182,10 @@ describe("InvoicesPanel states and counts (#7493, CON-PB2)", () => {
 
 describe("invoiceStatusCounts reads the first page's facet pass", () => {
 	it("gives every status an entry, from the server's counts", () => {
-		expect(invoiceStatusCounts(FACETS)).toEqual({ paid: 3, refunded: 0, void: 0 });
+		expect(invoiceStatusCounts(FACETS)).toEqual({ open: 0, overdue: 0, paid: 3, refunded: 0, void: 0 });
 	});
 
 	it("counts nothing before a first page has landed", () => {
-		expect(invoiceStatusCounts(null)).toEqual({ paid: 0, refunded: 0, void: 0 });
+		expect(invoiceStatusCounts(null)).toEqual({ open: 0, overdue: 0, paid: 0, refunded: 0, void: 0 });
 	});
 });

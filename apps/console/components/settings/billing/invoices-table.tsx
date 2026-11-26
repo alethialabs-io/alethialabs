@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Invoices table (Billing) — a presentational DataTable of the org's mirrored invoices with
-// number, paid date, billing period, status, total, and per-row actions (Preview + a
+// number, date (paid, or issued for an unpaid Paddle invoice), billing period, status, total, and per-row actions (Preview + a
 // download of our stored фактура PDF). Read-only; the parent owns the data + the preview dialog.
 // Server mode only (lib/query/README.md → "Paging", #7493): the Invoices page renders these columns
 // over its keyset list, and the preview over the five rows it holds; neither pages in the browser.
@@ -27,7 +27,10 @@ import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 // An invoice status is not one of the product statuses `statusTier()` knows — "paid",
 // "refunded" and "void" would all fall through to `idle` — so the tier is stated here and
 // the SHARED badge renders it, in place of the file-local pill this used to hand-roll.
+// `open` and `overdue` are a Paddle invoice's unpaid states (lib/billing/invoice-status.ts).
 const INVOICE_STATUS: Record<InvoiceInfo["status"], { tier: StatusTier; label: string }> = {
+	open: { tier: "pending", label: "Due" },
+	overdue: { tier: "failed", label: "Overdue" },
 	paid: { tier: "active", label: "Paid" },
 	refunded: { tier: "pending", label: "Refunded" },
 	void: { tier: "failed", label: "Void" },
@@ -82,7 +85,7 @@ function wholeList(rows: InvoiceInfo[]): KeysetList<InvoiceInfo> {
 }
 
 /**
- * The invoices columns: number, paid date, billing period, status, total, and per-row actions.
+ * The invoices columns: number, date, billing period, status, total, and per-row actions.
  * `onPreview` opens the preview dialog. Shared by the Invoices page (which renders them in its own
  * server-mode `DataTable` over a keyset list) and {@link InvoicesTable} (the preview).
  */
@@ -105,7 +108,8 @@ export function useInvoiceColumns(onPreview: (row: InvoiceInfo) => void): Column
 			},
 			{
 				accessorKey: "paidAt",
-				header: "Paid",
+				// "Date", not "Paid": an open or overdue Paddle invoice lists the day it was issued.
+				header: "Date",
 				cell: ({ row }) => (
 					// A date in the VIEWER's zone, rendered after hydration (this table is
 					// server-rendered with its rows since #6127 — see ClockText).
