@@ -1968,6 +1968,105 @@ function procedureModuleOf(domain, sources) {
 	return null;
 }
 
+/** Words an expression carries that are never a binding to trace. */
+const NOT_BINDINGS = new Set(["true", "false", "null", "undefined", "this", "new", "typeof", "void", "await", "as", "satisfies", "in", "of", "function", "return"]);
+
+/**
+ * The text of one expression starting at `from`: up to a `,` `;` or newline at its own bracket
+ * depth, or the bracket that closes the one it sits in.
+ *
+ * @param {string} text
+ * @param {number} from
+ */
+function expressionAt(text, from) {
+	let depth = 0;
+	for (let i = from; i < text.length; i += 1) {
+		const c = text[i];
+		if (c === "(" || c === "[" || c === "{") depth += 1;
+		else if (c === ")" || c === "]" || c === "}") {
+			if (depth === 0) return text.slice(from, i);
+			depth -= 1;
+		} else if (depth === 0 && (c === "," || c === ";" || c === "\n")) return text.slice(from, i);
+	}
+	return text.slice(from);
+}
+
+/**
+ * WHICH filter stores one `useKeysetList(orpc.<d>.<p>, filter)` call serves (#7744), by structure:
+ * the bindings its `filter` argument is built from, followed back through their `const`/`let`
+ * declarations, and the store hooks that closure names. Each declaration is looked up in the
+ * top-level function holding the call, or at module level — never in a sibling function, which is
+ * the whole point: `components/alerts/alerts-filters.ts` holds three view hooks over three stores,
+ * each with its own `const query`, and a module-wide lookup would hand one store's walk to all
+ * three (#7533's second weakness, which LST-7 had to work around by moving the hook out).
+ *
+ * Returns the empty list when the argument reaches no store at all (a `query` prop, a module
+ * constant); the caller decides what an untraced call may be credited to.
+ *
+ * @param {string} text comment-stripped module
+ * @param {number} at index of the `useKeysetList` token
+ * @param {string[]} named the store symbols this module names
+ * @returns {string[]}
+ */
+function keysetServes(text, at, named) {
+	const open = text.indexOf("(", at);
+	const comma = (() => {
+		let depth = 0;
+		for (let i = open + 1; i < text.length; i += 1) {
+			const c = text[i];
+			if (c === "(" || c === "[" || c === "{") depth += 1;
+			else if (c === ")" || c === "]" || c === "}") {
+				if (depth === 0) return -1;
+				depth -= 1;
+			} else if (c === "," && depth === 0) return i;
+		}
+		return -1;
+	})();
+	if (comma === -1 || named.length === 0) return [];
+	// The scope: the top-level `{…}` block holding the call, plus whatever sits at depth 0.
+	const depthAt = new Int32Array(text.length);
+	let depth = 0;
+	let blockStart = 0;
+	let blockEnd = text.length;
+	for (let i = 0; i < text.length; i += 1) {
+		const c = text[i];
+		if (c === "{") {
+			if (depth === 0 && i < at) blockStart = i;
+			depth += 1;
+		} else if (c === "}") {
+			depth -= 1;
+			if (depth === 0 && i > at && blockEnd === text.length && blockStart <= at) blockEnd = i;
+		}
+		depthAt[i] = depth;
+	}
+	if (depthAt[at] === 0) blockEnd = blockStart;
+	/** @param {number} i */
+	const inScope = (i) => depthAt[i] === 0 || (i > blockStart && i < blockEnd);
+	/** @param {string} expr */
+	const roots = (expr) => [...expr.matchAll(/(?<![\w$.])[A-Za-z_$][\w$]*/g)].map((r) => r[0]).filter((r) => !NOT_BINDINGS.has(r));
+
+	/** @type {Set<string>} */
+	const served = new Set();
+	/** @type {Set<string>} */
+	const seen = new Set();
+	const queue = roots(expressionAt(text, comma + 1));
+	while (queue.length > 0) {
+		const id = queue.shift() ?? "";
+		if (seen.has(id)) continue;
+		seen.add(id);
+		if (named.includes(id)) served.add(id);
+		const name = id.replace(/\$/g, "\\$");
+		const decl = new RegExp(`\\b(?:const|let|var)\\s+(?:${name}\\b|[{\\[][^=;]*?(?<![\\w$])${name}\\b[^=;]*?[}\\]])\\s*(?::[^=;]*)?=(?![=>])`, "g");
+		for (const d of text.matchAll(decl)) {
+			if (!inScope(d.index)) continue;
+			const rhs = expressionAt(text, d.index + d[0].length);
+			for (const sym of named) if (new RegExp(`\\b${sym}\\b`).test(rhs)) served.add(sym);
+			queue.push(...roots(rhs));
+		}
+	}
+	return [...served].sort();
+}
+
 /**
  * Every list-standard finding in the tree, as site counts per (subject, rule).
  *
@@ -2046,11 +2145,31 @@ export function measureListStandard(sources, surfaces, keysetBuilders) {
 
 	// keyset-contract (iii) — a filter surface that never pages through the contract.
 	/** @type {Set<string>} */
+	//
+	// A call counts for the store it SERVES (#7744), not for every store whose neighbourhood holds
+	// the module: `keysetServes` traces the call's filter argument back to the store hooks it is
+	// built from. An untraced call (a `query` prop, a constant) is credited only where that is
+	// unambiguous — the one store its module names, or, in a module naming none (a hop), the one
+	// surface whose neighbourhood holds it. Anything else credits nobody: the closed direction.
+	const symbols = surfaces.map((s) => s.symbol);
+	/** @type {Map<string, number>} how many neighbourhoods hold each module */
+	const hoods = new Map();
+	for (const s of surfaces) for (const f of new Set([s.file, ...s.consumers])) hoods.set(f, (hoods.get(f) ?? 0) + 1);
+	/** @param {string} file @param {string} symbol whether a `useKeysetList` in `file` serves `symbol` */
+	const pagesFor = (file, symbol) => {
+		const text = sources.get(file) ?? "";
+		const named = symbols.filter((sym) => new RegExp(`\\b${sym}\\b`).test(text));
+		for (const call of text.matchAll(/\buseKeysetList\s*\(/g)) {
+			const traced = keysetServes(text, call.index, named);
+			if (traced.length > 0 ? traced.includes(symbol) : named.length === 1 ? named[0] === symbol : named.length === 0 && hoods.get(file) === 1) return true;
+		}
+		return false;
+	};
 	const proseScope = new Set([...census, "apps/console/components/data-table.tsx"]);
 	for (const s of surfaces) {
 		const hood = [s.file, ...s.consumers];
 		for (const f of hood) proseScope.add(f);
-		if (!hood.some((f) => /\buseKeysetList\s*\(/.test(sources.get(f) ?? ""))) add(`store:${s.symbol}`, "keyset-contract");
+		if (!hood.some((f) => pagesFor(f, s.symbol))) add(`store:${s.symbol}`, "keyset-contract");
 	}
 
 	// count-prose — the census, the surfaces' neighbourhoods, and the table shell.
@@ -2803,6 +2922,47 @@ export function positiveControl() {
 		{ [LIST]: listText.replace("useKeysetList(orpc.widgets.page, query)", "useWidgetsQuery(query)") },
 		/store:useWidgetFilters: 1 `keyset-contract`/,
 	);
+	// TWO STORES IN ONE MODULE, ONE WIRED (#7744): the alerts shape — one module holds a view per
+	// store, and only one of them pages. The `useKeysetList` must be credited to the store its
+	// filter argument is built from, never to every store whose neighbourhood holds the module.
+	const CLIENT_TEXT = clean.readFile("apps/console/components/widgets-client.tsx");
+	const twoStores = (gadgetRead) => ({
+		[STORE]: `${clean.readFile(STORE)}\nexport const useGadgetFilters = createFilterStore({ name: "g", defaults: { search: "" } });`,
+		"apps/console/components/widgets-client.tsx": `${CLIENT_TEXT}\nconst gadgetUrlRead = useFilterUrlSync(useGadgetFilters, DEFAULTS);`,
+		[LIST]: [
+			'"use client";',
+			"import { useWidgetFilters, useGadgetFilters } from '@/lib/stores/use-widgets-filters';",
+			"export function WidgetsList() {",
+			"\tconst widgetFilters = useWidgetFilters((s) => s.filters);",
+			"\tconst query = useMemo(() => normalizeWidgetsQuery(widgetFilters), [widgetFilters]);",
+			"\tconst list = useKeysetList(orpc.widgets.page, query);",
+			"\treturn (<>",
+			"\t\t<ul>{list.rows.map((r) => <li key={r.id}>{r.name}</li>)}</ul>",
+			"\t\t<ListFooter list={list} />",
+			"\t</>);",
+			"}",
+			"export function GadgetsList() {",
+			"\tconst gadgetFilters = useGadgetFilters((s) => s.filters);",
+			"\tconst query = useMemo(() => normalizeGadgetsQuery(gadgetFilters), [gadgetFilters]);",
+			`\t${gadgetRead}`,
+			"\treturn (<>",
+			"\t\t<ul>{rows.map((r) => <li key={r.id}>{r.name}</li>)}</ul>",
+			"\t\t<ListFooter list={rows} />",
+			"\t</>);",
+			"}",
+		].join("\n"),
+	});
+	{
+		const got = listScan(twoStores("const rows = useGadgetsQuery(query);"));
+		const keysetStores = got.filter((p) => /store:use\w+Filters: \d+ `keyset-contract`/.test(p));
+		if (keysetStores.length !== 1 || !/store:useGadgetFilters: 1 `keyset-contract`/.test(keysetStores[0])) {
+			problems.push(
+				"keyset-contract attributes useKeysetList to the store it serves: with two stores in one module and only " +
+					`useWidgetFilters paged, expected exactly store:useGadgetFilters to fire, got ${got.join(" | ") || "no problems"}`,
+			);
+		}
+	}
+	listQuiet("...and neither store fires once both page through useKeysetList", twoStores("const rows = useKeysetList(orpc.widgets.page, query);"));
 	listFires(
 		"keyset-builder fires when the procedure reads through no keyset builder",
 		{ "apps/console/lib/rpc/procedures/widgets.ts": "export const widgetsRouter = { page: query.handler(() => listWidgets()) };" },
