@@ -84,6 +84,13 @@ cd apps/runner && go test ./...
   only after you run it, which is why they are described here rather than linked: a terminal
   table, an index.html to browse locally, lcov.info, coverage-summary.json, and
   coverage-final.json — the raw statement map the ratchet reads.
+- **In CI the console suite is sharded.** `ts-test-console` runs it as `TS_CONSOLE_SHARDS` shards
+  (`vitest run --coverage --shard=i/N`). `ts-test` merges their coverage-final.json files by path
+  with `scripts/ts-coverage-shards.mjs merge` (istanbul-lib-coverage, the same merge vitest's
+  `--merge-reports` does) and then runs the ratchet on the merged file. A missing or foreign shard
+  fails the merge, and the console ratchet runs with `--merged-from-shards`, so a partial file is
+  never measured as the whole. The floors are still recorded unsharded. The `ts-shard-equivalence`
+  dispatch (`gh workflow run ci.yml -f ts_shard_equivalence=true`) proves the two agree file by file.
 - Scope: our business **logic** — `lib/**` + `app/server/actions/**` (generated migrations/seeds
   and tests excluded; see `vitest.config.ts`). Presentational `components/**` are deliberately
   **not** counted here — UI is covered by the focused `@repo/ui` component tests + e2e, so the

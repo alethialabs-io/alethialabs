@@ -19,7 +19,16 @@
 // independently "verified" it and both concluded backwards — an inverted comment survives
 // checking, because the reader who checks finds the workflow apparently agreeing.
 //
-// WHAT IT CHECKS, per project that has a committed floors file and a ratchet step in ci.yml:
+// WHICH JOBS. The enforcing job (the one with the ratchet step) AND every job that MEASURES the
+// project for it. Those were one job until the console's unit suite was sharded: its coverage is now
+// measured in the `ts-test-console` matrix (each shard runs `ts-coverage-shards.mjs fingerprint
+// --project apps/console`) and merged + ratcheted in `ts-test`. A floor is reproducible only if BOTH
+// jobs can produce the recorded environment — the merge refuses a shard whose fingerprint differs
+// from the merging job's, so a measuring job that cannot reproduce the floors reds every PR, and an
+// enforcing job that cannot reproduce them demotes every regression. Either is checked here.
+//
+// WHAT IT CHECKS, per project that has a committed floors file and a ratchet step in ci.yml, in
+// every job above:
 //   os       — the enforcing job's `runs-on` must belong to the recorded OS family.
 //   node     — the enforcing job's setup-node version must match the recorded MAJOR.
 //   ee_dist  — a ROOT-level check, so it is a question about the JOB, not the project: `true`
@@ -41,6 +50,8 @@ import path from "node:path";
 const ROOT = process.cwd();
 const CI = ".github/workflows/ci.yml";
 const RATCHET = /ts-coverage\.mjs\s+--project\s+(\S+)/g;
+// A job that MEASURES one shard of a project's coverage for the ratchet to merge elsewhere.
+const SHARD_MEASURE = /ts-coverage-shards\.mjs\s+fingerprint\s+--project\s+(\S+)/g;
 
 function die(msg, hint) {
 	console.error(`check-floors-reproducible: ${msg}`);
@@ -105,6 +116,26 @@ for (const job of jobs.values()) {
 		const proj = m[1];
 		if (proj.startsWith('"') || proj.startsWith("$")) continue; // a loop variable, not a literal
 		if (!enforcedBy.has(proj)) enforcedBy.set(proj, job);
+	}
+}
+/** project -> every job that measures a shard of it (empty for an unsharded project). */
+const measuredBy = new Map();
+for (const job of jobs.values()) {
+	for (const m of job.body.matchAll(SHARD_MEASURE)) {
+		const proj = m[1];
+		if (proj.startsWith('"') || proj.startsWith("$")) continue;
+		if (!measuredBy.has(proj)) measuredBy.set(proj, []);
+		if (!measuredBy.get(proj).includes(job)) measuredBy.get(proj).push(job);
+	}
+}
+// A shard measured for a project no ratchet step reads is coverage nobody gates — say so rather
+// than check it against floors no step enforces.
+for (const proj of measuredBy.keys()) {
+	if (!enforcedBy.has(proj)) {
+		die(
+			`${CI}: job(s) ${measuredBy.get(proj).map((j) => `\`${j.name}\``).join(", ")} measure shards of ${proj}, but no step runs its ratchet`,
+			"Sharded coverage with no ratchet step is a gate that was removed while its inputs kept running.",
+		);
 	}
 }
 if (enforcedBy.size === 0) {
@@ -225,12 +256,20 @@ function eeDependents() {
 const EE_DEPENDENTS = eeDependents();
 
 function jobBuildsEeDist(job) {
-	if (/Build @alethia\/ee|-F\s+@alethia\/ee\s+build/.test(job.body)) {
+	// COMMENT LINES ARE NOT STEPS. This used to test the whole job text, so a comment merely
+	// MENTIONING "Build @alethia/ee" counted as the build — and the comment explaining why the step
+	// exists is exactly where that phrase appears. Measured on the shard split: deleting the step
+	// from `ts-test` left this guard green, because the step's own rationale still named it.
+	const code = job.body
+		.split("\n")
+		.filter((l) => !/^\s*#/.test(l))
+		.join("\n");
+	if (/Build @alethia\/ee|-F\s+@alethia\/ee\s+build/.test(code)) {
 		return { yes: true, how: "an explicit build step" };
 	}
 	// `turbo run test` with no --filter fans out across the whole workspace, so any ee dependent's
 	// test task drags @alethia/ee#build in via `test.dependsOn: ["^build"]`.
-	const m = job.body.match(/turbo run [^\n]*\btest\b[^\n]*/);
+	const m = code.match(/turbo run [^\n]*\btest\b[^\n]*/);
 	if (m && EE_DEPENDENTS.length > 0) {
 		const filtered = /--filter/.test(m[0]);
 		if (!filtered) {
@@ -253,20 +292,15 @@ const unarmed = [];
 const unverified = [];
 let checked = 0;
 
-for (const [project, job] of enforcedBy) {
-	const fp = path.join(project, "coverage-floors.json");
-	if (!existsSync(fp)) {
-		unarmed.push(`${project} (enforced in job \`${job.name}\`, but no coverage-floors.json)`);
-		continue;
-	}
-	const floors = JSON.parse(readFileSync(fp, "utf8"));
-	const env = floors.env || floors.environment || floors.fingerprint || {};
-	if (Object.keys(env).length === 0) {
-		problems.push(`${project}: floors file records no environment fingerprint at all`);
-		continue;
-	}
-	checked++;
-
+/**
+ * Check one job against one project's recorded fingerprint: `os`, `node` and `ee_dist`, each only
+ * when recorded. Appends to `problems` / `unverified`.
+ *
+ * @param {string} project
+ * @param {Record<string, unknown>} env the floors file's recorded environment
+ * @param {{name: string, body: string}} job
+ */
+function checkJob(project, env, job) {
 	// os
 	if (env.os !== undefined) {
 		const ro = (job.body.match(/runs-on:\s*\[?\s*([A-Za-z0-9._-]+)/) || [])[1] || "";
@@ -298,6 +332,23 @@ for (const [project, job] of enforcedBy) {
 			);
 		}
 	}
+}
+
+for (const [project, job] of enforcedBy) {
+	const fp = path.join(project, "coverage-floors.json");
+	if (!existsSync(fp)) {
+		unarmed.push(`${project} (enforced in job \`${job.name}\`, but no coverage-floors.json)`);
+		continue;
+	}
+	const floors = JSON.parse(readFileSync(fp, "utf8"));
+	const env = floors.env || floors.environment || floors.fingerprint || {};
+	if (Object.keys(env).length === 0) {
+		problems.push(`${project}: floors file records no environment fingerprint at all`);
+		continue;
+	}
+	checked++;
+
+	for (const j of [job, ...(measuredBy.get(project) ?? [])]) checkJob(project, env, j);
 
 	for (const k of ["coverage_provider", "edition"]) {
 		if (env[k] !== undefined) unverified.push(`${project}.${k} (not statically knowable)`);
