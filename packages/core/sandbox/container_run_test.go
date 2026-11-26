@@ -322,6 +322,97 @@ func TestReadStageError(t *testing.T) {
 	}
 }
 
+// TestReadStageError_OnlyRegularFile pins that result.json is read only as a regular file
+// at that name: a symbolic link to a well-formed result elsewhere, and a directory named
+// result.json, are both refused rather than followed or treated as a result.
+func TestReadStageError_OnlyRegularFile(t *testing.T) {
+	cases := []struct {
+		name  string
+		place func(t *testing.T, path string)
+	}{
+		{name: "symbolic link", place: func(t *testing.T, path string) {
+			target := filepath.Join(t.TempDir(), "elsewhere.json")
+			if err := os.WriteFile(target, []byte(`{"error":"from elsewhere"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "directory", place: func(t *testing.T, path string) {
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.place(t, filepath.Join(dir, "result.json"))
+			got, err := readStageError(dir)
+			if err == nil {
+				t.Fatalf("readStageError accepted a result.json that is a %s (got %q)", tc.name, got)
+			}
+			if got != "" {
+				t.Errorf("readStageError = %q, want no error text from a refused file", got)
+			}
+			if _, rerr := readStageResultFile(dir); rerr == nil {
+				t.Errorf("readStageResultFile accepted a result.json that is a %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestContainerRun_ResultJSONMustBeRegularFile pins that a clean exit counts as proof the
+// stage ran only when result.json is a regular file: a stage that leaves a symbolic link
+// (to a well-formed, successful result) or a directory at that name fails the run.
+func TestContainerRun_ResultJSONMustBeRegularFile(t *testing.T) {
+	cases := []struct {
+		name  string
+		place string // shell that puts something other than a regular file at "$wd/result.json"
+	}{
+		{name: "symbolic link", place: `t="$wd/../elsewhere-$$.json"; printf '{"error":""}' > "$t"; ln -s "$t" "$wd/result.json"`},
+		{name: "directory", place: `mkdir "$wd/result.json"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workDir := filepath.Join(t.TempDir(), "wd")
+			if err := os.Mkdir(workDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			script := "#!/bin/sh\n" +
+				"wd=\n" +
+				"for a in \"$@\"; do\n" +
+				"  case \"$a\" in\n" +
+				"    ALETHIA_STAGE_WORKDIR=*) wd=${a#ALETHIA_STAGE_WORKDIR=} ;;\n" +
+				"  esac\n" +
+				"done\n" +
+				"[ -n \"$wd\" ] || exit 90\n" +
+				tc.place + "\n" +
+				"exit 0\n"
+			runtime := filepath.Join(t.TempDir(), "stub-runtime.sh")
+			if err := os.WriteFile(runtime, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			c := Container{Runtime: runtime, Image: "img", Operator: "self", PidsLimit: 512, MemLimit: "2g"}
+			spec := Spec{
+				Kind: "deploy", JobID: "job-notregular", WorkDir: workDir,
+				Stage: &Stage{Kind: StageDeploy, Payload: []byte("{}")},
+			}
+			err := c.Run(context.Background(), spec, nil)
+			if _, lerr := os.Lstat(filepath.Join(workDir, "result.json")); lerr != nil {
+				t.Fatalf("precondition: the stub must leave something at result.json: %v", lerr)
+			}
+			if err == nil {
+				t.Fatalf("Run reported SUCCESS although result.json is a %s, not a regular file", tc.name)
+			}
+			if !strings.Contains(err.Error(), "result.json") {
+				t.Errorf("error %q should name result.json", err)
+			}
+		})
+	}
+}
+
 // TestEnvTrue covers the truthy vocabulary the sandbox gates read.
 func TestEnvTrue(t *testing.T) {
 	cases := []struct {
