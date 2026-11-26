@@ -26,6 +26,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+import { tryDuplicateProjectForProvider } from "@/app/server/actions/projects";
 import { DuplicateProjectDialog } from "@/components/projects/duplicate-project-dialog";
 
 h.handlers["projects.duplicateTargets"] = async () => ({
@@ -119,5 +120,53 @@ describe("DuplicateProjectDialog — nothing to duplicate onto (#6817)", () => {
 		} finally {
 			if (targets) h.handlers["projects.duplicateTargets"] = targets;
 		}
+	});
+});
+
+describe("DuplicateProjectDialog — where a refusal is shown (#6964)", () => {
+	/** Opens the dialog, picks the GCP account and its first region, and presses Duplicate. */
+	async function submit() {
+		const user = userEvent.setup();
+		render(
+			<DuplicateProjectDialog
+				open
+				onOpenChange={() => {}}
+				sourceProjectId="p1"
+				sourceProjectName="Shop"
+				orgSlug="acme"
+			/>,
+			{ wrapper: queryWrapper() },
+		);
+		await screen.findByText("Select a cloud account");
+		const [account] = screen.getAllByRole("combobox");
+		await user.click(account);
+		await user.click(await screen.findByRole("option", { name: /GCP prod/ }));
+		await user.click(await screen.findByText("Select region"));
+		const [region] = await screen.findAllByRole("option");
+		await user.click(region);
+		await user.click(screen.getByRole("button", { name: "Duplicate" }));
+	}
+
+	it("a refusal about the target account sits above the buttons, not under the name", async () => {
+		const message = "Civo is not available in this release.";
+		vi.mocked(tryDuplicateProjectForProvider).mockResolvedValue({ ok: false, error: message, field: "form" });
+		await submit();
+		const alert = await screen.findByText(message);
+		expect(alert.closest("[role='alert']")).not.toBeNull();
+		expect(screen.getByRole("textbox", { name: /name/i })).not.toHaveAccessibleDescription(message);
+	});
+
+	it("a refusal about the name is shown with the name field", async () => {
+		const message = 'A project named "Shop (gcp)" already exists.';
+		vi.mocked(tryDuplicateProjectForProvider).mockResolvedValue({
+			ok: false,
+			error: message,
+			field: "project_name",
+		});
+		await submit();
+		await screen.findByText(message);
+		expect(screen.getByRole("textbox", { name: /name/i })).toHaveAccessibleDescription(
+			expect.stringContaining(message),
+		);
 	});
 });

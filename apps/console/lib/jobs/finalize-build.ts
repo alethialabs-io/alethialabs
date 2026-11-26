@@ -12,6 +12,7 @@ import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
 import { transitionEnv } from "@/lib/db/env-status";
 import { notifyScaler } from "@/lib/scaler";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 import { jobs, projectEnvironments, projectServices } from "@/lib/db/schema";
 
 /**
@@ -106,6 +107,10 @@ export async function enqueueDeployAfterBuild(buildJobId: string) {
 	if (buildJob.job_type !== "BUILD") return;
 	if (buildJob.status !== "SUCCESS") return;
 	if (!buildJob.project_id || !buildJob.environment_id) return;
+	// Nothing new is deployed onto a cloud this deployment does not offer (#6964), the cloud having
+	// been taken out of the offered set since the BUILD was queued. Asked before the CAS, so the
+	// environment is not moved and no DEPLOY is queued.
+	if (await projectCloudRefusal(db, buildJob.project_id)) return;
 
 	const moved = await transitionEnv(
 		db,
@@ -207,6 +212,9 @@ export async function enqueueBuildAfterProvision(deployJobId: string) {
 		(s) => s.source.kind === "repo" && !s.resolvedImage,
 	);
 	if (!hasUnbuilt) return;
+	// A BUILD exists to chain a DEPLOY, so it is not queued for a project whose cloud this
+	// deployment does not offer (#6964); `buildProject` refuses the same for a person.
+	if (await projectCloudRefusal(db, job.project_id)) return;
 
 	// Move the env to QUEUED via the CAS FIRST — so a lost race (another job already took the env)
 	// doesn't strand an orphan BUILD, and a BUILD already in flight isn't double-enqueued.
