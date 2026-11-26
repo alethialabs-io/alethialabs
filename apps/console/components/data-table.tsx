@@ -105,6 +105,17 @@ interface DataTableCommonProps<TData extends { id?: string }, TValue> {
 	/** Tailwind height class (e.g. "h-[70vh]"). When set, wraps the table in a ScrollArea and makes the header sticky. */
 	scrollHeight?: string;
 	/**
+	 * Scroll horizontally when the columns are wider than the frame, instead of clipping them.
+	 *
+	 * The table's wrapper clips its x-axis by default (`@repo/ui/table` → `Table`), so a column past
+	 * the frame's right edge is cut off with no way to reach it — and a control in that column still
+	 * reads as visible and enabled while every click lands on the page behind it (#7713: a token row's
+	 * Revoke). A table whose LAST column carries row actions, or whose columns cannot be made to fit
+	 * the narrowest width it renders at, opts in here. Not combined with `scrollHeight`: a wrapper
+	 * that scrolls on x is a scroll container on y too, and it would trap that mode's sticky header.
+	 */
+	scrollX?: boolean;
+	/**
 	 * Message shown in the empty-state row when there are no rows (default "No results."). It is
 	 * NEVER shown while the read is loading or has failed: an empty table and a table still
 	 * loading are different answers, and showing the first for the second is a lie about the
@@ -228,6 +239,7 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 		selectedRowId,
 		className,
 		scrollHeight,
+		scrollX = false,
 		emptyMessage = "No results.",
 		skeletonRows = DEFAULT_SKELETON_ROWS,
 	} = props;
@@ -348,7 +360,7 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 	// `--z-raised` IS the 10 the sticky header used to hardcode (packages/brand/src/tokens.css).
 	// Naming the layer is deliberately not the moment to move it.
 	const tableEl = (
-		<Table>
+		<Table scroll={scrollX && !scrollHeight}>
 			<TableHeader
 				className={
 					scrollHeight ? "sticky top-0 z-[var(--z-raised)] bg-background" : undefined
