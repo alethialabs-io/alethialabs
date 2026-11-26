@@ -196,6 +196,7 @@ jobs:
       go_core: ${{ steps.plan.outputs.go_core }}
       infra: ${{ steps.plan.outputs.infra }}
       harness: ${{ steps.plan.outputs.harness }}
+      guards_selftest: ${{ steps.plan.outputs.guards_selftest }}
       console_images: ${{ steps.plan.outputs.console_images }}
       qa_leg: ${{ steps.plan.outputs.qa_leg }}
       t1_images: ${{ steps.plan.outputs.t1_images }}
@@ -366,6 +367,23 @@ jobs:
               - '.githooks/**'
               - 'CLAUDE.md'
               - 'AGENTS.md'
+            # What the `guards` job's "Guards self-test" step reads: the hooks and their libraries,
+            # every workflow (guard-spend prices each one and fails on one it cannot classify), the
+            # scripts the hooks call or source (env.sh, wt-lease, creds), deploy/ (runner-version,
+            # prod secrets example) and release-please's config (guard-merge). Deliberately broad —
+            # all of scripts/ and deploy/ — because a missed input lets a broken guard reach dev,
+            # while an extra one only costs a run. That step is 8–12 minutes of the job.
+            guards_selftest:
+              - '.claude/**'
+              - '.codex/**'
+              - '.agents/**'
+              - '.githooks/**'
+              - '.github/workflows/**'
+              - 'scripts/**'
+              - 'deploy/**'
+              - 'release-please-config.json'
+              - 'CLAUDE.md'
+              - 'AGENTS.md'
             # Root config that every TypeScript package inherits — a change here runs turbo
             # unfiltered, because turbo attributes no package to it.
             ts_root:
@@ -500,6 +518,7 @@ jobs:
           F_GO_CORE: ${{ steps.filter.outputs.go_core }}
           F_INFRA: ${{ steps.filter.outputs.infra }}
           F_HARNESS: ${{ steps.filter.outputs.harness }}
+          F_GUARDS_SELFTEST: ${{ steps.filter.outputs.guards_selftest }}
           F_TS_ROOT: ${{ steps.filter.outputs.ts_root }}
           F_CONSOLE_IMAGES: ${{ steps.filter.outputs.console_images }}
           F_QA_LEG: ${{ steps.filter.outputs.qa_leg }}
@@ -546,6 +565,13 @@ jobs:
           skip=false
           if [ "$selective" = true ] && [ "$AFFECTED_ONLY_ARMED" = true ]; then skip=true; fi
           out skip_unaffected "$skip"
+
+          # The guards' self-tests (8–12 minutes) run unless this is an affected-only PR that touched
+          # none of their inputs. The merge queue, pushes, promotions and the schedule are never
+          # selective, so a guard change is always self-tested before it lands on dev.
+          guards_selftest=true
+          if [ "$skip" = true ] && [ "$(b "${F_GUARDS_SELFTEST:-}")" = false ]; then guards_selftest=false; fi
+          out guards_selftest "$guards_selftest"
 
           ts_filter=full
           if [ "$selective" = true ] && [ "$(b "${F_TS_ROOT:-}")" = false ] && [ "$(b "${O_NOT_TS_SCOPED:-true}")" = false ]; then
@@ -1703,11 +1729,14 @@ jobs:
   guards:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
+    # For `guards_selftest` only (the "Guards self-test" step). `!cancelled()` keeps this job
+    # running if detect-changes fails, and that step runs unless the output is exactly 'false'.
+    needs: [detect-changes]
     # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' }}
     # `issues: read` for check-exclusion-issues.mjs, the one network step in an otherwise hermetic
     # job. The workflow-level `permissions: contents: read` makes every unlisted scope NONE, so
     # without this `gh issue view` fails, the check reports "could not read the state" and — being
@@ -3330,7 +3359,9 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/release-cursor.sh --self-test
       - name: Guards self-test (runtime · compose · merge · secrets · worktree · spend · destroy)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        # Skipped only on an affected-only PR that touched none of the guards' inputs (detect-changes
+        # `guards_selftest` filter). Runs on anything but an explicit 'false', so a failed detection runs it.
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && needs.detect-changes.outputs.guards_selftest != 'false' }}
         run: |
           bash .claude/hooks/guard-runtime.sh --self-test
           bash .claude/hooks/guard-compose.sh --self-test
