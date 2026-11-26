@@ -1,5 +1,12 @@
 # @repo/nra
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [0c2b83c]
+  - @repo/legal@0.1.2
+
 ## 0.0.2
 
 ### Patch Changes
