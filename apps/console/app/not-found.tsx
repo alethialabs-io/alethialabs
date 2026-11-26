@@ -9,15 +9,20 @@ import { Button } from "@repo/ui/button";
 
 export const metadata: Metadata = { title: "Not found" };
 
-/** App-wide 404 for unmatched URLs and any unscoped notFound(). */
+/**
+ * App-wide 404 for unmatched URLs and any unscoped notFound(). The polish-wave 404 form (spec §4,
+ * #7741): "Nothing here.", the likely reason, and the ways out. The `code` stays the bare "404" —
+ * the e2e navigation-shell spec finds every 404 by that exact text — and this stays the only 404
+ * carrying "Sign in", which that spec uses to tell this page from the org one.
+ */
 export default function NotFound() {
 	return (
 		<ErrorState
 			fullPage
 			mark={<AlethiaMark />}
 			code="404"
-			title="Page not found"
-			description="The page you're looking for doesn't exist or may have moved."
+			title="Nothing here."
+			description="The address may be mistyped, or the page has moved."
 			actions={
 				<>
 					<Button size="sm" nativeButton={false} render={<Link href="/" />}>
