@@ -1130,3 +1130,101 @@
   .ah-mark[data-compact] .ah-mark__word { filter: none; }
   .ah-mark[data-compact] .ah-mark__dot { transform: none; }
 }
+
+/* ============================================================
+   The [·] mark loader — MarkLoader (src/loader/mark-loader.tsx) and the inline
+   mark in @repo/ui's Spinner and Button `pending` (packages/ui/src/spinner.tsx),
+   which draw the SAME glyph with the same class names, so this one rule set animates
+   both. Polish-wave spec §2 (#7735, #7740). CSS only, like .ah-mark: no motion library.
+
+   One 1400ms loop on the .ah-mark curve: the mark comes into focus and drifts out.
+   At rest (0% / 100%) the brackets sit 2.2 apart from their canonical place at .45
+   opacity and the dot is .55 scale under a 1.2 blur; at 50% everything is the
+   canonical mark. The lengths are in the glyph's own viewBox units (0 0 32 32): a CSS
+   length on an SVG child resolves in its user space, so the drift is the same share
+   of the mark at every size — the 16px button glyph and the 40px region glyph breathe
+   alike.
+   ============================================================ */
+.ah-loader__glyph {
+  display: block;
+  flex: none;
+  overflow: visible;
+}
+.ah-loader__br,
+.ah-loader__dot {
+  animation-duration: 1400ms;
+  animation-timing-function: cubic-bezier(.65, 0, .35, 1);
+  animation-iteration-count: infinite;
+}
+.ah-loader__br--l { animation-name: ah-loader-br-l; }
+.ah-loader__br--r { animation-name: ah-loader-br-r; }
+.ah-loader__dot {
+  animation-name: ah-loader-dot;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes ah-loader-br-l {
+  0%, 100% { transform: translateX(-2.2px); opacity: .45; }
+  50%      { transform: translateX(0);      opacity: 1; }
+}
+@keyframes ah-loader-br-r {
+  0%, 100% { transform: translateX(2.2px); opacity: .45; }
+  50%      { transform: translateX(0);     opacity: 1; }
+}
+@keyframes ah-loader-dot {
+  0%, 100% { transform: scale(.55); filter: blur(1.2px); }
+  50%      { transform: scale(1);   filter: blur(0); }
+}
+/* The region and page wrappers: the glyph over an optional mono status line of real
+   facts ("Planning · prod-eu · 0:12"), never a percentage. */
+.ah-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+.ah-loader--region,
+.ah-loader--page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.ah-loader--region { padding: 32px 16px; }
+/* Full-page: the shell's main column while a page with no skeleton of its own
+   suspends, and the auth waits. Tall enough to sit in the visual middle of a column
+   without pushing the footer of a short one. */
+.ah-loader--page { min-height: min(60vh, 520px); padding: 48px 16px; }
+.ah-loader__status {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: var(--text-ui-xs);
+  letter-spacing: .08em;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.ah-loader__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Reduced motion: the static mark at full opacity (the status line still says what is
+   happening). `animation: none` rather than a duration: the apps' global reset
+   (`* { animation-duration: .01ms !important }`) would otherwise run the loop to its
+   last frame and park the mark in its drifted-out, dimmed state. */
+@media (prefers-reduced-motion: reduce) {
+  .ah-loader__br--l,
+  .ah-loader__br--r,
+  .ah-loader__dot {
+    animation: none;
+    transform: none;
+    filter: none;
+    opacity: 1;
+  }
+}

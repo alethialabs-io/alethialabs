@@ -4,7 +4,7 @@
 
 import type React from "react";
 import Link from "next/link";
-import { Loader2, MailQuestion } from "lucide-react";
+import { MailQuestion } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -114,10 +114,7 @@ function AcceptInvite({ completeSetup }: { completeSetup: () => Promise<void> })
 					title="We couldn’t load this invitation"
 					body="Something went wrong on our side or with the connection. Your invitation is unchanged."
 					action={
-						<Button onClick={() => void invitation.refetch()} disabled={invitation.isFetching}>
-							{invitation.isFetching ? (
-								<Loader2 className="size-4 animate-spin" aria-hidden="true" />
-							) : null}
+						<Button onClick={() => void invitation.refetch()} pending={invitation.isFetching}>
 							Try again
 						</Button>
 					}
@@ -228,15 +225,19 @@ function InvitationCard({
 						{error}
 					</p>
 				)}
-				{/* The label stays beside the spinner, so a pending button keeps its name and its
-				    width. */}
+				{/* `pending` keeps the label beside the loader, so a pending button keeps its name and
+				    its width. */}
 				<div className="mt-6 flex gap-3">
-					<Button variant="outline" className="flex-1" onClick={decline} disabled={busy !== null}>
-						{busy === "decline" ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+					<Button
+						variant="outline"
+						className="flex-1"
+						onClick={decline}
+						disabled={busy !== null}
+						pending={busy === "decline"}
+					>
 						Decline
 					</Button>
-					<Button className="flex-1" onClick={accept} disabled={busy !== null}>
-						{busy === "accept" ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+					<Button className="flex-1" onClick={accept} disabled={busy !== null} pending={busy === "accept"}>
 						Accept invitation
 					</Button>
 				</div>
@@ -292,8 +293,7 @@ function WrongAccount({
 			}
 			alert={failed ? "Couldn't sign you out. You are still signed in. Try again." : null}
 			action={
-				<Button onClick={switchAccount} disabled={signingOut}>
-					{signingOut ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+				<Button onClick={switchAccount} pending={signingOut}>
 					{AUTH.signOut} and switch account
 				</Button>
 			}
@@ -355,7 +355,7 @@ function Message({
  * sentence, two buttons. One picture from the first paint to the card, where there used to be an
  * empty shell, then a spinner, then the card (A-19).
  */
-function InviteSkeleton() {
+export function InviteSkeleton() {
 	return (
 		<Centered>
 			<AuthCard>

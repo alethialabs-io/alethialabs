@@ -151,6 +151,47 @@
   }
 }
 
+/* The route hairline (components/shell/route-progress.tsx; polish-wave spec §2, #7740): 2px of
+   foreground ink at the top of the content area. The component draws it only once a navigation
+   has run 200ms (`running`): it eases to 86% over a long decelerating curve, so a slow route keeps
+   creeping instead of stalling. On commit (`done`) it sweeps to the full width in 200ms and fades
+   over the next 240ms. `idle` has no transition, so returning to it after the fade is invisible.
+   It sits at the chrome's layer (`--z-header`): it belongs to the bar above the content, not to
+   anything sticky inside it. */
+.route-progress {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 2px;
+  background: var(--foreground);
+  transform-origin: left center;
+  transform: scaleX(0);
+  opacity: 0;
+  pointer-events: none;
+  z-index: var(--z-header);
+}
+.route-progress[data-state="running"] {
+  opacity: 1;
+  transform: scaleX(0.86);
+  transition:
+    transform 8s cubic-bezier(0.08, 0.82, 0.17, 1),
+    opacity 120ms linear;
+}
+.route-progress[data-state="done"] {
+  opacity: 0;
+  transform: scaleX(1);
+  transition:
+    transform 200ms cubic-bezier(0.65, 0, 0.35, 1),
+    opacity 240ms ease 200ms;
+}
+/* Reduced motion: no creep and no sweep — a still bar while the route loads, gone on commit. */
+@media (prefers-reduced-motion: reduce) {
+  .route-progress[data-state="running"],
+  .route-progress[data-state="done"] {
+    transition: none;
+  }
+}
+
 /* Architecture-canvas container regions (VPC / cluster / BYO module).
    A region is a background box you can drag by its header and resize by its handles, but its BODY
    must stay click-through so the pane still pans and the cards on top stay clickable. So the whole
