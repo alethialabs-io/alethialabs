@@ -7,7 +7,8 @@
     "./schema": "./src/schema.ts",
     "./enums": "./src/enums.ts",
     "./types": "./src/types.ts",
-    "./console-refs": "./src/console-refs.ts"
+    "./console-refs": "./src/console-refs.ts",
+    "./paddle": "./src/paddle.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
