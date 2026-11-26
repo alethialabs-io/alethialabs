@@ -83,6 +83,19 @@ This is narrower than `EU_COUNTRIES` in `@repo/plan-catalog`, which also bills n
 the EEA in EUR in the console's own currency toggle. Buyers in those countries pay USD at a Paddle
 checkout.
 
+### The transaction mirror backfill
+
+The console keeps a local copy of each Paddle transaction (`paddle_transaction`), written by the
+webhook. Transactions from before the destination existed, and transactions the webhook could not tie
+to an organization, are not in it. Set `ALETHIA_PADDLE_TRANSACTION_BACKFILL=1` in the environment to
+fill those gaps. The console then reads the account's billed, paid, past-due and completed
+transactions once a day (read-only towards Paddle) and applies each one through the same rules as
+the webhook. A credit pack read this way grants nothing. Each pass logs
+`[paddle] transaction backfill pass` with its counts.
+
+Turn it on before go-live, after `--apply` has subscribed the destination to the
+`transaction.billed`, `transaction.paid` and `transaction.past_due` events.
+
 ### Tax mode: set the account default first
 
 The prices ask for `tax_mode: account_setting`. Paddle **resolves** that when the price is created

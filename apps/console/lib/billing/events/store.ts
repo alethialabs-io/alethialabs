@@ -9,7 +9,7 @@
 
 import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { getServiceDb } from "@/lib/db";
-import { aiCreditGrant, organization, organizationBilling, paddleTransaction } from "@/lib/db/schema";
+import { aiCreditGrant, commerceOrder, organization, organizationBilling, paddleTransaction } from "@/lib/db/schema";
 import { emitUsageHint } from "@/lib/realtime/usage-hint";
 import type { BillingEventStore, BillingRowState } from "./apply";
 
@@ -62,6 +62,42 @@ export const postgresBillingEventStore: BillingEventStore = {
 			.where(eq(organizationBilling.paddleBusinessId, businessId))
 			.limit(1);
 		return row?.organizationId ?? null;
+	},
+
+	/** Whether the org's billing row, its Paddle orders or its mirror name one of `refs`. */
+	async orgHasRecordOf(orgId, refs) {
+		const db = getServiceDb();
+		if (refs.customerId) {
+			const [row] = await db
+				.select({ id: organizationBilling.organizationId })
+				.from(organizationBilling)
+				.where(
+					and(eq(organizationBilling.organizationId, orgId), eq(organizationBilling.paddleCustomerId, refs.customerId)),
+				)
+				.limit(1);
+			if (row) return true;
+		}
+		const orderRefs = [
+			refs.transactionId ? eq(commerceOrder.paddleTransactionId, refs.transactionId) : undefined,
+			refs.subscriptionId ? eq(commerceOrder.paddleSubscriptionId, refs.subscriptionId) : undefined,
+		].filter((c) => c !== undefined);
+		if (orderRefs.length === 0) return false;
+		const [order] = await db
+			.select({ id: commerceOrder.id })
+			.from(commerceOrder)
+			.where(and(eq(commerceOrder.organizationId, orgId), eq(commerceOrder.provider, "paddle"), or(...orderRefs)))
+			.limit(1);
+		if (order) return true;
+		const mirrorRefs = [
+			refs.transactionId ? eq(paddleTransaction.paddleTransactionId, refs.transactionId) : undefined,
+			refs.subscriptionId ? eq(paddleTransaction.paddleSubscriptionId, refs.subscriptionId) : undefined,
+		].filter((c) => c !== undefined);
+		const [mirrored] = await db
+			.select({ id: paddleTransaction.id })
+			.from(paddleTransaction)
+			.where(and(eq(paddleTransaction.organizationId, orgId), or(...mirrorRefs)))
+			.limit(1);
+		return mirrored != null;
 	},
 
 	/** Locks the org's row `FOR UPDATE` for `fn`, whose `write` inserts or updates it. */

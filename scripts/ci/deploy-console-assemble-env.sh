@@ -311,6 +311,8 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   emit PADDLE_PRODUCT_AI_CREDITS
   # 1 turns on the Paddle overage sweeper (lib/billing/paddle/overage-sweeper.ts); empty = off.
   emit ALETHIA_PADDLE_OVERAGE_SWEEP
+  # 1 turns on the daily Paddle transaction-mirror backfill (lib/billing/events/backfill.ts); empty = off.
+  emit ALETHIA_PADDLE_TRANSACTION_BACKFILL
   # Transactional email: the vault-selected transport (ses unless the vault says smtp; validated
   # above). Both transports' keys are emitted so the two stay one vault edit apart. The SES ones
   # are the alethia-email account's (infra/email-ses-account); the SMTP ones are empty unless the
