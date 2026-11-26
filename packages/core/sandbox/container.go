@@ -558,7 +558,13 @@ func isDeniedEnvKey(key string) bool {
 // (apps/runner/internal/agent/stage.go): packages/core must not import the runner. Keep the
 // two in step, or move this one to a shared core package the runner imports.
 func readStageResultFile(workDir string) ([]byte, error) {
-	path := filepath.Join(workDir, "result.json")
+	return readRegularFile(filepath.Join(workDir, "result.json"), os.Open)
+}
+
+// readRegularFile reads path only when it is a regular file, opening it with open (os.Open
+// in production). The name is checked with Lstat, and the opened file must be that same
+// file; a non-regular file, or one that is not the file that was checked, is refused.
+func readRegularFile(path string, open func(string) (*os.File, error)) ([]byte, error) {
 	before, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -566,16 +572,12 @@ func readStageResultFile(workDir string) ([]byte, error) {
 	if !before.Mode().IsRegular() {
 		return nil, fmt.Errorf("stage result %s is not a regular file (mode %s); refusing to read it", path, before.Mode().Type())
 	}
-	f, err := os.Open(path)
+	f, err := open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	opened, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !os.SameFile(before, opened) {
+	if opened, err := f.Stat(); err != nil || !os.SameFile(before, opened) {
 		return nil, fmt.Errorf("stage result %s changed while it was being opened; refusing to read it", path)
 	}
 	return io.ReadAll(f)

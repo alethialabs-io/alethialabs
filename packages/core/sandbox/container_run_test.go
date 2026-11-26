@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -360,6 +361,34 @@ func TestReadStageError_OnlyRegularFile(t *testing.T) {
 				t.Errorf("readStageResultFile accepted a result.json that is a %s", tc.name)
 			}
 		})
+	}
+}
+
+// TestReadRegularFile_OpenedFileMustMatch pins the second half of the regular-file rule:
+// the file that is opened must be the one Lstat checked, and an open that fails is an
+// error. The open function stands in for os.Open so both branches are reachable.
+func TestReadRegularFile_OpenedFileMustMatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "result.json")
+	other := filepath.Join(dir, "other.json")
+	for _, p := range []string{path, other} {
+		if err := os.WriteFile(p, []byte(`{"error":""}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	b, err := readRegularFile(path, func(string) (*os.File, error) { return os.Open(other) })
+	if err == nil || !strings.Contains(err.Error(), "changed while it was being opened") {
+		t.Fatalf("readRegularFile read a file other than the one it checked: b=%q err=%v", b, err)
+	}
+
+	if _, err := readRegularFile(path, func(string) (*os.File, error) { return nil, os.ErrPermission }); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("readRegularFile err = %v, want the open error", err)
+	}
+
+	b, err = readRegularFile(path, os.Open)
+	if err != nil || string(b) != `{"error":""}` {
+		t.Fatalf("readRegularFile(regular file) = %q, %v", b, err)
 	}
 }
 
