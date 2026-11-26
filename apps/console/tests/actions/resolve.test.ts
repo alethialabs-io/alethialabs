@@ -67,6 +67,18 @@ function mockActorScope(...results: unknown[][]) {
 	);
 }
 
+/**
+ * Stub withActorScope so its Nth call runs its callback with a tx chain seeded with the Nth list of
+ * results — for a read that opens more than one transaction.
+ */
+function mockActorScopePerTransaction(...transactions: unknown[][][]) {
+	const queue = [...transactions];
+	vi.mocked(withActorScope).mockImplementation(
+		(async (_actor: { userId: string; orgId: string }, cb: (tx: unknown) => unknown) =>
+			cb(makeChain(queue.shift() ?? []))) as never,
+	);
+}
+
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.mocked(getOwnerScope).mockResolvedValue({
@@ -232,8 +244,10 @@ describe("getEnvironmentsForSlug", () => {
 			{ id: "env-1", name: "staging", stage: "staging", is_default: true },
 			{ id: "env-2", name: "prod", stage: "production", is_default: false },
 		];
-		// First terminal await = project lookup; second = env list.
-		mockActorScope([{ id: "proj-1" }], envs);
+		// Two transactions since #7736: the per-request project lookup it shares with
+		// resolveProjectId, then the env list.
+		mockActorScopePerTransaction([[{ id: "proj-1" }]], [envs]);
 		await expect(getEnvironmentsForSlug("api")).resolves.toEqual(envs);
+		expect(withActorScope).toHaveBeenCalledTimes(2);
 	});
 });
