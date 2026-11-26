@@ -20,9 +20,10 @@
 
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { cn } from "@repo/ui/utils";
-import { SearchX, Server } from "lucide-react";
+import { Server } from "lucide-react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -35,7 +36,7 @@ import {
 } from "@/components/clusters/cluster-columns";
 import { ClusterDetailSheet } from "@/components/clusters/cluster-detail";
 import { clusterPosture } from "@/components/clusters/cluster-posture";
-import { ClustersFilterBar } from "@/components/clusters/clusters-filter-bar";
+import { clusterToolbarFacets } from "@/components/clusters/clusters-facets";
 import { DEFAULT_CLUSTER_FILTERS, normalizeClustersQuery } from "@/components/clusters/clusters-query";
 import { CLUSTERS_REGION, ClustersSkeleton } from "@/components/clusters/clusters-skeleton";
 import { DataTable } from "@/components/data-table";
@@ -45,6 +46,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { ARCHITECTURE, sentenceStart, PROJECT } from "@/lib/copy/vocabulary";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import {
 	hrefWithParamPatch,
 	SELECTION_PARAM,
@@ -53,6 +55,7 @@ import {
 } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useClustersFilters } from "@/lib/stores/use-clusters-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 
@@ -83,6 +86,7 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 	const filters = useClustersFilters((s) => s.filters);
 	const set = useClustersFilters((s) => s.set);
 	const reset = useClustersFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const urlRead = useFilterUrlSync(useClustersFilters, DEFAULT_CLUSTER_FILTERS, undefined, {
 		resetParams: FILTER_RESET_PARAMS,
 	});
@@ -178,27 +182,21 @@ export function ClustersClient({ projectId }: { projectId?: string }) {
 
 	return (
 		<div className="space-y-6" aria-busy={busy}>
-			{/* No count: the list standard carries no list sizes (lib/query/README.md → "Counts"). */}
-			<PageToolbar
-				description={
-					projectId
-						? "The cluster each of this project's environments runs on."
-						: "Every cluster this organization's environments run on."
-				}
+			{/* One row: search, facets, Reset · N. No count, no description (polish-wave spec §3). */}
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (value) => set("search", value),
+					placeholder: "Search by environment, project or cluster…",
+					ariaLabel: "Search clusters",
+					inputRef,
+					shortcut,
+				}}
+				facets={clusterToolbarFacets(filters, set, facets)}
+				reset={{ count: countActiveFilters(filters, DEFAULT_CLUSTER_FILTERS), onReset: reset }}
 			/>
-			<ClustersFilterBar filters={filters} onFilter={set} onReset={reset} facets={facets} />
 			{rows.length === 0 ? (
-				<EmptyState
-					className="min-h-[40vh]"
-					icon={<SearchX />}
-					title="No clusters match these filters"
-					description="Every cluster is excluded by the current search, cloud, status or region selection."
-					action={
-						<Button variant="outline" size="sm" onClick={reset}>
-							Clear filters
-						</Button>
-					}
-				/>
+				<FilterEmpty className="min-h-[40vh]" noun="clusters" onClear={reset} />
 			) : (
 				<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
 					<ClusterOpenContext.Provider value={open}>

@@ -19,7 +19,7 @@ import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { buildJobColumns, jobHref } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";
-import { JobsFilterBar } from "@/components/jobs/jobs-filter-bar";
+import { JobsRangeControls, jobsToolbarFacets } from "@/components/jobs/jobs-facets";
 import { DEFAULT_JOBS_FILTERS, jobsRangeWindow, normalizeJobsQuery } from "@/components/jobs/jobs-query";
 import { ARCHITECTURE } from "@/lib/copy/vocabulary";
 import { displayName } from "@/lib/user-display";
@@ -27,17 +27,20 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useMembersQuery } from "@/lib/query/use-activity-query";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { orpc } from "@/lib/rpc/client";
 import { projectHref } from "@/lib/routing";
 import { readRefusalOf } from "@/lib/rpc/refusal";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useJobsFilters } from "@/lib/stores/use-jobs-filters";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
-import { ClipboardList, SearchX } from "lucide-react";
+import { ClipboardList } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -61,6 +64,7 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const filters = useJobsFilters((s) => s.filters);
 	const set = useJobsFilters((s) => s.set);
 	const reset = useJobsFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const urlRead = useFilterUrlSync(useJobsFilters, DEFAULT_JOBS_FILTERS);
 	// Search stays responsive (bound to filters.search) but only re-keys the query after a
 	// 300ms pause — the input recomputes the memo on every keystroke, yet the normalized
@@ -82,9 +86,9 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 	const rows = list.rows;
 	const facets = list.facets ?? undefined;
 
-	// Author labels/avatars resolve through the cached members query; counts come from
-	// the unfiltered facet universe.
-	const { data: members = [], isPending: membersLoading } = useMembersQuery();
+	// Author names resolve through the cached members query (the facet carries ids); counts come
+	// from the unfiltered facet universe.
+	const { data: members = [] } = useMembersQuery();
 	const memberById = useMemo(() => new Map(members.map((m) => [m.userId, m])), [members]);
 	const authorById = useMemo(
 		() =>
@@ -96,21 +100,11 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 			),
 		[members],
 	);
-	const userOptions = useMemo(
-		() =>
-			(facets?.authors ?? []).map((o) => {
-				const m = memberById.get(o.value);
-				return {
-					value: o.value,
-					label: m
-						? displayName({ name: m.name, username: m.username, email: m.email })
-						: o.value,
-					image: m?.image,
-					hint: String(o.count),
-				};
-			}),
-		[facets, memberById],
-	);
+	/** An author id's display name, or the id until the members have loaded. */
+	const authorLabel = (userId: string): string => {
+		const m = memberById.get(userId);
+		return m ? displayName({ name: m.name, username: m.username, email: m.email }) : userId;
+	};
 
 	const columns = useMemo(
 		() => buildJobColumns({ showProject: !projectId, authorById, orgSlug }),
@@ -197,45 +191,24 @@ export function JobsClient({ projectId }: { projectId?: string } = {}) {
 				)
 			) : (
 				<>
-					{/* No count: the list standard carries no list sizes (lib/query/README.md →
-					    "Counts"); totals live only in the facet options' counts. */}
-					<PageToolbar
-						description={
-							projectId
-								? "Every plan, deploy and destroy this project has run."
-								: "Every plan, deploy and destroy this organization has run."
-						}
-					/>
-					<JobsFilterBar
-						showProject={!projectId}
-						filters={filters}
-						onFilter={set}
-						onReset={reset}
-						range={range}
-						authorOptions={userOptions}
-						authorsLoading={membersLoading}
-						facets={facets}
-						onCreateProject={() => router.push(`/${orgSlug}/~/new`)}
+					{/* One row: search, facets, range, Reset · N. No count (lib/query/README.md →
+					    "Counts") and no description line (polish-wave spec §3). */}
+					<ListToolbar
+						search={{
+							value: filters.search,
+							onChange: (v) => set("search", v),
+							placeholder: "Filter by project, environment, or error…",
+							ariaLabel: "Search jobs",
+							inputRef,
+							shortcut,
+						}}
+						facets={jobsToolbarFacets({ filters, set, facets, authorLabel, showProject: !projectId })}
+						dateRange={<JobsRangeControls filters={filters} set={set} range={range} />}
+						reset={{ count: countActiveFilters(filters, DEFAULT_JOBS_FILTERS), onReset: reset }}
 					/>
 
 					{noMatch ? (
-						<EmptyState
-							className="min-h-[50vh]"
-							data-state="no-match"
-							icon={<SearchX />}
-							level={2}
-							title="No jobs match these filters"
-							description={
-								projectId
-									? "Every job of this project is excluded by the current search, range, author, environment, status or type selection."
-									: "Every job is excluded by the current search, range, author, environment, project, status or type selection."
-							}
-							action={
-								<Button variant="outline" size="sm" onClick={reset}>
-									Clear filters
-								</Button>
-							}
-						/>
+						<FilterEmpty className="min-h-[50vh]" level={2} noun="jobs" onClear={reset} />
 					) : (
 						<TooltipProvider delayDuration={300}>
 							{/* keepPreviousData: the previous filters' rows stay visible, dimmed, while

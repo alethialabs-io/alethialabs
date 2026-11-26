@@ -161,7 +161,7 @@ describe("an empty list says which kind of empty it is", () => {
 			"href",
 			"/acme/payments/architecture",
 		);
-		expect(screen.queryByText("No jobs match these filters")).toBeNull();
+		expect(screen.queryByText("No jobs match these filters.")).toBeNull();
 		expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
 	});
 
@@ -173,8 +173,11 @@ describe("an empty list says which kind of empty it is", () => {
 		// pristine list), so a selection made before it would not survive to be cleared.
 		act(() => useJobsFilters.getState().patch({ statuses: ["FAILED"], range: "7d" }));
 		expect(useJobsFilters.getState().filters.range).toBe("7d");
-		expect(screen.getByRole("heading", { name: "No jobs match these filters" })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "No jobs match these filters." })).toBeInTheDocument();
 		expect(screen.queryByText("No jobs yet")).toBeNull();
+		// The toolbar names the selection on its facet, and counts both filters in its reset.
+		expect(screen.getByRole("button", { name: "Status: Failed" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Reset · 2" })).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useJobsFilters.getState().filters).toEqual(DEFAULT_JOBS_FILTERS);

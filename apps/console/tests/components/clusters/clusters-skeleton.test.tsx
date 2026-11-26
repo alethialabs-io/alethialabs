@@ -3,7 +3,7 @@
 
 // #6819: the clusters routes' loading state. It is SYNCHRONOUS — it reads nothing, so nothing paints
 // before it (the skeleton rules, docs/ui-conformance/RUBRIC.md) — and it is the list's own shape:
-// the toolbar, the list's real filter bar, and a table with the route's column count. The org route
+// the one-row ListToolbar's skeleton, and a table with the route's column count. The org route
 // has a Project column; a project's own route does not.
 
 import { render } from "@testing-library/react";
@@ -49,17 +49,19 @@ describe("ClustersSkeleton", () => {
 		expect(el).toHaveAttribute("inert");
 	});
 
-	it("draws the toolbar, the list's own filter bar and the table — in that order", () => {
+	it("draws the one-row toolbar (search + three facets, no description) and the table — in that order", () => {
 		const { container } = render(<ClustersSkeleton />);
 		const el = root(container);
-		expect(el.querySelector('[data-slot="page-toolbar-skeleton"]')).not.toBeNull();
-		// The bar is the real one, at its defaults: its search box is there, with nothing typed.
-		const search = el.querySelector('input[aria-label="Search clusters"]');
-		expect(search).not.toBeNull();
-		expect(search).toHaveValue("");
+		expect(el.querySelector('[data-slot="page-toolbar-skeleton"]')).toBeNull();
+		const toolbar = el.querySelector('[data-slot="list-toolbar-skeleton"]');
+		expect(toolbar).not.toBeNull();
+		expect(toolbar?.querySelectorAll('[data-part="search"]')).toHaveLength(1);
+		expect(toolbar?.querySelectorAll('[data-part="facet"]')).toHaveLength(3);
+		expect(toolbar?.querySelectorAll('[data-part="action"]')).toHaveLength(0);
 		expect(el.querySelector('[data-slot="data-table-skeleton"]')).not.toBeNull();
 		const order = [...el.children].map((child) => child.getAttribute("data-slot"));
-		expect(order.indexOf("page-toolbar-skeleton")).toBeLessThan(order.indexOf("data-table-skeleton"));
+		expect(order.indexOf("list-toolbar-skeleton")).toBeGreaterThanOrEqual(0);
+		expect(order.indexOf("list-toolbar-skeleton")).toBeLessThan(order.indexOf("data-table-skeleton"));
 	});
 
 	it("is never a spinner", () => {

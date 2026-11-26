@@ -74,6 +74,25 @@ const countPill = (section: ReturnType<typeof sections>["channels"]) =>
 const ledgerRows = (activity: ReturnType<typeof sections>["activity"]) =>
 	activity.locator("[data-slot='table-body'] [data-slot='table-row']");
 
+/**
+ * Opens a section's facet popover and returns its option rows. A facet is a popover now (polish-wave
+ * spec §3, #7738), not a row of chips: the options render in a portal OUTSIDE the section, so they
+ * are read off the page — and each option's accessible name is `<label>, <count>`.
+ */
+async function openFacet(
+	page: Page,
+	section: ReturnType<typeof sections>["channels"],
+	label: string,
+): Promise<ReturnType<Page["getByRole"]>> {
+	// Only the popover TRIGGER (`aria-haspopup="dialog"`, e2e/helpers/facet.ts): the ledger's
+	// sortable "Status" column header is a button with the same name.
+	await section
+		.getByRole("button", { name: label, exact: true })
+		.and(section.locator('[aria-haspopup="dialog"]'))
+		.click();
+	return page.getByRole("dialog").getByRole("option");
+}
+
 /** Opens the Alerts hub (optionally with filter params) and waits for the surface. */
 async function gotoAlerts(page: Page, org: string, query = ""): Promise<void> {
 	await page.goto(`${ALERTS(org)}${query}`);
@@ -168,7 +187,7 @@ test.describe("Alerts — empty states, through EmptyState", () => {
 		const { activity } = sections(team.page);
 		await expect(activity.locator("[data-slot='empty']")).toBeVisible();
 		await expect(activity.getByText("No activity yet")).toBeVisible();
-		await expect(activity.getByRole("button", { name: "Reset filters" })).toHaveCount(0);
+		await expect(activity.getByRole("button", { name: "Clear filters" })).toHaveCount(0);
 	});
 });
 
@@ -489,25 +508,28 @@ test.describe("Alerts — the channel filter store (channel*)", () => {
 	}) => {
 		await gotoAlerts(team.page, team.orgSlug!, "?channelStatus=paused");
 		const { channels } = sections(team.page);
-		await expect(channels.getByRole("button", { name: "Verified 2" })).toBeVisible();
-		await expect(channels.getByRole("button", { name: "Paused 1" })).toBeVisible();
+		// The selected facet names its value on the trigger, with its own clear beside it.
+		await expect(channels.getByRole("button", { name: "Clear Status", exact: true })).toBeVisible();
+		const options = await openFacet(team.page, channels, "Status: Paused");
+		// Exact names: "Verified" is a substring of "Unverified", so a text filter matches both.
+		await expect(options.and(team.page.getByRole("option", { name: "Verified, 2", exact: true }))).toHaveCount(1);
+		await expect(options.and(team.page.getByRole("option", { name: "Paused, 1", exact: true }))).toHaveCount(1);
 	});
 
 	// #4968 (F10, #4939): a filter that matches nothing lands in the shared EmptyState too, and that
-	// state carries the way out — Reset filters.
+	// state carries the way out — Clear filters (the shared `FilterEmpty`, #7738).
 	test("a filter that matches nothing lands in the shared EmptyState, which offers Reset", async ({
 		team,
 	}) => {
 		await gotoAlerts(team.page, team.orgSlug!, "?channel=zzz-no-such-channel");
 		const { channels } = sections(team.page);
 		await expect(channels.locator("[data-slot='empty']")).toBeVisible();
-		await expect(channels.getByText("No channels match")).toBeVisible();
-		await expect(channels.getByRole("button", { name: "Reset filters" })).toBeVisible();
+		await expect(channels.getByRole("button", { name: "Clear filters" })).toBeVisible();
 		await expect(channels.getByRole("option")).toHaveCount(0);
-		// The description says nothing matched without sizing the universe: #7489 removed the
-		// "None of the N channels" copy with the pills. Exact, so a number creeping back reds here.
+		// The title says nothing matched without sizing the universe: #7489 removed the "None of
+		// the N channels" copy with the pills. Exact, so a number creeping back reds here.
 		await expect(
-			channels.getByText("No channel matches these filters.", { exact: true }),
+			channels.getByText("No channels match these filters.", { exact: true }),
 		).toBeVisible();
 	});
 });
@@ -736,8 +758,9 @@ test.describe("Alerts — the policy filter store (policy*)", () => {
 	}) => {
 		await gotoAlerts(team.page, team.orgSlug!, "?policyStatus=off");
 		const { policies } = sections(team.page);
-		await expect(policies.getByRole("button", { name: "Enabled 2" })).toBeVisible();
-		await expect(policies.getByRole("button", { name: "Off 1" })).toBeVisible();
+		const options = await openFacet(team.page, policies, "Status: Off");
+		await expect(options.filter({ hasText: "Enabled" })).toHaveAccessibleName("Enabled, 2");
+		await expect(options.filter({ hasText: "Off" })).toHaveAccessibleName("Off, 1");
 	});
 
 	test("the three stores are independent: a policy filter leaves the channel rail alone", async ({
@@ -799,7 +822,10 @@ test.describe("Alerts — the delivery ledger and its activity* filters", () => 
 	test("the Failed chip narrows the ledger to failed deliveries", async ({ team }) => {
 		await gotoAlerts(team.page, team.orgSlug!);
 		const { activity } = sections(team.page);
-		await activity.getByRole("button", { name: "Failed 1" }).click();
+		const options = await openFacet(team.page, activity, "Status");
+		await options.filter({ hasText: "Failed" }).click();
+		await team.page.keyboard.press("Escape");
+		await expect(activity.getByRole("button", { name: "Status: Failed", exact: true })).toBeVisible();
 		await expect(activity.getByText("e2e failed event")).toBeVisible();
 		await expect(activity.getByText("e2e delivered event")).toBeHidden();
 		await expect(ledgerRows(activity)).toHaveCount(1);
@@ -814,8 +840,9 @@ test.describe("Alerts — the delivery ledger and its activity* filters", () => 
 		await expect(activity.getByText("e2e failed event")).toBeHidden();
 		await expect(ledgerRows(activity)).toHaveCount(1);
 		// Both options keep their universe counts, so the selection can be undone.
-		await expect(activity.getByRole("button", { name: "Sent 1" })).toBeVisible();
-		await expect(activity.getByRole("button", { name: "Failed 1" })).toBeVisible();
+		const options = await openFacet(team.page, activity, "Status: Sent");
+		await expect(options.filter({ hasText: "Sent" })).toHaveAccessibleName("Sent, 1");
+		await expect(options.filter({ hasText: "Failed" })).toHaveAccessibleName("Failed, 1");
 	});
 
 	test.afterAll(async ({ team }) => {

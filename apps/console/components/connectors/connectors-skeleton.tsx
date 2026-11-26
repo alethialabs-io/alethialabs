@@ -5,7 +5,7 @@
 // render draw this one skeleton, so the two cannot disagree about the layout they promise.
 
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /**
@@ -36,28 +36,16 @@ function ConnectorTileSkeleton() {
 }
 
 /**
- * The connectors board while its read is pending: the toolbar (count + description), the filter
- * bar (search, the status chips, the group and vendor pickers, then the view toggle and the docs
- * link at the end), and the first group sections as card grids — the board's default view.
+ * The connectors board while its read is pending: the one-row `ListToolbar` (search, the Status,
+ * Group and Vendor facets, then the view toggle and the docs link at the far right), and the first
+ * group sections as card grids — the board's default view.
  */
 export function ConnectorsSkeleton() {
 	return (
 		// `SkeletonRoot` (RUBRIC, "The skeleton rules", rule 1): the root says the region is pending
 		// (`aria-busy`). It used to be `aria-hidden`, which says nothing is here at all.
 		<SkeletonRoot data-skeleton="connectors" className="space-y-6">
-			<PageToolbarSkeleton />
-
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-9 w-[200px] rounded-md" />
-				<Skeleton className="h-8 w-24 rounded-full" />
-				<Skeleton className="h-8 w-24 rounded-full" />
-				<Skeleton className="h-9 w-24 rounded-md" />
-				<Skeleton className="h-9 w-32 rounded-md" />
-				<div className="ml-auto flex items-center gap-2.5">
-					<Skeleton className="h-9 w-[72px] rounded-md" />
-					<Skeleton className="size-9 rounded-md" />
-				</div>
-			</div>
+			<ListToolbarSkeleton facets={3} view actions={1} />
 
 			<div className="space-y-6">
 				{SKELETON_GROUPS.map((tiles, g) => (

@@ -50,7 +50,10 @@
 // A facet is found by its COUNT. Every shared facet primitive in `@repo/ui` renders an option's count
 // through `CountFigure` (`data-slot="count-figure"`), and nothing else in a console page does — so
 // "a button carrying a numeric count figure" is the one shape FacetFilter, FilterChip, MultiCombobox
-// and FunnelFilter all share. A bar whose options show no counts is therefore not found, and the
+// and FunnelFilter all share. Since #7738 every console list's facets sit behind a `FacetFilter`
+// trigger rather than inline, so the options are found by OPENING each trigger (`markOpeners` →
+// `openProbe`) and reading the counts in the popover; the control's `popover` arm pins that path.
+// A bar whose options show no counts is therefore not found, and the
 // route is NOT MEASURED naming that, never PASS. F8 and F9 drive the FIRST option that narrows, of
 // the FIRST facet found that has one; they do not claim every facet. When no facet found offers an
 // option narrower than the full list, or the list does not actually narrow once the option is
@@ -774,7 +777,7 @@ export const CONTROL_ORIGIN = "http://filters-control.invalid";
  * `aria-busy` for longer than the old settle window, then the filtered answer (#4980). F8 must PASS
  * there — a stillness-only settle read the placeholder and failed it.
  */
-export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke" | "one-kind" | "slow-reload";
+export type ControlMode = "good" | "no-url" | "moving-counts" | "per-keystroke" | "one-kind" | "slow-reload" | "popover";
 
 /** How long `slow-reload` holds its placeholder — well past the old 600 + 300 ms stillness window. */
 export const SLOW_RELOAD_MS = 2_000;
@@ -784,6 +787,12 @@ export const SLOW_RELOAD_MS = 2_000;
  * `data-list-item`, chips with `aria-pressed` and a `count-figure`, a search input beside
  * `svg.lucide-search`, a "Reset · N" button and a `data-slot="empty"` state — so the control
  * exercises the matchers the routes use.
+ *
+ * `popover` puts the same options behind a `FacetFilter`-shaped trigger (`aria-haspopup`, #7738): a
+ * hidden listbox OUTSIDE `main`, as a portal leaves it, of `role="option"` rows carrying
+ * `aria-selected`, which only opens on the trigger and closes on Escape. Every console list moved its
+ * facets behind such a trigger in #7738, so the good bar must still PASS all three there — an
+ * instrument that only found inline chips would turn every route NOT MEASURED and this arm red.
  *
  * The items are a `ul`, NOT table rows, so the good bar can only be sized through the item marker:
  * read any other way it has no size and every arm goes NOT MEASURED. And the heading carries a
@@ -797,6 +806,7 @@ export const CONTROL_FIXTURE = `<!doctype html><html lang="en"><head><meta chars
 <ul id="rows"></ul>
 <div id="empty-slot"></div>
 </main>
+<div id="pop" role="listbox" aria-multiselectable="true" style="display:none"></div>
 <script>
 var MODE = "__MODE__";
 var ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", kind: "b" }, { name: "gamma", kind: "a" }];
@@ -804,6 +814,7 @@ if (MODE === "one-kind") ROWS = [{ name: "alpha", kind: "a" }, { name: "beta", k
 var p = new URLSearchParams(location.search);
 var state = { kinds: (p.get("kinds") || "").split(",").filter(Boolean), search: p.get("search") || "" };
 var timer = null;
+var open = false;
 var placeholder = MODE === "slow-reload" && state.kinds.length > 0;
 function match(r) { return (placeholder || state.kinds.length === 0 || state.kinds.indexOf(r.kind) >= 0) && (!state.search || r.name.indexOf(state.search) >= 0); }
 function writeUrl() {
@@ -818,18 +829,29 @@ function render() {
 	var rows = ROWS.filter(match);
 	document.getElementById("rows").innerHTML = rows.map(function (r) { return "<li data-list-item>" + r.name + " · " + r.kind + "</li>"; }).join("");
 	var universe = MODE === "moving-counts" || MODE === "one-kind" ? rows : ROWS.filter(function (r) { return !state.search || r.name.indexOf(state.search) >= 0; });
-	document.getElementById("chips").innerHTML = ["a", "b"].map(function (k) {
+	var options = ["a", "b"].map(function (k) {
 		var n = universe.filter(function (r) { return r.kind === k; }).length;
 		if (MODE === "moving-counts" && n === 0) return "";
-		return '<button type="button" data-kind="' + k + '" aria-pressed="' + (state.kinds.indexOf(k) >= 0) + '">Kind ' + k + ' <span data-slot="count-figure">' + n + "</span></button>";
+		var on = state.kinds.indexOf(k) >= 0;
+		if (MODE === "popover") return '<div role="option" data-kind="' + k + '" aria-selected="' + on + '">Kind ' + k + ' <span data-slot="count-figure">' + n + "</span></div>";
+		return '<button type="button" data-kind="' + k + '" aria-pressed="' + on + '">Kind ' + k + ' <span data-slot="count-figure">' + n + "</span></button>";
 	}).join("");
+	if (MODE === "popover") {
+		document.getElementById("chips").innerHTML = '<button type="button" id="kind-trigger" aria-haspopup="dialog" aria-expanded="' + open + '">Kind</button>';
+		var pop = document.getElementById("pop");
+		pop.innerHTML = options;
+		pop.style.display = open ? "block" : "none";
+	} else {
+		document.getElementById("chips").innerHTML = options;
+	}
 	var active = state.kinds.length + (state.search ? 1 : 0);
 	document.getElementById("reset-slot").innerHTML = active > 0 ? '<button type="button" id="reset">Reset · ' + active + "</button>" : "";
 	document.getElementById("empty-slot").innerHTML = rows.length === 0 ? '<div data-slot="empty">No widgets match these filters</div>' : "";
 }
 document.addEventListener("click", function (e) {
-	var t = e.target instanceof Element ? e.target.closest("button") : null;
+	var t = e.target instanceof Element ? e.target.closest('button, [role="option"]') : null;
 	if (!t) return;
+	if (t.id === "kind-trigger") { open = !open; render(); return; }
 	if (t.id === "reset") { state = { kinds: [], search: "" }; document.getElementById("q").value = ""; }
 	else if (t.getAttribute("data-kind")) { var k = t.getAttribute("data-kind"); var i = state.kinds.indexOf(k); if (i >= 0) state.kinds.splice(i, 1); else state.kinds.push(k); }
 	else return;
@@ -839,6 +861,7 @@ if (placeholder) {
 	document.querySelector("main").setAttribute("aria-busy", "true");
 	setTimeout(function () { placeholder = false; document.querySelector("main").removeAttribute("aria-busy"); render(); }, __SLOW_MS__);
 }
+document.addEventListener("keydown", function (e) { if (e.key === "Escape" && open) { open = false; render(); } });
 document.getElementById("q").value = state.search;
 document.getElementById("q").addEventListener("input", function (e) {
 	state.search = e.target.value; writeUrl(); render();
@@ -893,6 +916,10 @@ export async function filtersControl(page: Page, fixture = CONTROL_FIXTURE): Pro
 		const good = await run("good");
 		for (const id of ["F8", "F9", "F10"] as const) {
 			if (verdictOf(good[id]) !== "PASS") problems.push(`the good bar reported ${id} ${verdictOf(good[id])}`);
+		}
+		const popover = await run("popover");
+		for (const id of ["F8", "F9", "F10"] as const) {
+			if (verdictOf(popover[id]) !== "PASS") problems.push(`the good bar with its facet behind a popover trigger reported ${id} ${verdictOf(popover[id])}`);
 		}
 		const noUrl = await run("no-url");
 		const noUrlF8 = noUrl.F8;
