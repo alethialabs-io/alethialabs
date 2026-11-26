@@ -49,6 +49,9 @@ importers:
       '@changesets/cli':
         specifier: 3.0.3
         version: 3.0.3
+      istanbul-lib-coverage:
+        specifier: 3.2.2
+        version: 3.2.2
       prettier:
         specifier: ^3.10.1
         version: 3.10.1

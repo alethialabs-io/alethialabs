@@ -80,14 +80,42 @@
 // gains are never locked until floors are REGENERATED. The same applies to a routine re-record.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// NOT COMPATIBLE WITH TEST SHARDING
+// SHARDED INPUT: THE CONSOLE IS MEASURED FROM A MERGE OF N SHARDS, NEVER FROM ONE
 //
-// Each shard would write a partial coverage-final.json, which F8 would (correctly) demote —
-// turning the gate off rather than wrong, but off. If sharding ever lands, teach this to accept
-// several artefacts and merge them by path BEFORE measuring.
+// This header used to say "NOT COMPATIBLE WITH TEST SHARDING": each shard writes a PARTIAL
+// coverage-final.json (its own test files' hits, every other `coverage.include` file at zero), and F8
+// would demote one — turning the gate off rather than wrong, but off. Since the console suite was
+// split across runners (ci.yml `ts-test-console`, `vitest run --coverage --shard=i/N`), the rule is:
+//
+//   1. Each shard uploads its coverage-final.json plus a fingerprint (`ts-coverage-shards.mjs
+//      fingerprint`: this file's `currentEnv`, and which shard it is).
+//   2. `ts-coverage-shards.mjs merge` takes the directory of shard artefacts and the EXPECTED N, and
+//      merges them BY PATH with istanbul-lib-coverage — the exact operation vitest's own
+//      `--merge-reports` performs — into `<project>/coverage/coverage-final.json`, plus a provenance
+//      manifest (shard-merge.json: N, and the sha256 of the bytes written). A missing, duplicated,
+//      mislabelled, corrupt or foreign-environment shard is a HARD error there and nothing is
+//      written: an incomplete merge is never measured as a whole. See scripts/lib/ts-coverage-merge.mjs.
+//   3. This script is then run with `--merged-from-shards N`, which makes the input contract explicit:
+//      before measuring, it verifies the manifest — right project, right N, and a hash matching the
+//      artefact it is about to read. Any mismatch (no manifest at all included, which is what one
+//      shard's partial file copied into place looks like) EXITS 1 rather than failing open. It is
+//      the one non-regression exit in this file, and it is not a coverage verdict: nothing a PR
+//      changes in code can produce it, only a broken pipeline can, and measuring a broken pipeline's
+//      output is how a ratchet goes quietly off.
+//
+// Everything after the merge is unchanged: the merged file is an ordinary coverage-final.json, F1..F11
+// apply to it as before, and the fingerprint read here (`currentEnv`, in the merging job) is a true
+// description of the measurement because step 2 refused any shard whose fingerprint differs from it.
+//
+// The floors are still RECORDED from an unsharded run (the determinism probe). That is licensed by an
+// empirical check rather than by this argument: ci.yml's `ts-shard-equivalence` dispatch runs the
+// suite unsharded and sharded on one commit and fails on any per-file covered/total difference.
+//
+// Without `--merged-from-shards` this script measures whatever coverage-final.json is in place, exactly
+// as before — every other project's step, the probe and a laptop run use that path.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,6 +127,16 @@ import {
 	UnusableCoverageError,
 	measureByFile,
 } from "./lib/ts-coverage-measure.mjs";
+import {
+	compareCoverage,
+	MANIFEST,
+	parseShardCount,
+	parseShardSpec,
+	readShards,
+	renderManifest,
+	ShardMergeError,
+	verifyManifest,
+} from "./lib/ts-coverage-merge.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -193,7 +231,7 @@ function coverageProviderVersion(projectDir) {
  * @param {string} projectDir absolute project root
  * @returns {Record<string, string|boolean>}
  */
-function currentEnv(projectDir) {
+export function currentEnv(projectDir) {
 	return {
 		// Spelled like `uname -s` so a reader can compare this against the Go floors side by side.
 		os: process.platform === "darwin" ? "Darwin" : process.platform === "linux" ? "Linux" : process.platform,
@@ -207,14 +245,19 @@ function currentEnv(projectDir) {
 		// The divergence is NOT local-vs-CI. It is turbo-vs-direct, and it runs the other way from
 		// what this comment used to claim:
 		//
-		//   pnpm exec turbo run test   -> dist PRESENT   (ci.yml's `ts-test` job, and a laptop running turbo)
+		//   pnpm exec turbo run test   -> dist PRESENT   (a laptop running turbo; the determinism probe)
 		//   pnpm -C apps/console run test       -> dist ABSENT    (scripts/env.sh, i.e. `pnpm env:check`)
 		//
 		// apps/console declares @alethia/ee under **optionalDependencies**, and turbo.json declares
-		// `test.dependsOn: ["^build"]` — so turbo builds the dist as part of the test task. That is
-		// why no explicit `Build @alethia/ee` step appears in the `ts-test` job even though the
-		// floors are reachable there. ci.yml (above `ts-test`'s ratchet steps) carries the measured evidence; it is not
-		// restated here, so the two cannot drift apart again.
+		// `test.dependsOn: ["^build"]` — so turbo builds the dist as part of the console's test task.
+		//
+		// CI NO LONGER RELIES ON THAT EDGE. Since the console suite was sharded, `ts-test` (which
+		// carries the ratchet steps) runs every workspace's tests EXCEPT the console's, so nothing in it
+		// depends on @alethia/ee — and both it and the `ts-test-console` shards now build the dist in an
+		// explicit `Build @alethia/ee` step. (An implicit producer was fragile anyway: turbo restores a
+		// cache hit's declared outputs, and `build.outputs` names `.next/**` only, so an
+		// `@alethia/ee#build` cache hit put no dist back.) ci.yml above `ts-test`'s ratchet steps
+		// carries the history; it is not restated here, so the two cannot drift apart again.
 		//
 		// This comment previously asserted the exact opposite, and that is the part worth keeping:
 		// an inverted rationale on a fingerprint key does not merely mislead, it SURVIVES
@@ -233,7 +276,7 @@ function floorsPath(projectDir) {
 }
 
 /** @returns {string} the coverage artefact path for a project. */
-function coveragePath(projectDir) {
+export function coveragePath(projectDir) {
 	return path.join(projectDir, "coverage/coverage-final.json");
 }
 
@@ -375,10 +418,51 @@ function measureOrFailOpen(projectDir, project, measureFn = measure) {
 	}
 }
 
-/** The check mode. Exits non-zero ONLY on a genuine, in-environment regression. */
-function runCheck(project) {
+/**
+ * `--merged-from-shards N`: prove the artefact about to be measured is the complete merge of N shards
+ * (see the SHARDED INPUT header). Exits 1 — never fail-open — when it is not, because the only way
+ * here is a broken pipeline, and the fail-open paths below would turn that into a demoted gate (F8)
+ * or a fake regression rather than the error it is.
+ *
+ * @param {string} projectDir absolute project root
+ * @param {string} project repo-relative project path
+ * @param {number} shards the N the calling step declares
+ */
+function assertMergedFromShards(projectDir, project, shards) {
+	const cov = coveragePath(projectDir);
+	const manifest = path.join(path.dirname(cov), MANIFEST);
+	try {
+		if (!existsSync(cov)) {
+			throw new ShardMergeError(`${project}: no coverage/coverage-final.json, though this step declares a merge of ${shards} shards — the merge step did not write one`);
+		}
+		const { perShard } = verifyManifest({
+			coverageText: readFileSync(cov, "utf8"),
+			manifestText: existsSync(manifest) ? readFileSync(manifest, "utf8") : null,
+			project,
+			shards,
+		});
+		process.stdout.write(`ts-coverage ${project}: measuring the verified merge of ${shards} shards (${perShard.map((p) => `${p.shard}: ${p.files} files`).join(", ")})\n`);
+	} catch (err) {
+		if (!(err instanceof ShardMergeError)) throw err;
+		annotate("error", null, null, `ts-coverage: ${err.message}`);
+		process.exit(1);
+	}
+}
+
+/**
+ * The check mode. Exits non-zero ONLY on a genuine, in-environment regression — or, with
+ * `mergedFromShards`, on an artefact that is not the complete merge it is declared to be.
+ *
+ * @param {string} project
+ * @param {{mergedFromShards?: number}} [opts]
+ */
+function runCheck(project, { mergedFromShards } = {}) {
 	const projectDir = path.join(ROOT, project);
 	const fp = floorsPath(projectDir);
+
+	// Before F1: whether the artefact is whole is a question about the pipeline, and it has the same
+	// answer whether or not this project is armed.
+	if (mergedFromShards !== undefined) assertMergedFromShards(projectDir, project, mergedFromShards);
 
 	// F1 — not armed. Landing inert is the whole bootstrap strategy.
 	if (!existsSync(fp)) {
@@ -1021,6 +1105,109 @@ function runSelfTest() {
 		check("a multi-line message is still one line", errChunks.every((c) => c.split("\n").filter(Boolean).length === 1));
 	}
 
+	// ── SHARDED INPUT (see the header). Every refusal path of the shard-set validation and of the
+	// provenance check, driven through the real functions. The MERGE itself (istanbul-lib-coverage)
+	// is not exercised here — this self-test runs with no installed tree — so
+	// `ts-coverage-shards.mjs --self-test` covers it in the ts-test job, before that job merges.
+	process.stdout.write("\n sharded input — an incomplete merge is an error, never a measurement\n");
+	{
+		const throwsMerge = (fn, needle) => {
+			try {
+				fn();
+				return false;
+			} catch (e) {
+				return e instanceof ShardMergeError && (needle === undefined || e.message.includes(needle));
+			}
+		};
+		check("shard count 4 parses", parseShardCount("4") === 4);
+		check("shard count 1 is refused (one shard is not sharding)", throwsMerge(() => parseShardCount("1")));
+		check("shard count 0 is refused (a vacuous merge of nothing)", throwsMerge(() => parseShardCount("0")));
+		check("a non-numeric shard count is refused", throwsMerge(() => parseShardCount("four")) && throwsMerge(() => parseShardCount("")));
+		check("shard spec 2/4 parses", parseShardSpec("2/4").index === 2 && parseShardSpec("2/4").total === 4);
+		check("shard spec outside 1..N is refused", throwsMerge(() => parseShardSpec("5/4")) && throwsMerge(() => parseShardSpec("0/4")));
+		check("a shard spec not spelled i/N is refused", throwsMerge(() => parseShardSpec("2-4")));
+
+		const env = { os: "Linux", node: "22", coverage_provider: "@vitest/coverage-v8@4.1.12", ee_dist: true, edition: "unset" };
+		const tmpRoot = mkdtempSync(path.join(tmpdir(), "tscov-shards-"));
+		let n = 0;
+		/**
+		 * Lay out a shard directory: shard i of `total` gets fixture coverage under /abs/proj, and a
+		 * fingerprint matching `env`. `tweak(i, files)` may rewrite either before they are written.
+		 */
+		const layout = (total, tweak = () => {}) => {
+			const dir = path.join(tmpRoot, `set-${(n += 1)}`);
+			mkdirSync(dir);
+			for (let i = 1; i <= total; i += 1) {
+				const files = {
+					name: `console-coverage-shard-${i}-of-${total}`,
+					coverage: JSON.stringify(fixture({ "lib/a.ts": i === 1 ? [1, 0] : [0, 1], "lib/b.ts": [0] })),
+					fingerprint: JSON.stringify({ shard: `${i}/${total}`, project: "p", env }),
+				};
+				tweak(i, files);
+				if (files.name === null) continue;
+				mkdirSync(path.join(dir, files.name));
+				if (files.coverage !== null) writeFileSync(path.join(dir, files.name, "coverage-final.json"), files.coverage);
+				if (files.fingerprint !== null) writeFileSync(path.join(dir, files.name, "fingerprint.json"), files.fingerprint);
+			}
+			return dir;
+		};
+		const read = (dir, total = 3, projectEnv = env) => readShards({ dir, shards: total, projectAbsDir: "/abs/proj", env: projectEnv, project: "p" });
+		try {
+			const ok = read(layout(3));
+			check("a complete set of 3 reads as 3 shards, in order", ok.length === 3 && ok.map((s) => s.index).join() === "1,2,3");
+			check("...each measured by the ratchet's own walk", ok[0].statements.total === 3 && ok[0].statements.covered === 1, JSON.stringify(ok[0].statements));
+			check("an absent shard directory is refused", throwsMerge(() => read(path.join(tmpRoot, "nope")), "none of the 3"));
+			check("a MISSING shard is refused, and named", throwsMerge(() => read(layout(3, (i, f) => { if (i === 2) f.name = null; })), "missing shard(s) 2/3"));
+			check("N comes from the caller: 2 arrived shards of 2 are refused when 3 are expected", throwsMerge(() => read(layout(2)), "expects 3"));
+			check("a stray entry beside the shards is refused", throwsMerge(() => { const d = layout(3); writeFileSync(path.join(d, "stray.json"), "{}"); read(d); }, "stray.json"));
+			check("the same shard arriving twice is refused", throwsMerge(() => { const d = layout(3); mkdirSync(path.join(d, "other-shard-1-of-3")); read(d); }, "arrived twice"));
+			check("a shard with no coverage-final.json is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 3) f.coverage = null; })), "no coverage-final.json"));
+			check("a shard with no fingerprint is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 1) f.fingerprint = null; })), "no fingerprint.json"));
+			check("a fingerprint naming another slot is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 2) f.fingerprint = JSON.stringify({ shard: "3/3", project: "p", env }); })), "wrong slot"));
+			check("a fingerprint naming another project is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 2) f.fingerprint = JSON.stringify({ shard: "2/3", project: "q", env }); })), "names project"));
+			check("a shard measured in another environment is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 3) f.fingerprint = JSON.stringify({ shard: "3/3", project: "p", env: { ...env, ee_dist: false } }); })), "ee_dist: false vs true"));
+			check("...and so is a merging job whose environment differs from every shard", throwsMerge(() => read(layout(3), 3, { ...env, node: "24" }), "node: 22 vs 24"));
+			check("a truncated coverage-final.json is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 2) f.coverage = f.coverage.slice(0, 20); })), "not valid JSON"));
+			check("an EMPTY coverage-final.json is refused, not merged as nothing", throwsMerge(() => read(layout(3, (i, f) => { if (i === 2) f.coverage = "{}"; })), "no file records"));
+			check("a corrupt record is refused and named as its shard", throwsMerge(() => read(layout(3, (i, f) => { if (i === 2) { const c = JSON.parse(f.coverage); delete c["/abs/proj/lib/a.ts"].s["1"]; f.coverage = JSON.stringify(c); } })), "shard 2/3: lib/a.ts"));
+			check("a record outside the project root is refused", throwsMerge(() => read(layout(3, (i, f) => { if (i === 1) f.coverage = JSON.stringify({ "/elsewhere/x.ts": { statementMap: {}, s: {} } }); })), "does not lie under"));
+		} finally {
+			rmSync(tmpRoot, { recursive: true, force: true });
+		}
+
+		const text = '{"/abs/proj/lib/a.ts":{}}';
+		const manifest = renderManifest({ project: "p", shards: 3, mergedText: text, perShard: [1, 2, 3].map((index) => ({ index, files: 1, statements: { covered: 0, total: 0 } })) });
+		const verify = (over = {}) => verifyManifest({ coverageText: text, manifestText: manifest, project: "p", shards: 3, ...over });
+		check("a matching manifest verifies", verify().perShard.length === 3);
+		check("NO manifest is refused — that is what one shard's partial copied into place looks like", throwsMerge(() => verify({ manifestText: null }), "may be one shard's partial"));
+		check("a manifest for a different N is refused", throwsMerge(() => verify({ shards: 4 }), "expects 4"));
+		check("a manifest for a different project is refused", throwsMerge(() => verify({ project: "q" })));
+		check("an artefact whose bytes are not the merge's is refused", throwsMerge(() => verify({ coverageText: `${text} ` }), "sha256 differs"));
+		check("an unparseable manifest is refused", throwsMerge(() => verify({ manifestText: "{" }), "not valid JSON"));
+
+		const base = fixture({ "lib/a.ts": [1, 0, 2], "lib/b.ts": [0] });
+		const same = compareCoverage(base, structuredClone(base));
+		check("identical maps compare equal", same.differences.length === 0 && same.hitDifferences.length === 0 && same.files === 2);
+		const lostOne = fixture({ "lib/a.ts": [1, 0, 0], "lib/b.ts": [0] });
+		check("one statement covered on one side only is a DIFFERENCE", compareCoverage(base, lostOne).differences.some((d) => d.includes("lib/a.ts") && d.includes("s 2/3 vs 1/3")));
+		check("a file on one side only is a DIFFERENCE", compareCoverage(base, fixture({ "lib/a.ts": [1, 0, 2] })).differences.some((d) => d.includes("only in the first")));
+		const moreHits = fixture({ "lib/a.ts": [5, 0, 2], "lib/b.ts": [0] });
+		const hits = compareCoverage(base, moreHits);
+		check("a differing hit COUNT with identical covered sets is reported, not failed", hits.differences.length === 0 && hits.hitDifferences.length === 1);
+		const branchy = (arms) => ({ "/abs/proj/x.ts": { ...fixture({ "x.ts": [1] })["/abs/proj/x.ts"], branchMap: { 0: {} }, b: { 0: arms } } });
+		check("branch arms are compared too, not only statements", compareCoverage(branchy([1, 0]), branchy([1, 1])).differences.some((d) => d.includes("b 1/2 vs 2/2")));
+
+		// The flag is refused outside the check mode — accepted by `--update` it would record floors
+		// from an artefact nobody verified. `--print` is the read-only way to reach that refusal.
+		try {
+			execFileSync(process.execPath, [path.join(ROOT, "scripts", "ts-coverage.mjs"), "--project", "packages/format", "--print", "--merged-from-shards", "2"], { stdio: ["ignore", "pipe", "pipe"] });
+			check("--merged-from-shards is refused outside the check mode", false, "exited 0");
+		} catch (err) {
+			const e = /** @type {{status?: number}} */ (err);
+			check("--merged-from-shards is refused outside the check mode", e.status === 2, `status ${String(e.status)}`);
+		}
+	}
+
 	process.stdout.write("\n scope — every coverage-emitting project must have a ratchet step\n");
 	try {
 		const ci = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -1317,9 +1504,13 @@ function runCli() {
 	// the `else` below REFUSES an argument it does not know — an unregistered flag would exit 2 with
 	// "unknown argument", which is the correct behaviour and the reason it must be registered here.
 	let perFile = false;
+	/** @type {string|undefined} `--merged-from-shards N`, check mode only. */
+	let mergedFrom;
 	for (let i = 0; i < argv.length; i += 1) {
 		const a = argv[i];
 		if (a === "--project") { project = argv[i + 1]; i += 1; }
+		else if (a === "--merged-from-shards") { mergedFrom = argv[i + 1] ?? ""; i += 1; }
+		else if (a.startsWith("--merged-from-shards=")) mergedFrom = a.slice("--merged-from-shards=".length);
 		else if (a.startsWith("--project=")) project = a.slice("--project=".length);
 		else if (a === "--update") mode = "update";
 		else if (a === "--accept-regression") mode = "accept";
@@ -1342,6 +1533,22 @@ function runCli() {
 		process.exit(2);
 	}
 
+	// Same strictness as `--per-file`: a declaration that cannot take effect is an error. Accepted by
+	// `--update` it would silently record floors from an unverified artefact.
+	let mergedFromShards;
+	if (mergedFrom !== undefined) {
+		if (mode !== "check") {
+			process.stderr.write(`ts-coverage: --merged-from-shards applies to the check mode only (mode is --${mode})\n`);
+			process.exit(2);
+		}
+		try {
+			mergedFromShards = parseShardCount(mergedFrom);
+		} catch (err) {
+			process.stderr.write(`ts-coverage: --merged-from-shards: ${/** @type {Error} */ (err).message}\n`);
+			process.exit(2);
+		}
+	}
+
 	if (mode === "self-test") runSelfTest();
 	else if (!project) {
 		process.stderr.write("ts-coverage: --project <path> is required (e.g. --project apps/console)\n");
@@ -1349,7 +1556,7 @@ function runCli() {
 	} else if (!existsSync(path.join(ROOT, project))) {
 		process.stderr.write(`ts-coverage: no such project directory: ${project}\n`);
 		process.exit(2);
-	} else if (mode === "check") runCheck(project);
+	} else if (mode === "check") runCheck(project, { mergedFromShards });
 	else if (mode === "print") runPrint(project, perFile);
 	else runUpdate(project, { allowLower: mode === "accept" });
 }
