@@ -22,6 +22,7 @@ import {
 	waitForTurn,
 } from "./helpers/ai-live";
 import {
+	isCommunityEdition,
 	ledgerByModel,
 	outstandingHolds,
 	personaOrgSlug,
@@ -129,6 +130,7 @@ test.describe(`Elench agent with a REAL model · ${TIER}`, () => {
 
 	test("the Plus advisor actually served step 0 (ledger row for the advisor model)", async ({ page }) => {
 		test.skip(!METERED, "this console meters nothing (no billing provider), so the ledger cannot answer");
+		test.skip(isCommunityEdition(), "community has no AI tiers — the executor plans every turn");
 		test.skip(TIER === "ai_free", "the free tier has no advisor — the executor plans");
 		const before = await rowsFor(ADVISOR_PLUS);
 		await ask(page, "Are my connectors healthy? Use the tools to check.");
@@ -153,7 +155,7 @@ test.describe(`Elench agent with a REAL model · ${TIER}`, () => {
 
 	test("on Max, Deep reasoning routes the advisor to the Max model", async ({ page }) => {
 		test.skip(!METERED, "this console meters nothing (no billing provider), so the ledger cannot answer");
-		test.skip(TIER !== "ai_max", "Deep reasoning renders only on the ai_max tier");
+		test.skip(isCommunityEdition() || TIER !== "ai_max", "Deep reasoning renders only on the ai_max tier");
 		const deep = page.getByRole("button", { name: "Deep reasoning" });
 		await deep.click();
 		await expect(deep).toHaveAttribute("aria-pressed", "true");

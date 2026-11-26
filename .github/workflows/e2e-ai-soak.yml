@@ -138,9 +138,12 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      # Same console shape as e2e-ai-nightly.yml's e2e-live job; see the comments there for why each
-      # of these is set (community edition, auth rate limiter off on a bare localhost console).
-      ALETHIA_EDITION: community
+      # The ENTERPRISE edition — the hosted shape. The nightly runs community, where tenancy collapses
+      # to the person (lib/auth/scope.ts: `orgId === userId`) and no org can hold an AI tier, so the
+      # Plus/Max advisor routing this soak exists to exercise could not be reached there. ee/dist is
+      # built below and guarded, exactly as release-gate.yml's legs do. The rest mirrors the nightly
+      # (see the comments in e2e-ai-nightly.yml, e.g. the auth rate limiter off on bare localhost).
+      ALETHIA_EDITION: enterprise
       ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
@@ -185,6 +188,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Migrate the test database
         run: pnpm -C apps/console run db:migrate
+      - name: Build @alethia/ee (the console resolves EE scope only when its dist exists)
+        run: pnpm -F @alethia/ee build
+      - name: Guard — ee/dist must exist, or the soak silently runs community scope
+        run: |
+          test -f ee/dist/index.js || {
+            echo "::error::ee/dist/index.js missing — the console would refuse the enterprise edition"
+            exit 1
+          }
       - name: Build the console
         run: pnpm -C apps/console run build
       - name: Install Playwright (Chromium + OS deps)

@@ -22,6 +22,17 @@ import { db } from "./db";
 /** The AI tiers a soak leg can seed (mirrors `AiTier` in lib/billing/ai-plan.ts). */
 export type SoakTier = "ai_free" | "ai_plus" | "ai_max";
 
+/**
+ * Whether the console under test is the COMMUNITY edition. There the tenancy collapses to the
+ * person: `getActiveScope` answers `{ orgId: userId }` whatever org the URL names
+ * (lib/auth/scope.ts), so every row the app reads is scoped by `org_id = <user id>`, and there is
+ * no AI tier to grant — `organization_billing.organization_id` must name a real organization, and
+ * the personal scope is not one. The nightly runs community; the soak runs enterprise.
+ */
+export function isCommunityEdition(): boolean {
+	return process.env.ALETHIA_EDITION === "community";
+}
+
 /** The tier this run seeds: `AI_SOAK_TIER` when it names a tier, otherwise `ai_plus`. */
 export function soakTier(): SoakTier {
 	const raw = process.env.AI_SOAK_TIER;
@@ -46,6 +57,9 @@ export async function personaOrgSlug(page: Page): Promise<string> {
  * every spec file may call it in `beforeAll` without coordinating with the others.
  */
 export async function seedAiTier(orgSlug: string, tier: SoakTier = soakTier()): Promise<void> {
+	// Community has no tiers to grant (see isCommunityEdition): the turn reads the personal scope's
+	// billing, which no row can name, so it is always ai_free there — and unmetered without billing.
+	if (isCommunityEdition()) return;
 	const sql = db();
 	const rows = await sql<{ id: string }[]>`select id from organization where slug = ${orgSlug} limit 1`;
 	const orgId = rows[0]?.id;
@@ -58,7 +72,13 @@ export async function seedAiTier(orgSlug: string, tier: SoakTier = soakTier()): 
 				updated_at = now()`;
 }
 
-/** The persona org's id and its owner's user id — the scope seeded rows (seed.ts `Owner`) carry. */
+/**
+ * The scope seeded rows (seed.ts `Owner`) must carry for the console to read them back: the
+ * persona's user id, and the org id the app's actor resolves to — the named organization in the
+ * enterprise edition, the user id itself in community (see isCommunityEdition). Seeding the
+ * organization's id under community wrote rows no page could see (measured on the first live run:
+ * the overview showed "No projects yet" and `list_projects` returned none).
+ */
 export async function personaOwner(orgSlug: string): Promise<{ orgId: string; userId: string }> {
 	const rows = await db()<{ orgId: string; userId: string }[]>`
 		select o.id as "orgId", m.user_id as "userId"
@@ -67,7 +87,7 @@ export async function personaOwner(orgSlug: string): Promise<{ orgId: string; us
 		order by m.created_at limit 1`;
 	const row = rows[0];
 	if (!row) throw new Error(`no owner found for organization ${orgSlug}`);
-	return row;
+	return isCommunityEdition() ? { orgId: row.userId, userId: row.userId } : row;
 }
 
 /** One ledger aggregate per model that served this org (ai_usage_ledger, settled rows only). */

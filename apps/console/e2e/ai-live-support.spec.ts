@@ -10,6 +10,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { completedAnswer, completedToolFrame, waitForTurn } from "./helpers/ai-live";
 import { personaOrgSlug, seedAiTier, soakTier } from "./helpers/ai-tier";
 import { STORAGE_STATE } from "./fixtures/auth";
+import { untilPageHydrated } from "./helpers/hydration";
 
 test.skip(!process.env.ANTHROPIC_API_KEY, "needs a real ANTHROPIC_API_KEY on the console under test");
 test.setTimeout(240_000);
@@ -18,11 +19,17 @@ let orgSlug = "";
 
 /** Send a message through the support chat's composer. */
 async function askSupport(page: Page, text: string): Promise<void> {
-	// The support chat's composer is the generic AgentChat one: a textbox named "Message" and an
-	// explicit "Submit" button (Enter in a bare fill did not send — measured on the first live run).
+	// VISIBLE IS NOT INTERACTIVE (helpers/hydration.ts, #5786): the first two live runs filled and
+	// submitted this composer before React hydrated it, so the text was dropped and NO request to
+	// /api/support/ask was ever made (the traces show none). Wait for hydration, then prove the
+	// message was actually sent — it appears in the transcript — before waiting on the model.
+	await untilPageHydrated(page);
 	const main = page.getByRole("main");
-	await main.getByRole("textbox", { name: "Message" }).fill(text);
+	const composer = main.getByRole("textbox", { name: "Message" });
+	await composer.fill(text);
+	await expect(composer).toHaveValue(text);
 	await main.getByRole("button", { name: "Submit" }).click();
+	await expect(main.getByRole("log").getByText(text).first()).toBeVisible({ timeout: 15_000 });
 }
 
 test.describe(`Support Ask AI with a REAL model · ${soakTier()}`, () => {
