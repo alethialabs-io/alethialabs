@@ -7,7 +7,8 @@
 # provider/prompt/SDK change quietly break tool-calling.
 #
 # Runs nightly + on demand. Skips cleanly (green, no-op) when the ANTHROPIC_API_KEY
-# secret is absent, so a fork or an unconfigured repo never sees a red X. Pinned to
+# secret is absent, so a fork or an unconfigured repo never sees a red X. A key that is
+# set but rejected (or out of credit) fails in `preflight`, naming the secret. Pinned to
 # Haiku (the cheapest tool-capable model) — a full run is a few cents.
 
 name: E2E (real model · nightly)
@@ -29,7 +30,8 @@ concurrency:
 
 # ── The job this workflow EXISTS to run (#2506). ──
 #
-# `preflight` succeeds whether or not ANTHROPIC_API_KEY is set; `e2e-live` is gated on it. Without
+# `preflight` succeeds when ANTHROPIC_API_KEY is unset (and fails only when the provider rejects a
+# key that IS set, or reports its account out of credit); `e2e-live` is gated on it. Without
 # the key the run concludes `success` having executed no test at all, and the daily health report
 # read that as healthy — correctly, at the wrong altitude.
 #
@@ -41,20 +43,67 @@ env:
   WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "E2E (browser · real model)"
 
 jobs:
+  # Asks two questions, not one: is a key configured, and does the provider ACCEPT it?
+  #
+  # Only the first used to be asked. From 2026-10-20 the run went red every night with the same
+  # three `elench-live` specs failing in ~2s each, which reads as three product regressions. It was
+  # none: until 11-20 the provider answered `provider-billing` (account out of credit), and from
+  # 11-21 `provider-auth` 401 "Invalid authentication credentials" (the key was revoked or rotated
+  # and the repo secret never updated). The console classified both correctly and the specs
+  # reported exactly what the console showed. The nightly was spending ~10 runner-minutes building
+  # the console to rediscover a credential problem, and naming specs instead of the credential.
+  #
+  # So this calls the provider once, with a 1-token Haiku request (a fraction of a cent — a free
+  # endpoint such as the model list would not see an empty credit balance), and fails HERE, naming
+  # the secret, when the answer is "rejected" or "out of credit". Anything else (429, 5xx, network)
+  # is not evidence about the key, so it warns and lets the journeys run and speak for themselves.
   preflight:
-    name: Preflight (is a key configured?)
+    name: Preflight (is the key configured and accepted?)
     runs-on: ubuntu-latest
     outputs:
       has_key: ${{ steps.check.outputs.has_key }}
     steps:
       - id: check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -n "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
-            echo "has_key=true" >> "$GITHUB_OUTPUT"
-          else
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "has_key=false" >> "$GITHUB_OUTPUT"
             echo "::notice::ANTHROPIC_API_KEY is not set — skipping the real-model E2E run."
+            exit 0
           fi
+          body=$(mktemp)
+          status=$(curl -sS -o "$body" -w '%{http_code}' https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d '{"model":"claude-haiku-4-5","max_tokens":1,"messages":[{"role":"user","content":"ok"}]}' \
+            || echo "000")
+          # The provider's error envelope carries a type and a human message — never the key.
+          detail=$(jq -r '.error | select(. != null) | "\(.type): \(.message)"' "$body" 2>/dev/null || true)
+          rm -f "$body"
+          case "$status" in
+            200)
+              echo "has_key=true" >> "$GITHUB_OUTPUT"
+              ;;
+            401|403)
+              echo "::error title=ANTHROPIC_API_KEY rejected::The provider refused the repo secret ANTHROPIC_API_KEY (HTTP $status — $detail). Not a product failure: replace the secret with a valid key (Settings → Secrets and variables → Actions)."
+              exit 1
+              ;;
+            400)
+              if printf '%s' "$detail" | grep -qi 'credit'; then
+                echo "::error title=Anthropic account out of credit::The account behind ANTHROPIC_API_KEY has no credit ($detail). Not a product failure: top up the account or replace the key."
+                exit 1
+              fi
+              # Any other 400 is about the probe request, not the key — let the journeys decide.
+              echo "::warning::Key probe returned HTTP 400 ($detail); running the journeys anyway."
+              echo "has_key=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::warning::Key probe returned HTTP $status ($detail) — not evidence about the key; running the journeys anyway."
+              echo "has_key=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
 
   e2e-live:
     name: E2E (browser · real model)
