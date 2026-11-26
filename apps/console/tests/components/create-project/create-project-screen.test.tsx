@@ -139,9 +139,11 @@ function renderScreen(
 	return { client, ...utils };
 }
 
-/** The Create button, once the form has read its draft. */
+/** The Create button, once the form has read its draft (until then the form is drawn inert and busy). */
 async function createButton() {
-	return screen.findByRole("button", { name: "Create project" });
+	const button = await screen.findByRole("button", { name: "Create project" });
+	await waitFor(() => expect(document.querySelector('form[aria-busy="true"]')).toBeNull());
+	return button;
 }
 
 beforeEach(() => {

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Evidence route prefetches EXACTLY what the client reads on first paint (#6126, RUBRIC B1): the
-// `evidence.page` read for the LINK's filters, normalized the way the client normalizes them, through
-// the in-process read router — and hands down only that read. The shell's reads, which share the
+// `evidence.page` read for the LINK's filters, normalized the way the client normalizes them, and the
+// first page of the `evidence.waivers` log under its one stable query `{}`, through the in-process
+// read router — and hands down only those reads. The shell's reads, which share the
 // per-request QueryClient, travel through the `[org]` layout's own boundary, not this one. A
 // prefetch that FAILED is not handed down at all, so the client reads again and renders the error or
 // the refusal it gets, instead of hydrating a failure.
@@ -50,20 +51,37 @@ beforeEach(() => {
 	qc.setQueryData([["workspace", "projects"], { type: "query" }], [{ id: "p1" }]);
 	h.client = qc;
 	h.handlers["evidence.page"] = async (input) => ({ asked: input });
+	h.handlers["evidence.waivers"] = async (input) => ({ items: [], nextCursor: null, asked: input });
 });
 
+/** The waivers log's first-page key, as `useKeysetList` builds it for `EvidenceWaivers`' query `{}`. */
+const WAIVERS_KEY = [["evidence", "waivers"], { input: {}, type: "infinite" }];
+
 describe("EvidenceRoute — first-paint prefetch", () => {
-	it("prefetches the link's filtered read under the client's key, and hands down only that", async () => {
+	it("prefetches the link's filtered read and the waivers' first page under the client's keys, and hands down only those", async () => {
 		const state = await dehydratedFor({ search: " pay ", stages: "staging,production,staging" });
 		const input = { search: "pay", stages: ["production", "staging"] };
-		expect(h.calls).toEqual([{ path: "evidence.page", input }]);
-		expect(state.queries.map((q) => q.queryKey)).toEqual([[["evidence", "page"], { input, type: "query" }]]);
-		expect(state.queries[0]?.state.data).toEqual({ asked: input });
+		expect(h.calls).toHaveLength(2);
+		expect(h.calls).toEqual(
+			expect.arrayContaining([
+				{ path: "evidence.page", input },
+				{ path: "evidence.waivers", input: {} },
+			]),
+		);
+		const keys = state.queries.map((q) => q.queryKey);
+		expect(keys).toHaveLength(2);
+		expect(keys).toEqual(
+			expect.arrayContaining([[["evidence", "page"], { input, type: "query" }], WAIVERS_KEY]),
+		);
+		const page = state.queries.find((q) => String(q.queryKey[0]) === "evidence,page");
+		expect(page?.state.data).toEqual({ asked: input });
 	});
 
 	it("a pristine link prefetches the unfiltered read — the key the client asks for first", async () => {
 		const state = await dehydratedFor({});
-		expect(state.queries.map((q) => q.queryKey)).toEqual([[["evidence", "page"], { input: {}, type: "query" }]]);
+		expect(state.queries.map((q) => q.queryKey)).toEqual(
+			expect.arrayContaining([[["evidence", "page"], { input: {}, type: "query" }]]),
+		);
 	});
 
 	it("a failed prefetch is not handed down — the client reads again rather than hydrating a failure", async () => {
@@ -71,7 +89,16 @@ describe("EvidenceRoute — first-paint prefetch", () => {
 			throw new Error("boom");
 		};
 		const state = await dehydratedFor({});
-		expect(state.queries).toEqual([]);
-		expect(h.calls, "no retry holds the first byte").toHaveLength(1);
+		expect(state.queries.map((q) => q.queryKey)).toEqual([WAIVERS_KEY]);
+		expect(h.calls, "no retry holds the first byte").toHaveLength(2);
+	});
+
+	it("a failed waivers read is not handed down either, and does not cost the roll-up its hydration", async () => {
+		h.handlers["evidence.waivers"] = async () => {
+			throw new Error("boom");
+		};
+		const state = await dehydratedFor({});
+		expect(state.queries.map((q) => q.queryKey)).toEqual([[["evidence", "page"], { input: {}, type: "query" }]]);
+		expect(h.calls, "no retry holds the first byte").toHaveLength(2);
 	});
 });
