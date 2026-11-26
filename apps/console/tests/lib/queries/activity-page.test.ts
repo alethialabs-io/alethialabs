@@ -99,11 +99,13 @@ beforeEach(() => {
 });
 
 describe("queryActivityPage — the keyset order and cursor", () => {
-	it("orders on ts truncated to the millisecond, then the id, both descending", async () => {
+	it("orders on ts truncated to the millisecond in the indexable UTC form, then the id, both descending", async () => {
 		const chains = seedFirst([], []);
 		await queryActivityPage(ORG);
+		// The exact expression idx_authz_activity_org_ts_ms_id holds (#7539): another spelling of
+		// the same order would read correctly and quietly sort in memory.
 		expect(rendered(rowsPass(chains).argsOf("orderBy"))).toBe(
-			`date_trunc('milliseconds', "authz_activity_log"."ts") desc, "authz_activity_log"."id" desc`,
+			`date_trunc('milliseconds', ("authz_activity_log"."ts" at time zone 'UTC')) desc, "authz_activity_log"."id" desc`,
 		);
 	});
 
@@ -112,9 +114,9 @@ describe("queryActivityPage — the keyset order and cursor", () => {
 		await queryActivityPage(ORG, {}, { limit: 50, cursor: { at: "2026-06-20T10:00:00.123Z", id: "42" } });
 		const query = whereOf(rowsPass(chains));
 		expect(query.sql).toContain(
-			`(date_trunc('milliseconds', "authz_activity_log"."ts"), "authz_activity_log"."id") < ($`,
+			`(date_trunc('milliseconds', ("authz_activity_log"."ts" at time zone 'UTC')), "authz_activity_log"."id") < (($`,
 		);
-		expect(query.sql).toMatch(/::timestamptz, \$\d+::bigint\)/);
+		expect(query.sql).toMatch(/::timestamptz at time zone 'UTC'\), \$\d+::bigint\)/);
 		expect(query.params).toEqual(expect.arrayContaining(["2026-06-20T10:00:00.123Z", "42"]));
 	});
 
