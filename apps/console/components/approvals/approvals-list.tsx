@@ -19,6 +19,7 @@ import { EmptyState } from "@repo/ui/empty";
 import { PageToolbar } from "@repo/ui/page-toolbar";
 import { cn } from "@repo/ui/utils";
 import { CircleCheck, SearchX, ShieldCheck } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef } from "react";
 import { DataTable } from "@/components/data-table";
@@ -145,8 +146,8 @@ export function ApprovalsList() {
 					description="When an agent, the Alethia CLI or a service token asks to deploy or destroy, the request waits here for a person."
 					action={
 						<span className="flex flex-wrap items-center justify-center gap-3">
-							{/* The agent setup guides. Settings → Connected agents (#7625) is the in-console home once it lands. */}
-							<Button size="sm" nativeButton={false} render={<a href="/docs/agents" target="_blank" rel="noopener noreferrer" />}>
+							{/* Settings → Connected agents (#7625): every app Alethia knows, with its setup guide. */}
+							<Button size="sm" nativeButton={false} render={<Link href={`/${orgSlug}/~/settings/connected`} />}>
 								Connect an agent
 							</Button>
 							<code className="rounded border px-2 py-1 font-mono text-ui-sm text-text-primary">alethia agent setup</code>

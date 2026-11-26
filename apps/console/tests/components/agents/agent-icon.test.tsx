@@ -3,12 +3,13 @@
 
 // The agent marks (SPEC §5a, ruling #3907): every catalogue app has a real mark, named after the app;
 // marks are in their owners' colours (a two-variant owner gets exactly its light and dark fills);
-// OpenAI Codex draws OpenAI's own files; an unknown app shows its own https icon or a neutral glyph —
-// never a letter.
+// GitHub Copilot draws GitHub's own Invertocat files (Copilot has no standalone logo); OpenAI Codex
+// draws OpenAI's own files; an unknown app shows its own https icon or a neutral glyph — never a
+// letter.
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { AgentIcon } from "@/components/settings/connected/agent-icon";
+import { AgentIcon } from "@/components/agents/agent-icon";
 import { AGENT_APPS } from "@/lib/agents/catalog";
 
 describe("AgentIcon", () => {
@@ -25,20 +26,24 @@ describe("AgentIcon", () => {
 		expect(paths[0]?.getAttribute("fill")).toBe("#D97757");
 	});
 
-	it("draws Cursor and Copilot in their owners' light and dark variants, one per theme", () => {
-		const { container } = render(
-			<>
-				<AgentIcon mark="cursor" name="Cursor" />
-				<AgentIcon mark="githubcopilot" name="GitHub Copilot" />
-			</>,
-		);
+	it("draws Cursor in its owner's light and dark variants, one per theme", () => {
+		const { container } = render(<AgentIcon mark="cursor" name="Cursor" />);
 		const fills = [...container.querySelectorAll("path")].map((p) => [p.getAttribute("fill"), p.getAttribute("class")]);
 		expect(fills).toEqual([
 			["#26251E", "dark:hidden"],
 			["#EDECEC", "hidden dark:block"],
-			["#000000", "dark:hidden"],
-			["#FFFFFF", "hidden dark:block"],
 		]);
+	});
+
+	it("draws GitHub Copilot as GitHub's own Invertocat files, black on light and white on dark", () => {
+		const { container } = render(<AgentIcon mark="githubcopilot" name="GitHub Copilot" />);
+		// No path of our own: the mark is GitHub's file, unmodified, never a redrawn Copilot icon.
+		expect(container.querySelector("path")).toBeNull();
+		const imgs = screen.getAllByRole("img", { name: "GitHub Copilot" });
+		const black = imgs.find((img) => (img.getAttribute("src") ?? "").includes("GitHub_Invertocat_Black.png"));
+		const white = imgs.find((img) => (img.getAttribute("src") ?? "").includes("GitHub_Invertocat_White.png"));
+		expect(black?.getAttribute("class")?.split(" ")).toContain("dark:hidden");
+		expect(white?.getAttribute("class")?.split(" ")).toEqual(expect.arrayContaining(["hidden", "dark:block"]));
 	});
 
 	it("draws OpenAI Codex from OpenAI's own Blossom files", () => {
