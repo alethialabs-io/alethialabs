@@ -71,6 +71,7 @@
     "billing:pending-org-setups": "tsx scripts/pending-org-setups.ts",
     "billing:payment-holds": "tsx scripts/payment-holds.ts",
     "factura:export": "tsx scripts/factura-export.ts",
+    "factura:issue-manual": "tsx scripts/factura-issue-manual.ts",
     "nra:build": "tsx scripts/nra-build.ts",
     "nra:protocol": "tsx scripts/nra-protocol.ts",
     "org:set-plan": "node scripts/set-org-plan.mjs",

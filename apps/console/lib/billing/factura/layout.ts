@@ -75,6 +75,23 @@ function describe(description: string, start: string | null, end: string | null)
 	return start && end ? `${description} (${bgDate(start)} – ${bgDate(end)})` : description;
 }
 
+/** The VAT total's label, with the rate when VAT is charged (Art. 114(1), point 11). */
+function vatLabel(ratePercent: number | null | undefined): string {
+	return ratePercent ? `ДДС ${ratePercent}% / VAT ${ratePercent}%` : "ДДС / VAT";
+}
+
+/**
+ * How the document is settled. A Stripe document (and every row written before L6b, which has no
+ * `source`) was paid or refunded through Stripe; a manual one is settled by bank transfer — the
+ * Paddle payout, an Enterprise customer's transfer.
+ */
+function paymentNote(s: FacturaSnapshot): string {
+	if (s.source === "manual") {
+		return s.original ? "Уреждане по банков път / Settled by bank transfer" : "Плащане по банков път / Payment by bank transfer";
+	}
+	return s.original ? "Възстановено чрез Stripe / Refunded via Stripe" : "Платено чрез Stripe / Paid via Stripe";
+}
+
 /** The printed content of the фактура or credit note `s` (a credit note has `original` set). */
 export function facturaLayout(s: FacturaSnapshot): FacturaLayout {
 	const eur = s.eurEquivalent;
@@ -102,7 +119,7 @@ export function facturaLayout(s: FacturaSnapshot): FacturaLayout {
 		},
 		totals: [
 			{ label: "Данъчна основа / Taxable amount", value: amount(s.taxBaseMinor, s.currency) },
-			{ label: "ДДС / VAT", value: amount(s.vatMinor, s.currency) },
+			{ label: vatLabel(s.vatRatePercent), value: amount(s.vatMinor, s.currency) },
 			{
 				label: s.original ? "Сума за възстановяване / Amount refunded" : "Сума за плащане / Amount payable",
 				value: amount(s.totalMinor, s.currency),
@@ -120,8 +137,9 @@ export function facturaLayout(s: FacturaSnapshot): FacturaLayout {
 		notes: [
 			...(s.reason ? [`Основание за издаване / Reason for issue: ${s.reason}`] : []),
 			...(s.noVatGround ? [`Основание за неначисляване на ДДС / Ground for not charging VAT: ${s.noVatGround}`] : []),
-			s.original ? "Възстановено чрез Stripe / Refunded via Stripe" : "Платено чрез Stripe / Paid via Stripe",
+			paymentNote(s),
 			...(s.stripeInvoiceNumber ? [`Референция / Reference: ${s.stripeInvoiceNumber}`] : []),
+			...(s.reference ? [`Референция / Reference: ${s.reference}`] : []),
 		],
 	};
 }

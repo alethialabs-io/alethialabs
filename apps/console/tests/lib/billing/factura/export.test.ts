@@ -43,6 +43,8 @@ function documents(): Factura[] {
 	});
 	const base = {
 		organizationId: "org_1",
+		source: "stripe" as const,
+		manualKey: null,
 		stripeInvoiceId: "in_test_1",
 		createdAt: new Date(0),
 		pdfKey: "k",
@@ -176,6 +178,9 @@ describe("buildExport", () => {
 		expect(lines[1]).toMatch(/^0000000001,invoice,,,2027-01-16,2027-01-15,Acme GmbH,DE123456789,DE,USD,55\.00,0\.00,55\.00,50\.60,0\.00,0\.92000000,2027-01-14,ECB:2027-01-14,/);
 		expect(lines[2]).toMatch(/^0000000002,credit_note,0000000001,2027-01-16,2027-01-21,2027-01-20,.*,USD,-10\.00,0\.00,-10\.00,-9\.20,/);
 		expect(lines[2]).toContain("re_1");
+		// L6b's columns are appended, so the earlier ones keep their place: source, VAT rate, manual key.
+		expect(lines[0]).toMatch(/,pdf_file,pdf_sha256,source,vat_rate,manual_key$/);
+		expect(lines[1]).toMatch(/,stripe,,$/);
 		expect(text(balance?.data ?? new Uint8Array()).split("\r\n")[1]).toBe(
 			"txn_1,2027-01-15T09:00:00.000Z,2027-01-22T00:00:00.000Z,charge,charge,Invoice OQDLWV3B-0031,USD,55.00,1.90,53.10,ch_1,po_1",
 		);

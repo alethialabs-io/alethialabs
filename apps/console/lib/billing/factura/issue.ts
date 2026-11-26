@@ -15,7 +15,8 @@
 //     that fails, the фактура still exists (number and snapshot are committed), the outcome says
 //     `pdf_failed`, and a replay of the event renders it again from the same snapshot.
 //
-// IDEMPOTENT on (Stripe invoice id, kind, refund id), the refund id NULL for a фактура: a replay finds the issued row and returns it. Two
+// IDEMPOTENT on (Stripe invoice id, kind, refund id, manual key), the refund id and the manual key NULL
+// for a Stripe фактура: a replay finds the issued row and returns it. Two
 // concurrent issuers for one invoice race on that unique key; the loser's insert does nothing, its
 // transaction is rolled back (returning its number), and it returns the winner's row.
 //
@@ -37,7 +38,12 @@ import {
 } from "@/lib/db/schema";
 import { log } from "@/lib/observability/log";
 import { storage } from "@/lib/storage";
-import { creditNotePdfKey, INVOICE_PDF_BUCKET, invoicePdfKey } from "@/lib/storage/invoice-pdf";
+import {
+	creditNotePdfKey,
+	INVOICE_PDF_BUCKET,
+	invoicePdfKey,
+	manualFacturaPdfKey,
+} from "@/lib/storage/invoice-pdf";
 import {
 	type FacturaFailure,
 	type FacturaSource,
@@ -102,6 +108,43 @@ export interface IssueDeps {
 /** Thrown inside the issuing transaction to roll it back when another issuer won the race. */
 class LostRace extends Error {}
 
+/**
+ * In one transaction: takes the next number of the one series, builds the row from it and inserts
+ * it. Returns the row, or null when another issuer already inserted the document with the same
+ * idempotency key — the Stripe document key for `stripe`, the operator key for `manual` (manual.ts)
+ * — in which case the transaction is rolled back and the number taken here is returned. Both
+ * sources draw from the same counter, so their numbers interleave without a gap.
+ */
+export async function issueInSeries(
+	build: (number: string) => FacturaInsert,
+	keyedBy: "stripe" | "manual",
+): Promise<Factura | null> {
+	const target =
+		keyedBy === "manual"
+			? [factura.manualKey]
+			: [factura.stripeInvoiceId, factura.kind, factura.stripeRefundId, factura.manualKey];
+	try {
+		return await getServiceDb().transaction(async (tx) => {
+			const [series] = await tx
+				.update(facturaSeries)
+				.set({ lastNumber: sql`${facturaSeries.lastNumber} + 1`, updatedAt: new Date() })
+				.where(eq(facturaSeries.id, FACTURA_SERIES_BG))
+				.returning({ lastNumber: facturaSeries.lastNumber });
+			if (!series) throw new Error(`factura series ${FACTURA_SERIES_BG} is not seeded`);
+			const [row] = await tx
+				.insert(factura)
+				.values(build(String(series.lastNumber).padStart(10, "0")))
+				.onConflictDoNothing({ target })
+				.returning();
+			if (!row) throw new LostRace();
+			return row;
+		});
+	} catch (err) {
+		if (err instanceof LostRace) return null;
+		throw err;
+	}
+}
+
 /** The Postgres store, through the service role (the tables admit no app-role write). */
 export const dbFacturaStore: FacturaStore = {
 	async findIssued(stripeInvoiceId) {
@@ -113,26 +156,7 @@ export const dbFacturaStore: FacturaStore = {
 		return row ?? null;
 	},
 	async issue(build) {
-		try {
-			return await getServiceDb().transaction(async (tx) => {
-				const [series] = await tx
-					.update(facturaSeries)
-					.set({ lastNumber: sql`${facturaSeries.lastNumber} + 1`, updatedAt: new Date() })
-					.where(eq(facturaSeries.id, FACTURA_SERIES_BG))
-					.returning({ lastNumber: facturaSeries.lastNumber });
-				if (!series) throw new Error(`factura series ${FACTURA_SERIES_BG} is not seeded`);
-				const [row] = await tx
-					.insert(factura)
-					.values(build(String(series.lastNumber).padStart(10, "0")))
-					.onConflictDoNothing({ target: [factura.stripeInvoiceId, factura.kind, factura.stripeRefundId] })
-					.returning();
-				if (!row) throw new LostRace();
-				return row;
-			});
-		} catch (err) {
-			if (err instanceof LostRace) return null;
-			throw err;
-		}
+		return issueInSeries(build, "stripe");
 	},
 	async attachPdf(id, pdfKey, pdfSha256) {
 		await getServiceDb()
@@ -173,8 +197,15 @@ function fail(reason: FacturaFailure, detail: string): FacturaOutcome {
 	return { ok: false, reason, detail };
 }
 
-/** Where an issued row's PDF is stored: per Stripe invoice for a фактура, per refund for a credit note. */
-export function facturaPdfKey(row: Pick<Factura, "organizationId" | "stripeInvoiceId" | "stripeRefundId">): string {
+/**
+ * Where an issued row's PDF is stored: per Stripe invoice for a фактура, per refund for a credit
+ * note, and per number for a manual document (which names no Stripe invoice and may name no
+ * organization: the `factura_source_link` CHECK guarantees a Stripe row has both).
+ */
+export function facturaPdfKey(
+	row: Pick<Factura, "organizationId" | "stripeInvoiceId" | "stripeRefundId" | "number">,
+): string {
+	if (!row.stripeInvoiceId || !row.organizationId) return manualFacturaPdfKey(row.number);
 	return row.stripeRefundId
 		? creditNotePdfKey(row.organizationId, row.stripeInvoiceId, row.stripeRefundId)
 		: invoicePdfKey(row.organizationId, row.stripeInvoiceId);
@@ -187,7 +218,7 @@ export function facturaPdfKey(row: Pick<Factura, "organizationId" | "stripeInvoi
  */
 export async function documentFor(
 	row: Factura,
-	deps: Pick<IssueDeps, "store" | "pdfStorage" | "render">,
+	deps: { store: Pick<FacturaStore, "attachPdf">; pdfStorage: FacturaPdfStorage; render: IssueDeps["render"] },
 ): Promise<FacturaOutcome> {
 	const issued = (pdfKey: string, pdf: Uint8Array): FacturaOutcome => ({
 		ok: true,
