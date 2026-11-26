@@ -20,6 +20,7 @@
 
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import { createRouterClient } from "@orpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -122,7 +123,7 @@ function fakeSelect() {
 }
 
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
-import { readClusterList, readClusters, readClustersPage } from "@/lib/rpc/procedures/clusters";
+import { clustersRouter, readClusterList, readClusters, readClustersPage } from "@/lib/rpc/procedures/clusters";
 
 const ACTOR: Actor = { userId: "u1", orgId: "o1", credential: "session" };
 
@@ -154,6 +155,7 @@ function baseRow(over: Record<string, unknown>) {
 		last_deployed_at: new Date("2026-11-01T00:00:00Z"),
 		provider: "gcp",
 		cluster_id: "c1",
+		cluster_created_at: new Date("2026-10-01T00:00:00Z"),
 		cluster_environment_id: "e1",
 		cluster_name: "gke-euw3-prod-web",
 		cluster_endpoint: "https://10.0.0.1",
@@ -445,6 +447,8 @@ describe("readClustersPage", () => {
 					id: "p2",
 					project_name: "search",
 					cluster_id: "c2",
+					// Created after c1, so it leads the newest-first page.
+					cluster_created_at: new Date("2026-10-02T00:00:00Z"),
 					cluster_environment_id: "e2",
 					provider: "aws",
 					region: "eu-central-1",
@@ -458,34 +462,84 @@ describe("readClustersPage", () => {
 		];
 	}
 
-	it("the pristine page is the whole list, with facets over all of it", async () => {
+	it("the pristine first page is the whole list, newest cluster first, with facets over all of it", async () => {
 		twoProjects();
 		const page = await readClustersPage(ACTOR);
-		expect(page.rows.map((c) => c.project_cluster.id)).toEqual(["c1", "c2"]);
-		expect(page).toMatchObject({ resultCount: 2, total: 2 });
-		expect(page.facets.clouds.map((o) => o.value)).toEqual(["aws", "gcp"]);
+		expect(page.rows.map((r) => r.cluster.project_cluster.id)).toEqual(["c2", "c1"]);
+		expect(page.rows.map((r) => r.id)).toEqual(["c2", "c1"]);
+		expect(page).toMatchObject({ nextCursor: null, universeEmpty: false });
+		expect(page.facets?.clouds.map((o) => o.value)).toEqual(["aws", "gcp"]);
 	});
 
-	it("a filter narrows the rows and leaves the facets and the total alone", async () => {
+	it("a filter narrows the rows and leaves the facets alone", async () => {
 		twoProjects();
 		const page = await readClustersPage(ACTOR, { statuses: ["failed"] });
-		expect(page.rows.map((c) => c.project_cluster.id)).toEqual(["c2"]);
-		expect(page).toMatchObject({ resultCount: 1, total: 2 });
-		expect(page.facets.clouds.map((o) => o.value)).toEqual(["aws", "gcp"]);
+		expect(page.rows.map((r) => r.id)).toEqual(["c2"]);
+		expect(page.universeEmpty).toBe(false);
+		expect(page.facets?.clouds.map((o) => o.value)).toEqual(["aws", "gcp"]);
 	});
 
-	it("a project is a SCOPE: its page lists, counts and offers only its own clusters", async () => {
+	it("a project is a SCOPE: its page lists and offers only its own clusters", async () => {
 		twoProjects();
 		const page = await readClustersPage(ACTOR, { projectId: "p2" });
-		expect(page.rows.map((c) => c.project_cluster.id)).toEqual(["c2"]);
-		expect(page).toMatchObject({ resultCount: 1, total: 1 });
-		expect(page.facets.clouds.map((o) => o.value)).toEqual(["aws"]);
-		expect(page.facets.regions.map((o) => o.value)).toEqual(["eu-central-1"]);
+		expect(page.rows.map((r) => r.id)).toEqual(["c2"]);
+		expect(page.facets?.clouds.map((o) => o.value)).toEqual(["aws"]);
+		expect(page.facets?.regions.map((o) => o.value)).toEqual(["eu-central-1"]);
+	});
+
+	it("pages on the server: a page of one carries the cursor to the next", async () => {
+		twoProjects();
+		const page = await readClustersPage(ACTOR, { limit: 1 });
+		expect(page.rows.map((r) => r.id)).toEqual(["c2"]);
+		expect(page.nextCursor).not.toBeNull();
 	});
 
 	it("still enforces project:view first — a refused page reads nothing", async () => {
 		h.decisions.set("view:project:", false);
 		await expect(readClustersPage(ACTOR)).rejects.toBeInstanceOf(ForbiddenError);
+		expect(h.selects).toBe(0);
+	});
+});
+
+describe("clusters.detail — one cluster by id, for a `?selected=` link (LST-3 #7485)", () => {
+	const client = createRouterClient(clustersRouter, { context: { actor: ACTOR } });
+	const C2 = "22222222-2222-4222-8222-222222222222";
+	const P2 = "44444444-4444-4444-8444-444444444444";
+
+	/** Two clusters: c1 of p1, and C2 of P2. */
+	function seedTwo() {
+		h.results = [
+			[baseRow({}), baseRow({ id: P2, project_name: "search", cluster_id: C2, cluster_environment_id: "e2" })],
+			[],
+			[],
+			[GCP_DEPLOY],
+			[GCP_DEPLOY],
+		];
+	}
+
+	it("answers the cluster from the SAME composed read as the page", async () => {
+		seedTwo();
+		const out = await client.detail({ clusterId: C2 });
+		expect(out?.project_cluster.id).toBe(C2);
+		expect(out?.project_name).toBe("search");
+	});
+
+	it("a project scope that is not the cluster's answers null — never another project's cluster", async () => {
+		seedTwo();
+		expect(await client.detail({ clusterId: C2, projectId: "55555555-5555-4555-8555-555555555555" })).toBeNull();
+	});
+
+	it("a cluster the read does not hold answers null", async () => {
+		seedTwo();
+		expect(await client.detail({ clusterId: "66666666-6666-4666-8666-666666666666" })).toBeNull();
+	});
+
+	it("enforces project:view first, and refuses a malformed id before reading", async () => {
+		h.decisions.set("view:project:", false);
+		await expect(client.detail({ clusterId: C2 })).rejects.toBeTruthy();
+		expect(h.selects).toBe(0);
+		h.decisions.clear();
+		await expect(client.detail({ clusterId: "nope" })).rejects.toBeTruthy();
 		expect(h.selects).toBe(0);
 	});
 });

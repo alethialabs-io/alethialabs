@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Pure filter plumbing for Settings · Roles — the console filter standard's "normalize" step
-// (lib/query/README.md → "Server-side filters"). `members.roles` (`listRoles(search)`) filters custom roles
-// server-side; the four built-ins arrive with the page bootstrap and are narrowed here, which
-// is why `filterBuiltins` exists at all.
+// (lib/query/README.md → "Server-side filters"). `members.roles` (`queryRolesPage`) filters AND pages
+// the custom roles server-side, by search and kind, with the Kind facet over the unfiltered universe
+// (LST-8 #7490); the four built-ins arrive with the page bootstrap and are narrowed here, which is
+// why `filterBuiltins` exists at all.
 
 import type { RoleRow } from "@/app/server/actions/roles";
 import { filterStateFromUrl, type ParamReader } from "@/lib/query/filter-url-codec";
@@ -28,7 +29,7 @@ export const ROLE_KIND_OPTIONS = [
 	{ value: "custom", label: "Custom" },
 ] as const;
 
-/** The rail's normalized filter state; its `search` is the `members.roles` read's input. */
+/** The rail's normalized filter state — the `members.roles` read's input, and so its key. */
 export interface NormalizedRolesQuery {
 	search?: string;
 	kinds?: string[];
@@ -96,20 +97,10 @@ export function hasNoMatches(input: NoMatchesInput): boolean {
 }
 
 /**
- * The zero-result empty state's description. `total` is the role UNIVERSE (every built-in plus
- * every custom role, unsearched) — never the search result, which is what the state is saying
- * is empty. Unknown until the unsearched list loads, and then the number is left out.
- */
-export function noMatchesDescription(total: number | undefined): string {
-	if (total === undefined) return "No roles match these filters.";
-	return `None of the ${total} ${total === 1 ? "role matches" : "roles match"} these filters.`;
-}
-
-/**
- * The custom-role search a link asks for — the `members.roles` input the rail settles on once
+ * The roles rail's query for a link — the `members.roles` input the rail settles on once
  * `useFilterUrlSync` has read the link, so the route can prefetch it (#4999's rule, #6129).
  */
-export function rolesSearchFromUrl(params: ParamReader): string | undefined {
+export function rolesQueryFromUrl(params: ParamReader): NormalizedRolesQuery {
 	const filters = filterStateFromUrl(params, DEFAULT_ROLES_FILTERS);
-	return normalizeRolesQuery(filters, filters.search).search;
+	return normalizeRolesQuery(filters, filters.search);
 }

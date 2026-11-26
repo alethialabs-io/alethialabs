@@ -1,75 +1,74 @@
 ---
-title: AWS Resources
-description: OpenTofu modules for AWS — EKS, Aurora, ElastiCache, DynamoDB, and networking.
+title: AWS template
+description: What the AWS OpenTofu template builds — EKS, Karpenter, Aurora, ElastiCache, DynamoDB and the rest — and the Karpenter and node group settings you can change.
 ---
 
-The AWS template set (`infra/templates/project/aws/`) is the most extensive, with ~15 top-level `.tf` files and 10 reusable modules.
+The AWS template (`infra/templates/project/aws/`) builds an EKS cluster and the AWS services your
+design declares, in your account. Pods reach AWS through IAM roles for service accounts (IRSA), never
+static keys.
 
-## Top-Level Resources
+<Mermaid chart={`
+flowchart TD
+  VPC["VPC, subnets, NAT"] --> EKS["EKS cluster and node groups"]
+  EKS --> K["Karpenter NodePools"]
+  EKS --> IRSA["IRSA roles for controllers"]
+  VPC --> Data["Aurora, ElastiCache, DynamoDB, SQS/SNS, S3, ECR"]
+  Edge["Route 53, ACM, WAFv2"] --> EKS
+`} />
 
-| File | Resources Created |
-|------|------------------|
-| `networking.tf` | VPC, public/private subnets, NAT gateway, internet gateway, route tables, security groups |
-| `eks.tf` | EKS cluster, managed node groups (the default one and `extra_node_pools`), OIDC provider for IRSA |
-| `karpenter.tf` | Karpenter's interruption queue (SQS) and its EventBridge rules, and the EC2 Spot service-linked role when `ec2_spot_service_role` is set. The runner applies the Karpenter NodePool after the cluster is up |
-| `rds.tf` | Aurora PostgreSQL/MySQL cluster, instances, subnet group |
-| `elasticache.tf` | ElastiCache Redis replication group, subnet group |
-| `valkey.tf` | ElastiCache Serverless cache running Valkey |
+## How it works
+
+### What it builds
+
+| File | Resources |
+| --- | --- |
+| `networking.tf` | VPC, public and private subnets, NAT and internet gateways, route tables, security groups |
+| `eks.tf` | EKS cluster, the default and extra managed node groups, the OIDC provider for IRSA |
+| `karpenter.tf` | Karpenter's interruption queue (SQS) and EventBridge rules, and the EC2 Spot service-linked role when `ec2_spot_service_role` is set |
+| `irsa.tf` | IAM roles for service accounts |
+| `rds.tf` | Aurora PostgreSQL or MySQL cluster and instances |
+| `elasticache.tf` | ElastiCache Redis replication group |
+| `valkey.tf` | ElastiCache Serverless Valkey cache |
 | `dynamodb.tf` | DynamoDB tables with KMS encryption |
-| `ecr.tf` | ECR repositories with lifecycle policies, scan-on-push |
-| `s3.tf` | S3 buckets with encryption, versioning, lifecycle rules |
-| `sqs.tf` | SQS queues (standard + FIFO) + SNS topics with subscriptions |
+| `sqs.tf` | SQS queues (standard and FIFO) and SNS topics |
+| `s3.tf` | S3 buckets with encryption, versioning and lifecycle rules |
+| `ecr.tf` | ECR repositories with lifecycle policies and scan on push |
+| `route53.tf` | Route 53 hosted zone |
+| `acm-certificate.tf` | ACM certificates with DNS validation |
 | `waf.tf` | WAFv2 web ACL with managed rule groups |
-| `acm-certificate.tf` | ACM SSL/TLS certificates with DNS validation |
-| `irsa.tf` | IAM Roles for Service Accounts (pod-level AWS access) |
-| `custom_secrets.tf` | Secrets Manager secrets with auto-generated passwords |
+| `custom_secrets.tf` | Secrets Manager secrets with generated passwords |
 
-## Modules
+These files call modules under `modules/` for EKS, RDS, Redis, Valkey, DynamoDB, ECR, S3, SQS and
+SNS, WAFv2, ACM, Route 53 and password generation.
 
-| Module | Purpose |
-|--------|---------|
-| `modules/eks/` | EKS cluster, access entries, OIDC provider |
-| `modules/rds/` | Aurora cluster, instances, IAM auth, S3 export |
-| `modules/redis/` | ElastiCache Redis with auth token, encryption |
-| `modules/valkey/` | ElastiCache Serverless Valkey cache, its user and user group, and a security group |
-| `modules/dynamodb/` | DynamoDB table with KMS, local encryption module |
-| `modules/ecr/` | ECR repository with lifecycle policy |
-| `modules/s3/` | S3 bucket with encryption, versioning |
-| `modules/sqs-sns/` | SQS queue + SNS topic with IAM policies |
-| `modules/wafv2/` | WAF web ACL with CloudWatch logging |
-| `modules/acm/` | ACM certificate with DNS validation |
-| `modules/awssm-passgen/` | Secrets Manager password generation |
+Aurora Serverless v2 scales from 0.5 to 128 Aurora capacity units.
 
-## Key Features
+### Karpenter NodePool
 
-**IRSA (IAM Roles for Service Accounts)** — Kubernetes pods can assume IAM roles via their service account, eliminating the need for static credentials in containers. The EKS module creates an OIDC provider and the IRSA module creates per-service-account IAM roles.
+With `enable_karpenter`, the runner applies a Karpenter `NodePool` named `default` after the cluster
+is up. It decides which EC2 instances Karpenter may launch. Set these keys in the cluster's
+`provider_config`; with none set, the defaults apply.
 
-**Karpenter** — Just-in-time node provisioning. Instead of pre-scaling node groups, Karpenter watches for pending pods and launches appropriately-sized EC2 instances within seconds. Supports spot instances and multiple instance families.
+| Key | Default | Allowed values |
+| --- | --- | --- |
+| `karpenter_capacity_types` | `["on-demand"]` | `spot`, `on-demand`, or both. With both, Karpenter prefers Spot. |
+| `karpenter_architectures` | `["amd64"]` | `amd64` only. Use `karpenter_arm64_nodepool` for arm64. |
+| `karpenter_instance_categories` | `["t", "m"]` | EC2 categories such as `c`, `m`, `r`. An empty list removes the requirement. |
+| `karpenter_instance_families` | `[]` | Families such as `c7i`, each in one of the categories. |
+| `karpenter_cpu_limit` | `100` | Total vCPU the pool may launch, 1 to 1000. |
+| `karpenter_node_labels` | `{}` | Labels on every Karpenter node. |
+| `karpenter_node_taints` | `[]` | Taints, each `{ key, value, effect }`. |
+| `karpenter_arm64_nodepool` | `null` | Adds an `arm64` pool. Fields: `instance_families` (Graviton, not `a1`) and `cpu_limit` (default `100`). |
 
-**Aurora Serverless v2** — Auto-scaling database with ACU-based capacity (0.5–128 ACUs). Scales to zero-ish (0.5 ACU minimum) during idle periods.
+Keys in the `kubernetes.io`, `k8s.io`, `karpenter.sh` and `karpenter.k8s.aws` domains are refused for
+labels and taints, except `node-restriction.kubernetes.io/`. The plan refuses a value outside these
+rules, and the runner checks again before it applies the pool. Change the settings, not the
+`NodePool` in the cluster: the next deploy replaces in-cluster edits.
 
-## Karpenter node pool
-
-When Karpenter is on (`enable_karpenter`), the runner applies a Karpenter `NodePool` named `default` after the cluster is up, and a second one named `arm64` if you ask for it. The pool decides which EC2 instances Karpenter can launch. You set its shape on the cluster component: select the cluster on the canvas and open the **Advanced** section of the inspector. Each setting below is a key in the cluster's `provider_config`.
-
-If you set nothing, every default below applies, and the runner renders the same pool as before these settings existed.
-
-| Setting | Default | Allowed values |
-|---------|---------|----------------|
-| `karpenter_capacity_types` | `["on-demand"]` | `spot`, `on-demand`, or both. With both, Karpenter prefers Spot and falls back to on-demand. |
-| `karpenter_architectures` | `["amd64"]` | `amd64` only. The plan refuses `arm64` on the default pool. Use `karpenter_arm64_nodepool` instead. See [The arm64 node pool](/concepts/runner/infrastructure-templates/aws#the-arm64-node-pool). |
-| `karpenter_instance_categories` | `["t", "m"]` | EC2 instance categories, such as `c`, `m` or `r`. An empty list removes the category requirement. |
-| `karpenter_instance_families` | `[]` (no requirement) | EC2 instance families, such as `c7i` or `m7i`. Each family must belong to one of the categories, unless the category list is empty. |
-| `karpenter_cpu_limit` | `100` | The total vCPU the pool can launch, a whole number from 1 to 1000. It is the only bound on the size of Karpenter's fleet. Karpenter launches EC2 instances outside OpenTofu, so the plan-time cost guards do not see them. |
-| `karpenter_node_labels` | `{}` | Labels on every Karpenter node. Keys in the `kubernetes.io`, `k8s.io`, `karpenter.sh` and `karpenter.k8s.aws` domains are refused, except `node-restriction.kubernetes.io/`. |
-| `karpenter_node_taints` | `[]` | Taints on every Karpenter node, each `{ key, value, effect }`. `value` is optional. `effect` is `NoSchedule`, `PreferNoSchedule` or `NoExecute`. Keys in the reserved domains above are refused. |
-| `karpenter_arm64_nodepool` | `null` (no arm64 pool) | An object with two optional fields: `instance_families`, Graviton families such as `m7g` or `c7gn` (default `[]`, any Graviton family in the categories; not `a1`, which is older than the pools' generation floor), and `cpu_limit`, from 1 to 1000 (default `100`). See [The arm64 node pool](/concepts/runner/infrastructure-templates/aws#the-arm64-node-pool). |
-
-The plan refuses a value outside these rules and names what is allowed. The runner checks the same rules again before it applies the pool.
-
-### Example: Spot nodes for batch work
-
-This `provider_config` lets Karpenter launch `c7i` and `m7i` instances, on Spot when it can, up to 400 vCPU. It labels and taints the nodes so that only pods that tolerate the `workload=batch` taint run there:
+<Callout type="warn">
+  Karpenter launches instances outside OpenTofu, so plan-time cost guards do not see them. The CPU
+  limit is the only bound on that fleet's size.
+</Callout>
 
 ```json
 {
@@ -79,163 +78,49 @@ This `provider_config` lets Karpenter launch `c7i` and `m7i` instances, on Spot 
   "karpenter_instance_families": ["c7i", "m7i"],
   "karpenter_cpu_limit": 400,
   "karpenter_node_labels": { "workload": "batch" },
-  "karpenter_node_taints": [
-    { "key": "workload", "value": "batch", "effect": "NoSchedule" }
-  ]
+  "karpenter_node_taints": [{ "key": "workload", "value": "batch", "effect": "NoSchedule" }]
 }
 ```
 
-A batch pod then selects and tolerates those nodes:
+**Spot.** AWS can reclaim a Spot instance with two minutes' notice. Karpenter gets the notice through
+the interruption queue and drains the node first. Run only work that can restart, or list both
+capacity types. Spot needs the `AWSServiceRoleForEC2Spot` role: create it once with
+`aws iam create-service-linked-role --aws-service-name spot.amazonaws.com`, or set
+`ec2_spot_service_role` to `true`.
 
-```yaml
-spec:
-  nodeSelector:
-    workload: batch
-  tolerations:
-    - key: workload
-      operator: Equal
-      value: batch
-      effect: NoSchedule
-```
+**The arm64 pool.** It uses the default pool's capacity types, categories, labels and taints, with its
+own families and CPU limit. Its nodes carry the taint `alethia.io/arch=arm64:NoSchedule`, which you
+cannot remove, so only pods that ask for arm64 land there. To run a workload on it, build an arm64 or
+multi-arch image, tolerate `alethia.io/arch=arm64:NoSchedule`, and select `kubernetes.io/arch: arm64`.
+A DaemonSet of your own, such as a log shipper, needs the same toleration. Removing the setting
+deletes the pool; the runner waits up to 15 minutes for Karpenter to drain it.
 
-<Callout type="warn">
-AWS can reclaim a Spot instance with two minutes' notice. Karpenter receives that notice through the interruption queue the template creates (an SQS queue fed by EventBridge rules), then cordons and drains the node before AWS reclaims it. Run only work that can stop and restart on Spot, or list both capacity types so that Karpenter can fall back to on-demand.
-</Callout>
+### Node groups
 
-<Callout type="info">
-Spot needs the `AWSServiceRoleForEC2Spot` service-linked role in the AWS account. An account that has never used Spot does not have it. Create it once with `aws iam create-service-linked-role --aws-service-name spot.amazonaws.com`, or set `ec2_spot_service_role` to `true` on the cluster to let the template create it.
-</Callout>
+The [node pool keys](/reference/node-pools) build these on
+EKS:
 
-Edit these settings on the cluster, not on the `NodePool` in the cluster. The next deploy renders the pool again from the settings and replaces a change made in the cluster.
+- `node_labels` reach the default node group and every extra one. `node_taints` reach the extra node
+  groups only.
+- Each entry in `extra_node_pools` is a managed node group named `<cluster>-<pool name>`.
+  `capacity_type: spot` makes it a Spot node group.
+- An extra node group uses the default group's operating system (`eks_ami_type`, Bottlerocket by
+  default), with the arm64 or NVIDIA image where the instance type needs one. The plan refuses a pool
+  with no matching image, such as a GPU pool on FIPS Bottlerocket.
+- An `arm64` pool needs a Graviton type, such as `m7g.large`; an `amd64` pool an x86 type.
+- **Size.** A node group starts with `desired_size` nodes and stays there: nothing scales it, and a
+  later change to `desired_size` does not resize it. For capacity that follows demand, use Karpenter.
+- **Isolation.** Every node group has the default group's controls: IMDSv2 with a hop limit of 1, the
+  same private subnets and security group, an encrypted gp3 root volume, and the same IAM policies.
 
-### The arm64 node pool
+## What it does not do
 
-The default pool launches amd64 (x86_64) instances only. For Graviton (arm64) instances, set
-`karpenter_arm64_nodepool`. The runner then applies a second `NodePool`, named `arm64`, next to the
-default one. It uses the default pool's capacity types, instance categories, labels and taints. Its
-instance families and its CPU limit are its own.
+- It does not let Karpenter's default pool launch arm64 instances.
+- It does not autoscale extra managed node groups.
+- It does not count Karpenter's instances in plan-time cost guards.
 
-The runner always taints the `arm64` pool's nodes with `alethia.io/arch=arm64:NoSchedule`. You
-cannot remove this taint or set it yourself. The images that Alethia builds are amd64 only, and the
-Deployments that Alethia generates do not select an architecture. Without the taint, Karpenter could
-place such a pod on an arm64 node, where it fails with `exec format error`. So a pod runs on the
-`arm64` pool only when it asks to.
+## Related
 
-This `provider_config` adds an arm64 pool of `m7g` and `c7g` instances, up to 64 vCPU:
-
-```json
-{
-  "enable_karpenter": true,
-  "karpenter_instance_categories": ["c", "m"],
-  "karpenter_arm64_nodepool": {
-    "instance_families": ["m7g", "c7g"],
-    "cpu_limit": 64
-  }
-}
-```
-
-To run a workload on it:
-
-1. Build a multi-arch image, or an arm64 image, for the workload.
-2. Add a toleration for `alethia.io/arch` with value `arm64` and effect `NoSchedule`.
-3. Add the node selector `kubernetes.io/arch: arm64`.
-
-```yaml
-spec:
-  nodeSelector:
-    kubernetes.io/arch: arm64
-  tolerations:
-    - key: alethia.io/arch
-      operator: Equal
-      value: arm64
-      effect: NoSchedule
-```
-
-A DaemonSet runs on the `arm64` pool's nodes only if it tolerates the taint and its image runs on
-arm64. EKS's own `aws-node` and `kube-proxy` tolerate every taint. If you run a DaemonSet of your own
-on every node, such as a log shipper (Fluent Bit) or a metrics agent, add the `alethia.io/arch`
-toleration to it. The same applies to the extra node groups below, and to every taint you set with
-`node_taints`.
-
-If you remove `karpenter_arm64_nodepool`, the next deploy deletes the `arm64` pool, and Karpenter
-drains and stops its nodes. The runner waits up to 15 minutes for the drain.
-
-## Node labels, taints and extra node groups
-
-On AWS, the [node labels, taints and extra pools](/reference/node-pools)
-keys work as that page describes. The keys are `node_labels`, `node_taints` and
-`extra_node_pools` in the cluster's `provider_config`. This section says what they build on EKS.
-
-- **The default node group.** `node_labels` reach the default managed node group. `node_taints` do
-  not, because the default node group runs Alethia's add-ons.
-- **Extra node groups.** Each entry in `extra_node_pools` is one more EKS managed node group, named
-  `<cluster>-<pool name>`. It has the pool's `instance_type`, its sizes, and the labels and taints
-  from the node pool contract. `capacity_type: spot` makes it a `SPOT` node group.
-- **Taint effects.** EKS spells the effects `NO_SCHEDULE`, `PREFER_NO_SCHEDULE` and `NO_EXECUTE`.
-  The template converts them. You write them the Kubernetes way.
-- **AMI type.** An extra node group uses the same operating system as the default node group
-  (`eks_ami_type`, Bottlerocket by default). An arm64 pool gets the arm64 AMI of that operating
-  system, and a GPU instance type (such as `g5`) gets its NVIDIA AMI. A FIPS cluster
-  (`BOTTLEROCKET_x86_64_FIPS`) gets the FIPS AMI for arm64 too. The plan refuses a pool that has no
-  matching AMI: a GPU pool on FIPS Bottlerocket, an arm64 GPU pool on AL2, or any extra pool when
-  `eks_ami_type` is not an x86 type.
-- **Instance type and arch.** `instance_type` is an EC2 type, such as `m7i.large`. An `arm64` pool
-  needs a Graviton type, such as `m7g.large` or `a1.large`. An `amd64` pool needs an x86 type. The
-  plan refuses a mismatch, because the node group would fail to start.
-- **Size.** The node group starts with `desired_size` nodes and stays there. Nothing scales a
-  managed node group, and a later change to `desired_size` does not resize it. Change `min_size` or
-  `max_size` to move the bounds. For capacity that follows demand, use the Karpenter pools above.
-- **Isolation.** Every extra node group has the isolation controls of the default node group:
-  IMDSv2 with a hop limit of 1, the same private subnets and node security group, the encrypted gp3
-  root volume, and the same IAM policies. With a hop limit of 2, any pod on the node could take the
-  node's IAM role.
-
-### Example: an arm64 Spot pool for batch jobs
-
-This `provider_config` labels every node with its team, and adds an arm64 Spot node group of up to
-ten `m7g.large` nodes for batch jobs. It taints the extra node groups with `dedicated=batch`:
-
-```json
-{
-  "node_labels": { "team": "payments" },
-  "node_taints": [
-    { "key": "dedicated", "value": "batch", "effect": "NoSchedule" }
-  ],
-  "extra_node_pools": [
-    {
-      "name": "batch",
-      "instance_type": "m7g.large",
-      "arch": "arm64",
-      "capacity_type": "spot",
-      "min_size": 0,
-      "desired_size": 2,
-      "max_size": 10,
-      "labels": { "workload": "batch" }
-    }
-  ]
-}
-```
-
-The `batch` node group's nodes then carry these labels and taints:
-
-| Labels | Taints |
-|--------|--------|
-| `team=payments`, `workload=batch`, `alethia.io/pool=batch` | `dedicated=batch:NoSchedule`, `alethia.io/arch=arm64:NoSchedule` |
-
-A batch pod selects the pool and tolerates both taints. Its image must be multi-arch, or arm64:
-
-```yaml
-spec:
-  nodeSelector:
-    alethia.io/pool: batch
-    kubernetes.io/arch: arm64
-  tolerations:
-    - key: dedicated
-      operator: Equal
-      value: batch
-      effect: NoSchedule
-    - key: alethia.io/arch
-      operator: Equal
-      value: arm64
-      effect: NoSchedule
-```
+- [Infrastructure templates](/concepts/runner/infrastructure-templates)
+- [Connect AWS](/guides/connectors/aws)
+- [Cluster guide](/guides/design-project/cluster)

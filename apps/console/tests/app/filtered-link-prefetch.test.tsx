@@ -106,14 +106,34 @@ async function runners(searchParams: SearchParams): Promise<DehydratedState> {
 	return dehydratedOf(await Reflect.apply(child.type, undefined, [child.props]));
 }
 
-/** The browser's key for the runners grid's page read with `input`. */
+/**
+ * The browser's key for the runners grid's FIRST keyset page with `input` — the infinite key
+ * `useKeysetList(orpc.runners.page, input)` asks for (#7484): the initial page param is null, so
+ * the cursor is never in it.
+ */
 function runnersPageKey(input: Record<string, unknown>): readonly unknown[] {
-	return serverOrpc().runners.page.queryKey({ input });
+	return serverOrpc().runners.page.infiniteKey({
+		input: (cursor: string | null) => (cursor === null ? input : { ...input, cursor }),
+		initialPageParam: null,
+	});
 }
 
-/** The browser's key for the members page read of `query` (`orpc.members.page`). */
+/** The dehydrated infinite data of a first page the fake read answered for `query`. */
+function firstPage(query: unknown): unknown {
+	return { pages: [{ query, rows: [] }], pageParams: [null] };
+}
+
+/**
+ * The browser's key for the members list walk of `query` (`useKeysetList(orpc.members.page, …)`,
+ * LST-8 #7490): an INFINITE key whose input is the filter alone — the cursor is the page param.
+ */
 function membersKey(query: unknown): readonly unknown[] {
-	return [["members", "page"], { input: query, type: "query" }];
+	return [["members", "page"], { input: query, type: "infinite" }];
+}
+
+/** A prefetched walk holding exactly one first page — what the route dehydrates. */
+function firstPageOf(data: unknown): unknown {
+	return { pages: [data], pageParams: [null] };
 }
 
 /** Render the members route for one link. */
@@ -132,13 +152,13 @@ describe("~/runners prefetches the link's filtered grid", () => {
 		const state = await runners({ versions: "1.4.0,1.10.0" });
 		// Sorted by the normalize step — the key the client builds, character for character.
 		const filtered = runnersPageKey({ versions: ["1.10.0", "1.4.0"] });
-		expect(dataAt(state, filtered)).toEqual({ query: { versions: ["1.10.0", "1.4.0"] }, rows: [] });
+		expect(dataAt(state, filtered)).toEqual(firstPage({ versions: ["1.10.0", "1.4.0"] }));
 		expect(runnersPage).toHaveBeenCalledWith({ versions: ["1.10.0", "1.4.0"] });
 	});
 
 	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
 		const state = await runners({ versions: "1.4.0" });
-		expect(dataAt(state, runnersPageKey({}))).toEqual({ query: {}, rows: [] });
+		expect(dataAt(state, runnersPageKey({}))).toEqual(firstPage({}));
 	});
 
 	it("fetches the pristine grid once for a pristine link", async () => {
@@ -152,13 +172,13 @@ describe("~/settings/members prefetches the link's filtered list (#4999)", () =>
 		const state = await members({ statuses: "pending", roles: "viewer,admin", search: "  ann " });
 		// Trimmed and sorted by the normalize step — the key the client builds, character for character.
 		const query = { search: "ann", statuses: ["pending"], roles: ["admin", "viewer"] };
-		expect(dataAt(state, membersKey(query))).toEqual({ query, rows: [] });
+		expect(dataAt(state, membersKey(query))).toEqual(firstPageOf({ query, rows: [] }));
 		expect(getMembersPage).toHaveBeenCalledWith(query);
 	});
 
 	it("still dehydrates the pristine key — the hydration render holds the store's defaults", async () => {
 		const state = await members({ statuses: "pending" });
-		expect(dataAt(state, membersKey({}))).toEqual({ query: {}, rows: [] });
+		expect(dataAt(state, membersKey({}))).toEqual(firstPageOf({ query: {}, rows: [] }));
 		// Never the member LIST (`members.list`): a different payload shape, and seeding it with a
 		// page would serve the wrong one.
 		expect(keysOf(state).some((k) => k.includes('"list"'))).toBe(false);

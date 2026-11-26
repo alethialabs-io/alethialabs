@@ -7,10 +7,19 @@ Every **private** console route, scored against the static half of
 [`RUBRIC.md`](./RUBRIC.md).
 
 **Everything below the marker is generated. Do not edit it.**
-Run `pnpm -C apps/console run audit:report --write` and commit the result; a bare
+`pnpm -C apps/console run audit:report --write` regenerates it; a bare
 `pnpm -C apps/console run audit:report` checks the two generated artifacts against the tree and exits 2
-naming the command, the same contract `PROGRAMME.md`'s derived half uses. The machine-readable
-twin is [`apps/console/ui-conformance-baseline.json`](../../ui-conformance-baseline.json).
+naming the command. The machine-readable twin is
+[`apps/console/ui-conformance-baseline.json`](../../ui-conformance-baseline.json).
+
+**A pull request does not commit either file (#7594).** Both carry aggregate totals, and the
+regenerations of N parallel PRs merge cleanly and wrongly. CI regenerates them against each PR's
+merge ref and **reports** the diff in the log and the step summary, so a reviewer sees the PR's
+conformance effect, but it does not fail on it. `dev`'s copy is regenerated after every merge by
+`.github/workflows/ui-conformance-scoreboard.yml`, which opens or updates one bot PR,
+`chore(console): regenerate the UI conformance scoreboard`. **The freshness bound is 24 hours**:
+that workflow goes red if the bot PR stays open longer, or if `dev` is stale and no bot PR exists.
+So this file can lag `dev` by one bot PR, and never by more than a day without something red.
 
 ## What this is, and what it is not
 
@@ -64,13 +73,16 @@ so for H8 in as many words — "a page scores FAIL on H8 today and the number ca
 The numbers this file was committed with were measured on an **unmodified `dev`**, before any
 conformance lane changed a component. A guard shipped in the same commit as its fix is
 tautological, and this repo has paid for that more than once. Every conformance lane that follows
-lowers a number here in the same commit as its code.
+lowers a number here; since #7594 the number moves in the bot PR that follows the lane's merge,
+and the lane's own PR shows the move as a CI report. The ratchets that GATE a lane —
+`route-states-baseline.yaml` and `shared-surface-allowlist.yaml` — still move in the same commit
+as its code.
 
 <!-- BEGIN GENERATED: audit-report · tree-derived · DO NOT EDIT BELOW -->
 
 ## What this scored
 
-**42 private routes** · 4 redirect-only · 38 real pages.
+**44 private routes** · 4 redirect-only · 40 real pages.
 
 RUBRIC.md defines **44 predicates**. This report scores **43** of them —
 24 from the tree and 19 from the committed live audit records.
@@ -135,33 +147,33 @@ leaves the denominator and a predicate withheld everywhere scores `—`, never `
 | withheld | routes | why the instrument did not answer |
 |---|---:|---|
 | **B1** | 9 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
-| **B1** | 2 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B1** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B2** | 6 | hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition |
-| **B2** | 2 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B2** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B3** | 3 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
 | **B3** | 28 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
-| **B3** | 2 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B3** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B4** | 6 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
 | **B4** | 8 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
 | **B4** | 1 | no-reads-failed — the route made no data read, so forcing reads to fail reached nothing |
-| **B4** | 2 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B4** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B5** | 9 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
 | **B5** | 19 | not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed |
-| **B5** | 2 | the `behaviour` run did not reach this route — it covers every route the manifest names |
-| **F10** | 2 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **F8** | 2 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **F9** | 2 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **R1** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R2** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R3** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R4** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R5** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R6** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R7** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R8** | 2 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **T5** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **T6** | 2 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **T7** | 15 | the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given |
+| **B5** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **F10** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **F8** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **F9** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **R1** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R2** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R3** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R4** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R5** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R6** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R7** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R8** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **T5** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **T6** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **T7** | 17 | the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given |
 
 **Nothing is suppressed.** R5, R6 and R7 declare no N/A reason at all, so an N/A on one of them
 is a parse error rather than a verdict. What still fails is recorded debt with an owner, and the
@@ -189,49 +201,49 @@ has a column of its own for the same reason — it is a fact about the instrumen
 
 | id | family | instrument | PASS | FAIL | N/A | NOT MEASURED | score | N/A reasons |
 |---|---|---|---:|---:|---:|---:|---:|---|
-| **S1** | S | `check-route-states` | 38 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **S2** | S | `check-route-states` | 37 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
-| **S3** | S | `check-route-states` | 38 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **S4** | S | `check-route-states` | 38 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **T1** | T | `check-route-states` | 38 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **T2** | T | `check-route-states` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **T3** | T | `check-route-states` | 11 | 0 | 31 | 0 | 1.00 | `does-not-call-not-found` 31 |
-| **T4** | T | `check-route-states` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **T5** | T | live — `routes` | 18 | 0 | 22 | 2 | 1.00 | `no-empty-state` 22 |
-| **T6** | T | live — `routes` | 36 | 0 | 4 | 2 | 1.00 | `redirect-only` 4 |
-| **T7** | T | live — `permissions` | 2 | 0 | 25 | 15 | 1.00 | `no-restricted-surface` 25 |
-| **H1** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H2** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H3** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H4** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H5** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H6** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H7** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H8** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **H9** | H | `check-shared-surface` | 42 | 0 | 0 | 0 | 1.00 | — |
-| **F1** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F2** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F3** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F4** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F5** | F | `check-filter-standard` | 7 | 12 | 23 | 0 | 0.37 | `not-a-list-page` 23 |
-| **F6** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F7** | F | `check-filter-standard` | 19 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F8** | F | live — `interaction` | 16 | 0 | 24 | 2 | 1.00 | `not-a-list-page` 24 |
-| **F9** | F | live — `interaction` | 16 | 0 | 24 | 2 | 1.00 | `not-a-list-page` 24 |
-| **F10** | F | live — `interaction` | 15 | 0 | 25 | 2 | 1.00 | `no-search-field` 1, `not-a-list-page` 24 |
-| **R1** | R | live — `routes` | 36 | 0 | 4 | 2 | 1.00 | `redirect-only` 4 |
-| **R2** | R | live — `routes` | 39 | 0 | 1 | 2 | 1.00 | `opens-no-overlay` 1 |
-| **R3** | R | live — `routes` | 36 | 0 | 4 | 2 | 1.00 | `redirect-only` 4 |
-| **R4** | R | live — `routes` | 36 | 0 | 4 | 2 | 1.00 | `redirect-only` 4 |
-| **R5** | R | live — `routes` | 40 | 0 | 0 | 2 | 1.00 | — |
-| **R6** | R | live — `routes` | 40 | 0 | 0 | 2 | 1.00 | — |
-| **R7** | R | live — `routes` | 40 | 0 | 0 | 2 | 1.00 | — |
-| **R8** | R | live — `interaction` | 35 | 0 | 5 | 2 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
-| **B1** | B | live — `behaviour` | 27 | 0 | 4 | 11 | 1.00 | `redirect-only` 4 |
-| **B2** | B | live — `behaviour` | 30 | 0 | 4 | 8 | 1.00 | `redirect-only` 4 |
-| **B3** | B | live — `behaviour` | 5 | 0 | 4 | 33 | 1.00 | `redirect-only` 4 |
-| **B4** | B | live — `behaviour` | 21 | 0 | 4 | 17 | 1.00 | `redirect-only` 4 |
-| **B5** | B | live — `behaviour` | 8 | 0 | 4 | 30 | 1.00 | `redirect-only` 4 |
+| **S1** | S | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **S2** | S | `check-route-states` | 39 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
+| **S3** | S | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **S4** | S | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **T1** | T | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **T2** | T | `check-route-states` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **T3** | T | `check-route-states` | 11 | 0 | 33 | 0 | 1.00 | `does-not-call-not-found` 33 |
+| **T4** | T | `check-route-states` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **T5** | T | live — `routes` | 18 | 0 | 22 | 4 | 1.00 | `no-empty-state` 22 |
+| **T6** | T | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
+| **T7** | T | live — `permissions` | 2 | 0 | 25 | 17 | 1.00 | `no-restricted-surface` 25 |
+| **H1** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H2** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H3** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H4** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H5** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H6** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H7** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H8** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **H9** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
+| **F1** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
+| **F2** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
+| **F3** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
+| **F4** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
+| **F5** | F | `check-filter-standard` | 20 | 1 | 23 | 0 | 0.95 | `not-a-list-page` 23 |
+| **F6** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
+| **F7** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
+| **F8** | F | live — `interaction` | 16 | 0 | 24 | 4 | 1.00 | `not-a-list-page` 24 |
+| **F9** | F | live — `interaction` | 16 | 0 | 24 | 4 | 1.00 | `not-a-list-page` 24 |
+| **F10** | F | live — `interaction` | 15 | 0 | 25 | 4 | 1.00 | `no-search-field` 1, `not-a-list-page` 24 |
+| **R1** | R | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
+| **R2** | R | live — `routes` | 39 | 0 | 1 | 4 | 1.00 | `opens-no-overlay` 1 |
+| **R3** | R | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
+| **R4** | R | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
+| **R5** | R | live — `routes` | 40 | 0 | 0 | 4 | 1.00 | — |
+| **R6** | R | live — `routes` | 40 | 0 | 0 | 4 | 1.00 | — |
+| **R7** | R | live — `routes` | 40 | 0 | 0 | 4 | 1.00 | — |
+| **R8** | R | live — `interaction` | 35 | 0 | 5 | 4 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
+| **B1** | B | live — `behaviour` | 27 | 0 | 4 | 13 | 1.00 | `redirect-only` 4 |
+| **B2** | B | live — `behaviour` | 30 | 0 | 4 | 10 | 1.00 | `redirect-only` 4 |
+| **B3** | B | live — `behaviour` | 5 | 0 | 4 | 35 | 1.00 | `redirect-only` 4 |
+| **B4** | B | live — `behaviour` | 21 | 0 | 4 | 19 | 1.00 | `redirect-only` 4 |
+| **B5** | B | live — `behaviour` | 8 | 0 | 4 | 32 | 1.00 | `redirect-only` 4 |
 | **B6** | B | **none** — #6115 | — | — | — | — | — | — |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
@@ -263,38 +275,40 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | route | S | T | H | F | R | B | overall |
 |---|---|---|---|---|---|---|---|
 | `/[org]/~/jobs/[id]` | 3/4 · 0.75 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 4 withheld of 44 |
-| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 5 withheld of 44 |
-| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 6/7 · 0.86 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 4 withheld of 44 |
-| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 8/9 · 0.89 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 2 withheld of 44 |
 | `/[org]/~/settings/sso` | 4/4 · 1.00 | 6/6 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | all withheld (5) | **0.97** · 5 withheld of 44 |
-| `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **0.97** · 5 withheld of 44 |
-| `/[org]/~/settings/teams` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **0.97** · 3 withheld of 44 |
-| `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **0.97** · 2 withheld of 44 |
-| `/[org]/~/settings/members` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 5/5 · 1.00 | **0.97** · 0 withheld of 44 |
-| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 9/10 · 0.90 | 8/8 · 1.00 | 5/5 · 1.00 | **0.98** · 0 withheld of 44 |
 | `/[org]` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]` · | all N/A | 3/3 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/architecture` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 4 withheld of 44 |
+| `/[org]/[project]/clusters` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
+| `/[org]/[project]/environments` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/jobs` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 1 withheld of 44 |
 | `/[org]/[project]/settings` · | all N/A | 2/2 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 1 withheld of 44 |
+| `/[org]/[project]/settings/access` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/[project]/settings/activity` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/settings/general` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/settings/preview` | 4/4 · 1.00 | 5/5 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/[project]/usage` | 4/4 · 1.00 | 6/6 · 1.00 · 1 withheld | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 5 withheld of 44 |
 | `/[org]/~/alerts` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | all withheld (5) | **1.00** · 5 withheld of 44 |
+| `/[org]/~/approvals` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
+| `/[org]/~/clusters` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 7/7 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/connectors` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/evidence` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/jobs` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
 | `/[org]/~/new` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/runners` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
+| `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/settings/billing/early-access` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | all N/A or withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
+| `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/classification` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
 | `/[org]/~/settings/connected` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | all N/A or withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/settings/general` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/settings/members` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
+| `/[org]/~/settings/roles` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 5/5 · 1.00 | **1.00** · 0 withheld of 44 |
+| `/[org]/~/settings/teams` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
+| `/[org]/~/settings/tokens` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | 7/7 · 1.00 · 3 withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/support` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/support/abuse` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/support/ask` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |

@@ -262,6 +262,8 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 											key={p.id}
 											type="button"
 											role="option"
+											// The list-item marker (#7673, components/data-table.tsx).
+											data-list-item=""
 											aria-selected={shown?.id === p.id}
 											// Only moves the selection. What that does to a draft is
 											// decided in one place above, for every way it can move.
@@ -628,13 +630,14 @@ function PolicyDetail({
 					<span className="font-mono text-ui-2xs uppercase tracking-wider text-muted-foreground">
 						Routing · channels
 					</span>
-					<button
-						type="button"
-						onClick={() => onOpenChannel()}
+					{/* An in-page LINK to the Channels section, not a button that scrolls — see the
+					    "All policies →" twin in channels-panel.tsx for why (#7673). */}
+					<a
+						href="#channels"
 						className="ml-auto text-muted-foreground text-xs hover:text-foreground"
 					>
 						All channels →
-					</button>
+					</a>
 				</div>
 				<ChannelRouting
 					channels={channels}

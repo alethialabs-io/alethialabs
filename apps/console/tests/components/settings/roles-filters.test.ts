@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The zero-result decision and its copy for Settings · Roles (#4968 review): "nothing matches"
-// may only be read off a SETTLED query, and the count names the role universe.
+// may only be read off a SETTLED query. The copy carries no count since LST-8 (#7490): the console
+// carries no list totals.
 
 import { describe, expect, it } from "vitest";
-import {
-	hasNoMatches,
-	noMatchesDescription,
-} from "@/components/settings/roles/roles-filters";
+import { hasNoMatches, rolesQueryFromUrl } from "@/components/settings/roles/roles-filters";
 
 describe("hasNoMatches", () => {
 	const base = { activeFilters: 1, builtinCount: 0, customCount: 0, settled: true };
@@ -28,13 +26,13 @@ describe("hasNoMatches", () => {
 	});
 });
 
-describe("noMatchesDescription", () => {
-	it("names the universe total", () => {
-		expect(noMatchesDescription(8)).toBe("None of the 8 roles match these filters.");
-		expect(noMatchesDescription(1)).toBe("None of the 1 role matches these filters.");
-	});
-
-	it("leaves the number out until the universe is known", () => {
-		expect(noMatchesDescription(undefined)).toBe("No roles match these filters.");
+describe("rolesQueryFromUrl", () => {
+	it("is the key the rail settles on: trimmed search and sorted kinds, empties dropped", () => {
+		const params = new URLSearchParams({ search: "  aud ", kinds: "custom,builtin" });
+		expect(rolesQueryFromUrl({ get: (k) => params.get(k) })).toEqual({
+			search: "aud",
+			kinds: ["builtin", "custom"],
+		});
+		expect(rolesQueryFromUrl({ get: () => null })).toEqual({});
 	});
 });

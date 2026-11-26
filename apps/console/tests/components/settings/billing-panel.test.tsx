@@ -35,6 +35,13 @@ vi.mock("@/app/server/actions/billing", () => ({
 	startAddCard: vi.fn(),
 	saveAiSpendLimits: vi.fn(),
 }));
+// The plan card's lifecycle writes are the provider-neutral actions (Paddle L4); Stripe's path sits
+// behind them unchanged. The same spies stand in, so every assertion below reads as before.
+vi.mock("@/app/server/actions/checkout", () => ({
+	cancelSubscriptionPlan: cancelPlan,
+	resumeSubscriptionPlan: resumePlan,
+	openBillingPortal: vi.fn(),
+}));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("next/navigation", () => ({
 	useRouter: () => ({ push: vi.fn() }),
@@ -69,6 +76,8 @@ const summary = (over: Partial<BillingSummary> = {}): BillingSummary => ({
 	seats: 5,
 	memberCount: 3,
 	unitAmount: money(2000, "usd"),
+	provider: "stripe",
+	pastDueGraceEndsAt: null,
 	...over,
 });
 
@@ -99,8 +108,9 @@ beforeEach(() => {
 	reads.liveAiPrices.mockRejectedValue(failed());
 	reads.paymentMethods.mockResolvedValue([]);
 	reads.planHistory.mockResolvedValue([]);
-	reads.transactions.mockResolvedValue([]);
-	reads.invoices.mockResolvedValue([]);
+	// Both are keyset pages since #7493: an empty, final first page.
+	reads.transactions.mockResolvedValue({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
+	reads.invoices.mockResolvedValue({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 });
 
 describe("BillingPanel", () => {

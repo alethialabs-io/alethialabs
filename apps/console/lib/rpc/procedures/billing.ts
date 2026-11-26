@@ -6,7 +6,6 @@ import "server-only";
 import { type Money, money } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { count, eq } from "drizzle-orm";
-import type Stripe from "stripe";
 import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
@@ -16,14 +15,31 @@ import { type InvoiceListFilters, listOrgInvoices } from "@/lib/billing/invoices
 import { providerDocumentsForOrg } from "@/lib/billing/provider/documents";
 import type { BillingDocument } from "@/lib/billing/provider/types";
 import { backupRankOf } from "@/lib/billing/payment-methods";
-import { getAllAiPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
+import { isManualGrantExpired, PAST_DUE_GRACE_MS } from "@/lib/billing/plan";
+import { getAllAiPrices, getAllPlanPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
+import { providerForOrg } from "@/lib/billing/provider/select";
 import { getOrgBilling } from "@/lib/billing/queries";
 import { getStripe } from "@/lib/billing/stripe";
 import { readSubscription } from "@/lib/billing/subscription-cache";
 import { mapStatus } from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
-import { type Invoice, member, organization } from "@/lib/db/schema";
+import { type Invoice, member, type OrganizationBilling, organization, type PaddleTransaction } from "@/lib/db/schema";
+import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
 import { type BillingPlan, type BillingStatus, type InvoiceStatus, invoiceStatus } from "@/lib/db/schema/enums";
+import {
+	type InvoiceFacets,
+	type InvoiceListRow,
+	paddleInvoiceStatus,
+	queryInvoicesPage,
+	queryTransactionsPage,
+	type TransactionInfo,
+} from "@/lib/queries/billing";
+import {
+	KEYSET_DEFAULT_LIMIT,
+	type KeysetListPage,
+	type KeysetPageRequest,
+	keysetPageInput,
+} from "@/lib/queries/keyset";
 import { query } from "@/lib/rpc/base";
 import {
 	INVOICE_PAID_WITHIN,
@@ -130,6 +146,17 @@ export interface BillingSummary {
 	 * conversion has no halves to keep in step.
 	 */
 	unitAmount: Money | null;
+	/**
+	 * Which provider this org's billing goes through (`providerForOrg`): its own row's, else the
+	 * instance's sales provider. Null when billing is not wired. Decides where the plan card's
+	 * "update the payment method" goes — Stripe's in-page cards, or Paddle's customer portal.
+	 */
+	provider: BillingProviderId | null;
+	/**
+	 * For a Paddle subscription that is `past_due`: the ISO instant its 7-day grace ends (O8,
+	 * `PAST_DUE_GRACE_MS`) — the paid features stay on until then. Null otherwise.
+	 */
+	pastDueGraceEndsAt: string | null;
 }
 
 /** Resolves the active org's billing state for display (read-only; any member). */
@@ -196,13 +223,30 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 			// Subscription unreadable (deleted upstream) — fall back to the DB row.
 		}
 	}
+	// A Paddle row is read from the row itself, which its webhook keeps (L3): a scheduled cancellation
+	// is `cancel_effective_at`, a past-due subscription keeps its plan for the grace window, and a local
+	// card-less trial past its end has lapsed to Hobby (`isManualGrantExpired`).
+	const provider = providerForOrg(billing);
+	let pastDueGraceEndsAt: string | null = null;
+	let effectivePlan = plan;
+	if (billing && provider === "paddle") {
+		const paddle = paddleSummaryFields(billing);
+		status = paddle.status;
+		effectivePlan = paddle.plan;
+		cancelAtPeriodEnd = paddle.cancelAtPeriodEnd;
+		currentPeriodEnd = paddle.currentPeriodEnd;
+		pastDueGraceEndsAt = paddle.pastDueGraceEndsAt;
+	}
 	// No live sub price (or no sub yet) → fall back to the plan's live Stripe price, in the
 	// currency that price is denominated in. `amounts[currency]` rather than a `usd` field: the
 	// fallback used to read `LivePlanPrice.unitAmountUsd` and label it `"usd"` by hand, which is
 	// the same assumption one layer up. An org with no live sub sees the plan's base-currency
 	// price; which currency it will actually be BILLED in is settled at checkout, not here.
-	if (unitAmount === null && plan !== "community") {
-		const price = await getPlanPrice(plan);
+	if (unitAmount === null && effectivePlan !== "community") {
+		// Paddle's prices come from its pricing preview (getAllPlanPrices overlays them); Stripe's from
+		// the plan's price as before.
+		const price =
+			provider === "paddle" ? (await getAllPlanPrices())[effectivePlan] : await getPlanPrice(effectivePlan);
 		unitAmount = price.amounts[price.currency] ?? null;
 	}
 
@@ -210,7 +254,7 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		// Provider-neutral: is billing a surface on this instance (the sales provider is configured).
 		hosted: isBillingConfigured(),
 		hasOrg,
-		plan,
+		plan: effectivePlan,
 		status,
 		state: derivePlanState(status, cancelAtPeriodEnd),
 		currentPeriodEnd,
@@ -220,6 +264,47 @@ export async function getBillingSummary(): Promise<BillingSummary> {
 		seats: billing?.seats ?? null,
 		memberCount,
 		unitAmount,
+		provider,
+		pastDueGraceEndsAt,
+	};
+}
+
+/** The plan-card fields of a Paddle-routed billing row (pure; `now` for the grace and lapse checks). */
+export function paddleSummaryFields(
+	billing: Pick<
+		OrganizationBilling,
+		| "plan"
+		| "status"
+		| "currentPeriodStart"
+		| "currentPeriodEnd"
+		| "cancelEffectiveAt"
+		| "stripeSubscriptionId"
+		| "paddleSubscriptionId"
+	>,
+	now: Date = new Date(),
+): {
+	plan: BillingPlan;
+	status: BillingStatus;
+	cancelAtPeriodEnd: boolean;
+	currentPeriodEnd: string | null;
+	pastDueGraceEndsAt: string | null;
+} {
+	if (isManualGrantExpired(billing, now)) {
+		return { plan: "community", status: "none", cancelAtPeriodEnd: false, currentPeriodEnd: null, pastDueGraceEndsAt: null };
+	}
+	const live = billing.status === "active" || billing.status === "trialing";
+	const cancelAtPeriodEnd = live && billing.cancelEffectiveAt != null;
+	const end = cancelAtPeriodEnd ? billing.cancelEffectiveAt : live ? billing.currentPeriodEnd : null;
+	const graceEnd =
+		billing.status === "past_due" && billing.currentPeriodStart
+			? new Date(billing.currentPeriodStart.getTime() + PAST_DUE_GRACE_MS)
+			: null;
+	return {
+		plan: billing.plan,
+		status: billing.status,
+		cancelAtPeriodEnd,
+		currentPeriodEnd: end?.toISOString() ?? null,
+		pastDueGraceEndsAt: graceEnd && graceEnd.getTime() > now.getTime() ? graceEnd.toISOString() : null,
 	};
 }
 
@@ -345,8 +430,9 @@ export type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 /**
  * Lists the active org's invoices (newest paid first): the mirrored ones from the local table — no
  * Stripe call, so only real paid invoices — plus, for an org with a Paddle customer, Paddle's own
- * invoices (lib/billing/provider/documents.ts; one Paddle read per page of history). Filterable by
- * period range + status.
+ * invoices fetched LIVE (lib/billing/provider/documents.ts; one Paddle read per page of history).
+ * Filterable by period range + status. Bounded by `limit`, so it is an in-process glance, not the
+ * ledger: the `billing.invoices` read pages both sources in SQL through {@link readInvoicesPage}.
  */
 export async function listInvoices(
 	params: InvoiceListParams = {},
@@ -394,60 +480,72 @@ function matchesInvoiceFilters(row: InvoiceInfo, filters: InvoiceListFilters): b
 	return true;
 }
 
-// ── Transactions (Stripe charges) ─────────────────────────────────────────────────────────────────
-
-/** A charge row for the transaction-history table. */
-export interface TransactionInfo {
-	id: string;
-	/** What the charge was for (Stripe description, or a sensible fallback). */
-	description: string;
-	/** Normalized outcome driving the status badge. */
-	status: "paid" | "pending" | "failed" | "refunded";
-	/** Smallest-unit amount; negative for refunds. */
-	amount: number;
-	currency: string;
-	created: string;
-	/** "Visa ···· 4242", or null when the method isn't a card. */
-	method: string | null;
-}
-
-/** Maps a Stripe charge to our normalized transaction shape. */
-function toTransaction(charge: Stripe.Charge): TransactionInfo {
-	const card = charge.payment_method_details?.card;
-	const method = card
-		? `${card.brand ?? "card"} ···· ${card.last4 ?? "••••"}`
-		: null;
-	const refunded = charge.refunded || charge.amount_refunded > 0;
-	const status: TransactionInfo["status"] = refunded
-		? "refunded"
-		: charge.status === "succeeded"
-			? "paid"
-			: charge.status === "failed"
-				? "failed"
-				: "pending";
+/**
+ * A mirrored Paddle invoice (`paddle_transaction`, billed or completed — Paddle is the merchant of
+ * record) in the list's shape, the mirror's twin of {@link documentToInvoiceInfo}. Its id is
+ * Paddle's (`txn_…`), the PDF route's key for Paddle's own PDF; the row's uuid only orders the
+ * list. With an invoice number it is downloadable, as an issued фактура is.
+ */
+export function paddleTransactionToInvoiceInfo(row: PaddleTransaction): InvoiceInfo {
 	return {
-		id: charge.id,
-		description: charge.description ?? "Subscription payment",
-		status,
-		amount: refunded ? -charge.amount_refunded : charge.amount,
-		currency: charge.currency,
-		created: new Date(charge.created * 1000).toISOString(),
-		method,
+		id: row.paddleTransactionId,
+		number: row.invoiceNumber,
+		total: row.totalMinor,
+		currency: row.currency.toLowerCase(),
+		status: paddleInvoiceStatus(row),
+		paidAt: (row.billedAt ?? row.createdAt).toISOString(),
+		periodStart: row.billingPeriodStart?.toISOString() ?? null,
+		periodEnd: row.billingPeriodEnd?.toISOString() ?? null,
+		description: null,
+		facturaIssued: row.invoiceNumber !== null,
 	};
 }
 
-/** Lists the active org's recent charges (paid / failed / refunded) for the ledger. */
-export async function listTransactions(): Promise<TransactionInfo[]> {
+/** One invoices-list row, of either source, in the UI shape. */
+function invoiceListRowToInfo(row: InvoiceListRow): InvoiceInfo {
+	return row.source === "invoice" ? toInvoiceInfo(row.invoice) : paddleTransactionToInvoiceInfo(row.transaction);
+}
+
+/**
+ * One page of the active org's invoices — the Stripe-era mirror plus the mirrored Paddle invoices —
+ * newest first, filtered by status and paid-date range SERVER-SIDE (`queryInvoicesPage`), with the
+ * status facet over both sources' unfiltered invoices on the first page. The Invoices page reads
+ * this; it used to read up to 500 rows in one go and page them in the browser (#7493). No Stripe
+ * and no Paddle call: both sources are local mirrors kept by their webhooks.
+ */
+export async function readInvoicesPage(
+	params: Omit<InvoiceListParams, "limit">,
+	request: KeysetPageRequest,
+): Promise<KeysetListPage<InvoiceInfo, InvoiceFacets>> {
+	const actor = await authorizeRead("manage_billing", { type: "billing" });
+	const page = await queryInvoicesPage(actor.orgId, invoiceReaderFilters(params), request);
+	return { ...page, rows: page.rows.map(invoiceListRowToInfo) };
+}
+
+// ── Transactions (Stripe charges) ─────────────────────────────────────────────────────────────────
+
+export type { TransactionInfo } from "@/lib/queries/billing";
+
+/**
+ * One page of the active org's charges (paid / failed / refunded) for the ledger, newest first,
+ * through Stripe's own cursor (`queryTransactionsPage`). Every charge is reachable: this used to
+ * read `limit: 24` and nothing after it (#7493).
+ */
+export async function readTransactionsPage(
+	request: KeysetPageRequest = { limit: KEYSET_DEFAULT_LIMIT },
+): Promise<KeysetListPage<TransactionInfo, null>> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
 	requireHostedRead();
 	const billing = await getOrgBilling(actor.orgId);
-	if (!billing?.stripeCustomerId) return [];
+	return queryTransactionsPage(billing?.stripeCustomerId ?? null, request);
+}
 
-	const charges = await getStripe().charges.list({
-		customer: billing.stripeCustomerId,
-		limit: 24,
-	});
-	return charges.data.map(toTransaction);
+/**
+ * The active org's NEWEST charges — the first page of {@link readTransactionsPage}, for an
+ * in-process caller that wants a glance rather than the ledger. The ledger itself pages.
+ */
+export async function listTransactions(): Promise<TransactionInfo[]> {
+	return (await readTransactionsPage()).rows;
 }
 
 // ── Plan history (minimal — derived, no event log yet) ────────────────────────────────────────────
@@ -468,7 +566,8 @@ export interface PlanHistoryEntry {
  */
 export async function getPlanHistory(): Promise<PlanHistoryEntry[]> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
-	requireHostedRead();
+	// No Stripe call below: any hosted rail (Stripe, or a Paddle sales provider) may read it.
+	if (!isBillingConfigured()) requireHostedRead();
 	if (actor.orgId === actor.userId) return [];
 
 	const [org] = await getServiceDb()
@@ -533,20 +632,34 @@ function readSalesOpen(): { open: boolean } {
 // ── Inputs + router ───────────────────────────────────────────────────────────────────────────────
 
 /** The invoices list's filters, as the page builds them (`normalizeInvoiceQuery`). */
-const invoicesInput = z.object({
+const invoiceFilterFields = {
 	status: z.array(z.enum(invoiceStatus.enumValues)).max(10).optional(),
 	paidWithin: z.enum(INVOICE_PAID_WITHIN).optional(),
 	paidFrom: z.iso.datetime().optional(),
 	paidTo: z.iso.datetime().optional(),
-	limit: z.number().int().min(1).max(500).optional(),
-});
+};
+
+/**
+ * The invoices read: the filters plus the paging contract (`keysetPageInput`: an opaque cursor,
+ * a malformed one a 400; `limit` defaulting to 50 and refused above 100). The Billing page's
+ * five-row preview reads the first page with `limit: 5`; the Invoices page walks every page.
+ */
+const invoicesInput = z.object({ ...invoiceFilterFields, ...keysetPageInput("uuid") });
+
+/**
+ * The transaction history's input: only the paging contract (the cursor's id is a Stripe charge
+ * id, so text-kind). Optional as a whole, so a caller that names nothing reads the first page.
+ */
+const transactionsInput = z.object(keysetPageInput("text")).optional();
 
 /** The billing domain's read procedures (ADR 0005 D1). */
 export const billingRouter = {
 	summary: query.handler(() => getBillingSummary()),
 	paymentMethods: query.handler(() => listPaymentMethods()),
-	invoices: query.input(invoicesInput).handler(({ input }) => listInvoices(input)),
-	transactions: query.handler(() => listTransactions()),
+	invoices: query
+		.input(invoicesInput)
+		.handler(({ input: { cursor, limit, ...filters } }) => readInvoicesPage(filters, { cursor, limit })),
+	transactions: query.input(transactionsInput).handler(({ input }) => readTransactionsPage(input)),
 	planHistory: query.handler(() => getPlanHistory()),
 	liveAiPrices: query.handler(() => readLiveAiPrices()),
 	salesOpen: query.handler(() => readSalesOpen()),

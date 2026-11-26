@@ -1,6 +1,7 @@
 {
   "name": "@repo/brand",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "description": "Alethia brand primitives: the mark and lockup, fonts, design tokens, and the icon, Open Graph and manifest routes.",
   "private": true,
   "exports": {
     "./status": "./src/brand-status.ts",

@@ -18,8 +18,12 @@
 // one product" is exactly the claim that they all answer them the same way.
 //
 // The surfaces #4890 lifted (alerts × 2 — the delivery ledger left for keyset paging in #7489, and
-// its paging is driven in tests/components/alerts/activity-keyset.test.tsx — access, runners) and the two #4890 lifted first (teams,
-// members) are all here. The older hooks — jobs, evidence, activity, sso, roles, support,
+// its paging is driven in tests/components/alerts/activity-keyset.test.tsx) are here. Runners left for
+// keyset paging in #7484, and its paging is driven in tests/components/runners/runners-list-paging.test.tsx.
+// Members, teams and access left in LST-8 (#7490): they page through the ONE keyset hook,
+// `useKeysetList`, whose own test (tests/lib/query/use-keyset-list.test.tsx) drives the same two facts
+// — a filter is its own cache entry, and the previous rows stay as placeholder data across a change —
+// once for every list on it. The older hooks — jobs, evidence, activity, sso, roles, support,
 // connectors — are not: they were already on the standard, and this file is the new work's
 // instrument, not a retro-fit of coverage onto everything that predates it.
 
@@ -35,11 +39,7 @@ vi.mock("next/navigation", () => ({ useParams: () => ({ org: "org-1" }) }));
 // utilities the browser uses. ONE mock of the client carries every router — a second `vi.mock` of the
 // same module would replace the first.
 const getAlertChannelsPage = vi.fn();
-const getAccessGrantsPage = vi.fn();
-const getTeamsPage = vi.fn();
-const getMembersPage = vi.fn();
 const getAlertPoliciesPage = vi.fn();
-const getRunnersPage = vi.fn();
 vi.mock("@/lib/rpc/client", async () => {
 	const { os, createRouterClient } = await import("@orpc/server");
 	const { createTanstackQueryUtils } = await import("@orpc/tanstack-query");
@@ -51,12 +51,6 @@ vi.mock("@/lib/rpc/client", async () => {
 			channels: page((input) => getAlertChannelsPage(input)),
 			policies: page((input) => getAlertPoliciesPage(input)),
 		},
-		runners: { page: page((input) => getRunnersPage(input)) },
-		members: {
-			grants: page((input) => getAccessGrantsPage(input)),
-			teams: page((input) => getTeamsPage(input)),
-			page: page((input) => getMembersPage(input)),
-		},
 	};
 	return { orpc: createTanstackQueryUtils(createRouterClient(router)) };
 });
@@ -66,12 +60,6 @@ const {
 	useAlertChannelsPageQuery,
 	useAlertPoliciesPageQuery,
 } = await import("@/lib/query/use-alerts-query");
-const { useAccessGrantsPageQuery } = await import(
-	"@/lib/query/use-access-grants-query"
-);
-const { useRunnersPageQuery } = await import("@/lib/query/use-runners-page-query");
-const { useTeamsPageQuery } = await import("@/lib/query/use-teams-query");
-const { useMembersPageQuery } = await import("@/lib/query/use-members-query");
 
 /** A page payload distinguishable per query, so "which answer is on screen" is observable. */
 function pageFor(query: Record<string, unknown>) {
@@ -81,8 +69,8 @@ function pageFor(query: Record<string, unknown>) {
 /**
  * The part of a `UseQueryResult` these assertions read.
  *
- * Structural rather than `UseQueryResult<AlertChannelsPage | AccessGrantsPage | …>`: the seven
- * hooks return seven payload types and the two facts under test — what is on screen, and
+ * Structural rather than `UseQueryResult<AlertChannelsPage | AlertPoliciesPage>`: the hooks
+ * return different payload types and the two facts under test — what is on screen, and
  * whether it is stale — are the same two fields on all of them.
  */
 interface PageResult {
@@ -131,41 +119,11 @@ const SUBJECTS: Record<string, Subject> = {
 		prefix: [["alerts", "policies"]],
 		queryOf: orpcInput,
 	},
-	useAccessGrantsPageQuery: {
-		usePage: (q) => useAccessGrantsPageQuery(q),
-		action: getAccessGrantsPage,
-		prefix: [["members", "grants"]],
-		queryOf: orpcInput,
-	},
-	useRunnersPageQuery: {
-		usePage: (q) => useRunnersPageQuery(q),
-		action: getRunnersPage,
-		// An oRPC key: the procedure's path, then `{ input, type }`. The tenant is not in it; the
-		// browser keeps one QueryClient per org instead (lib/query/client.ts).
-		prefix: [["runners", "page"]],
-		queryOf: orpcInput,
-	},
-	useTeamsPageQuery: {
-		usePage: (q) => useTeamsPageQuery(q),
-		action: getTeamsPage,
-		prefix: [["members", "teams"]],
-		queryOf: orpcInput,
-	},
-	useMembersPageQuery: {
-		usePage: (q) => useMembersPageQuery(q),
-		action: getMembersPage,
-		prefix: [["members", "page"]],
-		queryOf: orpcInput,
-	},
 };
 
 const ACTIONS = [
 	getAlertChannelsPage,
 	getAlertPoliciesPage,
-	getAccessGrantsPage,
-	getRunnersPage,
-	getTeamsPage,
-	getMembersPage,
 ];
 
 beforeEach(() => {

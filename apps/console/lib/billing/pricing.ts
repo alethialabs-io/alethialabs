@@ -31,6 +31,8 @@ import {
 	type PaidPlan,
 	priceIdForPlan,
 } from "@/lib/billing/config";
+import { providerById, salesProvider } from "@/lib/billing/provider/select";
+import type { LivePriceList } from "@/lib/billing/provider/types";
 import { getStripe } from "@/lib/billing/stripe";
 
 /**
@@ -151,12 +153,58 @@ export type LivePlanPriceMap = Record<PlanId, LivePlanPrice>;
 
 /** Resolve live prices for all plans at once (community/team/enterprise). */
 export async function getAllPlanPrices(): Promise<LivePlanPriceMap> {
+	const paddle = await paddlePriceList();
+	if (paddle) {
+		return {
+			community: fallbackPrice("community"),
+			team: withPaddleAmounts(fallbackPrice("team"), paddle.plans.team, planMeta("team").perSeat === true),
+			enterprise: withPaddleAmounts(fallbackPrice("enterprise"), paddle.plans.enterprise, false),
+		};
+	}
 	const [community, team, enterprise] = await Promise.all([
 		getPlanPrice("community"),
 		getPlanPrice("team"),
 		getPlanPrice("enterprise"),
 	]);
 	return { community, team, enterprise };
+}
+
+// ── Paddle (merchant of record) ──────────────────────────────────────────────────
+// When new sales go through Paddle, its pricing preview is the authority (O1): Paddle localises by
+// country, with our EUR override for the eurozone and USD elsewhere. Each amount Paddle returns
+// replaces the catalog's for that currency; a currency it does not answer keeps the catalog figure.
+
+/** Paddle's live price list when it is this instance's sales provider; null otherwise or on failure. */
+const paddlePriceList = cache(async (): Promise<LivePriceList | null> => {
+	if (salesProvider() !== "paddle") return null;
+	const provider = providerById("paddle");
+	if (!provider?.isConfigured()) return null;
+	try {
+		return await provider.livePrices();
+	} catch {
+		return null;
+	}
+});
+
+/** A catalog price with Paddle's amounts laid over it, its label re-rendered from the USD/base one. */
+function withPaddleAmounts<T extends LivePlanPrice | LiveAiPrice>(
+	base: T,
+	paddle: { readonly [C in SupportedCurrency]?: Money } | undefined,
+	perSeat: boolean,
+): T {
+	if (!paddle) return base;
+	const amounts: { -readonly [C in SupportedCurrency]?: Money } = { ...base.amounts };
+	for (const code of SUPPORTED_CURRENCIES) {
+		const amount = paddle[code];
+		if (amount) amounts[code] = amount;
+	}
+	const shown = amounts[base.currency];
+	const label = shown
+		? perSeat
+			? formatSeatPrice(shown.minor, base.currency, "month")
+			: `${formatPriceLabel(shown.minor, base.currency)} / ${shortInterval("month")}`
+		: base.label;
+	return { ...base, amounts, label };
 }
 
 // ── Standalone AI tiers ──────────────────────────────────────────────────────────
@@ -226,6 +274,14 @@ export type LiveAiPriceMap = Record<AiPlanId, LiveAiPrice>;
 
 /** Resolve live prices for all AI tiers at once (free/plus/max). */
 export async function getAllAiPrices(): Promise<LiveAiPriceMap> {
+	const paddle = await paddlePriceList();
+	if (paddle) {
+		return {
+			ai_free: aiFallbackPrice("ai_free"),
+			ai_plus: withPaddleAmounts(aiFallbackPrice("ai_plus"), paddle.aiTiers.ai_plus, false),
+			ai_max: withPaddleAmounts(aiFallbackPrice("ai_max"), paddle.aiTiers.ai_max, false),
+		};
+	}
 	const [ai_free, ai_plus, ai_max] = await Promise.all([
 		getAiPlanPrice("ai_free"),
 		getAiPlanPrice("ai_plus"),

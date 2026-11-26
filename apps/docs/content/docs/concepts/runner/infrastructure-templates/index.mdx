@@ -1,52 +1,61 @@
 ---
-title: Infrastructure Templates Overview
-description: OpenTofu modules the runner uses to provision infrastructure across AWS, GCP, Azure, and Hetzner.
+title: Infrastructure templates
+description: The OpenTofu templates a runner provisions from — one per cloud, plus the self-deployed runner template and the ArgoCD manifests — and how a design reaches them.
 ---
 
-The runner provisions infrastructure using pre-built OpenTofu modules (HCL). These templates are
-baked into the runner image at build time — each per-cloud image pre-runs `tofu init` on its
-template so no provider/module download happens at job time.
+A runner provisions from OpenTofu templates that ship inside its image, one per cloud. Each template
+is plain OpenTofu: a design reaches it only as variables, and its state goes through the control
+plane.
 
-## Template Categories
+<Mermaid chart={`
+flowchart LR
+  Snap["Config snapshot"] --> Vars["terraform.tfvars.json"]
+  Vars --> T["infra/templates/project/<cloud>"]
+  T --> Plan["tofu plan and apply"]
+  Plan --> Out["Outputs"]
+  Out --> Argo["infra/templates/argocd"]
+`} />
 
-| Category | Path | Purpose |
-|----------|------|---------|
-| AWS project | `infra/templates/project/aws/` | User infrastructure on AWS |
-| GCP project | `infra/templates/project/gcp/` | User infrastructure on GCP |
-| Azure project | `infra/templates/project/azure/` | User infrastructure on Azure |
-| Hetzner project | `infra/templates/project/hetzner/` | Self-managed Talos Kubernetes on Hetzner VMs |
-| Runner | `infra/templates/runner/aws/` | Self-deployed runner infrastructure (ECS Fargate) |
-| ArgoCD | `infra/templates/argocd/` | ArgoCD applications and components |
+## How it works
 
-<Cards>
-  <Card title="AWS Resources" href="/concepts/runner/infrastructure-templates/aws">EKS, Aurora, ElastiCache, DynamoDB, and more</Card>
-  <Card title="GCP Resources" href="/concepts/runner/infrastructure-templates/gcp">GKE, Cloud SQL, Memorystore, Firestore, and more</Card>
-  <Card title="Azure Resources" href="/concepts/runner/infrastructure-templates/azure">AKS, Azure Database, Azure Cache, Cosmos DB, and more</Card>
-  <Card title="ArgoCD Components" href="/concepts/runner/infrastructure-templates/argocd">Pre-installed cluster components</Card>
-</Cards>
+| Template | Path | What it builds |
+| --- | --- | --- |
+| [AWS](/concepts/runner/infrastructure-templates/aws) | `infra/templates/project/aws/` | EKS with Karpenter, Aurora, ElastiCache, DynamoDB, SQS and SNS, S3, ECR, WAF and the network. |
+| [GCP](/concepts/runner/infrastructure-templates/gcp) | `infra/templates/project/gcp/` | GKE (Standard or Autopilot), Cloud SQL, Memorystore, Firestore, Pub/Sub, Cloud Storage, Artifact Registry, Cloud Armor and the network. |
+| [Azure](/concepts/runner/infrastructure-templates/azure) | `infra/templates/project/azure/` | AKS, Azure Database, Azure Managed Redis, Cosmos DB, Service Bus, Storage, ACR, Key Vault, the WAF and Application Gateway, and the network. |
+| [Hetzner](/concepts/runner/infrastructure-templates/hetzner) | `infra/templates/project/hetzner/` | A Talos Kubernetes cluster on Hetzner servers, its network, firewall, DNS zone and object storage buckets. |
+| Runner | `infra/templates/runner/aws/` | A self-deployed runner on ECS Fargate. See [Job execution](/concepts/runner/job-execution#runner-lifecycle). |
+| ArgoCD | `infra/templates/argocd/` | The platform Applications installed after the apply. See [GitOps and ArgoCD](/concepts/gitops-argocd). |
 
-## Template staging (image build)
+Each per-cloud runner image carries its own template, initialized when the image is built, so a job
+downloads no providers or modules.
 
-During the [runner release pipeline](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/release-system.md), templates are `COPY`d into the image
-and pre-initialized. The full `runner` image carries every project template; each per-cloud image
-(`runner-aws`, `runner-hetzner`, …) carries only its own:
+For each job, the runner writes the environment's [configuration snapshot](/concepts/provisioning-pipeline)
+as `terraform.tfvars.json` with the variable names of that cloud's template. The templates declare an
+empty `backend "http"` block, which the runner binds to the per-job
+[state proxy](/concepts/terraform-state).
 
-```
-infra/templates/project/<cloud>  → /home/runner/project-templates/<cloud>   (+ tofu init)
-infra/templates/runner/          → /home/runner/runner-templates/
-infra/templates/argocd/          → /home/runner/argocd-templates/
-```
+### Settings you can change
 
-## Variable generation
+Most templates accept settings beyond the canvas form, as keys in a component's `provider_config`. In
+the console, open the component on the canvas and set them on its template settings card. Settings
+are off by default: a project that sets none gets the same infrastructure as before the setting
+existed. The cloud pages list them.
 
-When executing a job, the runner materializes a tfvars file from the environment's config snapshot
-(`tofu.OverrideTfvarsFromMap`). The provisioner in `packages/core/provisioner/` maps each component
-to specific tofu variables (`ProviderTfvars`). See
-[Cloud Provider Abstraction](/concepts/cloud-abstraction) for the mapping layer.
+The node pool keys `node_labels`, `node_taints` and `extra_node_pools` are the same on every cloud;
+their rules are in [Node labels, taints and extra pools](/reference/node-pools).
+Every cloud taints arm64 pools with `alethia.io/arch=arm64:NoSchedule`, because the images Alethia
+builds are amd64 only, and keeps the default pool untainted for Alethia's add-ons.
 
-## tofu state
+## What it does not do
 
-The runner holds **no object-storage credentials**. State for every template is written through the
-**Console HTTP state proxy** — the templates declare `backend "http" {}`, and the runner fetches a
-per-job token it exposes as `TF_HTTP_PASSWORD`, so state I/O flows through
-`/api/jobs/{id}/state`. See [tofu state](/concepts/terraform-state).
+- It does not template the `.tf` files. Values reach them only through variables.
+- It does not download providers at job time.
+- It does not let you edit the template for one project. To provision from your own code, use
+  [bring-your-own IaC](/concepts/bring-your-own-iac).
+
+## Related
+
+- [Cloud abstraction](/concepts/cloud-abstraction)
+- [Provisioning pipeline](/concepts/provisioning-pipeline)
+- [Cluster guide](/guides/design-project/cluster)

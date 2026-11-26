@@ -138,7 +138,8 @@ describe("getAccessGrantsPage", () => {
 		vi.mocked(queryAccessGrantsPage).mockResolvedValue({ rows: [] } as never);
 		await getAccessGrantsPage({ scopes: ["org"] });
 		expect(authorize).toHaveBeenCalledWith("view", { type: "member" });
-		expect(queryAccessGrantsPage).toHaveBeenCalledWith("org-real", { scopes: ["org"] });
+		// The paging request (LST-8 #7490) travels separately; absent here, the builder's default.
+		expect(queryAccessGrantsPage).toHaveBeenCalledWith("org-real", { scopes: ["org"] }, undefined);
 	});
 
 	it("passes projectId through as the universe selector, still under the actor's org", async () => {
@@ -161,16 +162,22 @@ describe("getMembersPage", () => {
 	it("takes BOTH the org and the viewer from the actor", async () => {
 		// The viewer id is what synthesizes a personal workspace's sole owner, so a
 		// client-supplied one would let a caller render someone else's account as the owner.
-		vi.mocked(queryMembersPage).mockResolvedValue({ members: [] } as never);
+		vi.mocked(queryMembersPage).mockResolvedValue({ rows: [] } as never);
 		await getMembersPage(HOSTILE);
 		expect(currentActor).toHaveBeenCalled();
-		expect(queryMembersPage).toHaveBeenCalledWith("org-real", "user-real", HOSTILE);
+		expect(queryMembersPage).toHaveBeenCalledWith("org-real", "user-real", HOSTILE, undefined);
 	});
 
 	it("defaults to an empty query", async () => {
-		vi.mocked(queryMembersPage).mockResolvedValue({ members: [] } as never);
+		vi.mocked(queryMembersPage).mockResolvedValue({ rows: [] } as never);
 		await getMembersPage({});
-		expect(queryMembersPage).toHaveBeenCalledWith("org-real", "user-real", {});
+		expect(queryMembersPage).toHaveBeenCalledWith("org-real", "user-real", {}, undefined);
+	});
+
+	it("forwards the paging request untouched", async () => {
+		vi.mocked(queryMembersPage).mockResolvedValue({ rows: [] } as never);
+		await getMembersPage({}, { limit: 10 });
+		expect(queryMembersPage).toHaveBeenCalledWith("org-real", "user-real", {}, { limit: 10 });
 	});
 
 	it("reads nothing when there is no active tenancy", async () => {
@@ -185,10 +192,11 @@ describe("getTeamsPage", () => {
 		vi.mocked(queryTeamsPage).mockResolvedValue({ rows: [] } as never);
 		await getTeamsPage({ search: "plat", sizes: ["large"] });
 		expect(currentActor).toHaveBeenCalled();
-		expect(queryTeamsPage).toHaveBeenCalledWith("org-real", {
-			search: "plat",
-			sizes: ["large"],
-		});
+		expect(queryTeamsPage).toHaveBeenCalledWith(
+			"org-real",
+			{ search: "plat", sizes: ["large"] },
+			undefined,
+		);
 	});
 
 	it("reads nothing when there is no active tenancy", async () => {

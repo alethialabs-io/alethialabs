@@ -76,7 +76,7 @@ services it needs.
 The `-IAM` policy denies attaching `AdministratorAccess`, `PowerUserAccess` or `IAMFullAccess` to
 anything. It limits `iam:PassRole` to the provisioned services, and denies `organizations:*`,
 `account:*` and billing actions. So the role cannot give itself admin rights. The full scope is in
-[Security](/concepts/security#aws-keyless-issuer-direct-iam-role).
+[Security](/concepts/security#per-cloud).
 
 ## Check that it worked
 

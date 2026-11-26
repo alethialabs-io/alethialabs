@@ -508,7 +508,7 @@ export const FIXTURES: Record<string, Fixture> = {
 	"agents.serviceTokens": {
 		kind: "gated",
 		reason: "org:manage_tokens, which U (a viewer in both orgs) does not hold",
-		input: undefined,
+		input: {},
 		enterprise: { x: "FORBIDDEN", y: "FORBIDDEN" },
 	},
 	"agents.tokenEnvironments": {
@@ -685,6 +685,26 @@ export const FIXTURES: Record<string, Fixture> = {
 			y: field(out, "projectId") === s.projectY,
 		}),
 	},
+	// LST-3 (#7485): the Environments TABLE and the promotions history, each a keyset page, each
+	// addressing the project by slug exactly as `overview` does. The table's rows name the ADDRESSED
+	// org's seeded environment; no promotion is seeded, so the history answers an empty page.
+	"environments.page": {
+		kind: "gated",
+		reason: "addresses a project by slug: the addressed org's project, NOT_FOUND in the personal scope",
+		input: { project: PROJECT_SLUG },
+		enterprise: { x: "ok", y: "ok" },
+		markers: (out, s) => {
+			const rows = field(out, "rows");
+			const has = (id: string) => Array.isArray(rows) && rows.some((row: unknown) => field(row, "id") === id);
+			return { x: has(s.envX), y: has(s.envY) };
+		},
+	},
+	"environments.promotions": {
+		kind: "gated",
+		reason: "addresses a project by slug: the addressed org's project, NOT_FOUND in the personal scope",
+		input: { project: PROJECT_SLUG },
+		enterprise: { x: "ok", y: "ok" },
+	},
 	"environments.byoAdmissionReport": {
 		kind: "by-id",
 		input: (s, org) => ({ projectId: projectOf(s, org), environmentId: envOf(s, org) }),
@@ -795,9 +815,10 @@ export const FIXTURES: Record<string, Fixture> = {
 		reason: "manage_billing (U holds it in X only)",
 		input: {},
 		enterprise: { x: "ok", y: "FORBIDDEN" },
+		// A keyset page since #7493: the seeded invoices are among its `rows`.
 		markers: (out) => ({
-			x: hasElement(out, "number", "IT-6127-X"),
-			y: hasElement(out, "number", "IT-6127-Y"),
+			x: hasElement(field(out, "rows"), "number", "IT-6127-X"),
+			y: hasElement(field(out, "rows"), "number", "IT-6127-Y"),
 		}),
 	},
 	"billing.transactions": {
@@ -891,10 +912,19 @@ export const FIXTURES: Record<string, Fixture> = {
 	"clusters.page": {
 		kind: "org-scoped",
 		input: {},
-		markers: (out, s) => ({
-			x: hasCluster(field(out, "rows"), s.clusterX),
-			y: hasCluster(field(out, "rows"), s.clusterY),
-		}),
+		// A keyset page (LST-3 #7485): each row wraps its cluster as `{ id, cluster }`.
+		markers: (out, s) => {
+			const rows = field(out, "rows");
+			const clusters = Array.isArray(rows) ? rows.map((row: unknown) => field(row, "cluster")) : undefined;
+			return { x: hasCluster(clusters, s.clusterX), y: hasCluster(clusters, s.clusterY) };
+		},
+	},
+	// LST-3 (#7485): one cluster by its own id, for a `?selected=` link whose row is not loaded. The
+	// same composed read as the page, narrowed: another org's cluster id answers null, never its row.
+	"clusters.detail": {
+		kind: "by-id",
+		input: (s, org) => ({ clusterId: org === "x" ? s.clusterX : s.clusterY }),
+		reveals: (out, s, org) => hasCluster([out], org === "x" ? s.clusterX : s.clusterY),
 	},
 	// General settings (#6128).
 	"settings.org": {
@@ -971,18 +1001,18 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.page": {
 		kind: "org-scoped",
 		input: {},
-		// `asOf` is the read's own instant, and the personal scope's synthesized owner is "active now".
+		// A keyset page since #7490: every row carries the read's own `asOf`, and the personal scope's
+		// synthesized owner is "active now".
 		withoutClock: (out) => {
-			const members = field(out, "members");
+			const rows = field(out, "rows");
 			return {
 				...Object(out),
-				asOf: null,
-				members: Array.isArray(members) ? members.map(withoutSynthesizedClock) : members,
+				rows: Array.isArray(rows) ? rows.map((r: unknown) => ({ ...Object(withoutSynthesizedClock(r)), asOf: null })) : rows,
 			};
 		},
 		markers: (out) => {
-			const members = field(out, "members");
-			const n = Array.isArray(members) ? members.length : -1;
+			const rows = field(out, "rows");
+			const n = Array.isArray(rows) ? rows.filter((r: unknown) => field(r, "kind") === "member").length : -1;
 			return { x: n === 3, y: n === 2 };
 		},
 	},
@@ -1018,7 +1048,8 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.roles": {
 		kind: "org-scoped",
 		input: {},
-		markers: (out, s) => ({ x: hasElement(out, "id", s.roleX), y: hasElement(out, "id", s.roleY) }),
+		// A keyset page since #7490: the seeded custom roles are among its `rows`.
+		markers: (out, s) => ({ x: hasRow(out, s.roleX), y: hasRow(out, s.roleY) }),
 	},
 	"members.roleCatalog": {
 		// The built-in viewer's distinct-user grant count IS the org's marker: U and V in X, U in Y.
@@ -1034,8 +1065,11 @@ export const FIXTURES: Record<string, Fixture> = {
 	"members.grants": {
 		kind: "org-scoped",
 		input: {},
-		// `asOf` is the read's own instant — what "Granted … ago" is computed against.
-		withoutClock: (out) => ({ ...Object(out), asOf: null }),
+		// Each row's `asOf` is the read's own instant — what "Granted … ago" is computed against.
+		withoutClock: (out) => {
+			const rows = field(out, "rows");
+			return { ...Object(out), rows: Array.isArray(rows) ? rows.map((r: unknown) => ({ ...Object(r), asOf: null })) : rows };
+		},
 		markers: (out, s) => {
 			const rows = field(out, "rows");
 			const names = (id: string) => Array.isArray(rows) && rows.some((r: unknown) => field(r, "principalId") === id);

@@ -167,6 +167,9 @@ function EnvRow({
 		// `tabIndex` here would only add a second tab stop that does the same thing.
 		<TableRow
 			role="row"
+			// The list-item marker (#7673, components/data-table.tsx). Only environment rows carry it,
+			// never the group header rows interleaved between them.
+			data-list-item=""
 			className="group/row cursor-pointer border-border-faint"
 			onClick={() => onOpen(row)}
 		>
