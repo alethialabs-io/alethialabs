@@ -156,7 +156,6 @@ export function ApprovalSheet({ approvalId, orgSlug, onClose, returnFocus }: App
 						orgSlug={orgSlug}
 						serious={pendingSerious}
 						closeRef={closeRef}
-						readAt={sheet.dataUpdatedAt}
 					/>
 				)}
 			</SheetContent>
@@ -205,13 +204,11 @@ function SheetBody({
 	orgSlug,
 	serious,
 	closeRef,
-	readAt,
 }: {
 	data: ApprovalSheetData;
 	orgSlug: string;
 	serious: "destroy" | "production" | null;
 	closeRef: RefObject<HTMLButtonElement | null>;
-	readAt: number;
 }) {
 	const { approval } = data;
 	const { viewer } = useViewer();
@@ -258,7 +255,7 @@ function SheetBody({
 				<NoteSection approval={approval} />
 			</div>
 			<footer className="border-t p-5" data-slot="approval-decision">
-				<ApprovalDecision sheet={data} orgSlug={orgSlug} viewerId={viewer?.id ?? null} readAt={readAt} onCopyLink={link} />
+				<ApprovalDecision sheet={data} orgSlug={orgSlug} viewerId={viewer?.id ?? null} onCopyLink={link} />
 			</footer>
 		</>
 	);

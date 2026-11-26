@@ -35,7 +35,8 @@ export class ApplyAuthorizationError extends Error {
 /**
  * Why an approval could not be requested, read or decided. Each maps to one HTTP status in the
  * approvals API (app/api/approvals/**), so a client can branch on it; the decision action
- * (app/server/actions/approvals.ts) shows the same reasons as refusals.
+ * (app/server/actions/approvals.ts) returns the same reasons as refusals carrying this code, which the
+ * decision sheet (components/approvals/approval-decision.tsx) branches on.
  */
 const APPROVAL_ERROR_CODES = {
 	/** The approval or plan does not exist in the caller's org, or the caller may not see it. */
@@ -63,6 +64,14 @@ const APPROVAL_ERROR_CODES = {
 
 /** One of the keys of {@link APPROVAL_ERROR_CODES}. */
 export type ApprovalErrorCode = keyof typeof APPROVAL_ERROR_CODES;
+
+/**
+ * True when `value` is an {@link ApprovalErrorCode}. The action contract carries a refusal's code as a
+ * plain string (lib/actions/result.ts), so the decision sheet narrows it here before branching on it.
+ */
+export function isApprovalErrorCode(value: unknown): value is ApprovalErrorCode {
+	return typeof value === "string" && Object.hasOwn(APPROVAL_ERROR_CODES, value);
+}
 
 /** A refusal from requesting, reading or deciding an approval. Its message is shown to a person. */
 export class ApprovalError extends Error {
