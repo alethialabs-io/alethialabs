@@ -22,4 +22,7 @@
 #     - file: apps/console/components/x/y.tsx
 #       rule: key-listener
 #       reason: why this surface cannot go through the registry
-entries: []
+entries:
+  - file: packages/ui/src/filter-search.tsx
+    rule: key-listener
+    reason: "The list search's bare `/` (signed-off polish-wave spec section 3, #7737). The registry refuses it twice by design - a global row must hold a modifier, and @repo/ui cannot import apps/console/lib/shortcuts - so it is one listener, opt-in via `slashToFocus` (set only by ListToolbar, one per page), mounted only while that search is, removed on unmount, and skipping exactly what the registry skips for a bare key: inputs, textareas, selects, contenteditable, text-box roles, and open dialogs and menus. Moving it into the registry needs a list scope that admits a bare key, which is the registry's decision to make."
