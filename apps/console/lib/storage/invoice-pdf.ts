@@ -24,3 +24,12 @@ export function invoicePdfKey(orgId: string, stripeInvoiceId: string): string {
 export function creditNotePdfKey(orgId: string, stripeInvoiceId: string, stripeRefundId: string): string {
 	return `${orgId}/${stripeInvoiceId}.credit-${stripeRefundId}.pdf`;
 }
+
+/**
+ * Storage key for a manual фактура or credit note (L6b, lib/billing/factura/manual.ts): it names no
+ * Stripe invoice and may name no organization (the monthly фактура to Paddle), so it is keyed by its
+ * number, which is unique and never reused, under a prefix no organization id can take.
+ */
+export function manualFacturaPdfKey(number: string): string {
+	return `manual/${number}.pdf`;
+}
