@@ -250,6 +250,64 @@ describe("destroy", () => {
 		);
 		expect(confirm).toBeInTheDocument();
 	});
+
+	/** A destroy-mode plan job as #7764's runner posts it: each change's identity and actions only. */
+	const DESTROY_PLAN = {
+		status: "SUCCESS",
+		job_type: "PLAN",
+		error_message: null,
+		execution_metadata: {
+			destroy_plan: true,
+			plan_file_sha256: "a".repeat(64),
+			plan_result: {
+				resource_changes: [
+					{ address: "aws_vpc.main", mode: "managed", type: "aws_vpc", name: "main", change: { actions: ["delete"] } },
+					{ address: "module.db.aws_rds_cluster.this", module_address: "module.db", mode: "managed", type: "aws_rds_cluster", name: "this", change: { actions: ["delete"] } },
+					{ address: "aws_s3_bucket.assets", mode: "managed", type: "aws_s3_bucket", name: "assets", change: { actions: ["delete"] } },
+					{ address: "data.aws_caller_identity.current", mode: "data", type: "aws_caller_identity", name: "current", change: { actions: ["delete"] } },
+				],
+			},
+		},
+	};
+
+	it("bound to a destroy plan: every resource listed as removed, and no add or change counts", async () => {
+		reads.plan.mockResolvedValue(DESTROY_PLAN);
+		reads.get.mockResolvedValue(sheet({ operation: "destroy", environment_name: "perf" }));
+		renderSheet();
+		await dialog("Destroy · payments-api / perf");
+		const section = screen.getByRole("region", { name: "What gets destroyed" });
+		const list = await screen.findByRole("list", { name: "Resources the destroy plan removes" });
+		expect(section).toContainElement(list);
+		const rows = Array.from(list.querySelectorAll("li"), (li) => li.textContent);
+		expect(rows).toEqual([
+			"aws_vpc.mainremoved",
+			"module.db.aws_rds_cluster.thisremoved",
+			"aws_s3_bucket.assetsremoved",
+		]);
+		expect(screen.getByText("3 resources, all removed")).toBeInTheDocument();
+		expect(screen.queryByText("data.aws_caller_identity.current")).toBeNull();
+		expect(screen.queryByText(/to add/)).toBeNull();
+		expect(screen.queryByText(/to change/)).toBeNull();
+		expect(screen.queryByText(/estimated after this deploy|No estimate for this plan/)).toBeNull();
+	});
+
+	it("bound to a destroy plan of an empty environment: says it removes nothing", async () => {
+		reads.plan.mockResolvedValue({ ...DESTROY_PLAN, execution_metadata: { ...DESTROY_PLAN.execution_metadata, plan_result: { resource_changes: [] } } });
+		reads.get.mockResolvedValue(sheet({ operation: "destroy", environment_name: "perf" }));
+		renderSheet();
+		await dialog("Destroy · payments-api / perf");
+		expect(await screen.findByText(/The destroy plan removes nothing/)).toBeInTheDocument();
+		expect(screen.queryByRole("list", { name: "Resources the destroy plan removes" })).toBeNull();
+	});
+
+	it("bound to a plan that is not a destroy plan: no list is read from it", async () => {
+		reads.get.mockResolvedValue(sheet({ operation: "destroy", environment_name: "perf" }));
+		renderSheet();
+		await dialog("Destroy · payments-api / perf");
+		expect(await screen.findByText("As listed in the destroy plan.")).toBeInTheDocument();
+		expect(screen.queryByRole("list", { name: "Resources the destroy plan removes" })).toBeNull();
+		expect(screen.queryByText("14 to add")).toBeNull();
+	});
 });
 
 describe("deny", () => {
