@@ -98,7 +98,7 @@
 # that a script could count all along. Nothing compared them, which is exactly why it went unnoticed
 # — it is prose, and prose is not measured. Now it is.
 #
-#   census: 55 controls — 55 confirmed
+#   census: 56 controls — 56 confirmed
 
 version: 1
 
@@ -729,6 +729,23 @@ controls:
     persona: owner
     status: confirmed
     prod-qa: own-rows-only
+
+  # Turning agent access off SUSPENDS every connected agent and the Alethia assistant in the org and
+  # voids every request waiting for approval, at once, for everyone — and the action's name says only
+  # that a policy was updated. The switch opens the confirmation on its OFF branch only; turning it
+  # back on asks nothing (AGT-L2 SPEC §3). Open-and-cancel on production changes nothing.
+  - id: settings.agent-access.turn-off
+    route: /[org]/~/settings/agents
+    surface: apps/console/components/settings/agents/agent-policy-page.tsx
+    mutation: updateAgentPolicy
+    control: { role: switch, name: "Let agents work in <org>" }
+    confirm: confirm-dialog
+    confirm_action: "Turn off agent access"
+    dialog_title: "Turn off agent access for <org>?"
+    fixture: none
+    persona: owner
+    status: confirmed
+    prod-qa: open-cancel
 
   - id: members.remove
     route: /[org]/~/settings/members
