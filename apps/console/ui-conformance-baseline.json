@@ -21,12 +21,12 @@
 		"scoredHere": 24,
 		"live": 19,
 		"notInstrumented": 1,
-		"findings": 21,
-		"findingFiles": 14,
+		"findings": 20,
+		"findingFiles": 13,
 		"liveNotMeasured": 178
 	},
 	"ledgers": {
-		"baseline": 15,
+		"baseline": 14,
 		"debt": 0
 	},
 	"live": {
@@ -13783,14 +13783,14 @@
 	"reconciliation": {
 		"byRule": {
 			"page_title": {
-				"total": 16,
-				"decision": 16,
+				"total": 15,
+				"decision": 15,
 				"debt": 0,
 				"unlisted": 0,
 				"inPageClosure": 6,
 				"chromeOnly": 1,
 				"sharedPackage": 0,
-				"offTree": 9,
+				"offTree": 8,
 				"predicate": "H1",
 				"owner": null
 			},
@@ -13929,10 +13929,6 @@
 			},
 			{
 				"file": "apps/console/components/auth/onboarding-form.tsx",
-				"hits": 1
-			},
-			{
-				"file": "apps/console/components/errors/error-state.tsx",
 				"hits": 1
 			},
 			{
