@@ -34,6 +34,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { ProviderIcon } from "@repo/ui/provider-icon";
+import type { CloudSlug } from "@repo/cloud-catalog";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { AlethiaMark } from "../lockup";
 
@@ -154,7 +155,12 @@ export function Icon({
 }
 
 /* ---------- provider / integration logos ---------- */
-export type ProviderId = "aws" | "gcp" | "azure";
+/**
+ * A catalog cloud slug, so the list follows packages/core/catalog/catalog.json. It is every
+ * catalog cloud, not only the offered ones: the generated `AVAILABLE_CLOUDS` is typed
+ * `readonly CloudSlug[]`, so which clouds are offered is a runtime value, not a type.
+ */
+export type ProviderId = CloudSlug;
 
 /** Grayscale cloud-provider logo. */
 export function Prov({ id, size = 14 }: { id: ProviderId; size?: number }) {
