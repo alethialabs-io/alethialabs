@@ -22,6 +22,10 @@ vi.mock("@/lib/billing/paddle/overage-sweeper", () => ({
 		skippedSubscriptions: 0,
 	})),
 }));
+vi.mock("@/lib/billing/events/backfill", () => ({
+	paddleTransactionBackfillEnabled: vi.fn(() => false),
+	runPaddleTransactionBackfill: vi.fn(async () => ({ applied: 0, ignored: 0, refused: 0, deferred: 0, unreadable: 0 })),
+}));
 vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async () => ({ converged: 0, candidates: 0 })) }));
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
@@ -52,6 +56,7 @@ import {
 } from "@/lib/observability/heartbeats";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
+import { paddleTransactionBackfillEnabled, runPaddleTransactionBackfill } from "@/lib/billing/events/backfill";
 import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
 import { paddleOverageSweepEnabled, runPaddleOverageSweep } from "@/lib/billing/paddle/overage-sweeper";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
@@ -152,6 +157,29 @@ describe("tick — the Paddle overage sweep (L5)", () => {
 		await tick(new Date(t0.getTime() + 16 * 60_000));
 		expect(runPaddleOverageSweep).toHaveBeenCalledTimes(1);
 		vi.mocked(paddleOverageSweepEnabled).mockReturnValue(false);
+	});
+});
+
+describe("tick — the Paddle transaction backfill (#7672)", () => {
+	it("never runs while the flag is off", async () => {
+		vi.mocked(paddleTransactionBackfillEnabled).mockReturnValue(false);
+		await tick(new Date());
+		expect(runPaddleTransactionBackfill).not.toHaveBeenCalled();
+		expect(getHeartbeats().map((h) => h.task)).not.toContain("paddle-transaction-backfill");
+	});
+
+	it("runs under its own heartbeat when enabled, then waits a day", async () => {
+		vi.mocked(paddleTransactionBackfillEnabled).mockReturnValue(true);
+		const t0 = new Date();
+		await tick(t0);
+		expect(runPaddleTransactionBackfill).toHaveBeenCalledTimes(1);
+		expect(getHeartbeats().map((h) => h.task)).toContain("paddle-transaction-backfill");
+		vi.mocked(runPaddleTransactionBackfill).mockClear();
+		await tick(new Date(t0.getTime() + 23 * 60 * 60_000));
+		expect(runPaddleTransactionBackfill).not.toHaveBeenCalled();
+		await tick(new Date(t0.getTime() + 25 * 60 * 60_000));
+		expect(runPaddleTransactionBackfill).toHaveBeenCalledTimes(1);
+		vi.mocked(paddleTransactionBackfillEnabled).mockReturnValue(false);
 	});
 });
 

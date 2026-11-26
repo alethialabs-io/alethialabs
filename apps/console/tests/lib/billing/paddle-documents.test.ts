@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Paddle invoices (lib/billing/paddle/documents.ts + lib/billing/provider/documents.ts): the list is
+// Paddle invoices (lib/billing/paddle/documents.ts): the list is
 // parsed, paginated with Paddle's `after` cursor, and kept to the ORG's own transactions — a Paddle
 // customer can span several orgs, so `customer_id` alone is never trusted. The PDF lookup applies the
 // same ownership test before it asks Paddle for a URL. A routing fetch stub stands in for Paddle.
@@ -18,8 +18,7 @@ import {
 	paddleInvoicePdfUrl,
 	toBillingDocument,
 } from "@/lib/billing/paddle/documents";
-import { providerDocumentsForOrg } from "@/lib/billing/provider/documents";
-import type { BillingDocument, BillingProvider } from "@/lib/billing/provider/types";
+import type { BillingDocument } from "@/lib/billing/provider/types";
 
 const KEY = `pdl_sdbx_apikey_${"c".repeat(20)}`;
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -189,53 +188,3 @@ describe("paddleInvoicePdfUrl", () => {
 	});
 });
 
-describe("providerDocumentsForOrg", () => {
-	/** A provider stub whose listDocuments answers `docs`. */
-	function paddle(configured: boolean, docs: BillingDocument[] = []) {
-		const listDocuments = vi.fn(async () => docs);
-		const p: Pick<BillingProvider, "isConfigured" | "listDocuments"> = { isConfigured: () => configured, listDocuments };
-		return { p, listDocuments };
-	}
-
-	it("lists Paddle documents for an org with a Paddle customer", async () => {
-		const doc = toBillingDocument({ ...txn("txn_a"), billed_at: null, billing_period: null, details: { totals: { total: 5 } } });
-		const { p, listDocuments } = paddle(true, [doc]);
-		const out = await providerDocumentsForOrg(ORG, { limit: 10 }, {
-			paddleCustomerId: async () => "ctm_1",
-			provider: () => ({ ...createStub(), ...p }),
-		});
-		expect(out).toEqual([doc]);
-		expect(listDocuments).toHaveBeenCalledWith(ORG, { limit: 10 });
-	});
-
-	it("asks nothing of Paddle without a Paddle customer, or when Paddle is not configured", async () => {
-		const a = paddle(true);
-		expect(await providerDocumentsForOrg(ORG, {}, { paddleCustomerId: async () => null, provider: () => ({ ...createStub(), ...a.p }) })).toEqual([]);
-		expect(a.listDocuments).not.toHaveBeenCalled();
-		const b = paddle(false);
-		const lookup = vi.fn(async () => "ctm_1");
-		expect(await providerDocumentsForOrg(ORG, {}, { paddleCustomerId: lookup, provider: () => ({ ...createStub(), ...b.p }) })).toEqual([]);
-		expect(lookup).not.toHaveBeenCalled();
-	});
-});
-
-/** A full provider whose every method refuses — the tests above override the two they use. */
-function createStub(): BillingProvider {
-	const no = () => Promise.reject(new Error("unused"));
-	return {
-		id: "paddle",
-		sellerOfRecord: "paddle",
-		isConfigured: () => false,
-		mode: () => null,
-		startPurchase: no,
-		managementUrl: no,
-		cancelAtPeriodEnd: no,
-		resume: no,
-		changePlan: no,
-		postUsageCharge: no,
-		reportJobUsage: () => Promise.resolve(false),
-		listDocuments: no,
-		livePrices: no,
-		parseWebhook: no,
-	};
-}
