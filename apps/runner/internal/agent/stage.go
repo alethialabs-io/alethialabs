@@ -615,10 +615,39 @@ func writeStageResult(workDir string, res stageResult, stageErr error) error {
 	return stageErr
 }
 
+// readStageResultFile returns the bytes of workDir/result.json, the file the stage writes for the
+// parent. The stage may run in a container that shares workDir, so the parent reads the file only
+// when it is a regular file at that name: a symbolic link (or anything else) there is refused rather
+// than followed. The name is checked with Lstat before opening and the opened file is checked to be
+// that same file afterwards, so a link swapped in between the two is refused too.
+func readStageResultFile(workDir string) ([]byte, error) {
+	path := filepath.Join(workDir, "result.json")
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("stage result %s is not a regular file (mode %s); refusing to read it", path, before.Mode().Type())
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(before, opened) {
+		return nil, fmt.Errorf("stage result %s changed while it was being opened; refusing to read it", path)
+	}
+	return io.ReadAll(f)
+}
+
 // readPlanResult decodes result.json's PlanResult (nil if absent). The parent calls it
 // after the sandbox runs, regardless of backend.
 func readPlanResult(workDir string) (*provisioner.PlanResult, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -638,7 +667,7 @@ func readPlanResult(workDir string) (*provisioner.PlanResult, error) {
 
 // readVerifyReport decodes result.json's VerifyReport (chart_scan).
 func readVerifyReport(workDir string) (*verify.Report, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +688,7 @@ func readVerifyReport(workDir string) (*verify.Report, error) {
 // readChartWorkloads decodes result.json's ChartWorkloads (chart_scan describe output). Returns a
 // nil slice when the stage emitted none (an older runner, or a chart with no described workloads).
 func readChartWorkloads(workDir string) ([]types.ChartWorkload, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +708,7 @@ func readChartWorkloads(workDir string) ([]types.ChartWorkload, error) {
 
 // readIacScanReport decodes result.json's IacReport (BYO IaC scan).
 func readIacScanReport(workDir string) (*types.IacScanReport, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -699,7 +728,7 @@ func readIacScanReport(workDir string) (*types.IacScanReport, error) {
 
 // readDriftPosture decodes result.json's DriftPosture (BYO drift).
 func readDriftPosture(workDir string) (*drift.Posture, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}

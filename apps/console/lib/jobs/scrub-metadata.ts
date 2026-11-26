@@ -41,9 +41,12 @@ const SENSITIVE_KEY_SUBSTRINGS = [
 
 // Top-level metadata keys whose SUBTREES are legitimate raw-plan payloads and must NOT be
 // descended into: `plan_result` carries the tofu plan JSON's resource_changes, whose
-// before/after attribute maps legitimately contain keys NAMED `password`/`*_token`/… (the
-// values are plan-time unknowns / sensitive-marked, and lib/plan/parse-plan.ts renders this
-// shape verbatim — key-scrubbing it would corrupt the Plan tab). This mirrors the runner's
+// attribute maps legitimately contain keys NAMED `password`/`*_token`/… and
+// lib/plan/parse-plan.ts renders this shape verbatim — key-scrubbing it would corrupt the Plan
+// tab. A current runner posts only each resource's identity, actions, the planned `after` values
+// minus every one tofu marks sensitive or unknown, and the `after_unknown` mask
+// (apps/runner/internal/agent/plan_metadata.go); an older runner posts the full entries, `before`
+// included, and nothing here reduces those. This mirrors the runner's
 // PLAN-path exemption (its scrub runs only on the DEPLOY metadata assembly). The keys
 // themselves are still denylist-checked; only recursion stops here.
 const OPAQUE_SUBTREES = new Set(["plan_result"]);
