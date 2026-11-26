@@ -1467,11 +1467,19 @@ jobs:
       # `Cannot find module … apps/console/scripts/audit-report.mjs` for a file that is present on
       # dev at 173450 bytes. The job's own log accused the console of a missing script. Conjoining
       # the checkout's outcome puts `Initialize containers` back as the last thing that failed.
+      #
+      # `--not-run=interaction`: this job runs `--project=audit` only. The `interaction` section's
+      # artifact (`ui-audit-interaction.json`, R8 + F8–F10) is written by the `audit-interaction`
+      # project, which needs the stripe+encryption capabilities and runs as its own release-gate
+      # leg. Without the declaration this step refused on the missing file EVERY night — runs
+      # 45814921924, 45611112939, 45402034845 and back through November all had 276/276 audit tests
+      # pass and went red here, so the table nobody could read was the job's only red. The flag
+      # skips by DECLARATION, and refuses if the artifact turns up after all.
       - name: Per-predicate summary of the audit, against the recorded baseline
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: |
           node apps/console/scripts/audit-report.mjs \
-            --step-summary=apps/console >> "$GITHUB_STEP_SUMMARY"
+            --step-summary=apps/console --not-run=interaction >> "$GITHUB_STEP_SUMMARY"
       # Same conjunct, milder symptom: on that run this step reported SUCCESS having uploaded
       # nothing, which is the harder half to notice.
       - name: Upload the audit report
