@@ -233,7 +233,8 @@ services:
 
   # Admin (internal staff support dashboard). OPT-IN internal path —
   # runs on its own subdomain behind Cloudflare Access (like the Umami dashboard);
-  # the app trusts Cf-Access-Authenticated-User-Email + SUPPORT_STAFF_EMAILS. Enable
+  # the app verifies the Access token (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD) and then
+  # checks SUPPORT_STAFF_EMAILS. Enable
   # with the `admin` profile AND uncomment `import admin*.caddy` in the active
   # Caddyfile (copy admin.caddy.example → admin.caddy).
   admin:

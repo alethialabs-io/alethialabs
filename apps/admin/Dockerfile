@@ -6,7 +6,8 @@
 #   docker build -f apps/admin/Dockerfile -t alethia-admin .
 #
 # Runs on its OWN subdomain behind CLOUDFLARE ACCESS (like the Umami dashboard) — the app
-# trusts the Cf-Access-Authenticated-User-Email header + the SUPPORT_STAFF_EMAILS allowlist.
+# verifies the Access application token (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD) and then checks
+# the SUPPORT_STAFF_EMAILS allowlist.
 # Listens on :3000 in-container (the compose/Caddy map fronts it). Reads the same Postgres
 # as the console via ALETHIA_DATABASE_URL.
 

@@ -3,18 +3,24 @@
 
 // The support-staff gate. Unlike the console (Better Auth sessions), this internal
 // dashboard sits behind CLOUDFLARE ACCESS — the same pattern as the Umami dashboard.
-// Access authenticates the request and forwards the verified identity in the
-// `Cf-Access-Authenticated-User-Email` header; the SUPPORT_STAFF_EMAILS allowlist then
-// AUTHORIZES it. That header + allowlist pair is the entire trust boundary: staff operate
+// Access authenticates the request and signs an application token for it; the staff
+// email is the `email` claim of that token once it VERIFIES against the team's keys,
+// issuer and this application's AUD (./access-jwt.ts). The SUPPORT_STAFF_EMAILS allowlist
+// then AUTHORIZES it. Verified token + allowlist is the entire trust boundary: staff operate
 // CROSS-TENANT (they view/answer every org's cases via getServiceDb, bypassing RLS), so
 // there's no org membership or PDP grant to key on. Used by the pages (redirect/403), every
 // staff server action, and the staff SSE route.
 
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { env } from "next-runtime-env";
 import { getServiceDb } from "@/lib/db";
 import { user } from "@repo/platform/console-refs";
 import { eq } from "drizzle-orm";
+import {
+	ACCESS_JWT_COOKIE,
+	ACCESS_JWT_HEADER,
+	resolveStaffEmail,
+} from "./access-jwt";
 
 /** The identity of an authenticated support-staff member. */
 export interface SupportStaff {
@@ -23,19 +29,23 @@ export interface SupportStaff {
 	name: string;
 }
 
-/** The header Cloudflare Access sets with the verified caller's email. */
-const ACCESS_EMAIL_HEADER = "cf-access-authenticated-user-email";
-
 /**
- * The email of the current caller as asserted by Cloudflare Access, lowercased. Falls back
- * to `SUPPORT_ADMIN_DEV_EMAIL` in local dev when the Access header is absent (no tunnel in
- * front). Returns null when neither is present.
+ * The email of the current caller, lowercased, taken from the VERIFIED Cloudflare Access
+ * application token (header, else cookie) under CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD. In
+ * production a missing setting, a missing token or a failed verification returns null. Outside
+ * production, with Access unconfigured or no token sent, it falls back to
+ * `SUPPORT_ADMIN_DEV_EMAIL`. Returns null when no identity can be established.
  */
 export async function getStaffEmail(): Promise<string | null> {
 	const h = await headers();
-	const fromAccess = h.get(ACCESS_EMAIL_HEADER);
-	const email = fromAccess || env("SUPPORT_ADMIN_DEV_EMAIL") || null;
-	return email ? email.trim().toLowerCase() : null;
+	const c = await cookies();
+	return resolveStaffEmail({
+		token: h.get(ACCESS_JWT_HEADER) || c.get(ACCESS_JWT_COOKIE)?.value || null,
+		teamDomain: env("CF_ACCESS_TEAM_DOMAIN"),
+		audience: env("CF_ACCESS_AUD"),
+		devEmail: env("SUPPORT_ADMIN_DEV_EMAIL"),
+		production: process.env.NODE_ENV === "production",
+	});
 }
 
 /** Parsed, lowercased allowlist from SUPPORT_STAFF_EMAILS (comma-separated). */
@@ -53,7 +63,7 @@ export function isSupportStaff(email: string | null | undefined): boolean {
 }
 
 /**
- * Resolves the current caller (Access header → allowlist) to a support-staff identity,
+ * Resolves the current caller (verified Access token → allowlist) to a support-staff identity,
  * looking up the `{id, name}` from the shared `user` table by email so replies/assignments
  * carry a real user id + display name. Returns null when there's no email, it isn't
  * allowlisted, OR the email has no Alethia account — the last matters because the staff
