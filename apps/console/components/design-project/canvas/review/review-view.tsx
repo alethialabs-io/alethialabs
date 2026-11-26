@@ -71,13 +71,11 @@ function announcement(review: ReviewController): string {
 function Step({
 	number,
 	title,
-	count,
 	children,
 	ref,
 }: {
 	number: number;
 	title: string;
-	count?: number;
 	children: ReactNode;
 	ref?: Ref<HTMLElement>;
 }) {
@@ -90,7 +88,6 @@ function Step({
 		>
 			<SectionHeading
 				level={3}
-				count={count}
 				title={
 					<>
 						<span aria-hidden className="mr-2 font-mono text-ui-sm text-muted-foreground">
@@ -126,7 +123,6 @@ function Issues({
 			<SectionHeading
 				level={3}
 				title="Fix before planning"
-				count={issues.length}
 				description="The design cannot be saved until these are fixed, and a plan saves it first."
 			/>
 			<ul className="space-y-1">
@@ -208,8 +204,6 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 		[board],
 	);
 
-	const pending = review.changes.length + review.operations.length;
-
 	return (
 		<section
 			ref={root}
@@ -249,7 +243,6 @@ export function ReviewView({ scope, onClose }: { scope: ReviewScope; onClose: ()
 				<Step
 					number={1}
 					title="Design changes"
-					count={pending > 0 ? pending : undefined}
 					ref={changesRef}
 				>
 					<ReviewChanges
