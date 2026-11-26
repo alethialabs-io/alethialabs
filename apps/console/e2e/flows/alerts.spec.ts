@@ -511,8 +511,9 @@ test.describe("Alerts — the channel filter store (channel*)", () => {
 		// The selected facet names its value on the trigger, with its own clear beside it.
 		await expect(channels.getByRole("button", { name: "Clear Status", exact: true })).toBeVisible();
 		const options = await openFacet(team.page, channels, "Status: Paused");
-		await expect(options.filter({ hasText: "Verified" })).toHaveAccessibleName("Verified, 2");
-		await expect(options.filter({ hasText: "Paused" })).toHaveAccessibleName("Paused, 1");
+		// Exact names: "Verified" is a substring of "Unverified", so a text filter matches both.
+		await expect(options.and(team.page.getByRole("option", { name: "Verified, 2", exact: true }))).toHaveCount(1);
+		await expect(options.and(team.page.getByRole("option", { name: "Paused, 1", exact: true }))).toHaveCount(1);
 	});
 
 	// #4968 (F10, #4939): a filter that matches nothing lands in the shared EmptyState too, and that
