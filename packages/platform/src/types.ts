@@ -18,4 +18,8 @@ export interface PlatformAuditInput {
 	slug?: string | null;
 	stripeCustomerId?: string | null;
 	stripeSubscriptionId?: string | null;
+	/** The Paddle customer id an operator linked to the org (link_paddle_customer). */
+	paddleCustomerId?: string | null;
+	/** The value it replaced, when the operator confirmed replacing one. */
+	replacedPaddleCustomerId?: string | null;
 }

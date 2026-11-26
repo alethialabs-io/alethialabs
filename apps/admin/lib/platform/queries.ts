@@ -89,6 +89,7 @@ export interface OrgDetail {
 		seats: number | null;
 		currentPeriodEnd: string | null;
 		stripeSubscriptionId: string | null;
+		paddleCustomerId: string | null;
 	} | null;
 	members: OrgMember[];
 	contracts: {
@@ -124,6 +125,7 @@ export async function getOrgDetail(orgId: string): Promise<OrgDetail | null> {
 			seats: organizationBilling.seats,
 			currentPeriodEnd: organizationBilling.currentPeriodEnd,
 			stripeSubscriptionId: organizationBilling.stripeSubscriptionId,
+			paddleCustomerId: organizationBilling.paddleCustomerId,
 		})
 		.from(organizationBilling)
 		.where(eq(organizationBilling.organizationId, orgId))
@@ -153,6 +155,7 @@ export async function getOrgDetail(orgId: string): Promise<OrgDetail | null> {
 					seats: billing.seats,
 					currentPeriodEnd: billing.currentPeriodEnd?.toISOString() ?? null,
 					stripeSubscriptionId: billing.stripeSubscriptionId,
+					paddleCustomerId: billing.paddleCustomerId,
 				}
 			: null,
 		members,
@@ -183,3 +186,13 @@ export async function getOrgStripeCustomer(orgId: string): Promise<string | null
 	return row?.id ?? null;
 }
 
+
+/** The org's stored Paddle customer id, if any ("Link Paddle customer" decides against it). */
+export async function getOrgPaddleCustomer(orgId: string): Promise<string | null> {
+	const [row] = await getServiceDb()
+		.select({ id: organizationBilling.paddleCustomerId })
+		.from(organizationBilling)
+		.where(eq(organizationBilling.organizationId, orgId))
+		.limit(1);
+	return row?.id ?? null;
+}

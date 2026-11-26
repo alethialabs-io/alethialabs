@@ -7,13 +7,17 @@ import { notFound } from "next/navigation";
 import { getStaff, isPlatformAdmin } from "@/lib/auth/staff";
 import { getOrgDetail } from "@/lib/platform/queries";
 import { GrantEnterpriseForm } from "@/components/orgs/grant-enterprise-form";
+import { LinkPaddleCustomerForm } from "@/components/orgs/link-paddle-customer-form";
 import { NotAuthorized } from "@/components/not-authorized";
 import { StaffShell } from "@/components/staff-shell";
 
 export const metadata: Metadata = { title: "Org · Alethia staff" };
 export const dynamic = "force-dynamic";
 
-/** Operator org detail (`/orgs/[id]`): billing, members, contract history, and the grant form. */
+/**
+ * Operator org detail (`/orgs/[id]`): billing, members, contract history, the grant form and the
+ * Paddle customer link.
+ */
 export default async function OrgDetailPage({
 	params,
 }: {
@@ -63,6 +67,7 @@ export default async function OrgDetailPage({
 									k="Stripe sub"
 									v={org.billing?.stripeSubscriptionId ?? "— (off-Stripe / none)"}
 								/>
+								<Row k="Paddle customer" v={org.billing?.paddleCustomerId ?? "—"} />
 							</dl>
 						</section>
 
@@ -123,7 +128,13 @@ export default async function OrgDetailPage({
 
 					{/* Grant Enterprise (Flow A) */}
 					{canAct ? (
-						<GrantEnterpriseForm orgId={org.id} ownerEmail={owner?.email ?? ""} />
+						<div className="space-y-5">
+							<GrantEnterpriseForm orgId={org.id} ownerEmail={owner?.email ?? ""} />
+							<LinkPaddleCustomerForm
+								orgId={org.id}
+								current={org.billing?.paddleCustomerId ?? null}
+							/>
+						</div>
 					) : (
 						<p className="text-sm text-muted-foreground">
 							Operator actions require the platform-admin allowlist.
