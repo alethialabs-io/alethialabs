@@ -72,7 +72,8 @@ function approval(over: Record<string, unknown> = {}) {
 		requester_name: "Dana Petrova",
 		requester_credential: "agent_oauth",
 		requester_credential_name: "Claude Code",
-		requester_credential_ref: "https://claude.ai/oauth",
+		requester_credential_ref: "https://claude.ai/code/oauth",
+		requester_credential_icon: null,
 		created_at: new Date(Date.now() - 8 * 60_000).toISOString(),
 		expires_at: new Date(Date.now() + 52 * 60_000).toISOString(),
 		decided_at: null,
@@ -172,6 +173,7 @@ describe("a waiting request", () => {
 		await dialog();
 		expect(screen.getByText(/Requested .* through Claude Code\./)).toBeInTheDocument();
 		expect(screen.getByText("Dana Petrova")).toBeInTheDocument();
+		expect(screen.getByRole("dialog").querySelector('[data-mark="claudecode"]')).not.toBeNull();
 		expect(await screen.findByText("14 to add")).toBeInTheDocument();
 		expect(screen.getByText("1 to change")).toBeInTheDocument();
 		expect(screen.getByText("Passed")).toBeInTheDocument();
