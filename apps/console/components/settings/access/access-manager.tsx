@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Settings · Access — an inheritance info-note, a toolbar (description · Add grant), the filter bar
-// (search · scope · roles · effect), an inline grant builder with a live preview, and the grants
+// Settings · Access — an inheritance info-note, one `ListToolbar` row (search · scope · effect ·
+// roles · Reset, then Add grant on the right), an inline grant builder with a live preview, and the grants
 // table on the shared DataTable in SERVER mode: `members.grants` pages on the keyset contract
 // (`useKeysetList` + the table's `ListFooter`, LST-8 #7490), and there is no count pill — the console
 // carries no list counts (it used to read 0 while the first page loaded). The reads are the `members.grants` and `members.grantOptions` GET
@@ -33,6 +33,7 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { roleDisplayName } from "@/lib/authz/registry";
 import { useGrantOptionsQuery } from "@/lib/query/use-access-grants-query";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import type { AccessGrantListRow } from "@/lib/queries/access-grants";
 import { orpc } from "@/lib/rpc/client";
 import { lookup } from "@/lib/typed-object";
@@ -64,12 +65,10 @@ import {
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
+import { FilterEmpty } from "@repo/ui/filter-bar";
 import { formatRelative } from "@repo/format";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
@@ -149,6 +148,8 @@ export function AccessManager({
   );
 
   const [creating, setCreating] = useState(false);
+  // `/` focuses the search while this page is mounted (polish-wave spec §3).
+  const { inputRef, shortcut } = useListSearchShortcut();
   const [deleting, setDeleting] = useState<AccessGrantListRow | null>(null);
   // What the revoke confirmation is RENDERING, which outlives `deleting` by one close.
   const [revokingCopy, setRevokingCopy] = useState({ what: "this grant", who: "this member" });
@@ -210,8 +211,6 @@ export function AccessManager({
   const revokingId = revocation.isPending ? revocation.variables?.id : undefined;
 
   const filtered = grantsList.rows;
-  /** The scope holds no grant at all — "no grants yet", as opposed to "none match"; a boolean. */
-  const firstRun = grantsList.universeEmpty === true;
   const facets = grantsList.facets;
   const counts = useMemo(
     () => ({
@@ -398,9 +397,66 @@ export function AccessManager({
         />
       ) : (
         <div aria-busy={busy}>
-          <PageToolbar
-            className="mb-4"
-            description="Who is granted what, and where it applies."
+          <ListToolbar
+            search={{
+              value: filters.search,
+              onChange: (v) => set("search", v),
+              placeholder: "Search member, team or scope…",
+              inputRef,
+              shortcut,
+            }}
+            facets={[
+              // Scope filter is meaningless when the list is already scoped to one project.
+              ...(projectId
+                ? []
+                : [
+                    {
+                      label: "Scope",
+                      icon: Layers,
+                      options: Object.keys(SCOPE_LEVEL).map((value) => ({
+                        value,
+                        label: SCOPE_LEVEL[value] ?? value,
+                        hint: String(counts.scopes[value] ?? 0),
+                      })),
+                      value: filters.scopes,
+                      onChange: (next: string[]) => set("scopes", next),
+                      searchPlaceholder: "Filter scope…",
+                      emptyText: "No scopes.",
+                    },
+                  ]),
+              {
+                label: "Effect",
+                icon: ShieldAlert,
+                options: EFFECT_OPTIONS.map((o) => ({
+                  value: o.value,
+                  label: o.label,
+                  hint: String(counts.effects[o.value] ?? 0),
+                })),
+                value: filters.effects,
+                onChange: (next: string[]) => set("effects", next),
+                searchPlaceholder: "Filter effect…",
+                emptyText: "No effects.",
+              },
+            ]}
+            extra={
+              /* Roles are an open-ended entity list (built-ins + every custom role + direct
+                 permission grants), so this is a searchable MultiCombobox, not a facet popover. */
+              <MultiCombobox
+                placeholder="All roles"
+                icon={Shield}
+                className="w-[190px]"
+                options={Object.keys(counts.roles)
+                  .sort()
+                  .map((value) => ({
+                    value,
+                    label: grantRoleLabel(value),
+                    hint: String(counts.roles[value] ?? 0),
+                  }))}
+                value={filters.roles}
+                onChange={(next) => set("roles", next)}
+              />
+            }
+            reset={{ count: activeFilters, onReset: reset }}
             actions={
               <DisabledReason reason={writeReason}>
                 <Button size="sm" onClick={() => setCreating(true)}>
@@ -410,61 +466,6 @@ export function AccessManager({
               </DisabledReason>
             }
           />
-
-          <FilterBar>
-            <FilterSearch
-              value={filters.search}
-              onChange={(v) => set("search", v)}
-              placeholder="Search member, team or scope…"
-              className="w-[240px] max-w-[380px] flex-1"
-            />
-            {/* Scope filter is meaningless when the list is already scoped to one project. */}
-            {!projectId && (
-              <FacetFilter
-                label="Scope"
-                icon={Layers}
-                options={Object.keys(SCOPE_LEVEL).map((value) => ({
-                  value,
-                  label: SCOPE_LEVEL[value] ?? value,
-                  hint: String(counts.scopes[value] ?? 0),
-                }))}
-                value={filters.scopes}
-                onChange={(next) => set("scopes", next)}
-                searchPlaceholder="Filter scope…"
-                emptyText="No scopes."
-              />
-            )}
-            {/* Roles are an open-ended entity list (built-ins + every custom role + direct
-                permission grants), so this is a searchable MultiCombobox, not a facet popover. */}
-            <MultiCombobox
-              placeholder="All roles"
-              icon={Shield}
-              className="w-[190px]"
-              options={Object.keys(counts.roles)
-                .sort()
-                .map((value) => ({
-                  value,
-                  label: grantRoleLabel(value),
-                  hint: String(counts.roles[value] ?? 0),
-                }))}
-              value={filters.roles}
-              onChange={(next) => set("roles", next)}
-            />
-            <FacetFilter
-              label="Effect"
-              icon={ShieldAlert}
-              options={EFFECT_OPTIONS.map((o) => ({
-                value: o.value,
-                label: o.label,
-                hint: String(counts.effects[o.value] ?? 0),
-              }))}
-              value={filters.effects}
-              onChange={(next) => set("effects", next)}
-              searchPlaceholder="Filter effect…"
-              emptyText="No effects."
-            />
-            <FilterBarReset count={activeFilters} onReset={reset} />
-          </FilterBar>
 
           {/* The grant builder is a long form (who · effect · role or permission · scope, and a
               live preview), so it opens in a sheet — Settings' shape for a long create, beside the
@@ -502,22 +503,16 @@ export function AccessManager({
             </SheetContent>
           </Sheet>
 
-          {filtered.length === 0 ? (
+          {filtered.length === 0 && grantsList.universeEmpty === false ? (
+            <FilterEmpty noun="grants" onClear={reset} />
+          ) : filtered.length === 0 ? (
             <EmptyState
               className="border border-border bg-surface-sunken"
               icon={<Shield />}
-              title={firstRun ? "No grants yet" : "No matching grants"}
-              description={
-                firstRun
-                  ? "Add a grant to bind a member or team to a role."
-                  : "No grant matches these filters."
-              }
+              title="No grants yet"
+              description="Add a grant to bind a member or team to a role."
               action={
-                !firstRun ? (
-                  <Button variant="outline" size="sm" onClick={reset}>
-                    Clear filters
-                  </Button>
-                ) : writeReason === null ? (
+                writeReason === null ? (
                   <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
                     <Plus size={13} />
                     Add grant

@@ -135,8 +135,11 @@ describe("UsagePanel", () => {
 		reads.summary.mockResolvedValue(summary());
 		renderWithReads(<UsagePanel />);
 
-		expect(await screen.findByText("Pro plan")).toBeInTheDocument();
-		expect(screen.getByText("Plan & limits")).toBeInTheDocument();
+		expect(await screen.findByText("Plan & limits")).toBeInTheDocument();
+		// No description line above the sections (polish-wave spec §3, #7739): the toolbar row is
+		// the action alone.
+		expect(screen.queryByText("Pro plan")).toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar-description"]')).toBeNull();
 		expect(screen.getByText("Resources")).toBeInTheDocument();
 		expect(screen.getByText("Usage over time")).toBeInTheDocument();
 		expect(screen.getByText("AI plan & usage")).toBeInTheDocument();
@@ -165,8 +168,8 @@ describe("UsagePanel", () => {
 		);
 		renderWithReads(<UsagePanel />);
 
-		expect(await screen.findByText("Hobby plan")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /upgrade to pro/i })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: /upgrade to pro/i })).toBeInTheDocument();
+		expect(screen.queryByText("Hobby plan")).toBeNull();
 		expect(screen.queryByRole("link", { name: /manage billing/i })).toBeNull();
 	});
 

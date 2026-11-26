@@ -11,7 +11,7 @@
 // confirmation, and the new token in a dialog that shows it once.
 //
 // States: loading (the route's skeleton, then the DataTable's placeholder rows), empty (the org has
-// no token: EmptyState + Create token), no match (filters exclude every token: EmptyState + Clear
+// no token: EmptyState + Create token), no match (filters exclude every token: FilterEmpty + Clear
 // filters), error (first page failed: RegionError + retry), forbidden (a refusal while live:
 // TokensNoAccess), populated.
 
@@ -29,9 +29,9 @@ import { readRefusalOf } from "@/lib/rpc/refusal";
 import { useServiceTokenFilters } from "@/lib/stores/use-service-token-filters";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
 import { cn } from "@repo/ui/utils";
-import { KeyRound, Plus, SearchX } from "lucide-react";
+import { KeyRound, Plus } from "lucide-react";
 import { CreateTokenSheet } from "./create-token-sheet";
 import { EditTokenSheet } from "./edit-token-sheet";
 import { RevokeTokenDialog } from "./revoke-token-dialog";
@@ -40,10 +40,6 @@ import { TokenCreatedDialog } from "./token-created-dialog";
 import { TokensFilterBar } from "./tokens-filter-bar";
 import { DEFAULT_SERVICE_TOKEN_FILTERS, normalizeServiceTokensQuery } from "./tokens-filters";
 import { TokensNoAccess } from "./tokens-no-access";
-
-/** The toolbar's one line (design §4, final copy). */
-const DESCRIPTION =
-	"Tokens let pipelines and scripts use Alethia without a person signed in. Each one is limited to what you choose.";
 
 /** The service tokens page. `canManageAgents` is the PDP's answer, asked by the route. */
 export function ServiceTokensPage({ canManageAgents }: { canManageAgents: boolean }) {
@@ -92,41 +88,31 @@ export function ServiceTokensPage({ canManageAgents }: { canManageAgents: boolea
 					onRetry={() => void list.query.refetch()}
 				/>
 			) : firstRun ? (
-				<>
-					<PageToolbar description={DESCRIPTION} />
-					<EmptyState
-						className="min-h-[40vh]"
-						data-state="first-run"
-						icon={<KeyRound />}
-						level={2}
-						title="No service tokens"
-						description={
-							<>
-								Create one for your CI pipeline. Use it as <span className="font-mono">ALETHIA_TOKEN</span> with the
-								Alethia CLI.
-							</>
-						}
-						action={createButton}
-					/>
-				</>
+				<EmptyState
+					className="min-h-[40vh]"
+					data-state="first-run"
+					icon={<KeyRound />}
+					level={2}
+					title="No service tokens"
+					description={
+						<>
+							Create one for your CI pipeline. Use it as <span className="font-mono">ALETHIA_TOKEN</span> with the
+							Alethia CLI.
+						</>
+					}
+					action={createButton}
+				/>
 			) : (
 				<>
-					<PageToolbar description={DESCRIPTION} actions={createButton} />
-					<TokensFilterBar filters={filters} onFilter={set} onReset={reset} facets={list.facets ?? undefined} />
+					<TokensFilterBar
+						filters={filters}
+						onFilter={set}
+						onReset={reset}
+						facets={list.facets ?? undefined}
+						actions={createButton}
+					/>
 					{noMatch ? (
-						<EmptyState
-							className="min-h-[30vh]"
-							data-state="no-match"
-							icon={<SearchX />}
-							level={2}
-							title="No tokens match these filters"
-							description="Every token in this organization is excluded by the current search or status."
-							action={
-								<Button variant="outline" size="sm" onClick={reset}>
-									Clear filters
-								</Button>
-							}
-						/>
+						<FilterEmpty noun="tokens" level={2} className="min-h-[30vh]" onClear={reset} />
 					) : (
 						<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
 							<div className="hidden md:block">

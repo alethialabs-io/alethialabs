@@ -116,7 +116,7 @@ describe("ConnectedAgentsPage — the read's states", () => {
 		answers.connected = () => new Promise(() => {});
 		const { container } = renderPage();
 		expect(container.querySelector('[data-skeleton="connected-agents"]')).not.toBeNull();
-		expect(screen.queryByText("No agents match")).toBeNull();
+		expect(screen.queryByText("No agents match these filters.")).toBeNull();
 	});
 
 	it("error: a region error with a retry, saying nothing changed", async () => {
@@ -141,12 +141,14 @@ describe("ConnectedAgentsPage — the read's states", () => {
 });
 
 describe("ConnectedAgentsPage — the board", () => {
-	it("connected + available: connected cards first, the copy, no count, actions named after their app", async () => {
+	it("connected + available: connected cards first, the footnote, no count, actions named after their app", async () => {
 		renderPage();
 		const list = await screen.findByRole("list", { name: "Agent apps" });
 		const cards = within(list).getAllByRole("listitem");
 		expect(cards.map((c) => c.getAttribute("data-connected") === "true")).toEqual([true, true, true, false, false, false]);
-		expect(screen.getByText("Apps you've let act for you in acme. They can only do what you can, limited to what you granted.")).toBeTruthy();
+		// No description line above the row (polish-wave §3): the old one is gone, and so is its toolbar.
+		expect(screen.queryByText(/Apps you've let act for you in acme/)).toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
 		expect(screen.getByText("Only you can see and disconnect your connections.")).toBeTruthy();
 		// The projects chip: all, a count, and the one project's name.
 		expect(within(cards[0] as HTMLElement).getByText("All projects")).toBeTruthy();
@@ -184,7 +186,7 @@ describe("ConnectedAgentsPage — the board", () => {
 
 	it("no search match: the empty state clears the filters, from the URL too", async () => {
 		renderPage("?q=nothing-like-this");
-		expect(await screen.findByText("No agents match")).toBeTruthy();
+		expect(await screen.findByText("No agents match these filters.")).toBeTruthy();
 		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(await screen.findByRole("list", { name: "Agent apps" })).toBeTruthy();
 		expect(window.location.search).toBe("");

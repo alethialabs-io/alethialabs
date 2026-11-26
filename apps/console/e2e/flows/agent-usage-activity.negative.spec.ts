@@ -143,6 +143,7 @@ test.describe("Activity — empty state (owner)", () => {
 // ── Activity — project-scoped feed ──────────────────────────────────────────────────────────
 test.describe("Activity — project scope drops org-only affordances (owner)", () => {
 	let projectSlug: string;
+	let projectName: string;
 
 	test.beforeAll(async () => {
 		// Seed a project the persona owns so the project-scoped activity route resolves.
@@ -155,10 +156,8 @@ test.describe("Activity — project scope drops org-only affordances (owner)", (
 		// Fail loudly here rather than seeding against `undefined` and reading the miss as an
 		// empty-state assertion passing.
 		if (!rec?.userId || !rec.orgId) throw new Error("ownerHobby persona has no userId/orgId — global-setup did not complete");
-		const project = await seedProject(
-			{ userId: rec.userId, orgId: rec.orgId },
-			{ name: `e2e-activity-${Date.now()}` },
-		);
+		projectName = `e2e-activity-${Date.now()}`;
+		const project = await seedProject({ userId: rec.userId, orgId: rec.orgId }, { name: projectName });
 		projectSlug = project.slug;
 	});
 
@@ -177,7 +176,9 @@ test.describe("Activity — project scope drops org-only affordances (owner)", (
 	test("the pinned feed labels the project scope", async ({ owner }) => {
 		test.skip(!projectSlug, "project seed failed");
 		await owner.page.goto(`/${owner.orgSlug}/${projectSlug}/settings/activity`);
-		await expect(owner.page.getByText(/^Activity in/i)).toBeVisible({ timeout: 30_000 });
+		// The feed no longer carries an "Activity in <project>." description line (#7739, polish-wave
+		// spec §3): the topbar's Project switcher is what names the scope, and it names THIS project.
+		await expect(owner.page.getByText(projectName, { exact: true }).first()).toBeVisible({ timeout: 30_000 });
 	});
 });
 

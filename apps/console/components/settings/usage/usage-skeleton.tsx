@@ -9,6 +9,7 @@
 // No "use client": it renders from the route's loading file (a server component) and from panels.
 
 import type { ReactNode } from "react";
+import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /** A settings section's title row: the heading, then the hairline rule, then (maybe) an action. */
@@ -69,11 +70,8 @@ function Card({ children }: { children: ReactNode }) {
 export function UsageSkeleton({ scope = "org" }: { scope?: "org" | "project" }) {
 	return (
 		<div className="space-y-2" aria-busy="true">
-			{/* PageToolbar: one description line and one action, on a row. */}
-			<div className="flex items-start justify-between gap-4 pb-2">
-				<Skeleton className="h-4 w-64" />
-				<Skeleton className="h-8 w-28 rounded-md" />
-			</div>
+			{/* PageToolbar: the one action, on the right of its row (no description line). */}
+			<PageToolbarSkeleton className="pb-2" description={false} actions={1} />
 
 			<section>
 				<SectionTitle />

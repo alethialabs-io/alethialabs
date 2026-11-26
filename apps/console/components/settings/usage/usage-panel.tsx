@@ -58,7 +58,6 @@ import {
 	retryUnlessRefused,
 } from "@/components/settings/billing/read-state";
 import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
-import { ClockText } from "@/components/settings/usage/clock-text";
 import { useUsageMetric, useUsageRange } from "@/components/settings/usage/use-usage-range";
 import {
 	count,
@@ -75,8 +74,7 @@ import { orpc } from "@/lib/rpc/client";
 import type { BillingSummary } from "@/lib/rpc/procedures/billing";
 import type { UsageReport } from "@/lib/rpc/procedures/usage";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { formatDate, formatMinutes, formatMoney, formatQuota } from "@repo/format";
-import { planMeta } from "@repo/plan-catalog";
+import { formatMinutes, formatMoney, formatQuota } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { EmptyState } from "@repo/ui/empty";
@@ -149,29 +147,14 @@ function UsageReportView({ summary }: { summary: BillingSummary }) {
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 	const usage = useQuery(orpc.usage.org.queryOptions({ retry: retryUnlessRefused }));
 	const isCommunity = summary.plan === "community" || summary.status === "none";
-	const periodEnd = usage.data?.periodEnd;
 
 	return (
 		<div className="space-y-2">
-			{/* No page title: the sidebar entry and the breadcrumb both already say "Usage". What
-			    neither of them says is WHICH PLAN and WHICH PERIOD every number below is measured
-			    against, which is what this row carries — plus the one action a usage page has. */}
+			{/* No page title and no description line (polish-wave spec §3): the sidebar entry and the
+			    breadcrumb both already say "Usage". The row carries only the one action a usage page
+			    has, on the right. */}
 			<PageToolbar
 				className="pb-2"
-				description={
-					<>
-						{/* The plan name is its own element and the period is a quieter one beside
-						    it: they are a fact and a qualifier ON that fact, not one sentence. */}
-						<span>{planMeta(summary.plan).name} plan</span>
-						{periodEnd ? (
-							<span className="text-text-tertiary">
-								{" · "}period to{" "}
-								{/* The period end is a date in the VIEWER's zone: after hydration only. */}
-								<ClockText sizer="30 Sept 2026" text={() => formatDate(periodEnd)} />
-							</span>
-						) : null}
-					</>
-				}
 				actions={
 					isCommunity ? (
 						<Button size="sm" onClick={() => setUpgradeOpen(true)}>
