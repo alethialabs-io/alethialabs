@@ -78,7 +78,7 @@ describe("IntroSplash markup", () => {
 		expect(classes).toEqual(expect.arrayContaining(["ah-intro", "pointer-events-none", "bg-background", "text-foreground"]));
 		// The stylesheet carries it too, on the overlay rule itself, not a parent.
 		expect(TOKENS).toMatch(/\.ah-intro \{[^}]*pointer-events: none;/);
-		expect(TOKENS).toMatch(/\.ah-intro \{[^}]*z-index: var\(--z-intro\);/);
+		expect(TOKENS).toMatch(/\.ah-intro \{[^}]*z-index: var\(--z-overlay\);/);
 	});
 
 	it("draws the lockup and the motto", () => {
@@ -124,9 +124,8 @@ describe("startIntro: dismissal", () => {
 
 	it("caps the overlay in CSS, because a late hydration has no effect to run", () => {
 		expect(INTRO_FLOOR_MS).toBeLessThan(INTRO_CAP_MS);
-		expect(TOKENS).toContain(`animation: ah-intro-out ${INTRO_EXIT_MS}ms var(--intro-exit) ${INTRO_CAP_MS}ms forwards;`);
-		expect(TOKENS).toContain(`transition: opacity ${INTRO_EXIT_MS}ms var(--intro-exit);`);
-		expect(TOKENS).toContain("--intro-exit: cubic-bezier(.22, 1, .36, 1);");
+		expect(TOKENS).toContain(`animation: ah-intro-out ${INTRO_EXIT_MS}ms cubic-bezier(.22, 1, .36, 1) ${INTRO_CAP_MS}ms forwards;`);
+		expect(TOKENS).toContain(`transition: opacity ${INTRO_EXIT_MS}ms cubic-bezier(.22, 1, .36, 1);`);
 	});
 
 	it("releases the lock and changes nothing if it unmounts before the floor", () => {
