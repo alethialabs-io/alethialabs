@@ -1,5 +1,13 @@
 # blog
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [c714998]
+  - @repo/ui@0.3.0
+  - @repo/brand@0.2.1
+
 ## 0.0.3
 
 ### Patch Changes
