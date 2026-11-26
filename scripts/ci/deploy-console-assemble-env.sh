@@ -64,7 +64,16 @@ REQ_STORAGE_ACCESS_KEY_ID="$(val ALETHIA_STORAGE_ACCESS_KEY_ID)"
 [ -n "$REQ_STORAGE_ACCESS_KEY_ID" ] || { echo "::error::ALETHIA_STORAGE_ACCESS_KEY_ID is required: docker-compose.yml refuses to render without it."; exit 1; }
 REQ_STORAGE_SECRET_ACCESS_KEY="$(val ALETHIA_STORAGE_SECRET_ACCESS_KEY)"
 [ -n "$REQ_STORAGE_SECRET_ACCESS_KEY" ] || { echo "::error::ALETHIA_STORAGE_SECRET_ACCESS_KEY is required: docker-compose.yml refuses to render without it."; exit 1; }
-unset REQ_DB_PASSWORD REQ_APP_DB_PASSWORD REQ_CRED_ENCRYPTION_KEY REQ_OPENFGA_DB_PASSWORD REQ_STORAGE_ACCESS_KEY_ID REQ_STORAGE_SECRET_ACCESS_KEY
+# The Cloudflare Access verification apps/admin performs (apps/admin/lib/auth/access-jwt.ts, #7765).
+# With either value empty the admin app admits NOBODY in production, so an absent key is not a
+# degraded admin but a locked-out one, and the staff support surface goes with it. Refused here and
+# in the preflight, through deploy/prod/required-vault-keys.txt, before any image is built — the
+# previous admin keeps serving until the vault holds both. Presence only; no value is printed.
+REQ_CF_ACCESS_TEAM_DOMAIN="$(val CF_ACCESS_TEAM_DOMAIN)"
+[ -n "$REQ_CF_ACCESS_TEAM_DOMAIN" ] || { echo "::error::CF_ACCESS_TEAM_DOMAIN is required: apps/admin refuses every request in production without it."; exit 1; }
+REQ_CF_ACCESS_AUD="$(val CF_ACCESS_AUD)"
+[ -n "$REQ_CF_ACCESS_AUD" ] || { echo "::error::CF_ACCESS_AUD is required: apps/admin refuses every request in production without it."; exit 1; }
+unset REQ_DB_PASSWORD REQ_APP_DB_PASSWORD REQ_CRED_ENCRYPTION_KEY REQ_OPENFGA_DB_PASSWORD REQ_STORAGE_ACCESS_KEY_ID REQ_STORAGE_SECRET_ACCESS_KEY REQ_CF_ACCESS_TEAM_DOMAIN REQ_CF_ACCESS_AUD
 # The transport, chosen in the VAULT so switching between SES and an SMTP relay is a vault edit and
 # a redeploy, not a PR (infra/email-ses-account/README.md, "Rollback"). Unset means ses: hosted
 # production sends from the alethia-email account. Hosted production accepts only ses and smtp;
