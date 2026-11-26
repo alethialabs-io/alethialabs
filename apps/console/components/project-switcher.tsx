@@ -5,7 +5,7 @@
 import { Check, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { SwitcherTrigger } from "@/components/shell/switcher-trigger";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";

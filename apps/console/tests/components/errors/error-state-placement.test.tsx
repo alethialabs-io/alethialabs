@@ -17,13 +17,13 @@ import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { ErrorState } from "@/components/errors/error-state";
-import { RegionError } from "@/components/errors/region-error";
+import { ErrorState } from "@repo/ui/error-state";
+import { RegionError } from "@repo/ui/region-error";
 
 const CONSOLE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ROOTS = ["app", "components"];
 const ROUTE_FILES = new Set(["error.tsx", "global-error.tsx", "not-found.tsx"]);
-const IMPORT = /from\s+["']@\/components\/errors\/error-state["']/;
+const IMPORT = /from\s+["']@repo\/ui\/error-state["']/;
 
 /**
  * Region sites still on `ErrorState`, each owned by the page lane that converts it. Keyed by path

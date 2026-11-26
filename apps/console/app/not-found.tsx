@@ -3,7 +3,8 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ErrorState } from "@/components/errors/error-state";
+import { AlethiaMark } from "@repo/brand/lockup";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 
 export const metadata: Metadata = { title: "Not found" };
@@ -13,6 +14,7 @@ export default function NotFound() {
 	return (
 		<ErrorState
 			fullPage
+			mark={<AlethiaMark />}
 			code="404"
 			title="Page not found"
 			description="The page you're looking for doesn't exist or may have moved."

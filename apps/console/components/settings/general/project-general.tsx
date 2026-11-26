@@ -28,7 +28,7 @@ import { ClassificationControl } from "@/components/classification/classificatio
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { FormRootError } from "@/components/forms/form-root-error";
 import { manageReason, MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
   GeneralRefusal,
   ProjectGeneralSkeleton,

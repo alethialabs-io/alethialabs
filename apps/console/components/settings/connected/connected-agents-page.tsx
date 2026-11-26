@@ -22,7 +22,7 @@ import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { disconnectAgent } from "@/app/server/actions/agents/connections";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { AgentCard } from "@/components/settings/connected/agent-card";
 import {
 	AGENT_STATUS_OPTIONS,

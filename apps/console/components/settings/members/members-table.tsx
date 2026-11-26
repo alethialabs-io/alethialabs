@@ -27,7 +27,7 @@ import {
 import { setMemberSuspended } from "@/app/server/actions/members";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { ClassificationControl } from "@/components/classification/classification-control";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { DataTable } from "@/components/data-table";

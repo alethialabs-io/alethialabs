@@ -55,7 +55,7 @@ import { NewEnvironmentDialog } from "@/components/environments/new-environment-
 import { PromoteDialog } from "@/components/environments/promote-dialog";
 import { ProtectionRulesDialog } from "@/components/environments/protection-rules-dialog";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";

@@ -102,6 +102,14 @@ export default defineConfig({
 				// tests/section-heading.test.tsx proves the heading's own slots.
 				"src/section-heading.tsx",
 				"src/spinner.tsx",
+				// Authored behaviour (#7734): the list page's filter row, its order and its skeleton.
+				// tests/list-toolbar.test.tsx proves the order, the right-aligned group and that the
+				// skeleton is built from the same row.
+				"src/list-toolbar.tsx",
+				// Authored behaviour, promoted from the console in #7734 with their suite: the route
+				// error surface and the region error render. tests/error-state.test.tsx proves each.
+				"src/error-state.tsx",
+				"src/region-error.tsx",
 			],
 			// These shadcn/Radix wrappers are deliberately proved through the composed-component
 			// suites that mount them, rather than counted in the authored-logic unit badge. Naming

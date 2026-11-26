@@ -26,7 +26,7 @@ import {
 } from "@/app/server/actions/billing";
 import { PaymentForm } from "@/components/billing/payment-form";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";

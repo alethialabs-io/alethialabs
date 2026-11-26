@@ -16,7 +16,7 @@ import { cn } from "@repo/ui/utils";
 import { LifeBuoy, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { ListFooter } from "@/components/list/list-footer";
 import {
