@@ -4,6 +4,8 @@
 import type { Metadata } from "next";
 import { PublicEnvScript } from "next-runtime-env";
 import { brandFontVariables } from "@repo/brand/fonts";
+import { INTRO_GATE_SCRIPT } from "@repo/brand/site-intro-gate";
+import { IntroSplash } from "@repo/brand/site-intro-splash";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@repo/ui/sonner";
 import { ConsentProvider } from "@repo/privacy/consent-provider";
@@ -48,6 +50,14 @@ export default function RootLayout({
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>
+				{/* The intro splash's once-per-session gate (#7742). Inline and first in <head>, so
+				    it runs before first paint: a repeat load in this session gets
+				    `data-intro="skip"` on <html> and the splash is `display: none` before it can
+				    paint. No CSP is set on this app (no header, no nonce), so an inline script
+				    needs nothing more; if one is added, this script needs its nonce or hash, like
+				    next-themes' and PublicEnvScript's. `suppressHydrationWarning` on <html> already
+				    covers the attribute it writes. */}
+				<script dangerouslySetInnerHTML={{ __html: INTRO_GATE_SCRIPT }} />
 				<PublicEnvScript />
 			</head>
 			<body
@@ -61,6 +71,9 @@ export default function RootLayout({
 				    cross between zones. A returning visitor whose choice is already in
 				    `localStorage` keeps it; the console, same origin and same key, still has
 				    a switcher. */}
+				{/* First in <body>, so nothing paints before it on a first load. Marketing's
+				    root layout only: the blog, the docs and the console never show it. */}
+				<IntroSplash />
 				<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 					<ConsentProvider>
 						{children}
