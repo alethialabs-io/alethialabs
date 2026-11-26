@@ -106,3 +106,41 @@ export function setOrgPlan(input: {
 }): Promise<{ ok: true }> {
 	return post("/set-plan", input);
 }
+
+/**
+ * The privacy register (#7222): every open case, the overdue ones and the recently decided. The
+ * body is unvalidated here; app/privacy/data.ts parses it.
+ */
+export function getPrivacyCases(): Promise<unknown> {
+	return get("/privacy/cases");
+}
+
+/** One privacy case and its ledger. Unvalidated here; app/privacy/data.ts parses it. */
+export function getPrivacyCase(reference: string): Promise<unknown> {
+	return get(`/privacy/cases/${encodeURIComponent(reference)}`);
+}
+
+/**
+ * Records a privacy request that arrived by email, its clock starting at `receivedAt`. The address
+ * is hashed by the console and never stored in the clear. Unvalidated here; the caller parses it.
+ */
+export function openPrivacyCase(input: {
+	actorUserId: string;
+	kind: string;
+	email: string;
+	receivedAt: string;
+}): Promise<unknown> {
+	return post("/privacy/cases", input);
+}
+
+/**
+ * Takes one handling step on a privacy case as `actorUserId` — the console runs the same step its
+ * own server action runs. Answers the step's outcome, unvalidated; the caller parses it.
+ */
+export function takePrivacyStep(
+	reference: string,
+	step: "verify" | "extend" | "hold" | "fulfil-erasure" | "refuse",
+	input: { actorUserId: string; reason?: string },
+): Promise<unknown> {
+	return post(`/privacy/cases/${encodeURIComponent(reference)}/${step}`, input);
+}

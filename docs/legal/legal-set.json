@@ -1604,7 +1604,7 @@
 					"shows": "Deletion is performed by fulfilling an erasure case."
 				}
 			],
-			"requires": "A person opening and fulfilling the erasure when the 30-day retrieval window ends. Nothing in the repository schedules it, and no screen calls fulfilErasure yet (#7222).",
+			"requires": "A person opening and fulfilling the erasure when the 30-day retrieval window ends. Nothing in the repository schedules it; a platform admin performs it from the staff app's Privacy page (apps/admin/app/privacy, #7222).",
 			"owner": "LEG-L1",
 			"verifiedOn": "2026-11-22"
 		},
@@ -1873,20 +1873,30 @@
 			"verifiedOn": "2026-11-22"
 		},
 		{
-			"id": "privacy-request-runbook.no-staff-case-screen",
+			"id": "privacy-request-runbook.staff-case-screen",
 			"document": "privacy-request-runbook",
 			"kind": "other",
 			"status": "tied",
-			"quote": "No console or admin screen calls `openPrivacyCase`, `verifyPrivacyCaseIdentity` or `fulfilErasure` yet",
+			"quote": "by email is recorded by a platform admin on the staff app's **Privacy** page (`apps/admin/app/privacy`), with the day it arrived so the clock starts at receipt.",
 			"evidence": [
 				{
-					"path": "apps/console/components/shell/account-settings-dialog.tsx",
-					"absent": "import \\{[^}]*\\b(openPrivacyCase|fulfilErasure)\\b",
-					"shows": "The only privacy-case UI imports the self-service request, not the staff steps."
+					"path": "apps/admin/app/privacy/actions.ts",
+					"pattern": "export async function openEmailedPrivacyCase\\(form: unknown\\): Promise<PrivacyActionResult> \\{\\n\\tconst staff = await assertPlatformAdmin\\(\\);",
+					"shows": "Recording an emailed request is a staff action, gated on the platform-admin allowlist."
+				},
+				{
+					"path": "apps/admin/app/privacy/actions.ts",
+					"pattern": "export async function fulfilPrivacyErasure\\(form: unknown\\): Promise<PrivacyActionResult> \\{\\n\\tconst staff = await assertPlatformAdmin\\(\\);",
+					"shows": "Fulfilling an erasure is a staff action on the same page, gated the same way."
+				},
+				{
+					"path": "apps/console/app/api/internal/platform/privacy/cases/route.ts",
+					"pattern": "receivedAt,\\n\\t\\treceivedHow: \"Request received by email and recorded by staff\"",
+					"shows": "The case's clock starts at the receipt time staff record, not at the time it was typed in."
 				}
 			],
 			"owner": "LEG-L1",
-			"verifiedOn": "2026-11-22"
+			"verifiedOn": "2026-11-26"
 		},
 		{
 			"id": "terms.paddle-reseller",
