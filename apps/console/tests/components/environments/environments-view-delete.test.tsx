@@ -211,8 +211,10 @@ describe("EnvironmentsView — deleting an environment (#6800)", () => {
 		await confirmDelete(user, dialog);
 
 		await waitFor(() =>
+			// The second argument is the toast's Retry action (#7741).
 			expect(h.toast.error).toHaveBeenCalledWith(
 				"Something went wrong on our side. Reference: ab12cd34",
+				expect.objectContaining({ action: expect.objectContaining({ label: "Retry" }) }),
 			),
 		);
 		expect(screen.getByRole("alertdialog")).toHaveTextContent("cannot be deleted: destroy it first.");
