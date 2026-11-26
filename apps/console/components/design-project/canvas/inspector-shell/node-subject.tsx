@@ -351,7 +351,7 @@ function NodeStatusView({ node }: { node: CanvasNode }) {
 			    the address that actually diverged. */}
 			{status.drift.length > 0 && (
 				<section className="space-y-2">
-					<SectionHeading level={3} title="Drift" count={status.drift.length} />
+					<SectionHeading level={3} title="Drift" />
 					<ul className="space-y-1">
 						{status.drift.map((d) => (
 							<li
