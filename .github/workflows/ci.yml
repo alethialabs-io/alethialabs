@@ -64,6 +64,14 @@ on:
         description: "TS coverage determinism probe: how many runs to compare (default 5)"
         required: false
         default: "5"
+      # ONLY `ts-shard-equivalence` reads this. Off by default, because that job re-runs the console suite
+      # unsharded (~16 minutes of runner) — it is the proof the shard split needed once and needs again
+      # after any change to vitest, its coverage provider or the merge, not a cost to pay on every dispatch.
+      ts_shard_equivalence:
+        description: "Run the console suite unsharded AND sharded+merged, and fail on any coverage difference"
+        required: false
+        type: boolean
+        default: false
 
 # CANCELLATION IS FOR SUPERSEDED PR RUNS ONLY (2026-11-22).
 #
@@ -84,6 +92,13 @@ concurrency:
 
 permissions:
   contents: read
+
+# How many runners the console's unit suite is split across — read by `ts-test-console` (whose matrix
+# must list exactly 1..N, and fails its first step when it does not), by `ts-test`'s merge (which
+# refuses any other number of shards) and by `ts-shard-equivalence`. One value, three readers, every
+# disagreement red. Why 4: see `ts-test-console`.
+env:
+  TS_CONSOLE_SHARDS: "4"
 
 jobs:
   # Which surfaces does this PR touch? Two jobs' worth of answers, from one job:
@@ -659,9 +674,122 @@ jobs:
             pnpm exec turbo run check-types lint --concurrency=2
           fi
 
+  # ── THE CONSOLE'S UNIT SUITE, SHARDED ACROSS RUNNERS ───────────────────────────────────────────────
+  #
+  # Before this split `ts-test` ran every workspace's unit suite in one `turbo run test`, and the
+  # console's (~1400 test files) was 15–16 of its 17–27 minutes (measured: `console:test` reported
+  # `Duration 940.38s` in run 45869149577, with every other workspace done inside its first minute).
+  # So the console now runs as TS_CONSOLE_SHARDS shards (`vitest run --coverage --shard=i/N`), each on
+  # its own runner, and `ts-test` below merges their coverage and runs the ratchets as before.
+  #
+  # N = 4, measured rather than guessed: a shard pays ~2 minutes of fixed cost (checkout, install,
+  # the ee build) before its first test, so 940 s of suite becomes ~4 min of tests + ~2 min of setup
+  # per shard at N=4, ~5 + 2 at N=3, and ~2.6 + 2 at N=6 — past four the fixed cost dominates while
+  # every extra shard is one more runner competing for the org's queue on every PR. Vitest assigns
+  # files to shards by a sha1 of each file's root-relative path, so the partition is deterministic,
+  # disjoint and complete by construction; the balance is by file COUNT, not duration.
+  #
+  # HOW THE SHARDS STAY ONE MEASUREMENT (see scripts/lib/ts-coverage-merge.mjs for the argument):
+  #
+  #   · each shard uploads its coverage-final.json with a fingerprint (the ratchet's own `currentEnv`
+  #     plus which shard it is) as the artifact `console-coverage-shard-<i>-of-<N>`;
+  #   · `ts-test` FAILS — it does not skip, and it does not demote — when this job did not succeed, and
+  #     its merge step fails when any shard is missing, duplicated, mislabelled, corrupt or measured in
+  #     an environment other than its own. N is never inferred from what arrived;
+  #   · the console ratchet runs with `--merged-from-shards`, which refuses to measure anything but
+  #     the verified merge (manifest + sha256), so a partial file can never be read as the whole.
+  #
+  # `fail-fast: false`: one shard's red would otherwise cancel the other three, and the author would
+  # learn about a quarter of the failures per push — the same reason the TypeScript check was split.
+  #
+  # UNFILTERED, for the reasons recorded on `ts-test` below: the shards run on every PR that runs
+  # `ts-test`, under the same affected-only skip (`ts_skip`: a prose-only diff), and `ts_filter` does
+  # not narrow them.
+  ts-test-console:
+    name: TypeScript — console unit tests (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # NOT ON THE UI-AUDIT NIGHTLY, and AFFECTED-ONLY — the identical conjuncts to `ts-test`, which
+    # needs this job: a mismatch would either run shards nobody merges or skip shards `ts-test` waits on.
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Must list 1..TS_CONSOLE_SHARDS exactly. The first step below fails the shard when it does
+        # not, so the matrix and the merge cannot drift apart silently.
+        shard: [1, 2, 3, 4]
+    env:
+      SHARD: ${{ matrix.shard }}
+      MATRIX_SIZE: ${{ strategy.job-total }}
+    steps:
+      - name: The matrix and TS_CONSOLE_SHARDS agree
+        run: |
+          set -euo pipefail
+          if [ "$MATRIX_SIZE" != "$TS_CONSOLE_SHARDS" ] || [ "$SHARD" -lt 1 ] || [ "$SHARD" -gt "$TS_CONSOLE_SHARDS" ]; then
+            echo "::error::shard ${SHARD} of a ${MATRIX_SIZE}-leg matrix, but TS_CONSOLE_SHARDS=${TS_CONSOLE_SHARDS} — the matrix must list exactly 1..TS_CONSOLE_SHARDS, or the merge in ts-test expects shards that never ran"
+            exit 1
+          fi
+          echo "shard ${SHARD}/${TS_CONSOLE_SHARDS}"
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # ONE KEY PER SHARD, for the reason the three TypeScript parts each have one: jobs saving one key
+      # race, and only the first save survives. turbo hashes the pass-through `--shard=i/N` into
+      # `console#test`, so a shard's cache entry replays only that shard's coverage/, never another's.
+      - name: Cache Turbo
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-test-console-${{ matrix.shard }}-of-${{ strategy.job-total }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-test-console-${{ matrix.shard }}-of-${{ strategy.job-total }}-
+            turbo-${{ runner.os }}-test-
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      # EXPLICIT, though `console#test` reaches `@alethia/ee#build` through `^build` anyway: turbo
+      # restores a cache hit's declared `outputs`, and the root `build.outputs` names `.next/**` only —
+      # so on an `@alethia/ee#build` cache HIT, nothing would put ee/dist back. The floors record
+      # `ee_dist: true`, and this shard's fingerprint must say the same thing as the merging job's
+      # (which builds it the same way), or the merge refuses the shard. esbuild; well under a second.
+      - name: Build @alethia/ee
+        run: pnpm -F @alethia/ee build
+      # The same `turbo run test` the console has always run — same task, same `^build` graph, same
+      # strict env, same cache semantics — with `--shard` passed through to vitest. turbo passes
+      # pass-through arguments to the ENTRY-POINT task only (`console#test`), not to its `^build`
+      # dependencies; checked against turbo 2 directly, since a `--shard` reaching esbuild would fail.
+      - name: Console unit tests — this shard
+        run: pnpm exec turbo run test --filter=console -- "--shard=${SHARD}/${TS_CONSOLE_SHARDS}"
+      # One directory, one upload, `if-no-files-found: error` — see scripts/ci/check-upload-aggregate.mjs
+      # for why a second path under one upload would weaken that `error`. The fingerprint is written
+      # AFTER the suite, so it describes the tree the suite actually ran in (ee/dist and all).
+      - name: Stage this shard's coverage and fingerprint
+        run: |
+          set -euo pipefail
+          mkdir -p console-coverage-shard
+          cp apps/console/coverage/coverage-final.json console-coverage-shard/coverage-final.json
+          node scripts/ts-coverage-shards.mjs fingerprint --project apps/console \
+            --shard "${SHARD}/${TS_CONSOLE_SHARDS}" > console-coverage-shard/fingerprint.json
+          cat console-coverage-shard/fingerprint.json
+      # `overwrite: true` so "Re-run failed jobs" can re-upload a re-run shard under the same name in the
+      # same run; the merge still checks every shard's fingerprint and coverage, so nothing stale passes.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: console-coverage-shard-${{ matrix.shard }}-of-${{ strategy.job-total }}
+          path: console-coverage-shard/
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
   ts-test:
     name: TypeScript — unit tests · coverage ratchets
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
@@ -669,7 +797,14 @@ jobs:
     # AFFECTED-ONLY (see `detect-changes`): skipped only when the job-level skips are ARMED and the
     # whole diff is `.md`/`.mdx` — turbo.json's own declared non-inputs for this task. `!cancelled()`
     # so a failed detect job runs this in full rather than skipping it.
-    needs: [detect-changes]
+    #
+    # `!cancelled()` ALSO KEEPS THIS JOB RUNNING WHEN A CONSOLE SHARD FAILED — deliberately. With the
+    # implicit `success()` a red shard would SKIP this job, and a skipped `ts-test` reads to the
+    # `typescript` aggregator as "planned away" only when `ts_skip` says so; otherwise it is red there
+    # too, but with the failure one hop further from where the author looks. Running, this job fails
+    # its own `Every console shard succeeded` step with the shard named, and still reports the other
+    # projects' tests and ratchets.
+    needs: [detect-changes, ts-test-console]
     if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
     steps:
       - uses: actions/checkout@v7
@@ -697,27 +832,74 @@ jobs:
             turbo-${{ runner.os }}-test-
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # EXPLICIT, and load-bearing for every ratchet below. The floors record `ee_dist: true`, and the
+      # ratchet reads it from THIS job's tree. It used to arrive implicitly: `turbo run test` reached
+      # `@alethia/ee#build` through apps/console's optionalDependency on @alethia/ee. With the console
+      # excluded from this job's turbo run (its shards run in `ts-test-console`), nothing here depends
+      # on @alethia/ee any more — so without this step ee/dist would be absent, F7 would DEMOTE every
+      # project's regressions to warnings, and the merge would refuse every shard (their fingerprints
+      # say `ee_dist: true`). scripts/check-floors-reproducible.mjs reads this step by its name.
+      - name: Build @alethia/ee
+        run: pnpm -F @alethia/ee build
       # UNFILTERED EVEN ON AN ORDINARY PR, unlike `ts-lint-types` and `ts-build` (2026-11-22). Two
       # reasons, either sufficient: (1) the console's unit tests READ files outside every package
       # graph edge turbo can see — Go sources in packages/core, fixtures in apps/cli, scripts/ — so
       # `...[HEAD^1]` would not re-run a test whose fixture changed in a package it does not depend
-      # on; and (2) the ratchets below compare against floors recorded with ee/dist present, which
-      # only a run that reaches an @alethia/ee dependent produces (scripts/check-floors-reproducible.mjs
-      # reads this line for exactly that). The turbo cache still skips the packages whose inputs are
-      # unchanged.
+      # on; and (2) the ratchets below compare against floors recorded with ee/dist present (the
+      # step above). The turbo cache still skips the packages whose inputs are unchanged.
       #
-      # UNFILTERED, and that is load-bearing for the ratchets below: `test.dependsOn: ["^build"]`
-      # reaches @alethia/ee through apps/console's optionalDependencies, so this builds ee/dist and
-      # the suites run in enterprise scope — the `ee_dist: true` the floors record.
-      # scripts/check-floors-reproducible.mjs reads THIS job (the one that carries the ratchet steps)
-      # to prove it.
-      - name: Unit tests
+      # `--filter='!console'` is the ONE exclusion, and it drops nothing: the console's suite runs in
+      # full across the `ts-test-console` shards. Every other workspace's `test` (and its `^build`
+      # graph) runs here exactly as before.
+      - name: Unit tests (every workspace except the console, whose shards ran in ts-test-console)
         id: unit
-        run: pnpm exec turbo run test
+        run: pnpm exec turbo run test --filter='!console'
+      # FAIL, NEVER SKIP OR DEMOTE. `needs.ts-test-console.result` is the matrix's aggregate: `success`
+      # only when every shard succeeded. A red, cancelled or skipped shard means some console test
+      # files did not pass (or did not run), and there is no artefact here that could be measured as
+      # the console's coverage.
+      - name: Every console shard succeeded
+        id: shards
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS_RESULT: ${{ needs.ts-test-console.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != success ]; then
+            echo "::error::ts-test-console concluded '${SHARDS_RESULT}' — at least one of the ${TS_CONSOLE_SHARDS} console unit-test shards failed or did not run. Open that shard for the failure; the console's coverage is not measured from an incomplete suite."
+            exit 1
+          fi
+          echo "all ${TS_CONSOLE_SHARDS} console shards succeeded"
+      # Each artifact extracts into `console-shards/<artifact name>/` (a `pattern`, not a `name`). Not
+      # trusted to have found them all: the merge below counts them against TS_CONSOLE_SHARDS itself,
+      # and runs even when this step fails, so a missing shard is reported by NAME rather than as a
+      # download error.
+      - name: Download the console shards' coverage
+        if: ${{ !cancelled() && steps.shards.outcome == 'success' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: console-coverage-shard-*
+          path: console-shards
+          merge-multiple: false
+      # The istanbul merge semantics, proven on the installed tree before they are trusted with the
+      # real artefacts. Hermetic (fixtures only); the refusal paths are also driven by
+      # `ts-coverage.mjs --self-test` in the `guards` job, which has no installed tree.
+      - name: Shard-merge self-test (istanbul semantics, end to end through the CLI)
+        id: merge-selftest
+        if: ${{ !cancelled() && steps.shards.outcome == 'success' }}
+        run: node scripts/ts-coverage-shards.mjs --self-test
+      - name: Merge the console shards' coverage (fails on a missing, extra, corrupt or foreign shard)
+        id: merge
+        if: ${{ !cancelled() && steps.merge-selftest.outcome == 'success' }}
+        # Headroom, not a measured need: the merge streams shard by shard, but one console artefact
+        # parsed is several times its file size, and an OOM here would read as a broken pipeline.
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/ts-coverage-shards.mjs merge --project apps/console --from console-shards --shards "$TS_CONSOLE_SHARDS"
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
       #
-      # THE RATCHETS LIVE IN THIS JOB BECAUSE THEY READ ITS ARTEFACT. They used to sit after the
+      # THE RATCHETS LIVE IN THIS JOB BECAUSE THEY READ ITS ARTEFACTS — the console's as merged above,
+      # every other project's as written by `Unit tests`. They used to sit after the
       # build smoke in a single job, so that a true ratchet failure could not skip the build — the
       # only check that catches a module imported from both a server and a client component, which
       # type-checks, lints and unit-tests clean and then 500s the page at runtime. The split gives
@@ -741,29 +923,23 @@ jobs:
       #
       # Every false-failure path is fail-open and enumerated F1..F10 in the script header. The
       # floors carry a fingerprint of the environment that recorded them — including whether
-      # ee/dist existed, which is TRUE here.
+      # ee/dist existed, which is TRUE here (the `Build @alethia/ee` step above).
       #
-      # CORRECTION. This comment previously claimed the opposite: that apps/console depends on
-      # @alethia/enterprise-api and NOT on @alethia/ee, so `test.dependsOn: ["^build"]` never
-      # reaches it. That is wrong. `apps/console/package.json:201` declares `@alethia/ee` under
-      # **optionalDependencies** — turbo's `^build` traverses it like any other workspace
-      # dependency, so `turbo run test` BUILDS ee/dist and the console suite runs in ENTERPRISE
-      # scope, here and on a laptop alike. Measured, not reasoned: the determinism probe checked
-      # ee/dist ABSENT at job start, then recorded `"ee_dist": true` in the floors it wrote after
-      # the suites — the build happened in between.
-      #
-      # The floors are still reachable BECAUSE of that, not despite it: this job and the probe run
-      # the same `turbo run test`, so they build the same dist and measure the same scope. What was
-      # wrong was the stated reason, and a fingerprint key whose rationale is inverted is one a
-      # future reader will "fix" in the wrong direction.
+      # A HISTORY WORTH KEEPING. This comment once claimed that apps/console did NOT reach @alethia/ee,
+      # so `test.dependsOn: ["^build"]` never built ee/dist. That was wrong — `@alethia/ee` is an
+      # **optionalDependency** of apps/console, and turbo's `^build` traverses it — and the measured
+      # proof was the determinism probe finding ee/dist ABSENT at job start and recording
+      # `"ee_dist": true` after its `turbo run test`. Since the shard split this job no longer runs the
+      # console's turbo task at all, which is exactly why the dist is now built by name above rather
+      # than left to a dependency edge: an implicit producer of a fingerprinted axis is how a ratchet
+      # gets disarmed by a refactor that never mentions it.
       - name: Coverage ratchet — apps/console
-        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
-        # rather than inheriting the implicit success() that would let one project's ratchet hide
-        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
-        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
-        # cause. `!cancelled()` keeps it off a cancelled run.
-        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
-        run: node scripts/ts-coverage.mjs --project apps/console
+        # Runs only on the VERIFIED MERGE of every shard. `--merged-from-shards` re-checks the merge's
+        # manifest (project, N, sha256 of the bytes) before measuring and EXITS 1 — never fails open —
+        # on anything else, so a partial artefact cannot be read as the whole. See ts-coverage.mjs's
+        # SHARDED INPUT header.
+        if: ${{ !cancelled() && steps.merge.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project apps/console --merged-from-shards "$TS_CONSOLE_SHARDS"
       - name: Coverage ratchet — packages/ui
         # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
         # rather than inheriting the implicit success() that would let one project's ratchet hide
@@ -4167,9 +4343,16 @@ jobs:
     #
     # They are NOT a laptop's, and that is the point of running it here. What makes the floors it
     # records reachable by the job that ENFORCES them is that this job and the required
-    # `typescript` job run the IDENTICAL `pnpm exec turbo run test` — same build, same ee/dist,
-    # same measured scope. Floors recorded from a laptop would bake in numbers CI can never
-    # reproduce and would red — or worse, silently DEMOTE — every PR in the repository.
+    # `typescript` job run the same turbo `test` tasks — same build, same ee/dist, same measured
+    # scope. Floors recorded from a laptop would bake in numbers CI can never reproduce and would
+    # red — or worse, silently DEMOTE — every PR in the repository.
+    #
+    # ONE DIFFERENCE SINCE THE SHARD SPLIT, and it is licensed by a measurement rather than argued
+    # away: this probe runs the console's suite UNSHARDED, while `ts-test` measures the merge of
+    # TS_CONSOLE_SHARDS shards. `ts-shard-equivalence` (dispatch with `ts_shard_equivalence=true`)
+    # runs both on one commit and fails on any per-file covered/total difference — dispatch it
+    # alongside this probe whenever floors are recorded after a change to vitest, its coverage
+    # provider or the merge.
     #
     # (This comment used to claim the opposite: that the probe "deliberately does NOT build
     # @alethia/ee" and therefore measures COMMUNITY scope. That was already corrected twice
@@ -4256,6 +4439,79 @@ jobs:
           name: ts-coverage-plan-catalog-fixture
           path: packages/plan-catalog/coverage/coverage-final.json
           if-no-files-found: error
+
+  ts-shard-equivalence:
+    name: TS shard equivalence — unsharded vs merged console coverage (manual)
+    # MANUAL ONLY, and only when asked (`-f ts_shard_equivalence=true`): the proof that licenses the
+    # shard split. The console's floors are RECORDED from an unsharded run (the determinism probe
+    # above) and ENFORCED against the merge of TS_CONSOLE_SHARDS shards (`ts-test`). That is only
+    # sound if the two produce the same numbers, and the argument for it (istanbul's merge is the
+    # operation vitest itself applies across test files and environments, and across shards in
+    # `--merge-reports`) is an argument, not a measurement. This is the measurement: on ONE commit,
+    # the suite unsharded here, against the real shards' artefacts from `ts-test-console` in the same
+    # run, merged by the same command `ts-test` uses — compared per FILE on statements, functions and
+    # branch arms, and per DIRECTORY on what the ratchet gates. Any covered/total difference is red.
+    #
+    # If it is ever red, do not loosen the comparison: the step log names every differing file. A
+    # one-statement wobble in a directory the determinism probe has already seen flap (#3342,
+    # apps/console/lib/billing) is the probe's question, answered by re-running; a difference that
+    # REPEATS is a real divergence between the two paths and blocks trusting the merge for that file.
+    #
+    # `needs: [ts-test-console]` so the shards it compares against are this run's own; a failed shard
+    # skips this job (there is nothing whole to compare). ~25 minutes: the unsharded suite is the
+    # cost the shards exist to avoid.
+    needs: [ts-test-console]
+    if: github.event_name == 'workflow_dispatch' && inputs.ts_shard_equivalence == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The same explicit build the shards and `ts-test` do, so this job's fingerprint matches theirs —
+      # the merge below refuses the shards otherwise.
+      - name: Build @alethia/ee
+        run: pnpm -F @alethia/ee build
+      # The SAME turbo task the shards run, minus `--shard`. No turbo cache is restored in this job,
+      # and `--force` makes that explicit: a replayed coverage/ would compare the shards against an
+      # older run instead of this commit's.
+      - name: The console suite, UNSHARDED
+        run: |
+          set -euo pipefail
+          pnpm exec turbo run test --filter=console --force
+          mkdir -p shard-equivalence
+          mv apps/console/coverage/coverage-final.json shard-equivalence/unsharded.json
+      - name: Download the console shards' coverage
+        uses: actions/download-artifact@v8
+        with:
+          pattern: console-coverage-shard-*
+          path: console-shards
+          merge-multiple: false
+      - name: Merge them with the command ts-test uses
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/ts-coverage-shards.mjs merge --project apps/console --from console-shards --shards "$TS_CONSOLE_SHARDS" --out shard-equivalence/merged/coverage-final.json
+      - name: Compare — any per-file covered/total difference fails
+        id: compare
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/ts-coverage-shards.mjs compare --project apps/console --first shard-equivalence/unsharded.json --second shard-equivalence/merged/coverage-final.json
+      # Both maps, so a red comparison can be re-read file by file without re-running ~25 minutes.
+      # Gated on the comparison having RUN: before that the directory is incomplete, and an upload
+      # error on top of the real failure would name the wrong cause.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (steps.compare.outcome == 'success' || steps.compare.outcome == 'failure') }}
+        with:
+          name: ts-shard-equivalence
+          path: shard-equivalence/
+          if-no-files-found: error
+          retention-days: 7
 
   runner-image-arch:
     name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
