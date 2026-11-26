@@ -200,7 +200,6 @@ const UNSWEPT = [
 	"components/connectors/provider-config-fields.tsx",
 	"components/create-project/cloud-field.tsx",
 	"components/create-project/region-select.tsx",
-	"components/data-table.tsx",
 	"components/design-project/byo/byo-iac-dialog.tsx",
 	"components/design-project/canvas/inspector/bindings-field.tsx",
 	"components/design-project/canvas/inspector/connector-select.tsx",
