@@ -22,7 +22,7 @@ import type {
 import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
-import { CountPill } from "@repo/ui/count-pill";
+import { CountFigure } from "@repo/ui/count-pill";
 import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
@@ -458,21 +458,17 @@ function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null 
 /**
  * One plan-summary count tile (add / change / destroy / replace).
  *
- * The NUMBER is `@repo/ui/count-pill` — mono, tabular, thousands-separated. The bordered tile
- * and its eyebrow caption stay here because the shared pill is the inline count that sits beside
- * a section heading and takes no label; a plan summary needs four labelled tiles. So this is the
- * composition the shared component was promoted for, not a second implementation of it.
+ * The NUMBER is `CountFigure` from `@repo/ui/count-pill` — the shared mono, tabular figure — at
+ * display size, because in a tile the count IS the content. It used to be a `CountPill`, the
+ * heading-count chip; that component went with the console's list counts (LST-14, #7496), and
+ * this tile, its last caller, was never a list count to begin with.
  */
 function PlanCountTile({ n, label }: { n: number; label: string }) {
 	return (
 		<div className="border border-border px-2.5 py-1.5 text-center">
-			<CountPill
-				count={n}
-				// In a tile the count IS the content, not a marginal annotation beside a heading,
-				// so the display size and weight are restored. Everything else — the mono face,
-				// tabular figures, locale separators, the null guard — comes from the component.
-				className="bg-transparent px-0 py-0 text-base font-semibold text-foreground"
-			/>
+			{/* The display size and weight replace the figure's trailing-count rung; the mono face and
+			    tabular figures come from the component. */}
+			<CountFigure className="text-base font-semibold text-foreground">{n.toLocaleString()}</CountFigure>
 			<div className="vx-eyebrow text-ui-3xs">{label}</div>
 		</div>
 	);

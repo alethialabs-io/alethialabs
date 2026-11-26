@@ -32,7 +32,7 @@ function ignore() {}
 export function ClustersSkeleton({ showProject = true }: { showProject?: boolean }) {
 	return (
 		<SkeletonRoot className="space-y-6" data-skeleton="clusters" inert>
-			<PageToolbarSkeleton count />
+			<PageToolbarSkeleton />
 			<ClustersFilterBar
 				className="animate-pulse"
 				filters={DEFAULT_CLUSTER_FILTERS}

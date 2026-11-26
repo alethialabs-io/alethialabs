@@ -71,7 +71,7 @@ export function SsoRouteSkeleton() {
 	if (sso === false) return <PeopleUpsellSkeleton toolbar={false} />;
 	return (
 		<SkeletonRoot>
-			<PageToolbarSkeleton className="mb-4" count actions={1} />
+			<PageToolbarSkeleton className="mb-4" actions={1} />
 			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
 				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
 				<Skeleton className="h-8 w-28 rounded-md" />

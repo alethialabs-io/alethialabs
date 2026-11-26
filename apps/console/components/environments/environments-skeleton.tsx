@@ -34,7 +34,7 @@ function ignore() {}
 export function EnvironmentsSkeleton() {
 	return (
 		<SkeletonRoot className="space-y-8" data-skeleton="environments" inert>
-			<PageToolbarSkeleton count actions={2} />
+			<PageToolbarSkeleton actions={2} />
 			<section className="space-y-4">
 				<EnvironmentsFilterBar
 					className="animate-pulse"

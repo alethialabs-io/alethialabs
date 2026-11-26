@@ -158,8 +158,8 @@ zustand store  →  debounce  →  normalize  →  TanStack key  →  server act
    equals `filterStateFromUrl` for EVERY link, which is what the page's RSC parses to prefetch
    the matching key. The one exception is a `persist: true` store, where a link carrying none
    of the store's filter params leaves what that pathname persisted in place.
-   A page whose URL also carries a page number or a selected row passes
-   `{ resetParams: FILTER_DEPENDENT_PARAMS }`: those params are dropped by a URL write that
+   A page whose URL also carries a selected row passes
+   `{ resetParams: FILTER_DEPENDENT_PARAMS }`: that param is dropped by a URL write that
    changes a filter, and kept by any other (see "View state in the URL" below).
 3. **Debounce** — free-text goes through `useDebouncedValue` (`hooks/use-debounced-value.ts`)
    before it reaches the key, handed what `useFilterUrlSync` returned:
@@ -214,22 +214,22 @@ narrows (step 6), and they DO shrink to the project's rows when the scope narrow
 
 ### View state in the URL
 
-Three more params describe a list page, and none of them is a filter. They are decoded in
+Two more params describe a list page, and neither is a filter. They are decoded in
 `lib/query/view-url-params.ts`, on the same `ParamReader` as the filter codec, so the route's
 server component and the client read a link identically:
 
 | Param | Read | Write | Absent or unreadable means |
 | --- | --- | --- | --- |
-| `?page=<n>` | `pageFromUrl` | `pagePatch` | the first page — **retired** (see "Paging"; the guard's `page-url` rule fails a new call, and the helpers go with their last caller, LST-14) |
 | `?selected=<id>` | `selectionFromUrl` | `selectionPatch` | nothing is open |
 | `?range=<value>` | `rangeFromUrl` | `rangePatch` | the page's default window |
 
-A patch goes through `hrefWithParamPatch`, which leaves every other param alone. A page number
-and a selected row only mean something under the filters they were chosen with, so they are
-`FILTER_DEPENDENT_PARAMS`: hand them to `useFilterUrlSync` as `resetParams` and a filter change
-goes back to the first page with nothing open, while a link that carries filters AND a page
-opens exactly that page. A cursor (the infinite variant) is never in the URL; it is the
-`pageParam`. `range` here is for a page that keeps its time window out of the filter store;
+A patch goes through `hrefWithParamPatch`, which leaves every other param alone. A selected row
+only means something under the filters it was chosen with, so it is in `FILTER_DEPENDENT_PARAMS`:
+hand that to `useFilterUrlSync` as `resetParams` and a filter change closes it, while a link that
+carries filters AND a selection opens exactly that row. **There is no `?page=`** — it and its
+helpers (`pageFromUrl`, `pagePatch`) were deleted with LST-14 (#7496); the guard's `page-url` rule
+fails a call if one comes back. The cursor is never in the URL; it is the infinite query's
+`pageParam` (see "Paging"). `range` here is for a page that keeps its time window out of the filter store;
 where the window is a store key it is an ordinary filter and step 2 already mirrors it. Either
 way it is one value (`lib/query/range-filter.ts`), so a preset link stays relative.
 
@@ -319,7 +319,8 @@ wraps `useInfiniteQuery`: the cursor is the `pageParam`, **never in the key and 
 filter change is a new key, so the walk restarts at page one; `keepPreviousData` keeps the old rows
 (dim them on `isPlaceholderData`, `opacity-60`); rows are joined across pages keeping each id once.
 Render the rows through `<DataTable keyset={list} …>` (server mode: every loaded row, no client
-sort or pages) or a card grid followed by `<ListFooter list={list} />` (`components/list/`): an
+sort or pages — DataTable has no page numbers, rows-per-page picker or "Show more" window in
+either mode since LST-14) or a card grid followed by `<ListFooter list={list} />` (`components/list/`): an
 invisible scroll sentinel PLUS an always-visible "Load more" button (keyboard, screen reader, no
 IntersectionObserver), a busy state while a page is in flight, a "Couldn't load more · Try again"
 line on a failed page with the rows kept, and **nothing** at the end. A route that prefetches the
@@ -331,19 +332,20 @@ first page uses `prefetchInfiniteQuery` with the same `infiniteOptions`, so the 
 first page failed → `RegionError` with retry (`list.query`); a refresh failed behind rows → rows
 stay plus DataTable's stale notice; a later page failed → rows stay plus `ListFooter`'s retry line.
 
-**Banned:** client page numbers over fetched rows (DataTable client mode, `.slice` page
-arithmetic, `?page=`), render windows over a fully fetched list, grow-limit re-reads, silent
+**Banned:** client page numbers over fetched rows (a client-mode DataTable over a fetched list,
+`.slice` page arithmetic, `?page=`), render windows over a fully fetched list, grow-limit re-reads, silent
 server caps, the rows-per-page `Select`.
 
 ## Counts (the standard, #7481)
 
-- **No count pill on a list.** No `CountPill`, no `count=` on `PageToolbar` or `SectionHeading`.
-  The prop itself goes once its last caller has (LST-14).
+- **No count pill on a list.** `PageToolbar` and `SectionHeading` have no `count` prop and
+  `CountPill` is deleted (LST-14, #7496); the guard's `count-pill` rule fails one coming back.
+  A list's size is its rows, each marked `data-list-item` — count those.
 - **No "N of M", "Showing X of Y" or "N total" prose** anywhere around a list.
 - Totals exist only as **facet option counts**, computed by the facet pass. `universeEmpty` is a
   boolean, never a count.
-- A number that IS the content (the agent artifact tile's plan counts) is not a list count; it is
-  recorded as a `content` decision.
+- A number that IS the content (the agent artifact tile's plan counts) is not a list count, and
+  it is not a pill: it renders as plain content (`CountFigure` at display size).
 
 ## The guard and its ledger
 
@@ -355,20 +357,21 @@ The census is wider than the filter surfaces: any module that renders a `DataTab
 `useKeysetList`, or hand-rolls an infinite query is a list subject, so a list with no filter bar
 cannot escape. F5 (inverted: no pill) is gated here too.
 
-Every site must be declared in `apps/console/list-standard/<surface>.json` — **one file per
-surface**, so lanes converting surfaces in parallel never edit the same file:
+A site is either fixed or declared in `apps/console/list-standard/<surface>.json` as a **bounded**
+decision — **one file per surface**:
 
 ```json
-{ "kind": "debt", "owner": "#7483", "lane": "LST-1", "why": "…",
-  "findings": { "apps/console/app/(private)/[org]/~/jobs/jobs-client.tsx": { "count-pill": 1 } } }
+{ "kind": "bounded", "decided": "LST-9 (#7491) …", "decision": "…", "bound": "`SSO_PROVIDERS_MAX` (20) …",
+  "findings": { "store:useSsoFilters": { "keyset-contract": 1 } } }
 ```
 
-`debt` names an open LST issue of #7481 (any other owner fails); `bounded` carries `decided`,
-`decision` and `bound` and may excuse only paging rules; `content` carries `decided` and `decision`
-and may excuse only `count-pill`. The declared count must EQUAL the measured one, both ways: a new
-site in an indebted module fails, and so does a declaration that overstates what is left — so
-converting a surface shrinks or deletes its file in the same commit, and that deletion is the proof.
-`bounded` and `content` files sit under ceilings in the script (`LIST_STANDARD_CEILINGS`).
+`bounded` names an unpaged list whose size the product caps, with the SERVER-SIDE bound, and may
+excuse only paging rules — never a count, never a builder. It is the only kind: `debt` (a finding
+with the open LST issue that removed it) and `content` (a count that was the content) were retired
+when the epic closed with LST-14 (#7496), and a file of either kind fails. The declared count must
+EQUAL the measured one, both ways: a new site in a declared module fails, and so does a declaration
+that overstates what is left. Bounded files sit under a ceiling in the script
+(`LIST_STANDARD_CEILINGS`).
 
 ## Realtime
 
