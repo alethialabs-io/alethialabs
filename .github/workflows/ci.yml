@@ -1917,6 +1917,16 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-single-keydown.mjs --self-test
+      # `availability` in packages/core/catalog/catalog.json decides which clouds are offered, and
+      # every offer list derives from it. This fails on a NEW hand-written list of three or more
+      # cloud slugs, and on a hidden cloud named in marketing, docs, blog, README or console page
+      # metadata. The ledger is scripts/cloud-availability-allowlist.yaml (#6950).
+      - name: No hand-written cloud list, no hidden cloud on a user-visible surface
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:cloud-availability
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-cloud-availability.mjs --self-test
       # The allowlist's `baseline:` and `debt:` are entry counts over its own rows, and the file is
       # shared by every conformance lane of #3613. Typed by hand they had two failure shapes: two
       # lanes writing DIFFERENT values conflict and the resolution is arithmetic (recount, then
