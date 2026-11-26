@@ -295,7 +295,9 @@ describe.skipIf(!hasKey)(`agent behavior (real model · ${MODEL})`, () => {
 			);
 			const propose = trace.find((t) => t.toolName === "propose_operation");
 			expect(propose, "the model called propose_operation").toBeDefined();
-			expect(inputField(propose?.input, "projectId")).toBe(PROJECT_ID);
+			// The project id sits inside `operation` (lib/ai/operation.ts); assert it is the real one
+			// list_projects returned, wherever the schema nests it.
+			expect(JSON.stringify(propose?.input ?? null)).toContain(PROJECT_ID);
 			// A plan is proposed for approval; the apply is a separate, later request.
 			expect(names(trace)).not.toContain("request_apply");
 		},
