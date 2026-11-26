@@ -1,0 +1,2 @@
+ALTER TABLE "organization_billing" ADD COLUMN "trial_ending_notice_for" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "organization_billing" ADD COLUMN "trial_ended_notice_for" timestamp with time zone;
