@@ -212,6 +212,22 @@ export function keysetSortKey(column: PgColumn | SQL): SQL {
 	return sql`date_trunc('milliseconds', ${column})`;
 }
 
+/**
+ * {@link keysetSortKey} in a form an index can hold, for a `timestamptz` column: the instant read as
+ * UTC wall time, then truncated to milliseconds. Pair it with {@link keysetUtcAfter}, never with
+ * {@link keysetAfter}.
+ *
+ * Why it exists: `date_trunc(text, timestamptz)` is STABLE — it reads the session TimeZone — and
+ * Postgres refuses a non-IMMUTABLE function in an index expression, so no index can match
+ * {@link keysetSortKey}'s expression. The `timestamp` overload is IMMUTABLE. The order is the same
+ * one: `AT TIME ZONE 'UTC'` is a monotonic bijection and a millisecond boundary does not depend on
+ * the offset. A list whose table is large enough to need its sort indexed uses this, and its index
+ * names the identical expression (the Activity log's `idx_authz_activity_org_ts_ms_id`, #7539).
+ */
+export function keysetUtcSortKey(column: PgColumn): SQL {
+	return sql`date_trunc('milliseconds', (${column} at time zone 'UTC'))`;
+}
+
 /** The ORDER BY of a keyset list: newest first, the id breaking ties, so the order is total. */
 export function keysetOrderBy(sortKey: SQL, id: PgColumn): [SQL, SQL] {
 	return [sql`${sortKey} desc`, sql`${id} desc`];
@@ -236,6 +252,22 @@ export function keysetAfter(
 ): SQL | undefined {
 	if (cursor === undefined) return undefined;
 	return sql`(${sortKey}, ${id}) < (${cursor.at}::timestamptz, ${cursor.id}${idCast(kind)})`;
+}
+
+/**
+ * {@link keysetAfter} for a {@link keysetUtcSortKey}: the cursor's instant is read as UTC wall time
+ * too, so both sides of the comparison are `timestamp` in the same frame. Comparing that key with a
+ * bare `timestamptz` would convert it through the session TimeZone and move the boundary by the
+ * offset on any connection not set to UTC.
+ */
+export function keysetUtcAfter(
+	sortKey: SQL,
+	id: PgColumn,
+	cursor: KeysetPosition | undefined,
+	kind: KeysetIdKind = "uuid",
+): SQL | undefined {
+	if (cursor === undefined) return undefined;
+	return sql`(${sortKey}, ${id}) < ((${cursor.at}::timestamptz at time zone 'UTC'), ${cursor.id}${idCast(kind)})`;
 }
 
 /** How many rows a builder reads for a page of `limit`: one more, which is how the end is known exactly. */
