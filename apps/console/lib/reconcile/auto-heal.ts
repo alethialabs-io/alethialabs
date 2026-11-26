@@ -20,7 +20,9 @@ import { transitionEnv } from "@/lib/db/env-status";
 import { jobs, projectEnvironments } from "@/lib/db/schema";
 import { signedJob } from "@/lib/db/signed-job";
 import { requireApplyAuthorization } from "@/lib/approvals/types";
+import { log } from "@/lib/observability/log";
 import { newTraceparent } from "@/lib/observability/trace";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 import { notifyScaler } from "@/lib/scaler";
 
 /** Circuit breaker: stop auto-healing an env after this many consecutive failed deploys. */
@@ -94,6 +96,18 @@ export async function maybeAutoHeal(
 	// healable state between the guard SELECT above and here) aborts before we queue an orphan auto-heal
 	// job that would deploy onto a torn-down / in-flight env.
 	const enqueued = await db.transaction(async (tx) => {
+		// A project on a cloud this deployment does not offer is never re-applied (#6964): an
+		// auto-heal is a DEPLOY, and nothing new is put on such a cloud. Asked before the CAS, so the
+		// environment is left as it is and the drift stays surfaced for a person.
+		const cloudRefusal = await projectCloudRefusal(tx, projectId);
+		if (cloudRefusal) {
+			log.warn("auto-heal skipped: the project's cloud is not offered", {
+				project_id: projectId,
+				env_id: environmentId,
+				cloud: cloudRefusal.slug,
+			});
+			return false;
+		}
 		const moved = await transitionEnv(tx, environmentId, "enqueueAutoHeal", null, {
 			orgId: env.org_id,
 			projectId,

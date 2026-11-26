@@ -21,6 +21,7 @@ import type {
 	ConnectorGroup,
 	ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
+import { connectorCloudOffered } from "@/lib/connectors/cloud-dependence";
 
 /**
  * The presentation groups the board renders, in display order. One entry per
@@ -227,47 +228,26 @@ export function notOfferedSentence(name: string): string {
 export const NOT_OFFERED_SHORT = "Not available for new projects in this release.";
 
 /**
- * Whether a connector signs in with the CLUSTER'S OWN cloud identity instead of a credential the
- * user gives it. That is every connector outside the cloud group whose `auth_method` is not
- * `api_key` and not `oauth`: the cross-account stores and registries, which hold no credential
- * fields and work only from a cluster running in the cloud whose identity they use.
- */
-function usesClusterCloudIdentity(integration: ConnectorWithConnection): boolean {
-	return (
-		integration.category !== "cloud" &&
-		integration.auth_method !== "api_key" &&
-		integration.auth_method !== "oauth"
-	);
-}
-
-/**
  * The connectors the board lists, out of the catalog the read returned.
  *
  * The read already leaves out the card of a cloud this deployment does not offer (unless the
  * organization has an account on it). One more kind of row depends on a cloud: a connector that
- * signs in with the cluster's own cloud identity ({@link usesClusterCloudIdentity}). With its
- * cloud not offered, no cluster it could run from can be created, so it is left out too. The cloud
- * is found by `auth_method`: such a connector shares its method with exactly the cloud whose
- * identity it uses, so it is listed while an OFFERED cloud card on the board has that method.
+ * signs in with the cluster's own cloud identity. With its cloud not offered, no cluster it could
+ * run from can be created, so it is left out too. The rule is `connectorCloudOffered`
+ * (lib/connectors/cloud-dependence.ts), which the server action that saves a connector credential
+ * also asks, so the board cannot list a connector the server refuses or hide one it accepts.
  *
  * A connector that takes its own credential is never dropped here, whoever makes it: a registry
  * that needs only an API token can be pulled from any cluster.
  *
- * WHAT THIS DOES NOT DO. It is the board's listing only. It does not stop a save for a dropped
- * connector on the server, and it does not reach the other places the catalog is read.
+ * WHAT THIS DOES NOT DO. It is the board's listing only; it does not reach the other places the
+ * catalog is read.
  */
 export function listedConnectors(
 	integrations: ConnectorWithConnection[],
 	offeredClouds: readonly string[],
 ): ConnectorWithConnection[] {
-	const offeredMethods = new Set(
-		integrations
-			.filter((i) => i.category === "cloud" && offeredClouds.includes(i.slug))
-			.map((i) => i.auth_method),
-	);
-	return integrations.filter(
-		(i) => !usesClusterCloudIdentity(i) || offeredMethods.has(i.auth_method),
-	);
+	return integrations.filter((i) => connectorCloudOffered(i, integrations, offeredClouds));
 }
 
 /** The board's filter state (the shape its zustand store holds). */

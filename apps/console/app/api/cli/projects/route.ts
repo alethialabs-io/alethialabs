@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { personalIdentityAuthor } from "@/lib/authz/actor-credential";
 import { authorizeCli } from "@/lib/authz/guard";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 import { actorIdentityWhere } from "@/lib/runners/claim-identity";
@@ -146,6 +147,15 @@ export async function POST(req: Request) {
 	} catch (err: unknown) {
 		if (err instanceof NoDedicatedEnvironmentError) {
 			return NextResponse.json({ error: err.message }, { status: 400 });
+		}
+		// The cloud identity is on a cloud this deployment does not offer (#6811), refused before
+		// anything was written. The caller's request conflicts with the deployment's offered set; it
+		// was a 500 carrying this sentence until #6964.
+		if (err instanceof CloudNotOfferedError) {
+			return NextResponse.json(
+				{ error: err.message, code: "cloud_not_offered" },
+				{ status: 409 },
+			);
 		}
 		const message = err instanceof Error ? err.message : "Internal Server Error";
 		return NextResponse.json({ error: message }, { status: 500 });

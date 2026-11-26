@@ -51,6 +51,7 @@ import {
 } from "@/lib/promotions/gates";
 import { claimApprovalSlot } from "@/lib/promotions/approve";
 import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 
 /** Promotion statuses considered "in flight" (a promotion is still resolving). */
 export const IN_FLIGHT = ["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"] as const;
@@ -343,6 +344,21 @@ async function applyGateDecision(
 					gate_evaluations: evaluation,
 					error_message:
 						"The candidate plan has no recorded plan digest, so it cannot be deployed as reviewed. Promote again to make a new plan.",
+					updated_at: now,
+				})
+				.where(eq(environmentPromotions.id, promotion.id));
+			return;
+		}
+		// Nothing new is deployed onto a cloud this deployment does not offer (#6964). The plan was
+		// queued while it was offered; the promotion stops here, before the CAS, and says why.
+		const cloudRefusal = await projectCloudRefusal(db, promotion.project_id);
+		if (cloudRefusal) {
+			await db
+				.update(environmentPromotions)
+				.set({
+					status: "BLOCKED",
+					gate_evaluations: evaluation,
+					error_message: cloudRefusal.message,
 					updated_at: now,
 				})
 				.where(eq(environmentPromotions.id, promotion.id));
