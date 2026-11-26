@@ -8,7 +8,7 @@
 // org-level waiver (a job with no project and no environment). All authored by an admin who never
 // reads. Two org viewers read through the `evidence.page` reader: VIEWER may view every project;
 // DENIED holds an explicit deny on viewing P. The claim: a reader sees an environment's evidence —
-// its row, its posture, its waivers, and its weight in the facet counts and the summary — exactly
+// its row, its posture, its waivers, and its weight in the facet counts — exactly
 // when they may view its project, and an org-level waiver is org-wide. VIEWER is the positive
 // control: the same rows ARE there for a reader who may see them.
 //
@@ -38,7 +38,8 @@ import {
 	user,
 } from "@/lib/db/schema";
 import { editionState } from "@/lib/enterprise";
-import { type EvidenceResult, readOrgEvidence } from "@/lib/rpc/procedures/evidence";
+import type { EvidencePosturePage } from "@/lib/queries/evidence-posture";
+import { readOrgEvidence, readOrgEvidenceWaivers } from "@/lib/rpc/procedures/evidence";
 import type { VerifyOverrideInput, VerifyReport } from "@/types/jsonb.types";
 import { describeIfDb, purgeAuthzActivityLog, seedJob } from "./db";
 
@@ -72,13 +73,27 @@ function override(reason: string): VerifyOverrideInput {
 }
 
 /** Reads the evidence page as `userId` in the org, as the read router binds it. */
-function readAs(userId: string): Promise<EvidenceResult> {
+function readAs(userId: string): Promise<EvidencePosturePage> {
 	return runWithActor({ userId, orgId: ORG, credential: "session" }, () => readOrgEvidence({}));
 }
 
+/** The job ids of every waiver `userId` sees: the in-force ones the posture groups carry, and the log's. */
+async function waiversSeenBy(userId: string): Promise<{ posture: string[]; log: string[] }> {
+	const page = await readAs(userId);
+	const log = await runWithActor({ userId, orgId: ORG, credential: "session" }, () =>
+		readOrgEvidenceWaivers({ limit: 100 }),
+	);
+	return { posture: page.rows.flatMap((g) => g.waivers.map((w) => w.jobId)), log: log.rows.map((w) => w.jobId) };
+}
+
+/** A status facet's count on a page. */
+function statusCount(page: EvidencePosturePage, value: string): number | undefined {
+	return page.facets?.statusOptions.find((o) => o.value === value)?.count;
+}
+
 /** The environment ids a result lists. */
-function envIds(result: EvidenceResult): string[] {
-	return result.groups.flatMap((g) => g.rows.map((r) => r.environmentId));
+function envIds(result: EvidencePosturePage): string[] {
+	return result.rows.flatMap((g) => g.rows.map((r) => r.environmentId));
 }
 
 describeIfDb("evidence rows follow project visibility", () => {
@@ -200,20 +215,22 @@ describeIfDb("evidence rows follow project visibility", () => {
 			const result = await readAs(DENIED);
 			expect(envIds(result)).not.toContain(ENV_P);
 			expect(envIds(result)).toContain(ENV_Q);
-			expect(result.groups.map((g) => g.label)).not.toContain(`it-6126-${P.slice(0, 8)}`);
+			expect(result.rows.map((g) => g.label)).not.toContain(`it-6126-${P.slice(0, 8)}`);
 		});
 
 		it("sees no waiver of P; Q's and the org-level waiver remain", async () => {
-			const waivers = (await readAs(DENIED)).waivers.map((w) => w.jobId);
-			expect(waivers).not.toContain(seeded.waiverP);
-			expect(waivers).toEqual(expect.arrayContaining([seeded.waiverQ, seeded.waiverOrg]));
+			const { posture, log } = await waiversSeenBy(DENIED);
+			expect(posture).not.toContain(seeded.waiverP);
+			expect(posture).toContain(seeded.waiverQ);
+			expect(log).not.toContain(seeded.waiverP);
+			expect(log).toEqual(expect.arrayContaining([seeded.waiverQ, seeded.waiverOrg]));
 		});
 
-		it("P weighs nothing in the summary or the facet counts", async () => {
+		it("P weighs nothing in the facet counts", async () => {
 			const result = await readAs(DENIED);
-			expect(result.total).toBe(1);
-			expect(result.summary).toMatchObject({ environments: 1, failing: 1, drifted: 1, criticalHighVulns: 1 });
-			expect(result.stageOptions).toEqual([{ value: "production", label: expect.any(String), count: 1 }]);
+			expect(result.universeEmpty).toBe(false);
+			expect([statusCount(result, "failing"), statusCount(result, "drifted"), statusCount(result, "vulns")]).toEqual([1, 1, 1]);
+			expect(result.facets?.stageOptions).toEqual([{ value: "production", label: expect.any(String), count: 1 }]);
 		});
 	});
 
@@ -221,11 +238,10 @@ describeIfDb("evidence rows follow project visibility", () => {
 		it("sees both environments, every waiver, and both in the counts", async () => {
 			const result = await readAs(VIEWER);
 			expect(envIds(result)).toEqual(expect.arrayContaining([ENV_P, ENV_Q]));
-			expect(result.waivers.map((w) => w.jobId)).toEqual(
-				expect.arrayContaining([seeded.waiverP, seeded.waiverQ, seeded.waiverOrg]),
-			);
-			expect(result.total).toBe(2);
-			expect(result.summary).toMatchObject({ environments: 2, failing: 2, drifted: 2, criticalHighVulns: 2 });
+			const { posture, log } = await waiversSeenBy(VIEWER);
+			expect(posture).toEqual(expect.arrayContaining([seeded.waiverP, seeded.waiverQ]));
+			expect(log).toEqual(expect.arrayContaining([seeded.waiverP, seeded.waiverQ, seeded.waiverOrg]));
+			expect([statusCount(result, "failing"), statusCount(result, "drifted"), statusCount(result, "vulns")]).toEqual([2, 2, 2]);
 		});
 	});
 });

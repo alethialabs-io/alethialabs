@@ -16,7 +16,7 @@
 import { Cloud, Layers, ShieldAlert } from "lucide-react";
 import { FunnelFilter, type FunnelFacet } from "@repo/ui/funnel-filter";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import type { EvidenceFacetOption } from "@/lib/rpc/procedures/evidence";
+import type { EvidenceFacetOption } from "@/lib/queries/evidence-posture";
 import {
 	CLOUD_FILTER_VALUES,
 	DEFAULT_EVIDENCE_FILTERS,
