@@ -197,13 +197,13 @@ run "committed_posture_plans_the_immutable_archive" {
   assert {
     condition = (
       length(jsondecode(aws_iam_role.books.assume_role_policy).Statement) == 1 &&
-      jsondecode(aws_iam_role.books.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:alethialabs-io/books:environment:books" &&
+      jsondecode(aws_iam_role.books.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:alethialabs-io@293964056/books@1470091729:environment:books" &&
       jsondecode(aws_iam_role.books.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:aud"] == "sts.amazonaws.com" &&
       jsondecode(aws_iam_role.books.assume_role_policy).Statement[0].Principal.Federated == "arn:aws:iam::450956683176:oidc-provider/token.actions.githubusercontent.com" &&
       !strcontains(aws_iam_role.books.assume_role_policy, "StringLike") &&
       !strcontains(aws_iam_role.books.assume_role_policy, "alethialabs-io/alethialabs")
     )
-    error_message = "books-monthly must trust exactly repo:alethialabs-io/books:environment:books through the account's existing GitHub OIDC provider, with StringEquals."
+    error_message = "books-monthly must trust exactly repo:alethialabs-io@293964056/books@1470091729:environment:books (GitHub's immutable subject) through the account's existing GitHub OIDC provider, with StringEquals."
   }
 
   # books-monthly: grants.
@@ -370,6 +370,15 @@ run "a_wildcard_environment_is_refused" {
   }
 
   expect_failures = [var.books_github_environment]
+}
+
+run "a_non_numeric_repo_id_is_refused" {
+  command = plan
+  variables {
+    books_github_repo_id = "*"
+  }
+
+  expect_failures = [var.books_github_repo_id]
 }
 
 # ── Each check that reads a live value can fire ──────────────────────────────────────────────────

@@ -96,8 +96,11 @@ check "books_role_trusts_one_exact_subject" {
       !strcontains(jsonencode(local.trust_statements), "StringLike"),
       try(local.trust_statements[0].Condition.StringEquals["${local.github_oidc_host}:sub"], "") == local.github_subject,
       try(local.trust_statements[0].Condition.StringEquals["${local.github_oidc_host}:aud"], "") == "sts.amazonaws.com",
+      # GitHub's immutable form (owner@id/name@id). The name-only form is a subject no token from the
+      # books repository presents (oidc.tf), so trusting it is a role nothing can assume.
+      can(regex("^repo:[A-Za-z0-9_.-]+@[1-9][0-9]*/[A-Za-z0-9_.-]+@[1-9][0-9]*:environment:[A-Za-z0-9._-]+$", local.github_subject)),
     ])
-    error_message = "books-monthly must trust exactly ${local.github_subject} (and aud sts.amazonaws.com), with StringEquals and no StringLike."
+    error_message = "books-monthly must trust exactly ${local.github_subject} (and aud sts.amazonaws.com), with StringEquals and no StringLike, in GitHub's immutable form repo:<owner>@<owner_id>/<name>@<repo_id>:environment:<env>."
   }
 }
 
