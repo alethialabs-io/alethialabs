@@ -136,8 +136,9 @@ describe("OverviewToolbar — search and filter controls", () => {
 	});
 });
 
-// R6 B-24: the overview's filters are the console filter standard's controls — the shared cloud
-// filter, a Repository facet and the mono Reset — not a bespoke funnel popover of its own.
+// R6 B-24: the overview's filters are the console filter standard's controls — a Cloud facet, a
+// Repository facet and the mono Reset, on the one-row ListToolbar (#7738) — not a bespoke funnel
+// popover of its own.
 describe("OverviewToolbar — the filter standard (B-24)", () => {
 	/** Renders the toolbar with `state` and a small facet universe. */
 	function renderToolbar(state: OverviewState, onChange = vi.fn()) {
@@ -158,10 +159,35 @@ describe("OverviewToolbar — the filter standard (B-24)", () => {
 
 	it("draws the facet controls in the bar, with no funnel popover", () => {
 		renderToolbar(PRISTINE);
-		expect(screen.getByRole("button", { name: /Repository/ })).toBeInTheDocument();
-		// The shared cloud filter is a combobox whose summary is its input placeholder.
-		expect(screen.getByPlaceholderText("All clouds")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Repository" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Cloud" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Filter and sort" })).toBeNull();
+	});
+
+	it("a selected facet names its values, and its own × clears just that facet", async () => {
+		const onChange = renderToolbar({ ...PRISTINE, clouds: ["aws"], repos: ["https://github.com/acme/web"] });
+		expect(screen.getByRole("button", { name: "Cloud: AWS" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Repository: acme/web" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Clear Cloud" }));
+		expect(onChange).toHaveBeenCalledWith({ clouds: [] });
+		expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ repos: [] }));
+	});
+
+	it("offers each cloud with its count from the unfiltered universe", async () => {
+		renderToolbar(PRISTINE);
+		await userEvent.click(screen.getByRole("button", { name: "Cloud" }));
+		expect(await screen.findByRole("option", { name: "AWS, 2" })).toBeInTheDocument();
+	});
+
+	it("draws no description line and no page toolbar — the row starts with the search", () => {
+		renderToolbar(PRISTINE);
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
+		const row = document.querySelector('[data-slot="filter-search"]')?.parentElement;
+		expect(row?.firstElementChild?.getAttribute("data-slot")).toBe("filter-search");
+		// The view toggle and the two actions sit in the right-aligned group.
+		const end = row?.querySelector('[data-slot="list-toolbar-end"]');
+		expect(end?.querySelector('button[aria-label="Sort by Activity"]')).not.toBeNull();
+		expect(end?.textContent).toContain("Create");
 	});
 
 	it("Reset appears with a selection, counts it, and clears the filters but not the sort", async () => {

@@ -117,16 +117,25 @@ beforeEach(() => {
 	act(() => useEnvironmentsFilters.getState().reset());
 });
 
+/** The page's one toolbar row: the row that holds the environments search. */
+function toolbarRow(): HTMLElement {
+	const row = document.querySelector('[data-slot="filter-search"]')?.parentElement;
+	if (!row) throw new Error("no toolbar holds the environments search");
+	return row;
+}
+
 describe("EnvironmentsView — the data (F010)", () => {
-	it("opens with the toolbar — the description, the actions, no count — and no page title", () => {
+	it("opens with the one-row toolbar — search, facets, the actions on the right, no count, no description — and no page title", () => {
 		renderView(seeded(overviewOf()));
-		const toolbar = document.querySelector('[data-slot="page-toolbar"]');
-		expect(toolbar).not.toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
+		const row = toolbarRow();
 		// No list size anywhere in it (lib/query/README.md → "Counts").
-		expect(toolbar?.textContent).not.toMatch(/\d/);
-		expect(toolbar).toHaveTextContent("Isolated instances of this project's services.");
-		expect(screen.getByRole("button", { name: /new environment/i })).toBeEnabled();
-		expect(screen.getByRole("button", { name: /promote/i })).toBeEnabled();
+		expect(row.textContent).not.toMatch(/\d/);
+		expect(screen.queryByText("Isolated instances of this project's services.")).toBeNull();
+		const end = row.querySelector<HTMLElement>('[data-slot="list-toolbar-end"]');
+		if (!end) throw new Error("the toolbar has no actions group");
+		expect(within(end).getByRole("button", { name: /new environment/i })).toBeEnabled();
+		expect(within(end).getByRole("button", { name: /promote/i })).toBeEnabled();
 		// No heading says what the breadcrumb already says.
 		expect(screen.queryByRole("heading", { name: /^environments/i })).toBeNull();
 	});
@@ -327,12 +336,12 @@ describe("EnvironmentsView — the filter standard", () => {
 		const table = screen.getByRole("table");
 		expect(within(table).getByRole("link", { name: "production" })).toBeInTheDocument();
 		expect(within(table).queryByRole("link", { name: "development" })).toBeNull();
-		expect(document.querySelector('[data-slot="page-toolbar"]')?.textContent).not.toMatch(/\d/);
+		expect(toolbarRow().textContent).not.toMatch(/\d/);
 	});
 
 	it("environments the filters exclude is `no match`, with a way back — never `No environments`", () => {
 		renderView(seeded(overviewOf(), pageOf([DEV, PROD], [])));
-		expect(screen.getByText("No environments match these filters")).toBeInTheDocument();
+		expect(screen.getByText("No environments match these filters.")).toBeInTheDocument();
 		expect(screen.queryByText("No environments")).toBeNull();
 		expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
 	});
@@ -352,11 +361,22 @@ describe("EnvironmentsView — the filter standard", () => {
 		expect(useEnvironmentsFilters.getState().filters.statuses).toEqual(["FAILED"]);
 	});
 
-	it("offers the three stages with their counts, from the read's facets", () => {
+	it("offers the three stages with their counts, from the read's facets", async () => {
 		renderView(seeded(overviewOf()));
-		for (const label of ["Development", "Staging", "Production"]) {
-			expect(screen.getByRole("button", { name: new RegExp(`^${label}`) })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Stage" }));
+		const counts: Record<string, number> = { Development: 1, Staging: 0, Production: 1 };
+		for (const [label, count] of Object.entries(counts)) {
+			expect(await screen.findByRole("option", { name: `${label}, ${count}` })).toBeInTheDocument();
 		}
+	});
+
+	it("a selected stage names itself on the trigger, and its own × clears just that facet", async () => {
+		h.search = new URLSearchParams("stages=production&statuses=FAILED");
+		renderView(seeded(overviewOf()));
+		expect(await screen.findByRole("button", { name: "Stage: Production" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Clear Stage" }));
+		expect(useEnvironmentsFilters.getState().filters.stages).toEqual([]);
+		expect(useEnvironmentsFilters.getState().filters.statuses).toEqual(["FAILED"]);
 	});
 });
 
@@ -397,8 +417,10 @@ describe("EnvironmentsView — the table pages by keyset (LST-3 #7485)", () => {
 		const qc = (client: QueryClient) => client.setQueryData(KEY, overviewOf());
 		renderView(qc);
 		expect(await screen.findByText("Couldn't load environments")).toBeInTheDocument();
-		// The overview still rendered: the toolbar is there.
-		expect(document.querySelector('[data-slot="page-toolbar"]')).not.toBeNull();
+		// The overview still rendered: the toolbar's actions are there — and its filters are not, over
+		// a list that could not be read.
+		expect(document.querySelector('[data-slot="list-toolbar-end"]')).not.toBeNull();
+		expect(screen.queryByRole("textbox", { name: "Search environments" })).toBeNull();
 		expect(screen.queryByText("No environments")).toBeNull();
 	});
 

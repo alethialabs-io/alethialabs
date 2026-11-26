@@ -2,19 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The evidence filter bar — search + the shared funnel popover (Cloud / Stage / Status facets,
-// check-on-the-right). Filter state lives in the page's URL-synced zustand store; grouping is
-// fixed to project, so the funnel carries facets + Reset only (no Group/Sort control). One
-// language with the overview toolbar — both drive the same `@repo/ui/funnel-filter`.
+// The evidence page's funnel — the shared funnel popover (Cloud / Stage / Status facets,
+// check-on-the-right) that rides in the page's one `ListToolbar` as its `extra` (polish-wave spec §3,
+// #7738: per-page variation goes through `extra` only). Filter state lives in the page's URL-synced
+// zustand store; grouping is fixed to project, so the funnel carries facets + Reset only (no
+// Group/Sort control).
 //
-// The bar ALSO renders the bar-level `FilterBarReset` ("Reset · N"), like every other list page
+// The toolbar ALSO renders the row-level "Reset · N", like every other list page
 // (lib/query/README.md). The funnel's own Reset only shows once its popover is open, so without
-// the bar-level one this page lacked the reset affordance the rest of the console shares (#5064).
+// the row-level one this page lacked the reset affordance the rest of the console shares (#5064).
 // Both call the same store `reset`, and both read the same active-filter count.
 
 import { Cloud, Layers, ShieldAlert } from "lucide-react";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
 import { FunnelFilter, type FunnelFacet } from "@repo/ui/funnel-filter";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import type { EvidenceFacetOption } from "@/lib/rpc/procedures/evidence";
@@ -35,8 +34,8 @@ function toggled(selection: string[], value: string): string[] {
 		: [...selection, value];
 }
 
-/** The filter bar; filter state lives in the page's zustand store (URL-synced). */
-export function EvidenceFilterBar({
+/** The Cloud / Stage / Status funnel; filter state lives in the page's zustand store (URL-synced). */
+export function EvidenceFunnel({
 	statusOptions,
 	stageOptions,
 	providerOptions,
@@ -98,25 +97,16 @@ export function EvidenceFilterBar({
 	};
 
 	return (
-		<FilterBar>
-			<FilterSearch
-				value={filters.search}
-				onChange={(v) => set("search", v)}
-				placeholder="Filter by project or environment…"
-				className="w-[240px] max-w-[380px] flex-1"
-			/>
-			<FunnelFilter
-				facets={facets}
-				selected={{
-					providers: filters.providers,
-					stages: filters.stages,
-					status: filters.status,
-				}}
-				onToggle={onToggle}
-				onReset={reset}
-				dirty={activeFilters > 0}
-			/>
-			<FilterBarReset count={activeFilters} onReset={reset} />
-		</FilterBar>
+		<FunnelFilter
+			facets={facets}
+			selected={{
+				providers: filters.providers,
+				stages: filters.stages,
+				status: filters.status,
+			}}
+			onToggle={onToggle}
+			onReset={reset}
+			dirty={activeFilters > 0}
+		/>
 	);
 }

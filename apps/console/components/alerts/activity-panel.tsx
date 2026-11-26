@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Alerts hub · Activity panel (ported from the Alethia Labs design "alerts-hub").
-// The durable delivery ledger: the standard filter bar (search + delivery-status chips,
-// see alerts-filter-bar.tsx) over a table. Bound to the real DeliveryDTO
+// The durable delivery ledger: the one-row `ListToolbar` (search + the delivery-status facet,
+// see alerts-facets.ts) over a table. Bound to the real DeliveryDTO
 // (event/status/attempts/when/error) — the design's per-policy and per-channel columns
 // aren't in the DTO yet, so they're omitted.
 //
@@ -29,18 +29,23 @@
 // the org's ledger holds nothing at all, whatever the filters.
 
 import type { ColumnDef } from "@tanstack/react-table";
-import { Activity, SearchX } from "lucide-react";
+import { Activity } from "lucide-react";
 import { useMemo } from "react";
 import type { DeliveryDTO } from "@/app/server/actions/alerts";
-import { ActivityFilterBar } from "@/components/alerts/alerts-filter-bar";
+import { activityToolbarFacets } from "@/components/alerts/alerts-facets";
+import { DEFAULT_ACTIVITY_FILTERS } from "@/components/alerts/alerts-query";
 import type { ActivityView } from "@/components/alerts/activity-view";
 import { deliveryBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { DataTable } from "@/components/data-table";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useAlertActivityFilters } from "@/lib/stores/use-alerts-filters";
-import { Button } from "@repo/ui/button";
+import { useAlertsSection } from "@/lib/stores/use-alerts-section";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { EmptyState } from "@repo/ui/empty";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { formatDate } from "@repo/format";
 import { ClockSlot } from "@/components/overview/clock-slot";
 import { RegionError } from "@repo/ui/region-error";
@@ -73,7 +78,12 @@ export function ActivityPanel({
 	const rows = list.rows;
 	const state =
 		list.query.data !== undefined ? "ready" : list.query.isError ? "error" : "loading";
+	const filters = useAlertActivityFilters((s) => s.filters);
+	const setFilter = useAlertActivityFilters((s) => s.set);
 	const resetFilters = useAlertActivityFilters((s) => s.reset);
+	// Three sections share the page, so `/` answers only the section in view (the scroll-spy's).
+	const inView = useAlertsSection((s) => s.active === "activity");
+	const { inputRef, shortcut } = useListSearchShortcut({ enabled: inView });
 	// One batched query hydrates every delivery row's classification chips (read-only). The
 	// ledger is filtered and paged SERVER-side, so the subject set is the rows loaded so far.
 	const { data: classMap = NO_ASSIGNMENTS } = useAssignmentsForKind(
@@ -94,7 +104,17 @@ export function ActivityPanel({
 				<RegionError title="Couldn't load activity" onRetry={() => void list.query.refetch()} />
 			) : (
 				<>
-			<ActivityFilterBar facets={facets} />
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (value) => setFilter("search", value),
+					placeholder: "Filter activity by title or event…",
+					inputRef,
+					shortcut,
+				}}
+				facets={activityToolbarFacets(filters, setFilter, facets)}
+				reset={{ count: countActiveFilters(filters, DEFAULT_ACTIVITY_FILTERS), onReset: resetFilters }}
+			/>
 
 			{/* `stale` is the filter standard's `isPlaceholderData` dim: these rows are the
 			    PREVIOUS query's answer, kept so the table does not blank, and marked so they are
@@ -106,17 +126,7 @@ export function ActivityPanel({
 				    yet (`universeEmpty`), or nothing matching, and only the second offers Reset. */}
 				{rows.length === 0 ? (
 					list.universeEmpty === false ? (
-						<EmptyState
-							className="border"
-							icon={<SearchX />}
-							title="No activity matches"
-							description="No delivery matches these filters."
-							action={
-								<Button variant="outline" size="sm" onClick={resetFilters}>
-									Reset filters
-								</Button>
-							}
-						/>
+						<FilterEmpty className="border" noun="deliveries" onClear={resetFilters} />
 					) : (
 						<EmptyState
 							className="border"

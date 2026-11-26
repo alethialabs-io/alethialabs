@@ -742,6 +742,15 @@ test.describe("the live predicates fail when the page is wrong", () => {
 		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/fetches per keystroke reported F10 PASS/);
 	});
 
+	test("F8–F10 — the control names the popover arm when its trigger stops opening the options (#7738)", async ({ page }) => {
+		test.setTimeout(300_000);
+		// Every console facet sits behind a `FacetFilter` trigger since #7738. If discovery stopped
+		// looking behind triggers, the popover bar would go NOT MEASURED and the arm must say so.
+		const mutant = FILTERS_FIXTURE.replace('if (t.id === "kind-trigger") { open = !open; render(); return; }', 'if (t.id === "kind-trigger") return;');
+		expect(mutant, "the mutation must apply").not.toBe(FILTERS_FIXTURE);
+		expect((await filtersControl(page, mutant)).join(" ")).toMatch(/behind a popover trigger reported F8 NOT MEASURED/);
+	});
+
 	test("F8 — the control names the arm when the slow bar stops declaring its placeholder busy", async ({ page }) => {
 		test.setTimeout(300_000);
 		// #4980. Without `aria-busy` the placeholder is indistinguishable from an answer by stillness —

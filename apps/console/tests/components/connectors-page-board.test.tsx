@@ -158,10 +158,12 @@ interface BoardInput {
 	integrations: ConnectorWithConnection[];
 	canManage: boolean;
 	offeredClouds?: string[];
+	/** The server's answer for a FILTERED query, in place of the view over every row. */
+	filteredTo?: { search: string; rows: ConnectorWithConnection[] };
 }
 
-/** Settles the board on `integrations`, with the server's view over all of them. */
-function settle({ integrations, canManage, offeredClouds = ["aws"] }: BoardInput): void {
+/** Settles the board on `integrations`, with the server's view over all of them (or `filteredTo`). */
+function settle({ integrations, canManage, offeredClouds = ["aws"], filteredTo }: BoardInput): void {
 	h.board = {
 		isPending: false,
 		isError: false,
@@ -171,8 +173,8 @@ function settle({ integrations, canManage, offeredClouds = ["aws"] }: BoardInput
 		data: {
 			integrations,
 			view: {
-				query: {},
-				rows: integrations,
+				query: filteredTo ? { search: filteredTo.search } : {},
+				rows: filteredTo ? filteredTo.rows : integrations,
 				facets: { groups: [], health: [], vendors: [] },
 				total: integrations.length,
 			},
@@ -276,8 +278,30 @@ describe("ConnectorsPage — nothing to show", () => {
 		renderBoard();
 
 		expect(screen.getByText("No connectors are available")).toBeInTheDocument();
-		expect(screen.queryByText("No connectors match")).toBeNull();
-		expect(screen.queryByRole("button", { name: "Reset filters" })).toBeNull();
+		expect(screen.queryByText("No connectors match these filters.")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+	});
+});
+
+describe("ConnectorsPage — the one-row toolbar", () => {
+	it("carries search, the three facets and the page's own controls, and no description line", () => {
+		settle({ integrations: [datadog], canManage: true });
+		const { container } = renderBoard();
+		expect(container.querySelector('[data-slot="page-toolbar"]')).toBeNull();
+		expect(screen.queryByText(/Credentials Alethia acts through/)).toBeNull();
+		expect(screen.getByRole("textbox", { name: "Search connectors" })).toBeInTheDocument();
+		for (const facet of ["Status", "Group", "Vendor"]) {
+			expect(screen.getByRole("button", { name: facet })).toBeInTheDocument();
+		}
+		expect(container.querySelector('[data-slot="list-toolbar-end"] a[aria-label="What are connectors?"]')).not.toBeNull();
+	});
+
+	it("filters that match nothing are the shared FilterEmpty, with a Clear filters way back", () => {
+		settle({ integrations: [datadog], canManage: true, filteredTo: { search: "zzz", rows: [] } });
+		renderBoard();
+		expect(screen.getByText("No connectors match these filters.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+		expect(screen.queryByText("No connectors are available")).toBeNull();
 	});
 });
 

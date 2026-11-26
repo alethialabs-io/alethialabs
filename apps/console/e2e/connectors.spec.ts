@@ -7,8 +7,8 @@
 // no accounts, no phantom verification, an untouched setup guide.
 //
 // It used to look for a Radix `<Select>` group filter (`getByRole("combobox")`). That control is
-// gone: the board is on the console filter standard, whose group axis is a `FacetFilter` popover
-// (`components/connectors/connectors-filter-bar.tsx`).
+// gone: the board is on the console filter standard, whose group axis is a `FacetFilter` popover in
+// the one-row `ListToolbar` (`components/connectors/connectors-facets.ts`).
 //
 // Never `getByRole("button", { name: "Connect" })` — the catalog renders a couple of dozen buttons
 // whose visible word is "Connect", so that fails strict mode. Each carries
@@ -39,7 +39,7 @@ test.describe("Connectors page", () => {
 		await page.goto(`/${orgSlug}/~/connectors`);
 		await expect(searchBox(page)).toBeVisible();
 		await expect(page.getByRole("button", { name: /^Group\b/ })).toBeVisible();
-		await expect(page.getByRole("textbox", { name: "All vendors", exact: true })).toBeVisible();
+		await expect(page.locator('[data-slot="facet-filter"]').getByRole("button", { name: "Vendor", exact: true })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Clouds", exact: true })).toBeVisible();
 	});
 

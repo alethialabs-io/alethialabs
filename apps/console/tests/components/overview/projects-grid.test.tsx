@@ -210,7 +210,7 @@ describe("ProjectsGrid — an organization with no project", () => {
 	it("an empty organization under a filter is still the first run, not a filter that missed", () => {
 		renderAnswered(makePage([], { universeEmpty: true }), { ...PRISTINE, q: "zzz" });
 		expect(screen.getByText("No projects yet")).toBeInTheDocument();
-		expect(screen.queryByText("No projects match your filters")).not.toBeInTheDocument();
+		expect(screen.queryByText("No projects match these filters.")).not.toBeInTheDocument();
 	});
 });
 
@@ -219,7 +219,7 @@ describe("ProjectsGrid — a filter that matches nothing", () => {
 		const onClearFilters = vi.fn();
 		const filtered = { ...PRISTINE, q: "zzz" };
 		renderAnswered(makePage([], { universeEmpty: false }), filtered, onClearFilters);
-		expect(screen.getByText("No projects match your filters")).toBeInTheDocument();
+		expect(screen.getByText("No projects match these filters.")).toBeInTheDocument();
 		expect(screen.queryByText("No projects yet")).not.toBeInTheDocument();
 		expect(hrefsOf(/create a project/i)).toEqual([]);
 
