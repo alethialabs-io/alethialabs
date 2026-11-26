@@ -17,10 +17,10 @@
 //      the deadline (payment + 5 days) and the reason, and again each day after that until it is
 //      issued. The alert is claimed with a compare-and-set on `invoice.factura_alerted_at`, so
 //      instances running the sweep at once page once.
-//   3. CREDIT-NOTE PDFS. A credit note whose number and snapshot are committed but whose PDF never
-//      landed (credit-note.ts: the order of writes) is rendered from its snapshot and attached. A
-//      фактура's own PDF is covered by step 1, since an issued-without-PDF фактура leaves its invoice
-//      pending.
+//   3. MISSING PDFS. A credit note, or a manual фактура (manual.ts, L6b), whose number and snapshot
+//      are committed but whose PDF never landed (the order of writes) is rendered from its snapshot
+//      and attached. A Stripe фактура's own PDF is covered by step 1, since an issued-without-PDF
+//      фактура leaves its invoice pending; a manual one has no invoice row, so it is swept here.
 //
 // What it does NOT retry: a refund whose credit note could not be issued because its фактура did not
 // exist yet. That needs the refund, which only the Stripe event carries; the credit-note path
@@ -53,7 +53,7 @@ export const FACTURA_ALERT_AFTER_DAYS = 3;
 /** A repeated page for the same invoice waits at least this long. */
 const REALERT_MS = 24 * 60 * 60 * 1000;
 
-/** A PDF-less credit note younger than this may still be rendering in the request that issued it. */
+/** A PDF-less document younger than this may still be rendering in the request that issued it. */
 const PDF_GRACE_MS = 10 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -79,8 +79,8 @@ export interface SweepStore {
 	 * when it was never paged or last paged before `before`; false when another pass already did.
 	 */
 	claimAlert(invoiceRowId: string, now: Date, before: Date): Promise<boolean>;
-	/** Credit notes with no PDF attached, created before `before`. */
-	creditNotesWithoutPdf(before: Date, limit: number): Promise<Factura[]>;
+	/** Credit notes and manual documents with no PDF attached, created before `before`. */
+	documentsWithoutPdf(before: Date, limit: number): Promise<Factura[]>;
 }
 
 /** The Stripe invoice fields a retry reads: the issuer's, and the hosted page kept beside the фактура. */
@@ -145,11 +145,17 @@ export const dbSweepStore: SweepStore = {
 			.returning({ id: invoice.id });
 		return claimed.length > 0;
 	},
-	async creditNotesWithoutPdf(before, limit) {
+	async documentsWithoutPdf(before, limit) {
 		return getServiceDb()
 			.select()
 			.from(factura)
-			.where(and(eq(factura.kind, "credit_note"), isNull(factura.pdfKey), lte(factura.createdAt, before)))
+			.where(
+				and(
+					or(eq(factura.kind, "credit_note"), eq(factura.source, "manual")),
+					isNull(factura.pdfKey),
+					lte(factura.createdAt, before),
+				),
+			)
 			.orderBy(asc(factura.createdAt))
 			.limit(limit);
 	},
@@ -224,7 +230,7 @@ export async function runFacturaSweep(now: Date = new Date(), deps: Partial<Swee
 		}
 	}
 
-	for (const note of await all.store.creditNotesWithoutPdf(new Date(now.getTime() - PDF_GRACE_MS), SWEEP_BATCH)) {
+	for (const note of await all.store.documentsWithoutPdf(new Date(now.getTime() - PDF_GRACE_MS), SWEEP_BATCH)) {
 		const outcome = await all.document(note).catch((err: unknown): FacturaOutcome => {
 			log.error("[factura] sweep credit-note render failed", { err, number: note.number });
 			return { ok: false, reason: "pdf_failed", detail: "render threw" };

@@ -21,7 +21,7 @@ import type { FacturaLine, FacturaParty, FacturaSnapshot } from "@/types/jsonb.t
 import type { FacturaSource, FacturaSourceLine } from "./checks";
 
 /** The document name of a фактура (Art. 114(1), point 1). */
-const FACTURA_DOCUMENT_NAME = "ФАКТУРА";
+export const FACTURA_DOCUMENT_NAME = "ФАКТУРА";
 
 /** What the snapshot needs beyond the Stripe invoice. */
 export interface SnapshotInputs {
@@ -40,15 +40,19 @@ export interface SnapshotInputs {
 /**
  * The supplier block: the company as registered. The registered address reads "town, district,
  * street…, country"; it is printed street first, then town and district. The country is printed
- * from `country`, as for the recipient.
+ * from `country`, as for the recipient. `vatNumber` is the supplier's VAT number once it is
+ * registered (Art. 114(1), point 4), printed after the ЕИК; the Stripe path passes none.
  */
-function supplierParty(): FacturaParty {
+export function supplierParty(vatNumber: string | null = null): FacturaParty {
 	const parts = LEGAL_ENTITY.registeredAddressBulgarian.split(", ");
 	return {
 		name: `${LEGAL_ENTITY.legalNameBulgarian} ЕДПК`,
 		addressLines: [parts.slice(2, -1).join(", "), parts.slice(0, 2).join(", ")],
 		country: "BG",
-		identifiers: [{ label: "ЕИК / Company ID", value: LEGAL_ENTITY.registrationNumber }],
+		identifiers: [
+			{ label: "ЕИК / Company ID", value: LEGAL_ENTITY.registrationNumber },
+			...(vatNumber ? [{ label: "ДДС № / VAT No.", value: vatNumber }] : []),
+		],
 	};
 }
 
@@ -88,7 +92,7 @@ function line(src: FacturaSourceLine): FacturaLine {
 }
 
 /** The publication date in a rate source such as `ECB:2027-01-14`; the chargeable date otherwise. */
-function rateDate(rate: EurRate, fallback: string): string {
+export function rateDate(rate: EurRate, fallback: string): string {
 	return /^[A-Z]+:(\d{4}-\d{2}-\d{2})$/.exec(rate.source)?.[1] ?? fallback;
 }
 
