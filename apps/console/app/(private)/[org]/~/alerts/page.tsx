@@ -21,7 +21,7 @@ import { pageMetadata } from "@/lib/seo/page-metadata";
 
 export const metadata = pageMetadata({
 	title: "Alerts",
-	description: "Notification channels, alert rules, and delivery activity.",
+	description: "Alert policies, notification channels, and delivery activity.",
 });
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;

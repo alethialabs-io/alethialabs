@@ -16,6 +16,7 @@ import {
 	DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { Skeleton } from "@repo/ui/skeleton";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { MoreVertical, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -97,24 +98,22 @@ export function PoolCard({ pool, economics, canManage, onEdit, onToggle, onDelet
 				<div className="min-w-0 flex-1">
 					<div className="flex items-center gap-2">
 						<span className="truncate text-sm font-semibold tracking-tight text-foreground">{label}</span>
+						{/* The shared status device (R6 C-19), as the connected-agent sheet says "Paused". */}
 						{!pool.enabled && (
-							<span className="shrink-0 border border-border bg-muted px-1.5 font-mono text-ui-3xs uppercase tracking-[0.1em] text-muted-foreground">
-								Paused
-							</span>
+							<StatusBadge className="shrink-0" status="paused" tier="disabled" label="Paused" />
 						)}
 					</div>
 					<div className={cn(MONO_LABEL, "mt-0.5 truncate")}>{pool.locations.join(" · ") || "—"}</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-1.5 pt-0.5">
-					<span
-						className={cn(
-							"size-2 rounded-full",
-							pool.degraded ? "bg-foreground ring-2 ring-inset ring-background" : "bg-foreground",
-						)}
+					{/* Health through the shared status device, not a hand-rolled dot (R6 C-19). Degraded is
+					    `pending`, the tier the connector sheet gives its own "degraded" state: still serving,
+					    not failed. */}
+					<StatusBadge
+						status={pool.degraded ? "degraded" : "healthy"}
+						tier={pool.degraded ? "pending" : "active"}
+						label={pool.degraded ? "Degraded" : "Healthy"}
 					/>
-					<span className={cn("font-mono text-ui-3xs uppercase tracking-[0.1em]", pool.degraded ? "text-foreground" : "text-muted-foreground")}>
-						{pool.degraded ? "Degraded" : "Healthy"}
-					</span>
 					{showMenu && (
 						<DropdownMenu>
 							{/* The destructive-action registry reaches this control through

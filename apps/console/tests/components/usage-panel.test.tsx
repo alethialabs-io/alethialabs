@@ -6,7 +6,7 @@
 // browser's. Asserts the four sections render the read numbers, the header affordance (paid →
 // "Manage billing", Hobby → "Upgrade to Pro"), and the four distinct renders a section can end in.
 
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { money } from "@repo/format";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveAiPriceMap } from "@/lib/billing/pricing";
@@ -20,7 +20,12 @@ vi.mock("@/app/server/actions/billing", () => ({
 	setUsageHardCap: vi.fn(),
 	saveAiSpendLimits: vi.fn(),
 }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// The over-time window and metric are URL state (R6 C-32): the link the panel reads is `url.search`.
+const url = vi.hoisted(() => ({ search: "" }));
+vi.mock("next/navigation", () => ({
+	useRouter: () => ({ push: vi.fn() }),
+	useSearchParams: () => new URLSearchParams(url.search),
+}));
 vi.mock("@/lib/stores/use-workspace-store", () => ({
 	useActiveOrgSlug: () => "acme",
 }));
@@ -112,6 +117,7 @@ const aiPrices: LiveAiPriceMap = {
 };
 
 beforeEach(() => {
+	url.search = "";
 	resetReads();
 	reads.org.mockResolvedValue(usage);
 	reads.resources.mockResolvedValue({
@@ -288,6 +294,52 @@ describe("UsagePanel", () => {
 			renderWithReads(<UsagePanel />);
 			await waitFor(() => expect(reads.overTime).toHaveBeenCalled());
 			expect(reads.overTime.mock.calls[0]?.[0]).toEqual({ range: { preset: "7d" } });
+		});
+
+		// R6 C-32: the window and the metric are URL state, so a link or a refresh reopens them.
+		it("asks for the window the link names, as its preset (`?range=30d`)", async () => {
+			url.search = "?range=30d";
+			reads.summary.mockResolvedValue(summary());
+			renderWithReads(<UsagePanel />);
+			await waitFor(() => expect(reads.overTime).toHaveBeenCalled());
+			expect(reads.overTime.mock.calls[0]?.[0]).toEqual({ range: { preset: "30d" } });
+		});
+
+		it("asks for an explicit window the link names as its two bounds", async () => {
+			url.search = "?range=2026-11-01T00:00:00.000Z/2026-11-08T00:00:00.000Z";
+			reads.summary.mockResolvedValue(summary());
+			renderWithReads(<UsagePanel />);
+			await waitFor(() => expect(reads.overTime).toHaveBeenCalled());
+			expect(reads.overTime.mock.calls[0]?.[0]).toEqual({
+				range: { from: "2026-11-01T00:00:00.000Z", to: "2026-11-08T00:00:00.000Z" },
+			});
+		});
+
+		it("an unreadable `?range=` is the default window, never an error", async () => {
+			url.search = "?range=yesterday-ish";
+			reads.summary.mockResolvedValue(summary());
+			renderWithReads(<UsagePanel />);
+			await waitFor(() => expect(reads.overTime).toHaveBeenCalled());
+			expect(reads.overTime.mock.calls[0]?.[0]).toEqual({ range: { preset: "7d" } });
+		});
+
+		it("opens on the metric the link names, and a pick writes it to the address bar", async () => {
+			window.history.replaceState(null, "", "/acme/~/usage");
+			url.search = "?metric=jobs";
+			reads.summary.mockResolvedValue(summary());
+			renderWithReads(<UsagePanel />);
+			const group = await screen.findByRole("group", { name: "Metric" });
+			const jobs = Array.from(group.querySelectorAll("button")).find((b) => b.textContent === "Jobs");
+			expect(jobs?.getAttribute("aria-pressed")).toBe("true");
+			const first = group.querySelector("button");
+			if (!first) throw new Error("no metric buttons");
+			fireEvent.click(first);
+			// The first metric is the default, so picking it REMOVES the param.
+			expect(window.location.search).toBe("");
+			const last = Array.from(group.querySelectorAll("button")).at(-1);
+			if (!last) throw new Error("no metric buttons");
+			fireEvent.click(last);
+			expect(new URLSearchParams(window.location.search).get("metric")).toBe("aiCredits");
 		});
 	});
 

@@ -22,7 +22,7 @@ import { ORPCError } from "@orpc/client";
 import { useParams, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 import { toast } from "sonner";
-import { Button } from "@repo/ui/button";
+import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { RegionError } from "@/components/errors/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
@@ -168,16 +168,12 @@ export function EvidenceClient() {
 
 					{isError && (
 						// A refresh failed behind rows that are still the last good answer: keep them.
-						<div
-							role="status"
-							data-slot="evidence-stale"
-							className="mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-ui-sm text-text-secondary"
-						>
-							{"Couldn't refresh — showing earlier evidence"}
-							<Button variant="ghost" size="xs" onClick={() => refetch()}>
-								Try again
-							</Button>
-						</div>
+						// The console's one stale-refresh line (R6 C-35), as the runners grid and the tables say it.
+						<StaleRefreshNotice
+							slot="evidence-stale"
+							className="mb-2.5 rounded-md border px-3 py-1.5"
+							onRetry={() => void refetch()}
+						/>
 					)}
 					<div
 						className={
