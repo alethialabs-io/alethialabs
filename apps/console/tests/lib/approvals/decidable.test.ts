@@ -186,7 +186,7 @@ describe("decideApproval re-checks the policy", () => {
 		fakeExecutor(
 			new Map<unknown, unknown[][]>([
 				[applyApprovals, [[row]]],
-				[jobs, [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null }], [], []]],
+				[jobs, [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }], [], []]],
 				[orgAgentPolicy, [[{ agent_access_enabled: false, agents_may_not_apply_to_production: false, require_different_approver: false, approval_ttl_minutes: 60 }]]],
 				[projectEnvironments, [[{ stage: "staging", name: "staging" }]]],
 			]),
@@ -231,7 +231,7 @@ describe("decideApproval and the enterprise allow-list", () => {
 		const fake = fakeExecutor(
 			new Map<unknown, unknown[][]>([
 				[applyApprovals, [[row]]],
-				[jobs, [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null }], [], []]],
+				[jobs, [[{ status: "SUCCESS", created_at: NOW, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }], [], []]],
 				[orgAgentPolicy, [[{ agent_access_enabled: true, agents_may_not_apply_to_production: false, require_different_approver: false, approval_ttl_minutes: 60, allowed_oauth_client_ids: ["https://claude.ai/c.json"] }]]],
 				[projectEnvironments, [[{ stage: "staging", name: "staging" }]]],
 			]),

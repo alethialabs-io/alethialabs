@@ -25,6 +25,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
+	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -1122,6 +1123,9 @@ func buildDeployMetadata(result *provisioner.PlanResult) map[string]any {
 }
 
 func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
+	if job.DestroyPlan {
+		return w.executeDestroyPlan(ctx, job, provider, identity, connectorCreds, stdout, stderr)
+	}
 	vc, err := snapshotToProjectConfig(job.ConfigSnapshot)
 	if err != nil {
 		return fmt.Errorf("failed to parse config snapshot: %w", err)
@@ -1277,6 +1281,22 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 		return err
 	}
 
+	// A DESTROY that names a destroy plan tears down exactly that plan, and only when it carries the
+	// plan's digest (plan_binding.go) — the same rule as a DEPLOY. Checked before any token is minted
+	// or workdir created. A DESTROY that consumed an approval must be bound; one that names no plan
+	// and consumed none (a person's click, the ephemeral reap) runs `tofu destroy` as before.
+	binding, planBound, err := jobPlanBinding(job)
+	if err != nil {
+		return err
+	}
+	if planBound {
+		fmt.Fprintf(stdout, "Validating against destroy plan job %s...\n", binding.planJobID)
+		if err := w.checkPlanJob(job, binding); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, "Destroy plan job validated.")
+	}
+
 	stateBackend, err := w.stateBackend(job.ID)
 	if err != nil {
 		return err
@@ -1291,6 +1311,16 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 	payload := buildDestroyPayload(vc, provider,
 		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
 		w.config.AlethiaURL, job.ID)
+	if planBound {
+		// Handed on only once its digest equals the one the job carries; a bound DESTROY never falls
+		// back to `tofu destroy`.
+		planFile, err := w.fetchReviewedPlan(binding, workDir)
+		if err != nil {
+			return err
+		}
+		payload.PlanFile = planFile
+		fmt.Fprintf(stdout, "Using the reviewed destroy plan from plan job %s (digest %s).\n", binding.planJobID, shortDigest(binding.digest))
+	}
 	stage, err := newStage(sandbox.StageDestroy, payload)
 	if err != nil {
 		return err
@@ -1322,6 +1352,155 @@ func (w *Runner) executeDestroy(ctx context.Context, job *Job, provider string, 
 		fmt.Fprintf(stderr, "Warning: failed to purge tofu state: %v\n", err)
 	}
 	return nil
+}
+
+// destroyPlanFileName is where the stage saves the destroy plan under the job workdir
+// (RunDestroyPlan's PlanOutFile) before handing its bytes back in result.json.
+const destroyPlanFileName = "tofu.destroy.plan"
+
+// executeDestroyPlan runs a destroy-mode PLAN job (#7455): `tofu plan -destroy` over the same
+// workdir a DESTROY builds, through the same sandbox seam, nothing applied. It records what an apply
+// plan records — the plan JSON's resource changes, the saved plan file as the job's plan artifact,
+// and that file's SHA-256 — so a later DESTROY can be bound to it exactly as a DEPLOY is bound to an
+// apply plan. The digest is posted only after the artifact is stored, and a plan whose artifact
+// could not be stored fails: a destroy plan is only useful as the file a DESTROY applies.
+func (w *Runner) executeDestroyPlan(ctx context.Context, job *Job, provider string, identity *CloudIdentity, connectorCreds []ConnectorCredential, stdout, stderr *JobLogger) error {
+	vc, err := snapshotToProjectConfig(job.ConfigSnapshot)
+	if err != nil {
+		return fmt.Errorf("failed to parse config snapshot: %w", err)
+	}
+	if provider == "" {
+		provider = string(vc.Provider)
+	}
+	if provider == "" {
+		provider = "aws"
+	}
+	if identity != nil {
+		vc.CloudAccountID = resolveAccountID(identity)
+	}
+	if vc.CloudAccountID == "" {
+		vc.CloudAccountID = resolveAmbientAccountID(provider)
+	}
+	vc.ConnectorCredentials = toCoreConnectorCreds(connectorCreds)
+
+	// E0 boundary, as for every plan: BYO IaC is untrusted customer tofu.
+	if err := w.byoManagedGate(vc, "PLAN"); err != nil {
+		return err
+	}
+
+	stateBackend, err := w.stateBackend(job.ID)
+	if err != nil {
+		return err
+	}
+
+	workDir, err := newJobWorkDir(job.ID)
+	if err != nil {
+		return fmt.Errorf("create workdir: %w", err)
+	}
+	defer os.RemoveAll(workDir)
+
+	payload := buildDestroyPayload(vc, provider,
+		filepath.Join(resolveProjectTemplatesDir(), provider), resolveCategoriesTemplatesDir(),
+		w.config.AlethiaURL, job.ID)
+	payload.DryRun = true
+	payload.PlanOutFile = filepath.Join(workDir, destroyPlanFileName)
+	stage, err := newStage(sandbox.StageDestroy, payload)
+	if err != nil {
+		return err
+	}
+	sec := stageSecrets{StateToken: stateBackend.Token}
+
+	if err := w.api.UpdateJobStatus(job.ID, "PROCESSING", "", map[string]any{
+		"phase": "tofu_plan", "progress": "Running OpenTofu destroy plan...",
+	}); err != nil {
+		if errors.Is(err, ErrJobNotOwned) {
+			return err
+		}
+		fmt.Fprintf(stderr, "Warning: failed to post plan progress: %v\n", err)
+	}
+
+	if err := w.sandbox.Run(ctx, sandbox.Spec{
+		Kind: "plan", JobID: job.ID, Provider: provider, WorkDir: workDir, Stage: stage,
+		Secrets: sec.specSecrets(),
+		Stdout:  stdout, Stderr: stderr,
+		Warn: func(s string) { fmt.Fprintln(stdout, "[sandbox] "+s) },
+	}, func(ctx context.Context) error {
+		return runDestroyStage(ctx, payload, sec, workDir, stdout, stderr)
+	}); err != nil {
+		return err
+	}
+
+	// The saved plan comes back as bytes in result.json (never as a path the stage chose), is
+	// hashed here in the parent, and is stored from a file the parent writes itself.
+	result, err := readPlanResult(workDir)
+	if err != nil || result == nil || len(result.PlanFileBytes) == 0 {
+		return fmt.Errorf("the destroy plan finished but returned no saved plan file (stage result: %v)", err)
+	}
+	digest := verify.PlanSHA256(result.PlanFileBytes)
+	tmpPlan := filepath.Join(os.TempDir(), fmt.Sprintf("destroy-plan-%s.out", job.ID))
+	if err := utils.WriteSecretFile(tmpPlan, result.PlanFileBytes); err != nil {
+		return fmt.Errorf("the destroy plan finished but its plan file could not be written for upload: %w", err)
+	}
+	uploadErr := w.api.UploadPlanArtifact(job.ID, tmpPlan)
+	_ = os.Remove(tmpPlan)
+	if uploadErr != nil {
+		return fmt.Errorf("the destroy plan finished but its plan file could not be stored: %w", uploadErr)
+	}
+	fmt.Fprintf(stdout, "Destroy plan artifact uploaded to storage (digest %s).\n", shortDigest(digest))
+
+	metadata := map[string]any{
+		"plan_completed":   true,
+		"destroy_plan":     true,
+		"plan_file_key":    fmt.Sprintf("%s/tofu.plan.out", job.ID),
+		"plan_file_sha256": digest,
+		// No resource_changes key is how tofu reports a teardown of empty state.
+		"plan_result": map[string]any{"resource_changes": destroyPlanChanges(result.PlanJSON["resource_changes"])},
+	}
+
+	// The plan result IS the plan job's output (the DESTROY that follows is bound to its digest), so
+	// a post that did not land fails the job instead of reporting a SUCCESS with nothing recorded.
+	if err := w.postMetadataWithRetry(job.ID, metadata); err != nil {
+		return fmt.Errorf("the destroy plan finished but its result was not recorded: %w", err)
+	}
+	return nil
+}
+
+// destroyPlanChangeKeys are the fields of a resource change kept in a destroy plan's posted result:
+// which resource, and what happens to it. Everything else is dropped.
+var destroyPlanChangeKeys = []string{"address", "module_address", "mode", "type", "name", "index", "provider_name"}
+
+// destroyPlanChanges reduces a destroy plan's resource_changes to what a reviewer reads: each
+// resource's identity and its actions. A teardown's `before` is the resource's whole current state —
+// every attribute, sensitive ones included — and none of it is needed to say what will be removed, so
+// none of it is copied into the persisted job metadata. The saved plan file, which the DESTROY
+// applies, is stored as the plan artifact like an apply plan's.
+func destroyPlanChanges(raw any) []any {
+	list, ok := raw.([]any)
+	if !ok {
+		return []any{}
+	}
+	out := make([]any, 0, len(list))
+	for _, el := range list {
+		rc, ok := el.(map[string]any)
+		if !ok {
+			continue
+		}
+		kept := make(map[string]any, len(destroyPlanChangeKeys)+1)
+		for _, k := range destroyPlanChangeKeys {
+			if v, ok := rc[k]; ok {
+				kept[k] = v
+			}
+		}
+		actions := []any{}
+		if change, ok := rc["change"].(map[string]any); ok {
+			if a, ok := change["actions"].([]any); ok {
+				actions = a
+			}
+		}
+		kept["change"] = map[string]any{"actions": actions}
+		out = append(out, kept)
+	}
+	return out
 }
 
 func getSnapshotString(snapshot map[string]any, key string) string {

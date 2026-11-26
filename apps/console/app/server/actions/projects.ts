@@ -2527,17 +2527,31 @@ export async function tryQueueDriftDetection(
 	return refusalAsValue(() => queueDriftDetection(...args));
 }
 
+/** Options for {@link planProject}. */
+export interface PlanProjectOptions {
+	/**
+	 * Plan a teardown of the environment (`tofu plan -destroy`) instead of an apply (#7455). The PLAN
+	 * is marked `destroy_plan`, built from the snapshot a DESTROY would use, and its saved plan is
+	 * what a DESTROY approved against it tears down (lib/approvals/plan-binding.ts). Nothing is
+	 * destroyed by the plan itself.
+	 */
+	destroy?: boolean;
+}
+
 /**
  * Queues a PLAN job for the project's target environment. `approvalKey` (the agent's approval card
  * passes `threadId:toolCallId`, #5797) makes it at most once per key: a repeated call returns the
- * job the key already queued — before any gate runs, and without queuing another.
+ * job the key already queued — before any gate runs, and without queuing another. With
+ * `options.destroy` the plan is a destroy-mode plan.
  */
 export async function planProject(
 	projectId: string,
 	runnerId?: string | null,
 	environmentId?: string | null,
 	approvalKey?: string | null,
+	options: PlanProjectOptions = {},
 ) {
+	const destroyPlan = options.destroy === true;
 	const actor = await authorize("plan", { type: "project", id: projectId });
 	// Defense-in-depth: a client-supplied assigned runner must belong to the
 	// caller's org (claim_next_job blocks the execution, this blocks the enqueue).
@@ -2559,17 +2573,20 @@ export async function planProject(
 	await assertUsageAllowed(actor.orgId);
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
+	// A destroy plan is built from the snapshot a DESTROY of this environment builds, so the teardown
+	// it plans is the one the destroy would run.
 	const { identity, environment, configSnapshot, iacSource } =
 		await buildConfigSnapshot(
 			actor,
 			projectId,
 			environmentId,
-			"plan",
+			destroyPlan ? "destroy" : "plan",
 		);
 	assertIacSourceQueueable(iacSource, "plan");
 	// A promotion deploys this plan's own snapshot (promotions/lifecycle.ts), so a plan whose deploy
 	// would push a GitOps add-on to a read-only apps repo is refused here, before anyone approves it.
-	assertGitopsDeliveryQueueable(configSnapshot);
+	// A destroy plan is never deployed, so the delivery gate does not apply to it.
+	if (!destroyPlan) assertGitopsDeliveryQueueable(configSnapshot);
 
 	const result = await withScope(
 		{ ownerId: owner, orgId: actor.orgId },
@@ -2584,6 +2601,7 @@ export async function planProject(
 					cloud_identity_id: identity.id,
 					initiated_by: "user",
 					job_type: "PLAN",
+					destroy_plan: destroyPlan,
 					config_snapshot: configSnapshot,
 					// What a deploy of this plan compares against to know the plan is still current
 					// (lib/approvals/plan-binding.ts); the runner compares it again before applying.

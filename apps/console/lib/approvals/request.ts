@@ -10,7 +10,7 @@ import { getPdp } from "@/lib/authz";
 import type { Actor } from "@/lib/authz/types";
 import { applyApprovals, jobs } from "@/lib/db/schema";
 import type { ApplyApproval } from "@/lib/db/schema/agent-surface";
-import { appliedState, bindingStaleReason, type Executor, staleMessage } from "./binding";
+import { bindingStaleReason, type Executor, staleMessage } from "./binding";
 import { readAgentPolicy, readEnvironment } from "./context";
 import { enterpriseAgentPolicy } from "./enterprise-policy";
 import { planDigestOf } from "./plan-binding";
@@ -23,7 +23,7 @@ export const MAX_REASON_LENGTH = 500;
 
 /** What is asked for. */
 export interface ApprovalRequestInput {
-	/** The reviewed PLAN job. For a destroy, the plan the environment's current state was applied from. */
+	/** The reviewed PLAN job: an apply plan for a deploy, a destroy-mode plan for a destroy. */
 	planJobId: string;
 	operation: ApplyOperation;
 	/** The requester's note, untrusted. */
@@ -36,7 +36,9 @@ export interface ApprovalRequestInput {
  * `db`, which the caller opens in the actor's tenancy scope.
  *
  * Refused (an {@link ApprovalError}) when the actor lacks the PDP verb on the project, when the plan is
- * not this org's, has not succeeded, has no digest, failed verification or is no longer current, and
+ * not this org's, is not the kind of plan the operation runs (a destroy is approved only against a
+ * destroy-mode plan, a deploy never against one), has not succeeded, has no digest, failed
+ * verification or is no longer current, and
  * when the org's agent policy refuses the operation outright (including, through the enterprise agent
  * policy, an OAuth client outside the org's allow-list). A pending approval of an older plan for
  * the same environment and operation is marked superseded.
@@ -56,6 +58,7 @@ export async function requestApproval(
 			configuration_hash: jobs.configuration_hash,
 			plan_sha256: jobs.plan_sha256,
 			execution_metadata: jobs.execution_metadata,
+			destroy_plan: jobs.destroy_plan,
 		})
 		.from(jobs)
 		.where(and(eq(jobs.id, input.planJobId), eq(jobs.job_type, "PLAN")))
@@ -89,6 +92,20 @@ export async function requestApproval(
 		if (refusal) throw new ApprovalError("not_permitted", refusal);
 	}
 
+	// The plan's kind is part of what is approved: a destroy tears down exactly a destroy plan, and a
+	// deploy never applies one (the runner checks the same, apps/runner/internal/agent/plan_binding.go).
+	if (input.operation === "destroy" && !plan.destroy_plan) {
+		throw new ApprovalError(
+			"plan_not_approvable",
+			`Plan ${plan.id} is not a destroy plan. A destroy is approved against a destroy plan of the environment: queue one, wait for it to succeed, then request the approval for it.`,
+		);
+	}
+	if (input.operation === "deploy" && plan.destroy_plan) {
+		throw new ApprovalError(
+			"plan_not_approvable",
+			`Plan ${plan.id} is a destroy plan, and a deploy never applies a teardown. Plan the environment, then request the approval for that plan.`,
+		);
+	}
 	if (plan.status !== "SUCCESS") {
 		throw new ApprovalError("plan_not_approvable", `Plan ${plan.id} has not succeeded (status ${plan.status}).`);
 	}
@@ -102,18 +119,9 @@ export async function requestApproval(
 			`Plan ${plan.id} failed verification, and an approval does not waive a failed verification.`,
 		);
 	}
-	if (input.operation === "destroy") {
-		const applied = await appliedState(db, environmentId);
-		if (!applied || applied.planJobId !== plan.id) {
-			throw new ApprovalError(
-				"plan_not_approvable",
-				"A destroy is approved against the plan the environment's current state was deployed from. Name that plan.",
-			);
-		}
-	}
 	const binding = { environment_id: environmentId, operation: input.operation, plan_job_id: plan.id, plan_sha256: digest };
 	const stale = await bindingStaleReason(db, binding);
-	if (stale) throw new ApprovalError("plan_not_approvable", staleMessage(stale));
+	if (stale) throw new ApprovalError("plan_not_approvable", staleMessage(stale, input.operation));
 
 	const credentialRef = actor.credentialRef ?? null;
 	const sameRequester = and(
