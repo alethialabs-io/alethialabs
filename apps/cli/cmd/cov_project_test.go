@@ -551,6 +551,8 @@ func projResetFlags() {
 	designApplyDryRun, designApplyStage, designApplyYes = false, false, false
 	componentRemoveYes, projectDestroyYes = false, false
 	projectDestroyCascade = false
+	projectDestroyPlanJobID, projectDestroyLatestPlan, projectDestroyNoWait = "", false, false
+	projectPlanDestroy = false
 	channelType, channelURL, channelSigningSecret, channelRoutingKey = "", "", "", ""
 	channelRecipients = nil
 	_ = projectComponentCmd.PersistentFlags().Set("project", "")
