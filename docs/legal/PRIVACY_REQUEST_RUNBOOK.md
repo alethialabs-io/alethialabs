@@ -15,12 +15,14 @@ Target response: one month from receipt
    settings opens an erasure case themselves (`requestMyErasure` in
    `apps/console/app/server/actions/privacy/self-serve.ts`), recorded as
    session-verified, and the privacy inbox is emailed. A request that arrives
-   by email is opened with `openPrivacyCase` in
-   `apps/console/app/server/actions/privacy/cases.ts`. No console or admin
-   screen calls `openPrivacyCase`, `verifyPrivacyCaseIdentity` or
-   `fulfilErasure` yet, so until one does, keep the details the case table
-   does not hold (jurisdiction, systems searched, evidence location) in the
-   restricted privacy-request register.
+   by email is recorded by a platform admin on the staff app's **Privacy**
+   page (`apps/admin/app/privacy`), with the day it arrived so the clock starts
+   at receipt. The same page lists every overdue and open case, and each case
+   page verifies identity, extends once, applies a legal hold, fulfils an
+   erasure (behind a typed confirmation) or refuses with grounds. Every step
+   is written to the case ledger and to `platform_audit`. The case table does
+   not hold jurisdiction, systems searched or evidence location: keep those in
+   the restricted privacy-request register, never in a case reason.
 2. Acknowledge promptly. Never copy the request or identity evidence into Git,
    issue trackers, analytics, or ordinary chat.
 3. Triage whether Alethia is controller. If a business customer is controller,
