@@ -681,6 +681,11 @@
 
   /* Reports on everything above, so it outranks everything above. */
   --z-toast: 300;
+
+  /* The marketing intro splash (.ah-intro, #7742). Above everything, toasts included,
+     because it covers the whole page for at most ~1.4s on a first load; it is
+     pointer-events:none, so it covers without blocking anything underneath. */
+  --z-intro: 400;
 }
 
 /* ── Page chrome ─────────────────────────────────────────────────────────────
@@ -1226,5 +1231,141 @@
     transform: none;
     filter: none;
     opacity: 1;
+  }
+}
+
+/* ============================================================
+   The marketing intro splash — IntroSplash (site/intro-splash.tsx), once per browser
+   session. Polish-wave spec §1 (#7735, #7742). CSS only, like .ah-mark: no motion
+   library, and the whole sequence runs from first paint, before any JavaScript.
+
+     0–520ms     the brackets close in from ±56px, blur 6px → 0, opacity 0 → 1, on the
+                 .ah-mark curve; the dot scales 0 → 1.25 → 1. They close onto the
+                 compact [·], so the lockup starts as the mark.
+     380–1030ms  "Alethia" and "LABS" unfold out of the dot, blur 3px → 0: the header
+                 logo's fold played in reverse, so the splash hands off to the header.
+     760–1180ms  the motto fades up 6px.
+     from hydration, floor 420ms (JS) / cap 1150ms (here): a 240ms fade out.
+
+   NO LAYOUT PROPERTY IS ANIMATED. The lockup is laid out at its final width from the
+   first frame. The unfold the header draws with max-width is drawn here with
+   transform and clip-path, because an animated max-width moves the brackets and the
+   dot by re-layout every frame, and each of those frames is a layout shift that
+   would count against CLS. The compact offsets are derived from the lockup's own
+   geometry (.ah-mark, above):
+     final width − compact width = 1.0625s + Wa + Wl   (s = --mark-s)
+     each bracket travels half of that; the dot travels (Wl − Wa)/2 − 0.05s,
+   where Wa and Wl are the words' widths: em estimates here, replaced by the
+   component's measurement (--intro-wa / --intro-wl, inline) once it hydrates.
+   ============================================================ */
+.ah-intro {
+  --intro-ease: cubic-bezier(.65, 0, .35, 1);
+  --intro-exit: cubic-bezier(.22, 1, .36, 1);
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-intro);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Load-bearing, and on the overlay itself: it stays mounted and full-screen while it
+     fades, and must never catch a click in that time. The component also carries the
+     Tailwind class; this keeps the rule true in an app that does not scan the package. */
+  pointer-events: none;
+  background: var(--background);
+  color: var(--foreground);
+  transition: opacity 240ms var(--intro-exit);
+  /* The cap. If hydration is late, no effect has run to dismiss the overlay, so the
+     stylesheet does it: at 1150ms the overlay fades whether or not React ever arrives. */
+  animation: ah-intro-out 240ms var(--intro-exit) 1150ms forwards;
+}
+.ah-intro[data-leaving] { opacity: 0; }
+/* Once per session: the <head> gate (site/intro-gate.ts) marks a repeat load before
+   first paint, so the overlay never paints at all. */
+[data-intro="skip"] .ah-intro { display: none; }
+/* The scroll lock, set and released by the component on <html>. `scrollbar-gutter`
+   keeps the space the scrollbar had, so locking does not shift the page sideways. */
+html[data-intro-lock] {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+.ah-intro__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+.ah-intro .ah-mark {
+  --mark-s: 64px;
+  --intro-wa: calc(var(--mark-s) * .625 * 2.95);
+  --intro-wl: calc(var(--mark-s) * .3125 * 3.28);
+  --intro-open: calc((var(--mark-s) * 1.0625 + var(--intro-wa) + var(--intro-wl)) / 2);
+  --intro-dot: calc((var(--intro-wl) - var(--intro-wa)) / 2 - var(--mark-s) * .05);
+}
+@media (max-width: 899.98px) {
+  .ah-intro .ah-mark { --mark-s: 48px; }
+}
+/* The spec's tracking for the splash. LABS' tracking is an inline style on the lockup
+   (TAG_TRACKING in lockup.tsx), so only !important can restate it here. */
+.ah-intro .ah-mark__alethia { letter-spacing: -0.035em; }
+.ah-intro .ah-mark__labs { letter-spacing: .22em !important; }
+
+/* Brackets: `translate` closes them in, `transform` opens them out. Two properties, so
+   the two overlapping animations compose instead of one replacing the other. */
+.ah-intro .ah-mark__br {
+  animation:
+    ah-intro-close-l 520ms var(--intro-ease) both,
+    ah-intro-open-l 650ms var(--intro-ease) 380ms backwards;
+}
+.ah-intro .ah-mark__br:last-child {
+  animation-name: ah-intro-close-r, ah-intro-open-r;
+}
+.ah-intro .ah-mark__dot {
+  animation:
+    ah-intro-dot-pop 520ms var(--intro-ease) both,
+    ah-intro-dot-open 650ms var(--intro-ease) 380ms backwards;
+}
+.ah-intro .ah-mark__alethia { animation: ah-intro-reveal-l 650ms var(--intro-ease) 380ms backwards; }
+.ah-intro .ah-mark__labs { animation: ah-intro-reveal-r 650ms var(--intro-ease) 380ms backwards; }
+.ah-intro .ah-mark__alethia > span { animation: ah-intro-slide-l 650ms var(--intro-ease) 380ms backwards; }
+.ah-intro .ah-mark__labs > span { animation: ah-intro-slide-r 650ms var(--intro-ease) 380ms backwards; }
+.ah-intro__motto {
+  margin: 0;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-weight: 500;
+  font-size: var(--text-ui-sm);
+  letter-spacing: .26em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  animation: ah-intro-motto 420ms var(--intro-ease) 760ms backwards;
+}
+
+/* Each keyframe names only its starting state; the end is the element's own style. */
+@keyframes ah-intro-close-l { from { translate: -56px 0; filter: blur(6px); opacity: 0; } }
+@keyframes ah-intro-close-r { from { translate: 56px 0; filter: blur(6px); opacity: 0; } }
+@keyframes ah-intro-open-l { from { transform: translateX(var(--intro-open)); } }
+@keyframes ah-intro-open-r { from { transform: translateX(calc(var(--intro-open) * -1)); } }
+@keyframes ah-intro-dot-pop {
+  0%   { scale: 0; }
+  60%  { scale: 1.25; }
+  100% { scale: 1; }
+}
+@keyframes ah-intro-dot-open { from { transform: translateX(var(--intro-dot)); } }
+@keyframes ah-intro-reveal-l { from { clip-path: inset(0 0 0 100%); filter: blur(3px); opacity: 0; } }
+@keyframes ah-intro-reveal-r { from { clip-path: inset(0 100% 0 0); filter: blur(3px); opacity: 0; } }
+@keyframes ah-intro-slide-l { from { transform: translateX(40%); } }
+@keyframes ah-intro-slide-r { from { transform: translateX(-40%); } }
+@keyframes ah-intro-motto { from { opacity: 0; transform: translateY(6px); } }
+@keyframes ah-intro-out { to { opacity: 0; visibility: hidden; } }
+
+/* Reduced motion: the complete lockup and motto from the first frame, nothing moving.
+   `animation: none` on the parts, not a short duration: the apps' global reset
+   (`* { animation-duration: .01ms !important }`) would otherwise still play each one
+   as a one-frame jump. The overlay itself keeps the cap, made instant, and leaves
+   without a fade (the component unmounts it at the floor). */
+@media (prefers-reduced-motion: reduce) {
+  .ah-intro * { animation: none !important; }
+  .ah-intro {
+    transition: none;
+    animation-duration: 1ms;
   }
 }

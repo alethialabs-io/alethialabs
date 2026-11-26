@@ -27,6 +27,8 @@
     "./site-primitives": "./src/site/primitives.tsx",
     "./github-stars": "./src/site/github-stars.ts",
     "./site-sections": "./src/site/page-sections.tsx",
+    "./site-intro-splash": "./src/site/intro-splash.tsx",
+    "./site-intro-gate": "./src/site/intro-gate.ts",
     "./cover": "./src/cover/news-cover.tsx",
     "./news-feeds": "./src/news/feeds.ts"
   },
