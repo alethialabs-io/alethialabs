@@ -3,7 +3,7 @@
 
 // The connectors board's four renders (#6124, RUBRIC B3/B4): pending is the board-shaped skeleton,
 // a refused read is its own state, a failed read is a region error with a retry, and data is the
-// board — an error is never an empty board, and pending is never "No connectors match". Also: the
+// board — an error is never an empty board, and pending is never the filtered "no match". Also: the
 // board sets no timer (the 30 s `router.refresh()` loop is gone; the bus keeps it live).
 
 import { ORPCError, createORPCClient } from "@orpc/client";
@@ -114,7 +114,7 @@ describe("ConnectorsPage — the four renders of its read", () => {
 		board.state = { ...settled, isPending: true };
 		const { container } = renderBoard();
 		expect(container.querySelector('[data-skeleton="connectors"]')).not.toBeNull();
-		expect(screen.queryByText("No connectors match")).toBeNull();
+		expect(screen.queryByText("No connectors match these filters.")).toBeNull();
 	});
 
 	it("failed: a region error with a retry — not an empty board, not a skeleton", () => {
@@ -122,7 +122,7 @@ describe("ConnectorsPage — the four renders of its read", () => {
 		const { container } = renderBoard();
 		expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load connectors");
 		expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
-		expect(screen.queryByText("No connectors match")).toBeNull();
+		expect(screen.queryByText("No connectors match these filters.")).toBeNull();
 		expect(container.querySelector('[data-skeleton="connectors"]')).toBeNull();
 	});
 

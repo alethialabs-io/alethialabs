@@ -60,6 +60,18 @@ beforeEach(() => {
 	}
 });
 
+describe("OverviewSkeleton — the toolbar row (#7738)", () => {
+	it("is the ListToolbar's own skeleton: search, two facets, the view toggle and two actions", () => {
+		const { container } = renderSkeleton({});
+		const toolbar = container.querySelector('[data-slot="list-toolbar-skeleton"]');
+		expect(toolbar).not.toBeNull();
+		expect(toolbar?.querySelectorAll('[data-part="search"]')).toHaveLength(1);
+		expect(toolbar?.querySelectorAll('[data-part="facet"]')).toHaveLength(2);
+		expect(toolbar?.querySelectorAll('[data-part="view"]')).toHaveLength(1);
+		expect(toolbar?.querySelectorAll('[data-part="action"]')).toHaveLength(2);
+	});
+});
+
 describe("OverviewSkeleton — the projects area", () => {
 	it("one placeholder per project: one project sets one card beside the cards column", () => {
 		renderSkeleton({ projects: projects(1) });

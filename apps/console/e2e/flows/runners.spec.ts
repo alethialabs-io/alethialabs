@@ -41,6 +41,13 @@ test.describe.configure({ timeout: 90_000 });
 const RUNNERS_PATH = (slug: string) => `/${slug}/~/runners`;
 
 /** A runner card, located by the name printed in its header. */
+/**
+ * A toolbar facet's button by its accessible name — `Status` idle, `Status: Online` selected, or the
+ * sibling `Clear Status` — scoped to the `FacetFilter` boxes (polish-wave spec §3, #7738).
+ */
+const facetTrigger = (page: import("@playwright/test").Page, name: string) =>
+	page.locator('[data-slot="facet-filter"]').getByRole("button", { name, exact: true });
+
 const cardFor = (page: import("@playwright/test").Page, name: string) =>
 	page.locator('[data-slot="card"]').filter({ hasText: name });
 
@@ -288,31 +295,30 @@ test.describe("Runners — the console filter standard", () => {
 		);
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await team.page.getByRole("textbox", { name: "Search runners", exact: true }).fill("zzz-nonexistent-xyz");
-		await expect(team.page.getByText("No runners match your filters.")).toBeVisible({
+		await expect(team.page.getByText("No runners match these filters.", { exact: true })).toBeVisible({
 			timeout: 10_000,
 		});
 	});
 
 	test("the bar carries all six axes the runner filter store declares", async ({ team }) => {
 		// `use-runner-filters.ts` declares search + clouds + statuses + operators + regions +
-		// versions. The previous spec looked for a "Filters" POPOVER holding status and operator —
-		// a shape `runners-toolbar.tsx` has not had since the chip groups were promoted to
-		// @repo/ui/filter-chip and inlined (`FilterChipGroup inline`). There is no Filters button
-		// on this page, so that test could only ever have been red.
+		// versions. Since #7738 every axis but the search is a `FacetFilter` in the one-row
+		// `ListToolbar`, named for its facet while nothing is selected.
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
 		await expect(team.page.getByRole("textbox", { name: "Search runners", exact: true })).toBeVisible({
 			timeout: 15_000,
 		});
-		await expect(team.page.getByRole("textbox", { name: "All clouds", exact: true })).toBeVisible();
-		// Status + operator are always-visible chips, not a popover.
-		await expect(team.page.getByRole("button", { name: "Online", exact: true })).toBeVisible();
-		await expect(team.page.getByRole("button", { name: "Draining", exact: true })).toBeVisible();
-		await expect(
-			team.page.getByRole("button", { name: "Self · Registered", exact: true }),
-		).toBeVisible();
-		// Region + version are facet popovers.
-		await expect(team.page.getByRole("button", { name: "Region" })).toBeVisible();
-		await expect(team.page.getByRole("button", { name: "Version" })).toBeVisible();
+		for (const facet of ["Cloud", "Status", "Operator", "Region", "Version"]) {
+			await expect(facetTrigger(team.page, facet), `${facet} facet`).toBeVisible();
+		}
+		// Status + operator carry their options inside their popovers.
+		await facetTrigger(team.page, "Status").click();
+		await expect(team.page.getByRole("option", { name: "Online", exact: true })).toBeVisible();
+		await expect(team.page.getByRole("option", { name: "Draining", exact: true })).toBeVisible();
+		await team.page.keyboard.press("Escape");
+		await facetTrigger(team.page, "Operator").click();
+		await expect(team.page.getByRole("option", { name: "Self · Registered", exact: true })).toBeVisible();
+		await team.page.keyboard.press("Escape");
 	});
 
 	test("a chip selection mirrors into the URL and Reset clears both", async ({ team }) => {
@@ -320,16 +326,21 @@ test.describe("Runners — the console filter standard", () => {
 		// `useFilterUrlSync` mirrors non-default values into the query string, so a filtered view
 		// is shareable. Asserting the URL is what makes that half testable at all.
 		await team.page.goto(RUNNERS_PATH(team.orgSlug));
-		const online = team.page.getByRole("button", { name: "Online", exact: true });
-		await expect(online).toBeVisible({ timeout: 15_000 });
+		const status = facetTrigger(team.page, "Status");
+		await expect(status).toBeVisible({ timeout: 15_000 });
 
+		await status.click();
+		const online = team.page.getByRole("option", { name: "Online", exact: true });
 		await online.click();
 		await expect(team.page).toHaveURL(/statuses=ONLINE/);
-		await expect(online).toHaveAttribute("aria-pressed", "true");
+		await expect(online).toHaveAttribute("aria-selected", "true");
+		await team.page.keyboard.press("Escape");
+		await expect(facetTrigger(team.page, "Status: Online")).toBeVisible();
 
 		await team.page.getByRole("button", { name: /^Reset/ }).click();
 		await expect(team.page).not.toHaveURL(/statuses=/);
-		await expect(online).toHaveAttribute("aria-pressed", "false");
+		await expect(facetTrigger(team.page, "Status")).toBeVisible();
+		await expect(facetTrigger(team.page, "Status: Online")).toHaveCount(0);
 	});
 
 	test("a pasted filter URL hydrates the bar and narrows the grid", async ({ team }) => {
@@ -345,9 +356,7 @@ test.describe("Runners — the console filter standard", () => {
 		// absence to mean the filter ran rather than the list simply not having loaded.
 		await expect(cardFor(team.page, live)).toBeVisible({ timeout: 15_000 });
 		await expect(cardFor(team.page, down)).toHaveCount(0);
-		await expect(
-			team.page.getByRole("button", { name: "Online", exact: true }),
-		).toHaveAttribute("aria-pressed", "true");
+		await expect(facetTrigger(team.page, "Status: Online")).toBeVisible();
 	});
 });
 

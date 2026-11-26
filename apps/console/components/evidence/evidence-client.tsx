@@ -23,6 +23,8 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { RegionError } from "@repo/ui/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
@@ -34,12 +36,13 @@ import {
 	selectionFromUrl,
 	selectionPatch,
 } from "@/lib/query/view-url-params";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
 import { EvidenceDrawer } from "./drawer/evidence-drawer";
 import type { EvidenceEnvRow } from "./evidence-derive";
-import { EvidenceForbidden, EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
-import { EvidenceFilterBar } from "./evidence-filter-bar";
+import { EVIDENCE_EMPTY_CARD, EvidenceForbidden, EvidenceOnboarding } from "./evidence-empty";
+import { EvidenceFunnel } from "./evidence-funnel";
 import { EvidenceSkeleton } from "./evidence-skeleton";
 import { EvidenceTable } from "./evidence-table";
 import { EvidenceWaivers } from "./evidence-waivers";
@@ -85,7 +88,9 @@ function isForbiddenRead(error: unknown): boolean {
 export function EvidenceClient() {
 	const { org } = useParams<{ org: string }>();
 	const filters = useEvidenceFilters((s) => s.filters);
+	const set = useEvidenceFilters((s) => s.set);
 	const reset = useEvidenceFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const urlRead = useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
 	const {
 		data: result,
@@ -150,8 +155,8 @@ export function EvidenceClient() {
 		return <EvidenceSkeleton />;
 	}
 
-	const filtersActive =
-		countActiveFilters(filters, DEFAULT_EVIDENCE_FILTERS) > 0;
+	const activeFilters = countActiveFilters(filters, DEFAULT_EVIDENCE_FILTERS);
+	const filtersActive = activeFilters > 0;
 	const onboarding = result.summary.environments === 0;
 
 	return (
@@ -160,10 +165,23 @@ export function EvidenceClient() {
 				<EvidenceOnboarding org={org} />
 			) : (
 				<>
-					<EvidenceFilterBar
-						statusOptions={result.statusOptions}
-						stageOptions={result.stageOptions}
-						providerOptions={result.providerOptions}
+					{/* One row: search, the Cloud / Stage / Status funnel (the page's `extra`), Reset · N. */}
+					<ListToolbar
+						search={{
+							value: filters.search,
+							onChange: (value) => set("search", value),
+							placeholder: "Filter by project or environment…",
+							inputRef,
+							shortcut,
+						}}
+						extra={
+							<EvidenceFunnel
+								statusOptions={result.statusOptions}
+								stageOptions={result.stageOptions}
+								providerOptions={result.providerOptions}
+							/>
+						}
+						reset={{ count: activeFilters, onReset: reset }}
 					/>
 
 					{isError && (
@@ -185,7 +203,7 @@ export function EvidenceClient() {
 						<SectionHeading className="mb-2.5" level={2} title="Environments" />
 
 						{result.resultCount === 0 && filtersActive ? (
-							<EvidenceNoMatch onClear={reset} />
+							<FilterEmpty className={EVIDENCE_EMPTY_CARD} noun="environments" onClear={reset} />
 						) : (
 							<EvidenceTable groups={result.groups} onOpen={openDrawer} />
 						)}

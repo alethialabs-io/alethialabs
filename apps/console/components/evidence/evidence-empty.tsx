@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The page-level states that are not rows. An org with zero environments gets
-// onboarding (evidence appears once something is provisioned); an over-filtered
-// view gets a one-click way back; a refused read says so. Never the same string twice.
+// onboarding (evidence appears once something is provisioned); a refused read says so.
+// An over-filtered view is the shared `FilterEmpty` (@repo/ui/filter-bar), rendered by the
+// client in this file's card. Never the same string twice.
 //
-// Both render through the shared `EmptyState` from `@repo/ui/empty` rather than the
+// These render through the shared `EmptyState` from `@repo/ui/empty` rather than the
 // local `StateFrame` they used to share, so the icon tile, the type scale and the
 // action slot match every other empty state in the console. The card treatment (the
 // bordered, raised surface the posture table would have occupied) is the only thing
@@ -17,8 +18,12 @@ import { EmptyState } from "@repo/ui/empty";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { EvIcon } from "./evidence-status";
 
-/** The card the posture table would have occupied — an empty state has to hold the same space. */
-const CARD = "border border-solid bg-surface p-12 shadow-sm md:p-14";
+/**
+ * The card the posture table would have occupied — an empty state has to hold the same space. The
+ * client hands it to the filtered `FilterEmpty` too, so "no match" holds the same space.
+ */
+export const EVIDENCE_EMPTY_CARD = "border border-solid bg-surface p-12 shadow-sm md:p-14";
+const CARD = EVIDENCE_EMPTY_CARD;
 
 /** Zero environments the reader can see — onboarding, not "no match". */
 export function EvidenceOnboarding({ org }: { org: string }) {
@@ -35,23 +40,6 @@ export function EvidenceOnboarding({ org }: { org: string }) {
 					render={<Link href={`/${org}/~/new`} />}
 				>
 					Create a project
-				</Button>
-			}
-		/>
-	);
-}
-
-/** Filters are active and exclude everything — offer the way back. */
-export function EvidenceNoMatch({ onClear }: { onClear: () => void }) {
-	return (
-		<EmptyState
-			className={CARD}
-			icon={<EvIcon name="search" size={22} />}
-			title="No environments match these filters"
-			description="Every environment is excluded by the current search, cloud, stage, or status selection."
-			action={
-				<Button variant="outline" size="sm" onClick={onClear}>
-					Clear filters
 				</Button>
 			}
 		/>

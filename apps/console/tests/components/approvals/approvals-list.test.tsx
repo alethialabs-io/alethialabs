@@ -148,6 +148,20 @@ describe("the approvals list's states", () => {
 		expect(page.input).toEqual({ status: ["pending"] });
 	});
 
+	it("one toolbar row: no description line, Status names Waiting, and its own × clears just Status", () => {
+		nav.search = "operation=destroy";
+		page.current = answered([row()]);
+		renderList();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
+		expect(screen.queryByText(/Each one needs a person/)).toBeNull();
+		expect(screen.getByRole("textbox", { name: "Search approval requests" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Status: Waiting" })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Clear Status" }));
+		const { filters } = useApprovalsFilters.getState();
+		expect(filters.status).toEqual([]);
+		expect(filters.operation).toEqual(["destroy"]);
+	});
+
 	it("loading: busy, and neither an empty state nor 'No results.'", () => {
 		const { container } = renderList();
 		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
@@ -199,7 +213,7 @@ describe("the approvals list's states", () => {
 		nav.search = "operation=destroy";
 		page.current = answered([]);
 		renderList();
-		expect(screen.getByText("No requests match these filters")).toBeInTheDocument();
+		expect(screen.getByText("No requests match these filters.")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 		const { filters } = useApprovalsFilters.getState();
 		expect(filters.status).toEqual([]);

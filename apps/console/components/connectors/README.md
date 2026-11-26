@@ -25,7 +25,7 @@ file is deleted, not aliased.
 | `connectors-disconnect-dialog.tsx` | The disconnect confirmation, on `ConfirmAction`. For a cloud account it names the projects that use it and asks for the account's name. |
 | `connectors-link-error.ts` | The sentence for a failed git-provider connection, shared with `components/repository-selector.tsx`. |
 | `connectors-query.ts` | **Pure filter/query plumbing.** `connectorState()` (the one status ladder), `GROUP_META`, `normalizeConnectorQuery()`, `selectConnectors()`, `buildConnectorFacets()`, `buildConnectorsView()`. No React, no server imports. |
-| `connectors-filter-bar.tsx` | The filter bar: `FilterSearch` + `FilterChipGroup` (status) + `FacetFilter` (group) + `MultiCombobox` (vendor) + `FilterBarReset`. |
+| `connectors-facets.ts` | The Status, Group and Vendor facets the page hands its one `ListToolbar` (search · facets · Reset · view toggle · docs link). |
 | `connector-card.tsx` | One connector as a tile (card view). Its pick mode (`selectable`) makes a connected cloud's whole tile a choice instead of a Manage button. |
 | `connector-row.tsx` | The same connector as a table row (table view). |
 | `connector-detail-sheet.tsx` | The manage drawer, on `@repo/ui/detail-sheet`. |

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery } from "@tanstack/react-query";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { orpc } from "@/lib/rpc/client";
@@ -30,7 +31,7 @@ function useShellAnswers() {
 
 /**
  * The org overview's loading state (`app/(private)/[org]/loading.tsx`): the page's own layout, so
- * nothing moves when it answers (RUBRIC B2) — the filter bar's row, then the two columns, with as
+ * nothing moves when it answers (RUBRIC B2) — the one-row `ListToolbar`, then the two columns, with as
  * many blocks side by side as the page will set.
  *
  * The page's SHAPE depends on data the shell already holds, and drawing a guess where the answer is
@@ -51,14 +52,9 @@ export function OverviewSkeleton() {
 	const { projectCount, jobCount, alerting } = useShellAnswers();
 	return (
 		<SkeletonRoot className="space-y-5">
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-9 min-w-[200px] flex-1 rounded-sm" />
-				<Skeleton className="h-9 w-9 rounded-sm" />
-				<div className="ml-auto flex items-center gap-2.5">
-					<Skeleton className="h-9 w-16 rounded-sm" />
-					<Skeleton className="h-9 w-24 rounded-md" />
-				</div>
-			</div>
+			{/* The toolbar row: search, the Cloud and Repository facets, then the view toggle and the
+			    two actions (sort, Create) — the real `ListToolbar`'s parts, from its own layout. */}
+			<ListToolbarSkeleton facets={2} view actions={2} />
 			<div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(312px,0.35fr)_minmax(0,0.65fr)]">
 				<div className="flex flex-col gap-4">
 					<UsageCardSkeleton />
