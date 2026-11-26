@@ -1208,11 +1208,15 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 	metadata := map[string]any{"plan_completed": true}
 	if result != nil {
 		if result.PlanJSON != nil {
+			// Only what the plan's readers use is persisted (applyPlanChanges), never the plan
+			// document itself.
 			if rc, ok := result.PlanJSON["resource_changes"]; ok {
-				metadata["plan_result"] = map[string]any{"resource_changes": rc}
+				metadata["plan_result"] = map[string]any{"resource_changes": applyPlanChanges(rc)}
 			} else {
+				// OpenTofu omits resource_changes when nothing changes. The format_version alone
+				// says "this is a plan, with nothing to change" to the console's plan summary.
 				fmt.Fprintln(stdout, "Warning: PlanJSON has no resource_changes key")
-				metadata["plan_result"] = result.PlanJSON
+				metadata["plan_result"] = noChangePlanResult(result.PlanJSON)
 			}
 		} else {
 			fmt.Fprintln(stdout, "Warning: PlanJSON is nil — tofu show may have failed")
@@ -1465,10 +1469,6 @@ func (w *Runner) executeDestroyPlan(ctx context.Context, job *Job, provider stri
 	return nil
 }
 
-// destroyPlanChangeKeys are the fields of a resource change kept in a destroy plan's posted result:
-// which resource, and what happens to it. Everything else is dropped.
-var destroyPlanChangeKeys = []string{"address", "module_address", "mode", "type", "name", "index", "provider_name"}
-
 // destroyPlanChanges reduces a destroy plan's resource_changes to what a reviewer reads: each
 // resource's identity and its actions. A teardown's `before` is the resource's whole current state —
 // every attribute, sensitive ones included — and none of it is needed to say what will be removed, so
@@ -1485,19 +1485,8 @@ func destroyPlanChanges(raw any) []any {
 		if !ok {
 			continue
 		}
-		kept := make(map[string]any, len(destroyPlanChangeKeys)+1)
-		for _, k := range destroyPlanChangeKeys {
-			if v, ok := rc[k]; ok {
-				kept[k] = v
-			}
-		}
-		actions := []any{}
-		if change, ok := rc["change"].(map[string]any); ok {
-			if a, ok := change["actions"].([]any); ok {
-				actions = a
-			}
-		}
-		kept["change"] = map[string]any{"actions": actions}
+		kept := planChangeIdentity(rc)
+		kept["change"] = map[string]any{"actions": planChangeActions(rc)}
 		out = append(out, kept)
 	}
 	return out
