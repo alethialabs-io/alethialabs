@@ -4,9 +4,9 @@
 // AGT-L2-U1 (#7501) — the decision sheet, every state in spec §1.4: loading, error, not available;
 // waiting (deploy, production, destroy with its typed confirmation, expiring soon, no estimate / not
 // checked); Approve; Deny with and without a reason; the policy re-check's four Blocked states; a
-// viewer who may not decide; each refusal the server raises, shown in its own sentence and then read
-// again; and the outcomes — approved by you, used, denied with and without a reason, expired,
-// replaced. Plus the accessibility basics: a modal dialog named by its title, focus on Close, Escape.
+// viewer who may not decide; each refusal code the server raises, shown under its own title with the
+// server's sentence, and then read again (#7643: from the code, never inferred from the re-read); and
+// the outcomes — approved by you, used, denied with and without a reason, expired, replaced. Plus the accessibility basics: a modal dialog named by its title, focus on Close, Escape.
 //
 // The reads are the oRPC client's (mocked: `reads.get` answers `approvals.get`, `reads.plan` the plan
 // job); the decision is the server action's (mocked). Nothing here talks to a server.
@@ -320,31 +320,73 @@ describe("the policy re-check: Approve is disabled with its reason, Deny stays",
 	});
 });
 
-describe("refusals: the server's sentence, then the state the re-read finds", () => {
-	/** Approves, with the server refusing `message` and the re-read answering `after`. */
-	async function refusedWith(message: string, after: ReturnType<typeof sheet>) {
-		reads.get.mockResolvedValueOnce(sheet()).mockResolvedValue(after);
-		decide.mockResolvedValue({ ok: false, error: { kind: "conflict", message } });
+describe("refusals: the code names the refusal, the server's sentence explains it, the re-read shows the state", () => {
+	/** Approves, with the server refusing `message` with `code` and the re-read answering `after`. */
+	async function refusedWith(code: string | undefined, message: string, after: ReturnType<typeof sheet> | Promise<never>) {
+		reads.get.mockResolvedValueOnce(sheet());
+		if (after instanceof Promise) reads.get.mockReturnValue(after);
+		else reads.get.mockResolvedValue(after);
+		decide.mockResolvedValue({ ok: false, error: { kind: code === "not_found" ? "not-found" : "conflict", message, code } });
 		renderSheet();
 		await dialog();
 		fireEvent.click(screen.getByRole("button", { name: "Approve deploy" }));
 		await waitFor(() => expect(decide).toHaveBeenCalled());
 	}
 
-	it("reauthentication_required: still waiting and unblocked after the re-read → Sign in again", async () => {
-		await refusedWith("Sign in again to decide this approval.", sheet());
+	/** A re-read that never answers: what is on screen comes from the refusal alone. */
+	const NO_REREAD = () => new Promise<never>(() => undefined);
+
+	// Written out by hand, not derived from the component's table: each code's title is the decision.
+	it.each([
+		["not_found", "This request isn't available", "That approval was not found in this organization."],
+		["plan_not_approvable", "This plan can't be approved as it stands", "The plan behind this request failed verification."],
+		["not_permitted", "This organization's agent policy doesn't allow it", "Agents may not deploy here."],
+		["not_a_person", "Only a person signed in to the console can decide", "An approval is decided by a person signed in to the console."],
+		["self_approval", "Someone else needs to approve this", "This organization requires a different person to approve."],
+		["policy_refused", "This organization's agent policy changed", "This organization does not let agents deploy production environments."],
+		["not_pending", "This request isn't waiting any more", "That approval was decided by someone else first."],
+		["confirmation_mismatch", "The environment name didn't match", "Type the environment's name to approve its destroy."],
+	])("%s: its own title, over the server's sentence, before any re-read", async (code, title, message) => {
+		await refusedWith(code, message, NO_REREAD());
+		expect(await screen.findByText(title)).toBeInTheDocument();
+		expect(screen.getByText(message)).toBeInTheDocument();
+		expect(screen.queryByText("That didn't go through")).toBeNull();
+		expect(screen.queryByRole("button", { name: "Sign in again" })).toBeNull();
+	});
+
+	it("reauthentication_required: Sign in again from the code alone, with no re-read", async () => {
+		await refusedWith("reauthentication_required", "Sign in again to decide this approval.", NO_REREAD());
 		expect(await screen.findByText("Sign in again to decide")).toBeInTheDocument();
-		expect(screen.getByText(/Sign in again to decide this approval\./)).toBeInTheDocument();
+		expect(screen.getByText(/Sign in again to decide this approval\. Approvals need a sign-in from the last 24 hours\./)).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Sign in again" })).toBeInTheDocument();
 	});
 
+	it("a still-waiting re-read is no longer read as an old sign-in", async () => {
+		// Before #7643 this exact sequence (refused, then waiting and unblocked) was inferred to be
+		// reauthentication_required. With a code that says otherwise, it is shown as what it is.
+		await refusedWith("confirmation_mismatch", "Type the environment's name to approve its destroy.", sheet());
+		expect(await screen.findByText("The environment name didn't match")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Sign in again" })).toBeNull();
+	});
+
+	it.each([
+		["no code", undefined],
+		["a code that is not an approval code", "something_else"],
+	])("%s: the generic title, over the server's sentence", async (_name, code) => {
+		await refusedWith(code, "Something refused this.", NO_REREAD());
+		expect(await screen.findByText("That didn't go through")).toBeInTheDocument();
+		expect(screen.getByText("Something refused this.")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Sign in again" })).toBeNull();
+	});
+
 	it("expired: the re-read shows the request expired", async () => {
-		await refusedWith("That approval expired before it was decided.", sheet({ status: "expired" }));
+		await refusedWith("not_pending", "That approval expired before it was decided.", sheet({ status: "expired" }));
 		expect(await screen.findByText(/Nobody decided before .*, so this request can't be approved any more\./)).toBeInTheDocument();
 	});
 
 	it("superseded: the re-read shows the request replaced", async () => {
 		await refusedWith(
+			"not_pending",
 			"A newer plan of this environment succeeded after the approved one. Request an approval for the newer plan.",
 			sheet({ status: "superseded" }),
 		);
@@ -353,6 +395,7 @@ describe("refusals: the server's sentence, then the state the re-read finds", ()
 
 	it("policy_refused: the re-read carries the block, and Approve is disabled with it", async () => {
 		await refusedWith(
+			"policy_refused",
 			"This organization does not let agents deploy production environments.",
 			sheet({}, { approveBlock: { reason: "agents_not_on_production", message: "x" } }),
 		);
@@ -362,14 +405,16 @@ describe("refusals: the server's sentence, then the state the re-read finds", ()
 
 	it("self_approval: the re-read carries the different-approver block", async () => {
 		await refusedWith(
+			"self_approval",
 			"This organization requires a different person to approve.",
 			sheet({}, { approveBlock: { reason: "self_approval", message: "x" } }),
 		);
-		expect(await screen.findByText("Someone else needs to approve this")).toBeInTheDocument();
+		expect(await screen.findByText(/requires a different person to approve requests made for you/)).toBeInTheDocument();
 	});
 
 	it("decided by someone else first: the re-read shows their decision", async () => {
 		await refusedWith(
+			"not_pending",
 			"That approval was decided by someone else first.",
 			sheet({ status: "approved", approver_user_id: "u-ivan", approver_name: "Ivan Georgiev", decided_at: new Date().toISOString() }),
 		);

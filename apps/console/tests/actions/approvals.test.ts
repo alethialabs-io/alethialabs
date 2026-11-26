@@ -22,7 +22,7 @@ vi.mock("@/lib/approvals/decide", () => ({ decideApproval }));
 vi.mock("@/lib/db", () => ({ withActorScope }));
 
 import { decideApplyApproval } from "@/app/server/actions/approvals";
-import { ApprovalError } from "@/lib/approvals/refusal";
+import { ApprovalError, type ApprovalErrorCode } from "@/lib/approvals/refusal";
 
 const ID = "00000000-0000-4000-8000-000000000050";
 const USER = "00000000-0000-4000-8000-000000000001";
@@ -48,6 +48,42 @@ describe("decideApplyApproval", () => {
 		currentActor.mockResolvedValue(actor);
 		expect((await decideApplyApproval({ approvalId: ID, decision: "approve" })).ok).toBe(false);
 		expect(decideApproval).not.toHaveBeenCalled();
+	});
+
+	it("refuses a credential that is not a person with the not_a_person code", async () => {
+		currentActor.mockResolvedValue({ userId: USER, orgId: USER, credential: "agent_in_app" });
+		expect(await decideApplyApproval({ approvalId: ID, decision: "approve" })).toStrictEqual({
+			ok: false,
+			error: { kind: "conflict", message: "An approval is decided by a person signed in to the console.", code: "not_a_person" },
+		});
+	});
+
+	// #7643: every engine refusal reaches the sheet with its code, so the sheet never infers which it was.
+	const CODES: ReadonlyArray<[ApprovalErrorCode, "not-found" | "conflict"]> = [
+		["not_found", "not-found"],
+		["plan_not_approvable", "conflict"],
+		["not_permitted", "conflict"],
+		["not_a_person", "conflict"],
+		["reauthentication_required", "conflict"],
+		["self_approval", "conflict"],
+		["policy_refused", "conflict"],
+		["not_pending", "conflict"],
+		["confirmation_mismatch", "conflict"],
+	];
+	it.each(CODES)("returns the engine's %s refusal as a %s carrying its code and sentence", async (code, kind) => {
+		decideApproval.mockRejectedValue(new ApprovalError(code, `Refused: ${code}.`));
+		expect(await decideApplyApproval({ approvalId: ID, decision: "approve" })).toStrictEqual({
+			ok: false,
+			error: { kind, message: `Refused: ${code}.`, code },
+		});
+	});
+
+	it("returns a refusal the engine answers as a value (expired, superseded) with its code", async () => {
+		decideApproval.mockResolvedValue({ ok: false, error: new ApprovalError("not_pending", "That approval expired.") });
+		expect(await decideApplyApproval({ approvalId: ID, decision: "approve" })).toStrictEqual({
+			ok: false,
+			error: { kind: "conflict", message: "That approval expired.", code: "not_pending" },
+		});
 	});
 
 	it("hands a signed-in person's decision to the engine with the session it was made in", async () => {
