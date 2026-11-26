@@ -25,6 +25,7 @@ import { destroyProject, planProject, provisionProject } from "@/app/server/acti
 import { scanRepo } from "@/app/server/actions/scanner";
 import { sendAgentFeedback } from "@/lib/ai/mcp/feedback";
 import { defaultHandlerDeps } from "@/lib/ai/mcp/handlers";
+import { approvePathForOrg } from "@/lib/approvals/http";
 
 describe("defaultHandlerDeps", () => {
 	it("queues a plan through planProject with the MCP idempotency key", async () => {
@@ -62,6 +63,10 @@ describe("defaultHandlerDeps", () => {
 		vi.mocked(scanRepo).mockResolvedValue({ jobId: "job-scan" });
 		expect(await defaultHandlerDeps.queueScan({ repo: "https://github.com/acme/api", key: "mcp:k" })).toEqual({ jobId: "job-scan" });
 		expect(scanRepo).toHaveBeenCalledWith("https://github.com/acme/api", { idempotencyKey: "mcp:k" });
+	});
+
+	it("links an approval by the path the approvals API answers as approve_path", () => {
+		expect(defaultHandlerDeps.approvePath).toBe(approvePathForOrg);
 	});
 
 	it("sends feedback through the agent feedback sink", () => {
