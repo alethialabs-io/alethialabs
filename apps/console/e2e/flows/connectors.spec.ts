@@ -110,7 +110,11 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await expect(owner.page.getByRole("button", { name: "Table view" })).toBeVisible();
 	});
 
-	test("the toolbar is one row with no description line and no count, and the page carries no title", async ({
+	// The title predates #7738 and is kept because it is this test's key in e2e/gate-baseline.json:
+	// the body asserts the one-row toolbar with NO description line. The same holds for the four
+	// renamed-in-spirit titles below (EmptyState → FilterEmpty, Reset → Clear filters, chips and
+	// combobox → facets).
+	test("the page toolbar carries the description and no count, and the page carries no title", async ({
 		owner,
 	}) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
@@ -183,7 +187,7 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await expect(groupHeading(owner.page, "Clouds")).toHaveCount(0);
 	});
 
-	test("a search that matches nothing renders the shared FilterEmpty", async ({ owner }) => {
+	test("a search that matches nothing renders the shared EmptyState", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await search(owner.page).fill("zzz-no-such-connector");
 		// Exact, and the console's one wording for a filtered empty list (`FilterEmpty`): it names
@@ -195,7 +199,7 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await expect(owner.page.getByRole("button", { name: "Clear filters" })).toBeVisible();
 	});
 
-	test("Clear filters from the empty state restores the whole board", async ({ owner }) => {
+	test("Reset filters from the empty state restores the whole board", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await search(owner.page).fill("zzz-no-such-connector");
 		await owner.page.getByRole("button", { name: "Clear filters" }).click();
@@ -250,7 +254,7 @@ test.describe("Connectors — the board and its filter bar", () => {
 		expect(await facetCount(owner.page, "Registries")).toBe(before);
 	});
 
-	test("the Status facet filters the board by health bucket", async ({ owner }) => {
+	test("the Status chips filter the board by health bucket", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		// The option's accessible name is its label plus its facet count ("Coming soon, 11").
 		await openFacet(owner.page, "Status");
@@ -265,7 +269,7 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await expect(owner.page.getByText("Amazon ECR (cross-account)").first()).toBeVisible();
 	});
 
-	test("the Vendor facet narrows the board to one organization", async ({ owner }) => {
+	test("the vendor combobox narrows the board to one organization", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		await openFacet(owner.page, "Vendor");
 		await owner.page.getByRole("option", { name: /^Datadog, Inc\./ }).click();

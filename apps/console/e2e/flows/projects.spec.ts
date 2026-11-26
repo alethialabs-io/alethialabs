@@ -301,7 +301,7 @@ test.describe("Projects — org overview grid", () => {
 		// A no-match query yields the empty-filter copy.
 		const search = owner.page.getByRole("textbox", { name: "Search projects", exact: true });
 		await search.fill(`zzz-no-such-project-${Date.now()}`);
-		await expect(owner.page.getByText(/no projects match your filters/i)).toBeVisible();
+		await expect(owner.page.getByText("No projects match these filters.", { exact: true })).toBeVisible();
 	});
 
 	test("the Create menu reaches the create-project front door", async ({ owner }) => {
