@@ -335,6 +335,44 @@ export async function sendTrialEndedEmail(sub: Stripe.Subscription): Promise<voi
 	});
 }
 
+/** Which of a local trial's two emails: the reminder before its end, or the notice once it has ended. */
+export type LocalTrialNotice = "ending" | "ended";
+
+/**
+ * One email about a LOCAL trial (lib/billing/trial/local.ts — the provider-less Pro grant a Paddle-era
+ * org trials on), to the org owner. There is no Stripe subscription, so no Stripe event says the trial
+ * is ending or has ended; the trial-notice sweep (lib/billing/trial/notices.ts) decides when, claims
+ * the notice, and calls this. The copy is the Stripe trial's own, in its "subscribe" variant: a local
+ * trial has nothing to add a card to — keeping Pro means buying it.
+ *
+ * Returns false when the org has no owner with an address (nothing was sent, and there is nobody to
+ * retry for). Throws when the send itself failed, so the sweep gives the claim back.
+ */
+export async function sendLocalTrialNoticeEmail(args: {
+	orgId: string;
+	notice: LocalTrialNotice;
+	trialEnd: Date;
+}): Promise<boolean> {
+	const to = await ownerEmail(args.orgId);
+	if (!to) return false;
+	const name = await orgName(args.orgId);
+	const planLabel = planMeta("team").name;
+	const trialEndLabel = formatDate(args.trialEnd);
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
+		to,
+		subject: args.notice === "ending" ? trialEndingSubject : trialEndedSubject,
+		react:
+			args.notice === "ending"
+				? TrialEndingEmail({ orgName: name, planLabel, trialEndLabel, subscribeToKeep: true })
+				: TrialEndedEmail({ orgName: name, planLabel, trialEndLabel, reason: "not_subscribed" }),
+		devLog: `local trial ${args.notice} ${trialEndLabel} for ${name}`,
+	});
+	return true;
+}
+
 /** Confirmation that a subscription was canceled. */
 export async function sendSubscriptionCanceledEmail(
 	sub: Stripe.Subscription,

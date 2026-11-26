@@ -1303,6 +1303,13 @@
       "when": 1795701389421,
       "tag": "0185_demonic_human_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1795709625651,
+      "tag": "0186_naive_black_bolt",
+      "breakpoints": true
     }
   ]
 }
