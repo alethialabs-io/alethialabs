@@ -14,7 +14,7 @@ import {
 import { ArrowDown, ArrowUp, ArrowUpDown, CircleAlert } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	DATA_TABLE_FRAME,
 	DEFAULT_SKELETON_ROWS,

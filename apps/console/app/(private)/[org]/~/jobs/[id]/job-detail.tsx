@@ -5,7 +5,7 @@
 import { applyPlan, cancelJob, rerunJob } from "@/app/server/actions/jobs";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { ClockSlot, JOB_TYPES, JobDuration, RelativeTime } from "@/components/jobs/columns";
 import { JobNotFoundState } from "@/components/jobs/job-not-found-state";

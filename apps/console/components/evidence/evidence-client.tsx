@@ -24,7 +24,7 @@ import { useMemo } from "react";
 import { toast } from "sonner";
 import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
 import { SectionHeading } from "@repo/ui/section-heading";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";

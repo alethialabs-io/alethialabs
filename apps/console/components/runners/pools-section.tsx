@@ -11,7 +11,7 @@ import { DisabledReason } from "@repo/ui/disabled-reason";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { MANAGE_PENDING_REASON, manageReason } from "@/components/errors/manage-gate";
 import { isForbidden } from "@/components/overview/overview-reads";

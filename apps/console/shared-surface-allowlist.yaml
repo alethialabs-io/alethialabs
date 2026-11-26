@@ -120,7 +120,7 @@
 #                      the thing review stops. The floors sit a few percent under the live count
 #                      so an ordinary refactor need not touch them.
 
-baseline: 15
+baseline: 14
 debt: 0
 
 scanned:
@@ -187,9 +187,6 @@ page_title:
   - path: apps/console/components/alerts/alerts-page.tsx
     hits: 1
     reason: An `sr-only` landmark, and the only heading in this list that is never painted. No console page shows a title any more, but a route still needs one outline root or its three sections are orphans — a screen reader has no breadcrumb to fall back on.
-  - path: apps/console/components/errors/error-state.tsx
-    hits: 1
-    reason: An error boundary replaces the page, so the breadcrumb above it is naming something the reader can no longer see; its heading says what went wrong, and has to size itself to whether it is filling the screen or sitting inside a panel.
 
 section_header:
 

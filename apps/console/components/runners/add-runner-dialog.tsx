@@ -46,7 +46,7 @@ import {
 	SheetTitle,
 } from "@repo/ui/sheet";
 import { Skeleton } from "@repo/ui/skeleton";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { CloudIdentitySelector } from "@/components/design-project/cloud-identity-selector";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";

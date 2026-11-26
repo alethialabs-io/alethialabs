@@ -34,7 +34,7 @@ import {
 	TableRow,
 } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { ListFooter } from "@/components/list/list-footer";
 import type { EvidenceWaiverRow } from "@/lib/queries/evidence";
 import { useKeysetList } from "@/lib/query/use-keyset-list";

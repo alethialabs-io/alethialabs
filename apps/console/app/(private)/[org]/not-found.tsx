@@ -34,7 +34,7 @@
 // Still non-leaky: absent and forbidden read the same — we never disclose existence.
 
 import Link from "next/link";
-import { ErrorState } from "@/components/errors/error-state";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 
 /** The in-shell 404 for anything under a RESOLVED org that has no nearer not-found boundary. */

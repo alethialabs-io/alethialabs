@@ -15,7 +15,7 @@
 // keeps each job id once (`useKeysetList`), so a job seen on two pages mid-refetch is drawn once.
 
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { buildJobColumns, jobHref } from "@/components/jobs/columns";
 import type { JobAuthorInfo } from "@/components/jobs/job-author";

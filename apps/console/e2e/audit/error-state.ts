@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// T6 — "fault-injected, the page renders `components/errors/error-state`".
+// T6 — "fault-injected, the page renders `@repo/ui/error-state`".
 //
 // Two halves, and both have a trap that was measured rather than reasoned about.
 //
@@ -9,7 +9,7 @@
 // query for. Hard-coding its class list here would be a hand-written copy of somebody else's
 // source, and a hand-written copy decays silently the first time that source is restyled — the
 // detector would then answer "not the shared component" for a page that renders nothing but. So the
-// signature is DERIVED from `components/errors/error-state.tsx` at run time, and the derivation
+// signature is DERIVED from `packages/ui/src/error-state.tsx` at run time, and the derivation
 // RAISES if it cannot find the shape it expects. A detector that cannot find its subject must not
 // report a clean page.
 //
@@ -42,7 +42,7 @@ import path from "node:path";
 import type { Page } from "@playwright/test";
 import { repoRoot } from "./manifest";
 
-const SOURCE = path.join("apps", "console", "components", "errors", "error-state.tsx");
+const SOURCE = path.join("packages", "ui", "src", "error-state.tsx");
 
 let signature: string[][] | null = null;
 
@@ -88,7 +88,7 @@ export async function rendersSharedErrorState(page: Page): Promise<boolean> {
 }
 
 /**
- * The REGION-level error render (#6117): `components/errors/region-error.tsx` — `RegionError`, marked
+ * The REGION-level error render (#6117): `packages/ui/src/region-error.tsx` — `RegionError`, marked
  * `data-slot="region-error"` and `role="alert"` — or any visible `role="alert"` inside `main`.
  *
  * `ErrorState` is the ROUTE boundary's render and nothing else since #6117, so a page whose failed or

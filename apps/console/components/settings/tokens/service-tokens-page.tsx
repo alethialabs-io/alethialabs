@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import type { CreatedServiceToken } from "@/app/server/actions/agents/service-tokens";
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { ListFooter } from "@/components/list/list-footer";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";

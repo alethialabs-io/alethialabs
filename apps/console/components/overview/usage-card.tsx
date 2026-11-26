@@ -21,7 +21,7 @@ import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { sessionResetLabel, weeklyResetLabel } from "@/lib/billing/ai-usage-format";
 import { globalHref } from "@/lib/routing";

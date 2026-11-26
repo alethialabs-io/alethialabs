@@ -26,7 +26,7 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
 import type { TeamRow } from "@/app/server/actions/teams";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { viaAuth } from "@/components/settings/members/auth-action";
 import { PeopleListSkeleton } from "@/components/settings/members/people-skeleton";
 import { Button } from "@repo/ui/button";

@@ -23,7 +23,7 @@ import {
 } from "@/app/server/actions/sso";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
 import { PanelSkeleton } from "@/components/skeletons/page-skeletons";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";

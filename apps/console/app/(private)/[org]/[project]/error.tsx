@@ -8,7 +8,7 @@
 
 import { useEffect } from "react";
 import { captureException } from "@/lib/analytics/track";
-import { ErrorState } from "@/components/errors/error-state";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 
 export default function ProjectError({

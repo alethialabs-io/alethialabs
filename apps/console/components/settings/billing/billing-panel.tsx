@@ -34,7 +34,7 @@ import {
 } from "@/app/server/actions/checkout";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { ClockText } from "@/components/settings/usage/clock-text";

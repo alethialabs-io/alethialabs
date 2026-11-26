@@ -13,7 +13,7 @@
 
 import type { ReactNode } from "react";
 import { formatMinutes } from "@repo/format";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";

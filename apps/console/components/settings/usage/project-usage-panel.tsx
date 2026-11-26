@@ -29,7 +29,7 @@ import { formatMinutes, formatMonthlyRate } from "@repo/format";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Info } from "lucide-react";
 import Link from "next/link";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	RegionRefusal,
 	refusalOf,

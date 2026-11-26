@@ -6,7 +6,7 @@
 
 import { CircleAlert } from "lucide-react";
 
-import { Button } from "@repo/ui/button";
+import { Button } from "./button";
 import {
 	Empty,
 	EmptyContent,
@@ -14,8 +14,8 @@ import {
 	EmptyHeader,
 	EmptyMedia,
 	EmptyTitle,
-} from "@repo/ui/empty";
-import { cn } from "@repo/ui/utils";
+} from "./empty";
+import { cn } from "./utils";
 
 interface RegionErrorProps {
 	/** What failed, in the reader's terms. Defaults to a generic "Couldn't load this". */
@@ -47,7 +47,8 @@ interface RegionErrorProps {
  * - a TABLE does neither by hand: pass `query={q}` to `DataTable`, which renders this for a failed
  *   first load and keeps its rows behind a one-line notice for a failed refresh;
  * - an expected refusal (forbidden, not found, plan-gated) is its own render, and is not this.
- * `tests/components/errors/error-state-placement.test.tsx` holds `ErrorState` to its half.
+ * `apps/console/tests/components/errors/error-state-placement.test.tsx` holds the console's
+ * `ErrorState` imports to its half.
  *
  * @example
  * if (query.isError && query.data === undefined)
