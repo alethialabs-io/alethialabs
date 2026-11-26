@@ -111,6 +111,12 @@ allow:
   - mutation: destroyProject
     surface: apps/console/lib/ai/mcp/handlers.ts
     reason: the MCP `request_destroy` tool, not a control a person clicks. It queues a destroy only after a person approved that exact plan in the console, and destroyProject re-checks and consumes that approval once
+  - mutation: destroyPlanFor
+    surface: apps/console/lib/ai/mcp/handlers.ts
+    reason: a READ, not a destructive call — it looks up the environment's current destroy-mode plan (a tofu plan -destroy that changed nothing) for the MCP `request_destroy` tool to name in its approval request. It destroys, queues and records nothing (#7455)
+  - mutation: destroyPlanFor
+    surface: apps/console/lib/agent/approval-request.ts
+    reason: a READ, not a destructive call — the in-product agent's `request_destroy` looks up the environment's current destroy-mode plan to name in an approval request. It destroys and queues nothing; a destroy runs only after a person approves that plan (#7455)
   - mutation: cancelPaddleSubscriptionAtPeriodEnd
     surface: apps/console/lib/billing/paddle/provider.ts
     reason: the Paddle adapter's `cancelAtPeriodEnd`, not a control a person clicks. It is reached only through `cancelSubscriptionPlan`, whose plan-card button carries the `billing.subscription.cancel` confirmation

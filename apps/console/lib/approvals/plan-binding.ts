@@ -17,6 +17,15 @@
 //
 // The runner refuses a DEPLOY that names a plan without carrying a matching digest
 // (apps/runner/internal/agent/plan_binding.go), so the stamp below is what lets the apply run.
+//
+// A DESTROY is bound by the same three stamps (#7455), to a destroy-mode plan: a PLAN job queued with
+// `destroy_plan`, which ran `tofu plan -destroy` and stored that plan as its artifact. A destroy plan
+// has no verify receipt, so its `plan_sha256` is stamped from the digest the runner records for the
+// stored file (`execution_metadata.plan_file_sha256`, {@link destroyPlanFileDigest}). The DESTROY that
+// consumes a person's approval is stamped with the approved plan's id and digest (gate.ts), and the
+// runner tears down exactly that saved plan. The mode is part of the binding both ways: a DEPLOY
+// never names a destroy plan here, a destroy approval never names anything else (request.ts), and
+// the runner checks both again.
 
 import { createHash } from "node:crypto";
 import { and, eq, gt, inArray } from "drizzle-orm";
@@ -64,12 +73,22 @@ export function receiptPlanDigest(metadata: ExecutionMetadata | null | undefined
 	return fromReceipt && SHA256_HEX.test(fromReceipt) ? fromReceipt : null;
 }
 
+/**
+ * The digest a destroy-mode PLAN job's runner recorded for the plan file it stored, lowercase hex, or
+ * null when it recorded none. What the status route stamps on a succeeded destroy plan's `plan_sha256`.
+ */
+export function destroyPlanFileDigest(metadata: ExecutionMetadata | null | undefined): string | null {
+	const digest = metadata?.plan_file_sha256?.trim().toLowerCase();
+	return digest && SHA256_HEX.test(digest) ? digest : null;
+}
+
 /** Why an apply was not queued against a reviewed plan. Stable: the jobs API returns it as `code`. */
 export type PlanBindingRefusalCode =
 	| "plan_required"
 	| "plan_not_found"
 	| "plan_not_current"
-	| "plan_digest_missing";
+	| "plan_digest_missing"
+	| "plan_is_destroy_plan";
 
 /**
  * A deploy that could not be tied to a current reviewed plan. Every message says what to do next, so
@@ -118,7 +137,8 @@ function staleMessage(reason: Exclude<PlanStaleReason, "no-plan">, planJobId: st
  * The reviewed plan a deploy of `target` applies, or a {@link PlanBindingError} saying why there is
  * none. Read in `tx`, the transaction that then inserts the DEPLOY.
  *
- * The named plan must be a PLAN job of the same project and environment, and current by the board's
+ * The named plan must be a PLAN job of the same project and environment that plans an apply (a
+ * destroy plan is refused with `plan_is_destroy_plan`), and current by the board's
  * own rule ({@link planStaleReason}): it succeeded, it was planned from the configuration the deploy
  * would apply now (its `configuration_hash` equals `target.configurationHash`), and no build, deploy or
  * destroy of the environment was queued after it. It must also carry a plan digest, which the runner
@@ -142,6 +162,7 @@ export async function resolveReviewedPlan(tx: Tx, target: ReviewedPlanTarget): P
 			configuration_hash: jobs.configuration_hash,
 			plan_sha256: jobs.plan_sha256,
 			execution_metadata: jobs.execution_metadata,
+			destroy_plan: jobs.destroy_plan,
 			created_at: jobs.created_at,
 		})
 		.from(jobs)
@@ -158,6 +179,12 @@ export async function resolveReviewedPlan(tx: Tx, target: ReviewedPlanTarget): P
 		throw new PlanBindingError(
 			"plan_not_found",
 			`Job ${named} is not a plan of this environment. Plan this environment, review the plan, then apply it.`,
+		);
+	}
+	if (plan.destroy_plan) {
+		throw new PlanBindingError(
+			"plan_is_destroy_plan",
+			`Plan ${plan.id} is a destroy plan: it describes tearing this environment down, and a deploy never applies it. Plan this environment, review the plan, then apply it.`,
 		);
 	}
 	const [laterRun] = await tx

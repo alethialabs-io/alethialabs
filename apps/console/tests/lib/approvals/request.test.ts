@@ -3,8 +3,8 @@
 // @vitest-environment node
 
 // Requesting an approval (lib/approvals/request.ts): only against this org's succeeded, current plan
-// with a digest and no failed verification, by a caller holding the verb; a destroy names the plan the
-// environment's current state was deployed from; the row is bound to the requesting credential.
+// with a digest and no failed verification, by a caller holding the verb; a deploy names an apply plan
+// and a destroy names a destroy-mode plan (#7455); the row is bound to the requesting credential.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,12 +36,17 @@ function planRow(overrides: Record<string, unknown> = {}) {
 		configuration_hash: "cfg",
 		plan_sha256: DIGEST,
 		execution_metadata: null,
+		destroy_plan: false,
 		...overrides,
 	};
 }
 
 /** A current plan as the binding reads it (plan, nothing since, no newer plan). */
-const current = (): unknown[][] => [[{ status: "SUCCESS", created_at: AT, plan_sha256: DIGEST, execution_metadata: null }], [], []];
+const current = (destroyPlan = false): unknown[][] => [
+	[{ status: "SUCCESS", created_at: AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: destroyPlan }],
+	[],
+	[],
+];
 
 function setup(
 	plan: unknown[],
@@ -122,24 +127,51 @@ describe("requestApproval", () => {
 	});
 
 	it("refuses a plan that is no longer current", async () => {
-		const f = setup([planRow()], [[{ status: "SUCCESS", created_at: AT, plan_sha256: DIGEST, execution_metadata: null }], [{ id: "later" }]]);
+		const f = setup([planRow()], [[{ status: "SUCCESS", created_at: AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }], [{ id: "later" }]]);
 		expect(await codeOf(requestApproval(f.db, TOKEN_ACTOR, { planJobId: PLAN, operation: "deploy" }))).toBe(
 			"plan_not_approvable",
 		);
 	});
 
-	it("refuses a destroy against a plan the environment's current state was not deployed from", async () => {
-		const f = setup([planRow()], [[{ id: "deploy", plan_job_id: "other-plan", plan_sha256: DIGEST, created_at: AT }]]);
+	it("refuses a destroy against an apply plan, writing nothing", async () => {
+		const f = setup([planRow()]);
+		expect(await codeOf(requestApproval(f.db, TOKEN_ACTOR, { planJobId: PLAN, operation: "destroy" }))).toBe(
+			"plan_not_approvable",
+		);
+		expect(f.writes).toEqual([]);
+	});
+
+	it("refuses a deploy against a destroy plan, writing nothing", async () => {
+		const f = setup([planRow({ destroy_plan: true })], current(true));
+		expect(await codeOf(requestApproval(f.db, TOKEN_ACTOR, { planJobId: PLAN, operation: "deploy" }))).toBe(
+			"plan_not_approvable",
+		);
+		expect(f.writes).toEqual([]);
+	});
+
+	it("refuses a destroy plan with no digest", async () => {
+		const f = setup([planRow({ destroy_plan: true, plan_sha256: null })], current(true));
 		expect(await codeOf(requestApproval(f.db, TOKEN_ACTOR, { planJobId: PLAN, operation: "destroy" }))).toBe(
 			"plan_not_approvable",
 		);
 	});
 
-	it("accepts a destroy against the plan the environment's current state was deployed from", async () => {
-		const applied = { id: "deploy", plan_job_id: PLAN, plan_sha256: DIGEST, created_at: AT };
-		const f = setup([planRow()], [[applied], [applied], []]);
+	it("refuses a destroy plan once something ran on the environment after it", async () => {
+		const f = setup(
+			[planRow({ destroy_plan: true })],
+			[[{ status: "SUCCESS", created_at: AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: true }], [{ id: "later" }]],
+		);
+		expect(await codeOf(requestApproval(f.db, TOKEN_ACTOR, { planJobId: PLAN, operation: "destroy" }))).toBe(
+			"plan_not_approvable",
+		);
+	});
+
+	it("accepts a destroy against a current destroy plan, bound to its digest", async () => {
+		const f = setup([planRow({ destroy_plan: true })], current(true));
 		await expect(requestApproval(f.db, TOKEN_ACTOR, { planJobId: PLAN, operation: "destroy" })).resolves.toEqual({ id: "approval-1" });
 		expect(can).toHaveBeenCalledWith(TOKEN_ACTOR, "destroy", { type: "project", id: "project" });
+		const insert = f.writes.find((w) => w.kind === "insert");
+		expect(insert?.values).toEqual(expect.objectContaining({ operation: "destroy", plan_job_id: PLAN, plan_sha256: DIGEST }));
 	});
 });
 

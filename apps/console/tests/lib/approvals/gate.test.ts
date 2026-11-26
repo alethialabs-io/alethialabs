@@ -77,18 +77,14 @@ interface Setup {
 	/** Something queued on the environment after the plan. */
 	runSince?: boolean;
 	newerPlan?: boolean;
-	/** For a destroy: the latest successful DEPLOY. */
-	applied?: Record<string, unknown>[];
 	/** What the consume UPDATE … RETURNING answers. */
 	cas?: unknown[];
 }
 
 /** A fake executor answering one gate call's reads, in the order the gate makes them. */
 function setup(s: Setup = {}) {
-	const plan = s.plan ?? [{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null }];
-	const jobReads: unknown[][] = s.applied
-		? [s.applied, s.runSince ? [{ id: "later" }] : []]
-		: [plan, plan, s.runSince ? [{ id: "later" }] : [], s.newerPlan ? [{ id: "newer" }] : []];
+	const plan = s.plan ?? [{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: false }];
+	const jobReads: unknown[][] = [plan, plan, s.runSince ? [{ id: "later" }] : [], s.newerPlan ? [{ id: "newer" }] : []];
 	return fakeExecutor(
 		new Map<unknown, unknown[][]>([
 			[projectEnvironments, [[{ stage: s.stage ?? "development", name: "dev" }]]],
@@ -186,6 +182,12 @@ describe("an approval is bound and single-use", () => {
 			DEPLOY_TARGET,
 			"approval_invalid",
 		],
+		[
+			"a deploy approval whose plan is a destroy plan",
+			{ plan: [{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: true }] },
+			DEPLOY_TARGET,
+			"approval_invalid",
+		],
 		["an approval after something ran since the plan", { runSince: true }, DEPLOY_TARGET, "approval_invalid"],
 		["an approval after a newer plan succeeded", { newerPlan: true }, DEPLOY_TARGET, "approval_invalid"],
 		["a pending approval", { approval: [approvalRow({ status: "pending" })] }, DEPLOY_TARGET, "approval_required"],
@@ -217,31 +219,47 @@ describe("an approval is bound and single-use", () => {
 describe("destroy", () => {
 	const cli = { kind: "actor" as const, actor: actorOf("cli_session") };
 	const destroyApproval = approvalRow({ operation: "destroy" });
-	const applied = [{ id: "deploy-1", plan_job_id: PLAN, plan_sha256: DIGEST, created_at: PLANNED_AT }];
+	/** A succeeded destroy-mode plan with the approved digest (#7455). */
+	const destroyPlan = [{ status: "SUCCESS", created_at: PLANNED_AT, plan_sha256: DIGEST, execution_metadata: null, destroy_plan: true }];
 
-	it("consumes an approval bound to the environment's applied state", async () => {
-		const f = setup({ approval: [destroyApproval], applied });
+	it("consumes an approval bound to a destroy plan and stamps the destroy with that plan", async () => {
+		const f = setup({ approval: [destroyApproval], plan: destroyPlan });
 		await expect(requireApplyAuthorization(f.db, cli, "destroy", DESTROY_TARGET, APPROVAL)).resolves.toEqual({
 			approvalId: APPROVAL,
 		});
+		// The runner tears down exactly the approved destroy plan: the job carries its id and digest.
+		expect(f.writes).toContainEqual({
+			kind: "update",
+			table: jobs,
+			values: { approval_id: APPROVAL, plan_job_id: PLAN, plan_sha256: DIGEST },
+		});
 	});
 
-	it("refuses it once the environment was deployed from another plan", async () => {
-		const f = setup({ approval: [destroyApproval], applied: [{ ...applied[0], plan_job_id: "newer-plan" }] });
-		expect((await refusal(requireApplyAuthorization(f.db, cli, "destroy", DESTROY_TARGET, APPROVAL))).code).toBe(
-			"approval_invalid",
-		);
-	});
+	const REFUSALS: Array<[string, Setup, ApplyTarget]> = [
+		["an approval whose plan is an apply plan, not a destroy plan", { approval: [destroyApproval] }, DESTROY_TARGET],
+		[
+			"an approval whose digest is not the destroy plan's",
+			{ approval: [destroyApproval], plan: [{ ...destroyPlan[0], plan_sha256: "cd".repeat(32) }] },
+			DESTROY_TARGET,
+		],
+		["an approval whose destroy plan is missing", { approval: [destroyApproval], plan: [] }, DESTROY_TARGET],
+		["an approval after something ran on the environment", { approval: [destroyApproval], plan: destroyPlan, runSince: true }, DESTROY_TARGET],
+		["an approval after a newer destroy plan succeeded", { approval: [destroyApproval], plan: destroyPlan, newerPlan: true }, DESTROY_TARGET],
+		[
+			"a destroy that names a different plan than its approval",
+			{ approval: [destroyApproval], plan: destroyPlan },
+			{ ...DESTROY_TARGET, planJobId: "other-plan" },
+		],
+	];
 
-	it("refuses it once something else ran on the environment", async () => {
-		const f = setup({ approval: [destroyApproval], applied, runSince: true });
-		expect((await refusal(requireApplyAuthorization(f.db, cli, "destroy", DESTROY_TARGET, APPROVAL))).code).toBe(
-			"approval_invalid",
-		);
+	it.each(REFUSALS)("refuses %s, and never stamps the job", async (_name, s, target) => {
+		const f = setup(s);
+		expect((await refusal(requireApplyAuthorization(f.db, cli, "destroy", target, APPROVAL))).code).toBe("approval_invalid");
+		expect(f.writes.some((w) => w.table === jobs)).toBe(false);
 	});
 
 	it("refuses a cascade to the environments on the Fabric for a credential that needs an approval", async () => {
-		const f = setup({ approval: [destroyApproval], applied });
+		const f = setup({ approval: [destroyApproval], plan: destroyPlan });
 		const err = await refusal(
 			requireApplyAuthorization(f.db, cli, "destroy", { ...DESTROY_TARGET, cascadeOfEnvironmentId: "owner-env" }, APPROVAL),
 		);
