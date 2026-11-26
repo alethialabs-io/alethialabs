@@ -7,7 +7,7 @@
 // `SCOPE_WORDS`, which carries "the consent screen's words" for the Manage sheet — one wording for
 // both, so the screen that grants a permission and the sheet that shows it agree.
 
-import type { AgentScope } from "@/lib/approvals/types";
+import type { AgentScope } from "@/lib/approvals/scopes";
 
 export { SCOPE_WORDS } from "@/components/settings/connected/connected-agents-board";
 

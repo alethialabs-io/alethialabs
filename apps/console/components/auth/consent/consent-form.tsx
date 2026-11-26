@@ -25,7 +25,7 @@ import { Checkbox } from "@repo/ui/checkbox";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { AgentIcon } from "@/components/agents/agent-icon";
-import { AGENT_SCOPES, type AgentScope } from "@/lib/approvals/types";
+import { AGENT_SCOPES, type AgentScope } from "@/lib/approvals/scopes";
 import { COPY, EYEBROW, SCOPE_VERB_WORD, SCOPE_WORDS } from "./consent-copy";
 import { ConsentHeading } from "./consent-heading";
 import {
