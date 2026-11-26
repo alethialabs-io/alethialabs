@@ -74,12 +74,14 @@ import { orpc } from "@/lib/rpc/client";
 import type { BillingSummary } from "@/lib/rpc/procedures/billing";
 import type { UsageReport } from "@/lib/rpc/procedures/usage";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { formatMinutes, formatMoney, formatQuota } from "@repo/format";
+import { formatDate, formatMinutes, formatMoney, formatQuota } from "@repo/format";
+import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { USAGE_STANDING_ROW } from "./usage-primitives";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
+import { ClockText } from "@/components/settings/usage/clock-text";
 import { SelfManagedUsageNotice } from "./self-managed-usage-notice";
 import { UsageSkeleton } from "./usage-skeleton";
 
@@ -147,16 +149,30 @@ function UsageReportView({ summary }: { summary: BillingSummary }) {
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
 	const usage = useQuery(orpc.usage.org.queryOptions({ retry: retryUnlessRefused }));
 	const isCommunity = summary.plan === "community" || summary.status === "none";
+	const periodEnd = usage.data?.periodEnd;
 
 	return (
 		<div className="space-y-2">
-			{/* No page title and no description line (polish-wave spec §3): the sidebar entry and the
-			    breadcrumb both already say "Usage". The row carries only the one action a usage page
-			    has, on the right. */}
-			<PageToolbar
-				className="pb-2"
-				actions={
-					isCommunity ? (
+			{/* No page title: the sidebar entry and the breadcrumb both already say "Usage". What
+			    neither of them says is WHICH PLAN and WHICH PERIOD every number below is measured
+			    against. That standing is account information, not a page description, so it is this
+			    panel's own content (not `PageToolbar`'s `description`): one row, the standing on the
+			    left and the action it calls for on the right, so the two read together. */}
+			<div data-slot="usage-standing" className={USAGE_STANDING_ROW}>
+				<p className="min-w-0 text-ui-md text-text-secondary">
+					{/* The plan name is its own element and the period is a quieter one beside it: they
+					    are a fact and a qualifier ON that fact, not one sentence. */}
+					<span>{planMeta(summary.plan).name} plan</span>
+					{periodEnd ? (
+						<span className="text-text-tertiary">
+							{" · "}period to{" "}
+							{/* The period end is a date in the VIEWER's zone: after hydration only. */}
+							<ClockText sizer="30 Sept 2026" text={() => formatDate(periodEnd)} />
+						</span>
+					) : null}
+				</p>
+				<div className="flex shrink-0 items-center gap-2">
+					{isCommunity ? (
 						<Button size="sm" onClick={() => setUpgradeOpen(true)}>
 							Upgrade to Pro
 							<ArrowUpRight size={14} />
@@ -175,9 +191,9 @@ function UsageReportView({ summary }: { summary: BillingSummary }) {
 							Manage billing
 							<ArrowUpRight size={13} />
 						</Link>
-					)
-				}
-			/>
+					)}
+				</div>
+			</div>
 
 			<PlanAndLimits summary={summary} usage={usage} />
 			<UsageOverTimeSection />

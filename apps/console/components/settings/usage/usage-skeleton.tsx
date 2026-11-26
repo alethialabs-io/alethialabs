@@ -11,6 +11,7 @@
 import type { ReactNode } from "react";
 import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
+import { USAGE_STANDING_ROW } from "./usage-primitives";
 
 /** A settings section's title row: the heading, then the hairline rule, then (maybe) an action. */
 function SectionTitle({ action }: { action?: "picker" }) {
@@ -62,7 +63,7 @@ function Card({ children }: { children: ReactNode }) {
 }
 
 /**
- * The org Usage page's shape: toolbar, Plan & limits (three gauges), Usage over time (pickers and
+ * The org Usage page's shape: the standing row (plan · period, and its action), Plan & limits (three gauges), Usage over time (pickers and
  * the chart card), Resources (three facts and a footnote), AI plan & usage (plan row, two gauges).
  * `scope="project"` draws what the project page has instead: its first section is two facts and a
  * footnote (a project has no quota to gauge), and it has no AI section.
@@ -70,8 +71,18 @@ function Card({ children }: { children: ReactNode }) {
 export function UsageSkeleton({ scope = "org" }: { scope?: "org" | "project" }) {
 	return (
 		<div className="space-y-2" aria-busy="true">
-			{/* PageToolbar: the one action, on the right of its row (no description line). */}
-			<PageToolbarSkeleton className="pb-2" description={false} actions={1} />
+			{scope === "org" ? (
+				// The org panel's standing row: one `text-ui-md` line (plan · period) and the action.
+				<div aria-hidden data-slot="usage-standing-skeleton" className={USAGE_STANDING_ROW}>
+					<div className="flex h-[1lh] items-center text-ui-md">
+						<Skeleton className="h-3 w-48" />
+					</div>
+					<Skeleton className="h-8 w-28 rounded-md" />
+				</div>
+			) : (
+				// The project panel's PageToolbar: the one link, on the right of its row.
+				<PageToolbarSkeleton className="pb-2" description={false} actions={1} />
+			)}
 
 			<section>
 				<SectionTitle />
