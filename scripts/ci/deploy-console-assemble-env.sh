@@ -329,10 +329,15 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   echo "ALETHIA_SES_EVENTS_TOPIC_ARNS=$SES_TOPIC_ARNS"
   # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
   emit SUPPORT_SLACK_WEBHOOK_URL
-  # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist
-  # (apps/admin/lib/auth/staff.ts) + the console URL its case deep-links target. COMPOSE_PROFILES
-  # activates the profiled `admin` service on the box (docker compose reads it from this .env).
+  # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the staff allowlist
+  # (apps/admin/lib/auth/staff.ts), the Cloudflare Access team domain + application AUD the app
+  # verifies the Access token against (apps/admin/lib/auth/access-jwt.ts — both empty ⇒ admin
+  # admits nobody in production), and the console URL its case deep-links target.
+  # COMPOSE_PROFILES activates the profiled `admin` service on the box (docker compose reads it
+  # from this .env).
   emit SUPPORT_STAFF_EMAILS
+  emit CF_ACCESS_TEAM_DOMAIN
+  emit CF_ACCESS_AUD
   echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
   echo "COMPOSE_PROFILES=admin"
   # Platform-operator plane (Enterprise onboarding, apps/admin /orgs → console internal
