@@ -12,7 +12,7 @@
 import type React from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { AlethiaLockup } from "@repo/brand/lockup";
 import { Chrome } from "@repo/brand/site-chrome";
@@ -70,8 +70,7 @@ function SignedInAs() {
         <span className="hidden sm:inline">Signed in as </span>
         <span className="text-text-primary">{viewer.email}</span>
       </span>
-      <Button variant="outline" size="sm" onClick={signOut} disabled={signingOut}>
-        {signingOut ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+      <Button variant="outline" size="sm" onClick={signOut} pending={signingOut}>
         {AUTH.signOut}
       </Button>
     </div>
