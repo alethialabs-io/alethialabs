@@ -87,8 +87,30 @@ describe("ListToolbar", () => {
 		);
 		await user.type(screen.getByRole("textbox", { name: "Search jobs" }), "a");
 		expect(onSearch).toHaveBeenCalledWith("a");
-		// The selected count badge is FacetFilter's own render, so the value reached it.
-		expect(screen.getByRole("button", { name: /Status/ }).textContent).toContain("1");
+		// The trigger naming its selection is FacetFilter's own render, so the value reached it.
+		expect(screen.getByRole("button", { name: /^Status/ })).toHaveAccessibleName("Status: Online");
+	});
+
+	it("binds `/` to its search by default, with the key hint (#7737)", async () => {
+		const user = userEvent.setup();
+		render(<ListToolbar search={{ value: "", onChange: () => {}, placeholder: "Search runners" }} />);
+		const input = screen.getByRole("textbox", { name: "Search runners" });
+		expect(input).toHaveAttribute("aria-keyshortcuts", "/");
+		await user.keyboard("/");
+		expect(input).toHaveFocus();
+	});
+
+	it("leaves `/` alone when the search opts out", async () => {
+		const user = userEvent.setup();
+		render(
+			<ListToolbar
+				search={{ value: "", onChange: () => {}, placeholder: "Search runners", slashToFocus: false }}
+			/>,
+		);
+		const input = screen.getByRole("textbox", { name: "Search runners" });
+		expect(input).not.toHaveAttribute("aria-keyshortcuts");
+		await user.keyboard("/");
+		expect(input).not.toHaveFocus();
 	});
 
 	it("hides Reset at zero and fires onReset when shown", async () => {
@@ -129,7 +151,7 @@ describe("ListToolbarSkeleton", () => {
 		const realRow = realEnd.parentElement;
 		const realClasses = realRow ? [...realRow.classList].sort() : [];
 		const realEndClasses = [...realEnd.classList].sort();
-		const realSearch = screen.getByRole("textbox").parentElement;
+		const realSearch = screen.getByRole("textbox").closest('[data-slot="filter-search"]');
 		const realSearchClasses = realSearch ? [...realSearch.classList] : [];
 		real.unmount();
 
@@ -139,7 +161,7 @@ describe("ListToolbarSkeleton", () => {
 		expect([...row.classList].sort()).toEqual(realClasses);
 		const search = row.querySelector('[data-part="search"]');
 		// The search placeholder carries the real search's width classes.
-		for (const c of ["w-full", "sm:w-64"]) {
+		for (const c of ["w-full", "sm:w-65"]) {
 			expect(realSearchClasses).toContain(c);
 			expect(search?.classList).toContain(c);
 		}

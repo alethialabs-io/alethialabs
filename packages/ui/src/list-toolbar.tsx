@@ -10,7 +10,12 @@
 //   search · facets · date range · extra · Reset · N ········· view · actions
 //
 // This file decides LAYOUT only. It renders the existing pieces unchanged; how they look is the
-// design unit's job, and it restyles them in their own files, not here.
+// design unit's job, and it restyles them in their own files, not here. The one behaviour it adds is
+// the `/` shortcut: it is the page's one list toolbar, so its search is the one that binds `/`
+// (`FilterSearch`'s `slashToFocus`, #7737).
+//
+// When the filters match nothing, the rows area renders `FilterEmpty` from `@repo/ui/filter-bar`
+// ("No <noun> match these filters." + Clear filters) with the same handler as `reset.onReset`.
 
 import * as React from "react";
 
@@ -25,8 +30,9 @@ import { cn } from "./utils";
 // data lands. `ROW` restates `FilterBar`'s own classes and is passed to it, so a later change to
 // `FilterBar` cannot move the real row away from its skeleton without this file saying so.
 const ROW = "mb-4 flex flex-wrap items-center gap-2.5";
-// Full width on a phone, so the search takes its own line and the controls wrap under it.
-const SEARCH = "w-full sm:w-64";
+// Full width on a phone, so the search takes its own line and the controls wrap under it; 260px
+// from `sm` up (polish-wave spec §3).
+const SEARCH = "w-full sm:w-65";
 // `ml-auto` pushes the page's own controls to the far right of the row; when the row wraps they
 // stay right-aligned on the last line.
 const END = "ml-auto flex items-center gap-2.5";
@@ -45,11 +51,16 @@ export interface ListToolbarSearch {
 	placeholder?: string;
 	/** Accessible name; falls back to the placeholder. */
 	ariaLabel?: string;
+	/**
+	 * Whether `/` focuses this search. On by default: a page has one list toolbar, so its search
+	 * is the one `/` belongs to. Turn it off only for a second toolbar on the same page.
+	 */
+	slashToFocus?: boolean;
 }
 
 /** The `Reset · N` affordance: hidden while `count` is 0. */
 export interface ListToolbarReset {
-	/** How many filters differ from their defaults. */
+	/** How many filters differ from their defaults: active facets, the date range, and the search. */
 	count: number;
 	onReset: () => void;
 }
@@ -118,6 +129,7 @@ export function ListToolbar({
 					onChange={search.onChange}
 					placeholder={search.placeholder}
 					ariaLabel={search.ariaLabel}
+					slashToFocus={search.slashToFocus ?? true}
 				/>
 			) : null}
 			{hasFacets ? facets.map((facet) => <FacetFilter key={facet.label} {...facet} />) : null}
