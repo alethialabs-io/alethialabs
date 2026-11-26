@@ -11,8 +11,8 @@
 //
 // `custom_data` is UNTRUSTED. Checkout opens only server-created transactions, so in practice it is
 // what our server wrote — but anyone with dashboard or API access to the Paddle account can write
-// it too, and an org id in it decides nothing on its own: lib/billing/apply-event.ts checks the org
-// exists and prefers the org already holding the subscription. A custom_data that does not parse is
+// it too, and an org id in it decides nothing on its own: lib/billing/events/apply.ts prefers the org
+// already holding the subscription, and otherwise needs a record of ours tying the org to the event. A custom_data that does not parse is
 // dropped (null), never an error. What a subscription IS (plan or AI tier) comes from its price ids
 // against the configured catalog, never from custom_data.
 
@@ -26,6 +26,7 @@ import type {
 	PurchaseItem,
 	SubscriptionSlot,
 	TransactionSnapshot,
+	TransactionUpdatedEvent,
 } from "@/lib/billing/provider/types";
 import type { BillingStatus } from "@/lib/db/schema/enums";
 import { PADDLE_TRANSACTION_STATUSES } from "@/lib/db/schema/paddle-transaction";
@@ -80,6 +81,8 @@ const subscriptionSchema = z.looseObject({
 		}),
 	),
 	custom_data: z.unknown().optional(),
+	/** Only on `subscription.created`: the checkout transaction that created it. */
+	transaction_id: z.string().nullish(),
 });
 
 const transactionSchema = z.looseObject({
@@ -133,8 +136,15 @@ const SUBSCRIPTION_EVENTS: ReadonlySet<string> = new Set([
 	"subscription.canceled",
 ]);
 
-/** The transaction event types that only move the mirror. */
-const TRANSACTION_UPDATE_EVENTS: ReadonlySet<string> = new Set(["transaction.paid", "transaction.past_due"]);
+/**
+ * The transaction event types that only move the mirror. `transaction.billed` is how a
+ * manual-collection invoice (billed now, paid later) reaches the mirror before it is paid.
+ */
+const TRANSACTION_UPDATE_EVENTS: ReadonlySet<string> = new Set([
+	"transaction.billed",
+	"transaction.paid",
+	"transaction.past_due",
+]);
 
 /** What a configured price id buys: a plan, or an AI tier. */
 export type CatalogItem = { slot: "plan"; plan: PaidPlan } | { slot: "ai"; tier: PaidAiTier };
@@ -230,6 +240,7 @@ function normalizeSubscription(env: PaddleEnvelope, catalog: PaddleCatalog): Nor
 		cancelEffectiveAt: sub.scheduled_change?.action === "cancel" ? sub.scheduled_change.effective_at : null,
 		businessId: sub.business_id ?? null,
 		addressId: sub.address_id ?? null,
+		transactionId: sub.transaction_id ?? null,
 	};
 }
 
@@ -250,12 +261,10 @@ function purchasedItem(
 	return null;
 }
 
-/** Normalizes a transaction.* event we act on. */
-function normalizeTransaction(env: PaddleEnvelope, catalog: PaddleCatalog): NormalizedBillingEvent {
-	const txn = parseData(transactionSchema, env.data, `${env.event_type} data`);
-	const custom = parseCustomData(txn.custom_data);
+/** The mirror's snapshot of a parsed transaction. */
+function snapshotOf(txn: z.infer<typeof transactionSchema>, custom: PaddleTransactionCustomData | null): TransactionSnapshot {
 	const { totals } = txn.details;
-	const snapshot: TransactionSnapshot = {
+	return {
 		status: txn.status,
 		origin: txn.origin ?? null,
 		subtotal: money(totals.subtotal, txn.currency_code),
@@ -267,6 +276,13 @@ function normalizeTransaction(env: PaddleEnvelope, catalog: PaddleCatalog): Norm
 		billingPeriodEnd: txn.billing_period?.ends_at ?? null,
 		customData: custom,
 	};
+}
+
+/** Normalizes a transaction.* event we act on. */
+function normalizeTransaction(env: PaddleEnvelope, catalog: PaddleCatalog): NormalizedBillingEvent {
+	const txn = parseData(transactionSchema, env.data, `${env.event_type} data`);
+	const custom = parseCustomData(txn.custom_data);
+	const snapshot = snapshotOf(txn, custom);
 	const common = {
 		provider: "paddle" as const,
 		eventId: env.event_id,
@@ -291,6 +307,36 @@ function normalizeTransaction(env: PaddleEnvelope, catalog: PaddleCatalog): Norm
 	}
 	if (env.event_type === "transaction.payment_failed") return { ...common, kind: "transaction_payment_failed" };
 	return { ...common, kind: "transaction_updated" };
+}
+
+const readTransactionSchema = transactionSchema.extend({ updated_at: isoDate });
+
+/** The event type a {@link transactionReadEvent} carries, so logs tell it from a webhook. */
+export const TRANSACTION_READ_EVENT_TYPE = "transaction.read";
+
+/**
+ * A transaction as Paddle's API returns it (`GET /transactions`), as a mirror-only event — the
+ * transaction backfill's input (lib/billing/events/backfill.ts). Its watermark is the transaction's
+ * own `updated_at`, so it never overwrites a row a newer webhook wrote, and any later webhook wins
+ * over it. Mirror-only on purpose: a completed credit pack read here grants nothing (a pack that was
+ * never granted was alerted when its webhook was refused, and may since have been granted by hand).
+ * Throws {@link PaddlePayloadError} when the transaction does not carry what the mirror reads.
+ */
+export function transactionReadEvent(data: unknown): TransactionUpdatedEvent {
+	const txn = parseData(readTransactionSchema, data, "transaction");
+	const custom = parseCustomData(txn.custom_data);
+	return {
+		provider: "paddle",
+		eventId: `read:${txn.id}:${txn.updated_at.toISOString()}`,
+		eventType: TRANSACTION_READ_EVENT_TYPE,
+		occurredAt: txn.updated_at,
+		organizationId: custom?.organizationId ?? null,
+		kind: "transaction_updated",
+		transactionId: txn.id,
+		subscriptionId: txn.subscription_id ?? null,
+		customerId: txn.customer_id ?? null,
+		transaction: snapshotOf(txn, custom),
+	};
 }
 
 /** Paddle's adjustment action, folded onto the seam's closed list. */
