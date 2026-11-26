@@ -6,6 +6,7 @@
   "exports": {
     "./status": "./src/brand-status.ts",
     "./lockup": "./src/lockup.tsx",
+    "./loader": "./src/loader/mark-loader.tsx",
     "./tokens.css": "./src/tokens.css",
     "./icon": "./src/icon.tsx",
     "./icon-svg": "./src/icon-svg.ts",

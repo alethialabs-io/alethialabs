@@ -12,6 +12,9 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MarkLoader } from "@repo/brand/loader";
+import { Button } from "@repo/ui/button";
+import { Spinner } from "@repo/ui/spinner";
 import { describe, expect, it } from "vitest";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 
@@ -31,6 +34,8 @@ const postcss: { parse: (css: string) => CssNode } = createRequire(
 )("postcss");
 
 const globalsPath = path.resolve(__dirname, "../../app/globals.css");
+/** The brand stylesheet the console imports first; the `[·]` mark loader's keyframes live there. */
+const tokensPath = path.resolve(__dirname, "../../../../packages/brand/src/tokens.css");
 
 /** A `transition` on one of these moves or resizes the element. */
 const MOVING_TRANSITION = /\b(all|width|height|inline-size|block-size|transform|translate|scale|rotate|top|right|bottom|left|inset|margin[\w-]*|background-position)\b/;
@@ -164,6 +169,8 @@ describe("app/globals.css animations under prefers-reduced-motion", () => {
 		["workspace-card-in", "animation"],
 		["canvas-env-in", "animation"],
 		["shimmer-sweep", "animation"],
+		['route-progress[data-state="running"]', "transition"],
+		['route-progress[data-state="done"]', "transition"],
 	])("defines .%s with a %s", async (name, prop) => {
 		const root = postcss.parse(await readFile(globalsPath, "utf8"));
 		const defined = (root.nodes ?? []).some(
@@ -182,5 +189,56 @@ describe("app/globals.css animations under prefers-reduced-motion", () => {
 		const html = renderToStaticMarkup(<Shimmer duration={1.5}>Thinking...</Shimmer>);
 		expect(html).toMatch(/class="[^"]*\bshimmer-sweep\b/);
 		expect(html).toContain("--shimmer-duration:1.5s");
+	});
+});
+
+// The `[·]` mark loader (#7740) is drawn by @repo/brand's MarkLoader and by @repo/ui's Spinner and
+// Button `pending`, all through one glyph whose motion is in packages/brand/src/tokens.css. That
+// file holds other surfaces' motion with reduced-motion rules of their own shape (the lockup's fold
+// is deliberately KEPT under reduced motion), so only the loader's selectors are held here.
+describe("the [·] mark loader under prefers-reduced-motion", () => {
+	/** The loader's rules in tokens.css, as the same findings the console's sheet is held to. */
+	const loaderFindings = async () =>
+		unguardedMotion(await readFile(tokensPath, "utf8")).filter((f) => f.startsWith(".ah-loader"));
+
+	it("gives each moving part of the loop a reduced-motion rule", async () => {
+		expect(await loaderFindings()).toEqual([]);
+	});
+
+	// So an empty list above means "covered", not "the loader's classes were never found".
+	it.each(["ah-loader__br--l", "ah-loader__br--r", "ah-loader__dot"])(
+		"runs a moving keyframe on .%s and stills it with animation: none",
+		async (name) => {
+			const root = postcss.parse(await readFile(tokensPath, "utf8"));
+			const normal = (root.nodes ?? []).some(
+				(n) => n.type === "rule" && selectorsOf(n).includes(`.${name}`) && declsOf(n).some((d) => d.prop === "animation-name"),
+			);
+			const reducedNone = (root.nodes ?? []).some(
+				(n) =>
+					isReduceMedia(n) &&
+					(n.nodes ?? []).some(
+						(r) =>
+							r.type === "rule" &&
+							selectorsOf(r).includes(`.${name}`) &&
+							declsOf(r).some((d) => d.prop === "animation" && d.value === "none"),
+					),
+			);
+			expect({ normal, reducedNone }).toEqual({ normal: true, reducedNone: true });
+		},
+	);
+
+	// The class names are pinned on the RENDERED markup of every caller, so a rename on either side
+	// of the stylesheet fails here instead of rendering a mark that never moves.
+	it.each([
+		["MarkLoader region", <MarkLoader key="r" status="Planning · prod-eu · 0:12" />],
+		["MarkLoader page", <MarkLoader key="p" size="page" />],
+		["MarkLoader inline", <MarkLoader key="i" size="inline" />],
+		["Spinner", <Spinner key="s" />],
+		["Button pending", <Button key="b" pending>Applying…</Button>],
+	])("%s renders the glyph with the loader's classes", (_name, element) => {
+		const html = renderToStaticMarkup(element);
+		for (const cls of ["ah-loader__glyph", "ah-loader__br--l", "ah-loader__br--r", "ah-loader__dot"]) {
+			expect(html).toContain(cls);
+		}
 	});
 });
