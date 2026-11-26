@@ -3,7 +3,7 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { Suspense } from "react";
-import { prefetchRunnersList } from "@/components/runners/runners-prefetch";
+import { isRunnersRead, prefetchRunnersList } from "@/components/runners/runners-prefetch";
 import { runnersQueryFromUrl } from "@/components/runners/runners-query";
 import { RunnersSkeleton } from "@/components/runners/runners-skeleton";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
@@ -60,7 +60,8 @@ export default async function RunnersRoute({ searchParams }: { searchParams: Sea
  *   read — a different question from a filtered page, not a leftover;
  * - `runners.fleet` and `runners.fleetEconomics`, only where the Pools column renders (self-managed);
  *   the economics read answers null, without a recorded refusal, to anyone who does not manage it.
- * A read that fails is not dehydrated; its region renders its own error after a client retry.
+ * A read that fails is not dehydrated; its region renders its own error after a client retry. Only
+ * `runners.*` is dehydrated here: the `[org]` layout hands over the shell's reads itself (R6 C-34).
  */
 async function PrefetchedRunners({ searchParams, hosted }: { searchParams: SearchParams; hosted: boolean }) {
 	const filtered = runnersQueryFromUrl(paramReader(await searchParams));
@@ -75,7 +76,7 @@ async function PrefetchedRunners({ searchParams, hosted }: { searchParams: Searc
 	]);
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient)}>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isRunnersRead })}>
 			<RunnersClient hosted={hosted} />
 		</HydrationBoundary>
 	);

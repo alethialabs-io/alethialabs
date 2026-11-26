@@ -51,6 +51,9 @@ export const ORG_CONTROL_NOTES = {
 /** The note in the Organization profile panel's Save band. */
 export const ORG_PROFILE_SAVE_NOTE = "Applies across the console";
 
+/** The Save band's note while the profile has edits that are not saved (R6 E-17), as Preview's says. */
+export const ORG_PROFILE_UNSAVED_NOTE = "You have unsaved changes";
+
 
 /**
  * The Danger zone's three rows. The delete row's description names the org between `before` and
