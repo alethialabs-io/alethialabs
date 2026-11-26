@@ -66,9 +66,10 @@ const DESCRIPTION = "My production cluster stopped responding after the last app
 
 /** Answers steps 1–3 (type, area, the defaulted severity) and lands on Details. */
 async function toDetails() {
-	// Wait for the first step itself: until the draft is read the page shows its skeleton, whose
-	// placeholder cards carry the same words and would take the click.
+	// Wait for the first step to come alive: until the draft is read it is drawn inert and busy, and
+	// a press there would land on a wizard that has not booted.
 	await screen.findByRole("radiogroup", { name: "Case type" });
+	await waitFor(() => expect(document.querySelector('[aria-busy="true"]')).toBeNull());
 	fireEvent.click(screen.getByText("Technical"));
 	fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 	fireEvent.click(await screen.findByRole("button", { name: "Pick Clusters" }));

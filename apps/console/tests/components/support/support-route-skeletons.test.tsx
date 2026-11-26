@@ -21,7 +21,7 @@
 //   suggestion chips, the docked composer — not on chat bubbles.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaseListItem as CaseListItemData, CaseWithThread } from "@/lib/queries/support";
@@ -206,6 +206,7 @@ describe("~/support/submit: the skeleton is the wizard's first step (#6354, B2)"
 	const real = async () => {
 		const view = renderWithClient(<SubmitCaseForm orgSlug="acme" defaultEmail="a@example.test" />);
 		await view.findByRole("radiogroup", { name: "Case type" });
+		await waitFor(() => expect(view.container.querySelector('[aria-busy="true"]')).toBeNull());
 		return view.container.firstElementChild;
 	};
 	const skeleton = () => render(<SubmitCaseFormSkeleton />).container.firstElementChild;
