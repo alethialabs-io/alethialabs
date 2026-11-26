@@ -17,6 +17,9 @@ var (
 	projectPlanRunnerID   string
 	projectPlanEnv        string
 	projectPlanWait       waitFlags
+	// projectPlanDestroy is --destroy (#7455): plan a teardown of the environment instead of an
+	// apply. Nothing is destroyed; `project destroy` is then approved against this plan.
+	projectPlanDestroy bool
 )
 
 // projectPreviewLong is the help of `project preview`. The deprecated `project plan` shows it too.
@@ -25,6 +28,11 @@ const projectPreviewLong = `Queue a PLAN job that works out what a deploy would 
 Use it before "alethia project deploy" to read the changes first. The job runs on a runner: add
 --wait to stay until it finishes and --timeout to bound that wait, then read the plan with
 "alethia jobs logs". "alethia project deploy --latest-plan" deploys exactly the plan you read.
+
+--destroy plans a teardown of the environment instead: what "alethia project destroy" would
+delete. It deletes nothing. A destroy from the CLI is approved against a destroy plan, and
+"alethia project destroy --latest-plan" asks for the approval of exactly the plan you read.
+"project deploy --latest-plan" never picks a destroy plan.
 
 --project and --runner take a NAME, so nothing has to be copied out of another command's
 output. --dry-run checks every input and prints the request without sending it.
@@ -76,6 +84,7 @@ func runProjectPreview(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
+	params.DestroyPlan = projectPlanDestroy
 	return finishProjectJob(cmd, client, projectJobRun{
 		Params: params, Wait: projectPlanWait, DryRun: cmdmeta.DryRunRequested(cmd),
 	})
@@ -89,6 +98,8 @@ func registerPreviewFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&projectPlanEnv, "env", "", jobEnvFlagUsage)
 	addProjectWaitFlags(cmd, &projectPlanWait)
 	addDryRunFlag(cmd)
+	cmd.Flags().BoolVar(&projectPlanDestroy, "destroy", false,
+		"Plan a teardown of the environment instead of a deploy; deletes nothing (what `project destroy` is approved against)")
 }
 
 func init() {
