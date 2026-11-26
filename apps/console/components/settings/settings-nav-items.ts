@@ -6,10 +6,13 @@
 // list without dragging a "use client" component module into their graph.
 
 import {
+	Bot,
 	CreditCard,
 	GitPullRequest,
 	KeyRound,
+	KeySquare,
 	Network,
+	Plug,
 	ScrollText,
 	Settings2,
 	ShieldCheck,
@@ -39,7 +42,9 @@ export interface SettingsNavItem {
 // Project scope exposes the project-scopable surfaces — General (rename/delete this project),
 // Access (grants on this project), and Activity (this project's events); org-wide concerns
 // (Billing/Members/Teams/Roles/SSO) stay org-only. The project order follows this list: General ·
-// Access · Activity.
+// Access · Activity. The three agent surfaces (AGT-L2) sit together after Access: Agents (the org's
+// policy), Service tokens and Connected agents. Each is visible to anyone with `org:view`; each page
+// decides editability from the PDP's answer, never the nav.
 export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
 	{ label: "General", sub: "general", icon: Settings2, scopes: ["org", "project"] },
 	{
@@ -53,6 +58,9 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
 	{ label: "Teams", sub: "teams", icon: UsersRound, scopes: ["org"] },
 	{ label: "Roles", sub: "roles", icon: ShieldCheck, scopes: ["org"] },
 	{ label: "Access", sub: "access", icon: Network, scopes: ["org", "project"] },
+	{ label: "Agents", sub: "agents", icon: Bot, scopes: ["org"] },
+	{ label: "Service tokens", sub: "tokens", icon: KeySquare, scopes: ["org"] },
+	{ label: "Connected agents", sub: "connected", icon: Plug, scopes: ["org"] },
 	{ label: "Single Sign-On", sub: "sso", icon: KeyRound, scopes: ["org"] },
 	{ label: "Classification", sub: "classification", icon: Tags, scopes: ["org"] },
 	{ label: "Activity", sub: "activity", icon: ScrollText, scopes: ["org", "project"] },
