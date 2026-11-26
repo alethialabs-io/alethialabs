@@ -103,6 +103,12 @@
 //       rubric's own reference implementation, which composes `FunnelFilter`) a FAIL.
 //       FAILS on a surface with no `<FilterBar>` at all, and on `lib/query/README.md`'s two named
 //       bans inside the bar region — a Radix `<Select>` and a stat-card strip.
+//       `<ListToolbar>` (`@repo/ui/list-toolbar`, #7734) IS a bar: it takes the search and the facets
+//       as DATA and renders `FilterBar`/`FilterSearch`/`FacetFilter` itself, so its region is the
+//       element's own props (by brace depth, to its `/>` — a self-closing element has no closing
+//       tag, and reading to EOF would charge it with a `<Select>` elsewhere in the file), and a
+//       `search=` or `facets=` prop counts as composing the primitives. Its `extra` slot is JSX
+//       inside that region, so a `<Select>` passed there still fails.
 //
 //   F5  NO list count: no pill, no "N of M" (INVERTED by #7482, the maintainer's 2026-11-24 ruling).
 //       It used to REQUIRE the pill. FAILS on `<CountPill>`, on `count=` on a `SectionHeading` /
@@ -1516,7 +1522,10 @@ export function scoreSurface(surface, sources, barPrimitives) {
 		bar === null
 			? []
 			: toolbarFile !== undefined
-				? ["ListToolbar"]
+				? // A toolbar that carries only actions renders no filter primitive at all (#7739).
+					/\s(search|facets)=\{/.test(bar)
+					? ["ListToolbar"]
+					: []
 				: [...new Set([...bar.matchAll(/<([A-Z]\w*)/g)].map((m) => m[1]))].filter((n) => barPrimitives.has(n) && n !== "FilterBar");
 	verdict(
 		"F4",
@@ -2814,6 +2823,41 @@ export function positiveControl() {
 	drive(
 		"F4 fires on a Radix Select inside the bar",
 		{ [CLIENT]: clean.readFile(CLIENT).replace("<FacetFilter />", "<FacetFilter /><Select />") },
+		(v) => v.F4.verdict === "FAIL",
+	);
+	drive(
+		"F4 accepts a ListToolbar built from config (#7734): its search and facets are the primitives",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace(
+					/<FilterBar>.*<\/FilterBar>/,
+					'<ListToolbar search={{ value: q, onChange: (v) => set("search", v) }} facets={[{ label: "Kind" }]} reset={{ count: n, onReset: reset }} />',
+				),
+		},
+		(v) => v.F4.verdict === "PASS",
+	);
+	drive(
+		"F4 fires on a Radix Select passed through a ListToolbar's `extra`",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace(/<FilterBar>.*<\/FilterBar>/, '<ListToolbar facets={[{ label: "Kind" }]} extra={<Select value={k} />} />'),
+		},
+		(v) => v.F4.verdict === "FAIL",
+	);
+	drive(
+		"F4 does NOT charge a self-closing ListToolbar with a Select further down the file",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace(/<FilterBar>.*<\/FilterBar>/, '<ListToolbar facets={[{ label: "Kind" }]} />\n<RowEditor><Select value={role} /></RowEditor>'),
+		},
+		(v) => v.F4.verdict === "PASS",
+	);
+	drive(
+		"F4 fires on a ListToolbar that carries only actions — no filter at all",
+		{ [CLIENT]: clean.readFile(CLIENT).replace(/<FilterBar>.*<\/FilterBar>/, "<ListToolbar actions={<Button>New</Button>} />") },
 		(v) => v.F4.verdict === "FAIL",
 	);
 	drive(

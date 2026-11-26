@@ -17,7 +17,7 @@
 // universe), and the open sheet is `?selected=<grant id>`, so a reload or a shared link reopens it.
 
 import { useQuery } from "@tanstack/react-query";
-import { CircleDot, Power, Search } from "lucide-react";
+import { CircleDot, Power } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { disconnectAgent } from "@/app/server/actions/agents/connections";
@@ -43,21 +43,20 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { hrefWithParamPatch, selectionFromUrl, selectionPatch } from "@/lib/query/view-url-params";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf, retryUnlessRefused } from "@/lib/rpc/refusal";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { useWorkspaceStore } from "@/lib/stores/use-workspace-store";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 
 /** Writes a param patch into the address bar in place (no server navigation, no history entry). */
 function replaceParams(patch: Record<string, string | null>) {
 	window.history.replaceState(null, "", hrefWithParamPatch(window.location.pathname, window.location.search, patch));
 }
 
-/** The connected-agents board: toolbar, kill-switch banner, filters, the card grid and the sheet. */
+/** The connected-agents board: kill-switch banner, the one toolbar row, the card grid and the sheet. */
 export function ConnectedAgentsPage({ orgSlug }: { orgSlug: string }) {
 	const read = useQuery(orpc.agents.connected.queryOptions({ input: undefined, retry: retryUnlessRefused }));
 	const projectsRead = useQuery(orpc.workspace.projects.queryOptions({ retry: retryUnlessRefused }));
@@ -85,6 +84,8 @@ export function ConnectedAgentsPage({ orgSlug }: { orgSlug: string }) {
 	const noneConnected = read.data ? read.data.connected.length === 0 : false;
 	const managed = board.find((card) => card.grant !== null && card.grant.grantId === selectedId) ?? null;
 	const [disconnecting, setDisconnecting] = useState<{ grantId: string; name: string } | null>(null);
+	// `/` focuses the search while this page is mounted (polish-wave spec §3).
+	const { inputRef, shortcut } = useListSearchShortcut();
 
 	const disconnect = useActionMutation(disconnectAgent, {
 		invalidates: [orpc.agents.connected.key()],
@@ -137,10 +138,6 @@ export function ConnectedAgentsPage({ orgSlug }: { orgSlug: string }) {
 				</Alert>
 			) : null}
 
-			<PageToolbar
-				description={`Apps you've let act for you in ${org}. They can only do what you can, limited to what you granted.`}
-			/>
-
 			{noneConnected ? (
 				<p className="text-ui-sm text-text-secondary">
 					You haven&apos;t connected an agent to {org} yet. Pick an app below for its setup steps, or run{" "}
@@ -151,42 +148,36 @@ export function ConnectedAgentsPage({ orgSlug }: { orgSlug: string }) {
 				</p>
 			) : null}
 
-			<FilterBar>
-				<FilterSearch
-					value={filters.search}
-					onChange={(search) => setFilters({ ...filters, search })}
-					placeholder="Search agents…"
-					ariaLabel="Search agents"
-					className="w-[220px] max-w-[320px] flex-1"
-				/>
-				<FacetFilter
-					label="Status"
-					icon={CircleDot}
-					options={AGENT_STATUS_OPTIONS.map((o) => ({
-						value: o.value,
-						label: o.label,
-						hint: String(counts[o.value]),
-					}))}
-					value={filters.status}
-					onChange={(next) => setFilters({ ...filters, status: next.filter(isAgentStatus) })}
-					searchPlaceholder="Filter status…"
-					emptyText="No statuses."
-				/>
-				<FilterBarReset count={activeAgentFilters(filters)} onReset={resetFilters} />
-			</FilterBar>
+			<ListToolbar
+				search={{
+					value: filters.search,
+					onChange: (search) => setFilters({ ...filters, search }),
+					placeholder: "Search agents…",
+					ariaLabel: "Search agents",
+					inputRef,
+					shortcut,
+				}}
+				facets={[
+					{
+						label: "Status",
+						icon: CircleDot,
+						options: AGENT_STATUS_OPTIONS.map((o) => ({
+							value: o.value,
+							label: o.label,
+							hint: String(counts[o.value]),
+						})),
+						value: filters.status,
+						onChange: (next: string[]) => setFilters({ ...filters, status: next.filter(isAgentStatus) }),
+						searchPlaceholder: "Filter status…",
+						emptyText: "No statuses.",
+					},
+				]}
+				reset={{ count: activeAgentFilters(filters), onReset: resetFilters }}
+			/>
 
 			{shown.length === 0 ? (
-				<EmptyState
-					className="border border-border bg-surface"
-					icon={<Search />}
-					title="No agents match"
-					description="Try another name, or clear the filter."
-					action={
-						<Button variant="outline" size="sm" onClick={resetFilters}>
-							Clear filters
-						</Button>
-					}
-				/>
+				// The board is the whole agent-app catalogue, never empty, so no card is a FILTERED empty.
+				<FilterEmpty noun="agents" onClear={resetFilters} />
 			) : (
 				<ul aria-label="Agent apps" className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
 					{shown.map((card) => (

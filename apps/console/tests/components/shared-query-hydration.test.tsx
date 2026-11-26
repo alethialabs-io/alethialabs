@@ -13,7 +13,7 @@
 //   · the overview's Recent jobs card — `useRecentJobsQuery`, also read by the app shell;
 //   · the My cases list — `qk.supportCases("all")`, read by the notifications bell until #6114
 //     (since #6130 its own `support.cases` key, prefetched by its route — see its test below);
-//   · the project Activity caption — `useProjectsQuery`, also read by the project switcher.
+//   · the project Activity feed — `useProjectsQuery`, also read by the project switcher.
 //
 // On the server none of those had data, so each rendered its pending state. In the browser the
 // page's boundary hydrates in a later pass than the shell, and when the shell's fetch landed in
@@ -202,7 +202,10 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 		expect(container?.querySelector("time")?.textContent).toMatch(/ ago$/);
 	});
 
-	it("the project Activity caption", async () => {
+	it("the project Activity feed", async () => {
+		// It used to caption itself "Activity in <project>." from the shared projects query, which
+		// could name the project on the client before the server had; the description line is gone
+		// (#7739), and the feed still hydrates without a mismatch when that query lands late.
 		const { serverHtml, recoverable } = await serverThenHydrate(
 			<ActivityLog projectId="s1" />,
 			client(),
@@ -211,8 +214,8 @@ describe("a page reading a query the shell also reads hydrates cleanly (#5786)",
 			},
 		);
 
-		expect(serverHtml).toContain("this project");
+		expect(serverHtml).toContain("Search actor, action or resource");
 		expect(recoverable).toEqual([]);
-		expect(container?.textContent).toContain("Activity in payments-api.");
+		expect(container?.textContent).not.toContain("Activity in");
 	});
 });

@@ -4,7 +4,7 @@
 // No "use client": the people & access routes' `loading.tsx` render this, and they are server
 // components.
 
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
 
@@ -12,9 +12,8 @@ import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
  * The loading form of a people & access list (members, teams, access), in the order and the boxes
  * the page renders (#6129, RUBRIC B2):
  *
- * - the toolbar — a result count, ONE line of description, and `actions` buttons;
- * - the filter bar — the search box (`w-[240px] max-w-[380px] flex-1`, as every one of these
- *   pages sizes it) and one `h-8` control per facet;
+ * - the one `ListToolbar` row — the search box, one control per facet (a `MultiCombobox` in the
+ *   row's `extra` slot counts as one), and the `actions` buttons on the right;
  * - the table, with the real table's column count.
  *
  * `lead` draws the Access page's inheritance note above the toolbar, which it renders whatever the
@@ -36,13 +35,7 @@ export function PeopleListSkeleton({
 	return (
 		<div aria-busy>
 			{lead && <AccessNoteSkeleton />}
-			<PageToolbarSkeleton className="mb-4" actions={actions} />
-			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
-				{Array.from({ length: facets }, (_, i) => (
-					<Skeleton key={i} className="h-8 w-28 rounded-md" />
-				))}
-			</div>
+			<ListToolbarSkeleton facets={facets} actions={actions} />
 			<DataTableSkeleton columns={columns} rows={rows} />
 		</div>
 	);
@@ -105,7 +98,8 @@ function FeatureUpsellSkeleton() {
 
 /**
  * The loading form of a gated people & access page whose body, for an org without the plan, is the
- * upsell panel (F021): the toolbar when the page keeps one (Teams keeps its disabled Create team),
+ * upsell panel (F021): the toolbar row when the page keeps one (Teams keeps its disabled Create team,
+ * alone on the right of a `ListToolbar` with no filters),
  * and the panel — never a filter bar or a table the page will not draw.
  */
 export function PeopleUpsellSkeleton({
@@ -118,7 +112,7 @@ export function PeopleUpsellSkeleton({
 	return (
 		<div aria-busy>
 			{lead && <AccessNoteSkeleton />}
-			{toolbar && <PageToolbarSkeleton className="mb-4" actions={1} />}
+			{toolbar && <ListToolbarSkeleton search={false} actions={1} />}
 			<FeatureUpsellSkeleton />
 		</div>
 	);

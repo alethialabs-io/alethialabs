@@ -25,9 +25,6 @@ import {
 	type Resource,
 } from "@/lib/authz/registry";
 
-/** The page toolbar's one line of supporting copy. */
-export const ROLES_DESCRIPTION = "Built-in roles plus the custom roles this organization defines.";
-
 /** The master/detail grid: the rail and the detail panel, side by side from `lg`. */
 export const ROLES_GRID_CLASS = "grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]";
 

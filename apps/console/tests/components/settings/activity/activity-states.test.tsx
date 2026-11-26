@@ -146,16 +146,19 @@ describe("the three empty answers (R6 E-27)", () => {
 	});
 });
 
-describe("the page opens with its toolbar (R6 E-28)", () => {
-	it("has no heading naming the page, and describes the feed", async () => {
+describe("the page opens with its one toolbar row (R6 E-28, polish-wave §3)", () => {
+	it("has no heading naming the page and no description line; the search leads the row", async () => {
 		h.page.mockResolvedValue(firstPage([row(1)], 1));
 		render();
 		await waitFor(() => expect(screen.getAllByText("Ada Lovelace").length).toBeGreaterThan(0));
 		expect(screen.queryByRole("heading", { name: "Activity" })).toBeNull();
 		// No count anywhere in the toolbar: a keyset feed only knows what it LOADED (#7481).
 		expect(document.querySelector('[data-slot="count-pill"]')).toBeNull();
-		expect(
-			screen.getByText("Every recorded action and access decision in this organization."),
-		).toBeInTheDocument();
+		expect(screen.queryByText("Every recorded action and access decision in this organization.")).toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
+		// The row starts with the search box: it is the first control of its row.
+		const search = document.querySelector('[data-slot="filter-search"]');
+		expect(search?.parentElement?.firstElementChild).toBe(search);
+		expect(screen.getByPlaceholderText("Search actor, action or resource…")).toBeInTheDocument();
 	});
 });

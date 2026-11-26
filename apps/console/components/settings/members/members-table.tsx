@@ -34,6 +34,7 @@ import { DataTable } from "@/components/data-table";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { type ActionResult, describeActionError } from "@/lib/actions/result";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { type KeysetList, useKeysetList } from "@/lib/query/use-keyset-list";
@@ -54,11 +55,9 @@ import {
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
 import { EmptyState } from "@repo/ui/empty";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { MultiCombobox } from "@repo/ui/multi-combobox";
-import { PageToolbar } from "@repo/ui/page-toolbar";
 import { SectionHeading } from "@repo/ui/section-heading";
 import {
   Select,
@@ -737,6 +736,9 @@ export function MembersTable() {
   // and the free text is debounced. The role filter is a FACET, not the Radix Select it used
   // to be — Selects are banned from filter bars by the console filter standard.
   const filters = useMembersFilters((s) => s.filters);
+  // `/` focuses the search while this page is mounted (polish-wave spec §3); before the early
+  // returns below, as every hook must be.
+  const { inputRef, shortcut } = useListSearchShortcut();
   const set = useMembersFilters((s) => s.set);
   const reset = useMembersFilters((s) => s.reset);
   // A filter change is a new list key, so the walk restarts at its first page — the cursor is the
@@ -1049,9 +1051,6 @@ export function MembersTable() {
       />
     );
   }
-  // First-run empty is the universe's answer (`universeEmpty`, a boolean), never a count; an empty
-  // page over a non-empty universe is the FILTERED empty state.
-  const firstRun = list.universeEmpty === true;
 
   const inviteButton = (
     <Button size="sm">
@@ -1073,67 +1072,68 @@ export function MembersTable() {
 
   return (
     <div aria-busy={busy}>
-      <PageToolbar
-        className="mb-4"
-        description="Organization members and pending invitations."
-        actions={inviteAction}
-      />
       {/* The stat-card strip that used to sit here is gone (banned by CLAUDE.md §6). Every
           figure it carried — seats, active, pending, suspended — is now the Status facet's
           option counts, computed over the same unfiltered rows, so nothing was lost. */}
-      <FilterBar>
-        <FilterSearch
-          value={filters.search}
-          onChange={(v) => set("search", v)}
-          placeholder="Search name or email…"
-          className="w-[240px] max-w-[380px] flex-1"
-        />
-        <FacetFilter
-          label="Status"
-          icon={Users}
-          options={MEMBER_STATUS_OPTIONS.map((o) => ({
-            value: o.value,
-            label: o.label,
-            hint: String(counts.statuses[o.value] ?? 0),
-          }))}
-          value={filters.statuses}
-          onChange={(next) => set("statuses", next)}
-          searchPlaceholder="Filter status…"
-          emptyText="No statuses."
-        />
-        <FacetFilter
-          label="Role"
-          icon={Shield}
-          options={MEMBER_ROLE_FILTER_OPTIONS.map((o) => ({
-            value: o.value,
-            label: o.label,
-            hint: String(counts.roles[o.value] ?? 0),
-          }))}
-          value={filters.roles}
-          onChange={(next) => set("roles", next)}
-          searchPlaceholder="Filter role…"
-          emptyText="No roles."
-        />
-        {/* Teams are an open-ended entity list, so this is a searchable combobox rather than
-            a fixed facet popover — the same split the standard draws for authors/projects. */}
-        {Object.keys(counts.teams).length > 0 && (
-          <MultiCombobox
-            placeholder="All teams"
-            icon={Users}
-            className="w-[180px]"
-            options={Object.keys(counts.teams)
-              .sort()
-              .map((t) => ({
-                value: t,
-                label: t,
-                hint: String(counts.teams[t] ?? 0),
-              }))}
-            value={filters.teams}
-            onChange={(next) => set("teams", next)}
-          />
-        )}
-        <FilterBarReset count={activeFilters} onReset={reset} />
-      </FilterBar>
+      <ListToolbar
+        search={{
+          value: filters.search,
+          onChange: (v) => set("search", v),
+          placeholder: "Search name or email…",
+          inputRef,
+          shortcut,
+        }}
+        facets={[
+          {
+            label: "Status",
+            icon: Users,
+            options: MEMBER_STATUS_OPTIONS.map((o) => ({
+              value: o.value,
+              label: o.label,
+              hint: String(counts.statuses[o.value] ?? 0),
+            })),
+            value: filters.statuses,
+            onChange: (next: string[]) => set("statuses", next),
+            searchPlaceholder: "Filter status…",
+            emptyText: "No statuses.",
+          },
+          {
+            label: "Role",
+            icon: Shield,
+            options: MEMBER_ROLE_FILTER_OPTIONS.map((o) => ({
+              value: o.value,
+              label: o.label,
+              hint: String(counts.roles[o.value] ?? 0),
+            })),
+            value: filters.roles,
+            onChange: (next: string[]) => set("roles", next),
+            searchPlaceholder: "Filter role…",
+            emptyText: "No roles.",
+          },
+        ]}
+        extra={
+          /* Teams are an open-ended entity list, so this is a searchable combobox rather than
+             a fixed facet popover — the same split the standard draws for authors/projects. */
+          Object.keys(counts.teams).length > 0 ? (
+            <MultiCombobox
+              placeholder="All teams"
+              icon={Users}
+              className="w-[180px]"
+              options={Object.keys(counts.teams)
+                .sort()
+                .map((t) => ({
+                  value: t,
+                  label: t,
+                  hint: String(counts.teams[t] ?? 0),
+                }))}
+              value={filters.teams}
+              onChange={(next) => set("teams", next)}
+            />
+          ) : undefined
+        }
+        reset={{ count: activeFilters, onReset: reset }}
+        actions={inviteAction}
+      />
 
       {linked && (
         <section
@@ -1197,23 +1197,14 @@ export function MembersTable() {
         </div>
       )}
 
-      {filtered.length === 0 ? (
+      {filtered.length === 0 && list.universeEmpty === false ? (
+        <FilterEmpty noun="members" onClear={reset} />
+      ) : filtered.length === 0 ? (
         <EmptyState
           className="border border-border bg-surface-sunken"
           icon={<Users />}
-          title={firstRun ? "No members yet" : "No matching members"}
-          description={
-            firstRun
-              ? "Invite a teammate to collaborate in this organization."
-              : "No member or invitation matches these filters."
-          }
-          action={
-            firstRun ? undefined : (
-              <Button variant="outline" size="sm" onClick={reset}>
-                Clear filters
-              </Button>
-            )
-          }
+          title="No members yet"
+          description="Invite a teammate to collaborate in this organization."
         />
       ) : (
         <div

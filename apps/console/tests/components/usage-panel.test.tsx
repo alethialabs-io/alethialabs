@@ -6,7 +6,7 @@
 // browser's. Asserts the four sections render the read numbers, the header affordance (paid →
 // "Manage billing", Hobby → "Upgrade to Pro"), and the four distinct renders a section can end in.
 
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { money } from "@repo/format";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveAiPriceMap } from "@/lib/billing/pricing";
@@ -136,6 +136,11 @@ describe("UsagePanel", () => {
 		renderWithReads(<UsagePanel />);
 
 		expect(await screen.findByText("Pro plan")).toBeInTheDocument();
+		// The plan standing is the panel's own content now, beside its action — not a PageToolbar
+		// description (#7739).
+		const standing = screen.getByText("Pro plan").closest('[data-slot="usage-standing"]');
+		expect(standing).not.toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar-description"]')).toBeNull();
 		expect(screen.getByText("Plan & limits")).toBeInTheDocument();
 		expect(screen.getByText("Resources")).toBeInTheDocument();
 		expect(screen.getByText("Usage over time")).toBeInTheDocument();
@@ -166,7 +171,10 @@ describe("UsagePanel", () => {
 		renderWithReads(<UsagePanel />);
 
 		expect(await screen.findByText("Hobby plan")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /upgrade to pro/i })).toBeInTheDocument();
+		// The standing and the action it calls for read together, in one row.
+		const standing = screen.getByText("Hobby plan").closest('[data-slot="usage-standing"]');
+		if (!(standing instanceof HTMLElement)) throw new Error("no usage-standing row");
+		expect(within(standing).getByRole("button", { name: /upgrade to pro/i })).toBeInTheDocument();
 		expect(screen.queryByRole("link", { name: /manage billing/i })).toBeNull();
 	});
 

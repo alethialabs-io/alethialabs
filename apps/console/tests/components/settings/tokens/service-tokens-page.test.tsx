@@ -99,7 +99,7 @@ describe("the service tokens list's answers", () => {
 		useServiceTokenFilters.setState({ filters: { search: "", status: ["expired"] } });
 		page.current = answered([], { universeEmpty: false });
 		renderPage();
-		expect(screen.getByText("No tokens match these filters")).toBeInTheDocument();
+		expect(screen.getByText("No tokens match these filters.")).toBeInTheDocument();
 		await userEvent.setup().click(screen.getByRole("button", { name: "Clear filters" }));
 		expect(useServiceTokenFilters.getState().filters).toEqual(DEFAULT_SERVICE_TOKEN_FILTERS);
 	});
