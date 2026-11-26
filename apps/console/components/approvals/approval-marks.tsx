@@ -7,10 +7,12 @@
 
 import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
-import { Bot, KeyRound, MessageSquare, MonitorSmartphone, SquareTerminal } from "lucide-react";
+import { KeyRound, type LucideIcon, MessageSquare, MonitorSmartphone, SquareTerminal } from "lucide-react";
+import { AgentIcon } from "@/components/agents/agent-icon";
+import { agentAppFor } from "@/lib/agents/catalog";
 import type { ApplyOperation, ApprovalStatus } from "@/lib/approvals/types";
 import type { CredentialKind } from "@/lib/authz/types";
-import { APPROVAL_STATUS, OPERATION_LABEL } from "./approval-vocabulary";
+import { APPROVAL_STATUS, CREDENTIAL_LABEL, OPERATION_LABEL } from "./approval-vocabulary";
 
 /** An approval's effective status. */
 export function ApprovalStatusBadge({ status }: { status: ApprovalStatus }) {
@@ -42,18 +44,60 @@ export function ProductionPill() {
 	);
 }
 
+/** The fields of an approval that say what asked, enough to draw its mark. */
+interface RequesterMarkSource {
+	requester_credential: CredentialKind;
+	requester_credential_name: string | null;
+	requester_credential_ref: string | null;
+	requester_credential_icon: string | null;
+}
+
+/** The neutral glyph of each credential that is not a connected agent: Alethia's own surfaces and tokens. */
+const CREDENTIAL_GLYPH: Record<Exclude<CredentialKind, "agent_oauth">, LucideIcon> = {
+	session: MonitorSmartphone,
+	cli_session: SquareTerminal,
+	agent_in_app: MessageSquare,
+	service_token: KeyRound,
+};
+
 /**
- * A neutral glyph for what asked. A connected agent's real brand mark belongs here once the connected
- * agents catalogue (#7625) lands; until then every credential gets a neutral, recognisable glyph, and
- * the app's NAME always carries the identity — never a letter placeholder (spec ruling 6).
+ * The mark of what asked. A connected agent is drawn by the shared `AgentIcon`, keyed by its OAuth
+ * client id: the app's brand mark when the agent catalogue knows it, otherwise the icon the app
+ * registered, otherwise a neutral glyph — never a letter placeholder (spec ruling 6). Every other
+ * credential gets a neutral glyph. Decorative everywhere: the app's NAME sits beside it and carries
+ * the identity, so the mark is hidden from assistive tech rather than announcing the name twice.
  */
-export function CredentialGlyph({ credential, className }: { credential: CredentialKind; className?: string }) {
-	const Icon = {
-		session: MonitorSmartphone,
-		cli_session: SquareTerminal,
-		agent_oauth: Bot,
-		agent_in_app: MessageSquare,
-		service_token: KeyRound,
-	}[credential];
-	return <Icon aria-hidden className={cn("size-3.5 shrink-0 text-text-tertiary", className)} />;
+export function RequesterMark({
+	approval,
+	size = 14,
+	className,
+}: {
+	approval: RequesterMarkSource;
+	/** Rendered size in px. */
+	size?: number;
+	className?: string;
+}) {
+	if (approval.requester_credential === "agent_oauth") {
+		const app = approval.requester_credential_ref ? agentAppFor(approval.requester_credential_ref) : null;
+		return (
+			<AgentIcon
+				mark={app?.mark ?? null}
+				icon={app ? null : approval.requester_credential_icon}
+				name={app?.name ?? approval.requester_credential_name ?? CREDENTIAL_LABEL.agent_oauth}
+				size={size}
+				decorative
+				className={className}
+			/>
+		);
+	}
+	const Icon = CREDENTIAL_GLYPH[approval.requester_credential];
+	return (
+		<Icon
+			aria-hidden
+			width={size}
+			height={size}
+			data-mark="credential"
+			className={cn("shrink-0 text-text-tertiary", className)}
+		/>
+	);
 }
