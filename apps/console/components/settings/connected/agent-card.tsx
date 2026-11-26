@@ -7,14 +7,14 @@
 // two-line description, the status dot (filled with a halo when connected, an outline when not), the
 // mono meta row with its chip and state label, and one action on the right.
 //
-// The mark is in its owner's colours in every state (ruling #3907, see agent-icon.tsx); whether the
-// app is connected is said by the dot, the meta row and the action, and in words by the state label,
-// because the dot is decoration (`aria-hidden`).
+// The mark is in its owner's colours in every state (ruling #3907, see components/agents/agent-icon.tsx);
+// whether the app is connected is said by the dot, the meta row and the action, and in words by the
+// state label, because the dot is decoration (`aria-hidden`).
 
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { formatRelative } from "@repo/format";
-import { AgentIcon } from "@/components/settings/connected/agent-icon";
+import { AgentIcon } from "@/components/agents/agent-icon";
 import type { AgentCardEntry } from "@/components/settings/connected/connected-agents-board";
 
 interface AgentCardProps {
