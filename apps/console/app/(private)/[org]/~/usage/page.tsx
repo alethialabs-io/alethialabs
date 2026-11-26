@@ -3,8 +3,10 @@
 
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { UsagePanel } from "@/components/settings/usage/usage-panel";
-import { USAGE_DEFAULT_RANGE } from "@/components/settings/usage/usage-reads";
+import { isUsageRead, usageRangeSpec } from "@/components/settings/usage/usage-reads";
 import { getQueryClient } from "@/lib/query/client";
+import { paramReader } from "@/lib/query/filter-url-codec";
+import { rangeFromUrl } from "@/lib/query/view-url-params";
 import { serverOrpc } from "@/lib/rpc/server";
 import { pageMetadata } from "@/lib/seo/page-metadata";
 
@@ -26,8 +28,17 @@ export const metadata = pageMetadata({
  * with no organization render one card each and read nothing else, so nothing else is prefetched
  * for them. A failed prefetch is not dehydrated; the panel then reads in the browser and renders
  * that read's error or refusal, section by section. `loading.tsx` covers the prefetch window.
+ *
+ * The over-time window is the link's (`?range=`, R6 C-32), so a shared or refreshed link is
+ * prefetched under the key the chart asks for. Only this page's reads are dehydrated: the `[org]`
+ * layout hands over the shell's own (R6 C-34).
  */
-export default async function UsagePage() {
+export default async function UsagePage({
+	searchParams,
+}: {
+	searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+	const range = usageRangeSpec(rangeFromUrl(paramReader(await searchParams)));
 	const queryClient = getQueryClient();
 	const rpc = serverOrpc();
 	const summary = await queryClient
@@ -38,7 +49,7 @@ export default async function UsagePage() {
 			queryClient.prefetchQuery(rpc.usage.org.queryOptions()),
 			queryClient.prefetchQuery(rpc.usage.resources.queryOptions()),
 			queryClient.prefetchQuery(
-				rpc.usage.overTime.queryOptions({ input: { range: USAGE_DEFAULT_RANGE } }),
+				rpc.usage.overTime.queryOptions({ input: { range } }),
 			),
 			queryClient.prefetchQuery(rpc.usage.ai.queryOptions()),
 			queryClient.prefetchQuery(rpc.billing.liveAiPrices.queryOptions()),
@@ -46,7 +57,7 @@ export default async function UsagePage() {
 	}
 
 	return (
-		<HydrationBoundary state={dehydrate(queryClient)}>
+		<HydrationBoundary state={dehydrate(queryClient, { shouldDehydrateQuery: isUsageRead })}>
 			<UsagePanel />
 		</HydrationBoundary>
 	);

@@ -30,6 +30,7 @@ import {
   saveOrgGeneral,
 } from "@/app/server/actions/org-settings";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
+import { useLeavePageGuard } from "@/components/confirm/use-unsaved-guard";
 import { RegionError } from "@/components/errors/region-error";
 import { OrgLogoUpload } from "@/components/org/org-logo-upload";
 import { GeneralRefusal } from "@/components/settings/general/general-states";
@@ -40,6 +41,7 @@ import {
   ORG_GENERAL_SECTIONS,
   ORG_PROFILE_ROWS,
   ORG_PROFILE_SAVE_NOTE,
+  ORG_PROFILE_UNSAVED_NOTE,
 } from "@/components/settings/general/org-general-copy";
 import { OrgGeneralSkeleton } from "@/components/settings/general/org-general-skeleton";
 import {
@@ -329,6 +331,10 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
   });
 
   const busy = isSubmitting || save.isPending;
+  // Unsaved profile edits are not dropped silently (R6 E-17): a reload or a closed tab asks first and
+  // the Save band says so — the same page-level guard Preview settings use. A save resets the form.
+  const unsaved = isDirty && canEdit;
+  useLeavePageGuard(unsaved);
   const saveBtn = canEdit ? (
     <Button type="submit" size="sm" disabled={!isDirty || busy}>
       {busy ? "Saving…" : "Save changes"}
@@ -449,7 +455,9 @@ function OrgGeneralForm({ settings }: { settings: OrgSettings }) {
                     )}
                   </SettingsField>
                 </div>
-                <SettingsCardFoot note={ORG_PROFILE_SAVE_NOTE}>{saveBtn}</SettingsCardFoot>
+                <SettingsCardFoot note={unsaved ? ORG_PROFILE_UNSAVED_NOTE : ORG_PROFILE_SAVE_NOTE}>
+                  {saveBtn}
+                </SettingsCardFoot>
               </SettingsPanel>
             </SettingsSection>
           </SettingsColumns>

@@ -460,3 +460,34 @@ describe("controls a role cannot use are disabled, with the reason (review advis
 		expect(screen.getByRole("button", { name: "Delete organization" })).toBeEnabled();
 	});
 });
+
+// R6 E-17: unsaved profile edits are not dropped silently — the Save band says so, and a reload or a
+// closed tab asks first, the same page-level guard Preview settings use. A save clears both.
+describe("E-17 — unsaved profile edits", () => {
+	/** Fires a cancelable `beforeunload` and answers whether the page asked to stay. */
+	function leaving(): boolean {
+		const event = new Event("beforeunload", { cancelable: true });
+		window.dispatchEvent(event);
+		return event.defaultPrevented;
+	}
+
+	it("a pristine form neither warns nor asks", () => {
+		renderOrgGeneral();
+		expect(screen.queryByText("You have unsaved changes")).toBeNull();
+		expect(leaving()).toBe(false);
+	});
+
+	it("an edit says so in the Save band and guards a reload; a save clears both", async () => {
+		const user = userEvent.setup();
+		renderOrgGeneral();
+		await user.type(screen.getByRole("textbox", { name: "Organization name" }), " Corp");
+		expect(screen.getByText("You have unsaved changes")).toBeInTheDocument();
+		expect(leaving()).toBe(true);
+
+		const [save] = saveButtons();
+		if (!save) throw new Error("no Save button");
+		await user.click(save);
+		await waitFor(() => expect(screen.queryByText("You have unsaved changes")).toBeNull());
+		expect(leaving()).toBe(false);
+	});
+});
