@@ -10,6 +10,7 @@ import { z } from "zod";
 import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { isBillingConfigured, isStripeConfigured } from "@/lib/billing/config";
+import { INVOICE_DISPLAY_STATUSES, type InvoiceDisplayStatus, paddleInvoiceStatus } from "@/lib/billing/invoice-status";
 import { paidSalesOpen } from "@/lib/billing/eligibility";
 import { listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf } from "@/lib/billing/payment-methods";
@@ -23,11 +24,10 @@ import { mapStatus } from "@/lib/billing/sync";
 import { getServiceDb } from "@/lib/db";
 import { type Invoice, member, type OrganizationBilling, organization, type PaddleTransaction } from "@/lib/db/schema";
 import type { BillingProviderId } from "@/lib/db/schema/billing-provider";
-import { type BillingPlan, type BillingStatus, type InvoiceStatus, invoiceStatus } from "@/lib/db/schema/enums";
+import type { BillingPlan, BillingStatus } from "@/lib/db/schema/enums";
 import {
 	type InvoiceFacets,
 	type InvoiceListRow,
-	paddleInvoiceStatus,
 	queryInvoicesPage,
 	queryTransactionsPage,
 	type TransactionInfo,
@@ -372,8 +372,15 @@ export interface InvoiceInfo {
 	/** Total in the smallest currency unit (e.g. cents). */
 	total: number;
 	currency: string;
-	status: InvoiceStatus;
-	/** ISO instant the invoice was paid — the primary display/sort date. */
+	/**
+	 * What the invoice's badge says: the stored status for a Stripe-era invoice; for a Paddle one,
+	 * also `open` (billed, not yet paid) or `overdue` (past due) — `paddleInvoiceStatus`.
+	 */
+	status: InvoiceDisplayStatus;
+	/**
+	 * The primary display/sort date (ISO): when a Stripe-era invoice was paid; when Paddle billed
+	 * (issued) a Paddle invoice, which for an open or overdue one is not a payment date.
+	 */
 	paidAt: string;
 	/** Billing period the invoice covers (ISO), if known. */
 	periodStart: string | null;
@@ -441,8 +448,8 @@ export async function listInvoices(
 }
 
 /**
- * A mirrored Paddle invoice (`paddle_transaction`, billed or completed — Paddle is the merchant of
- * record) in the list's shape. Its id is Paddle's (`txn_…`), the PDF route's key for Paddle's own
+ * A mirrored Paddle invoice (`paddle_transaction`, open, overdue, paid or void — Paddle is the
+ * merchant of record) in the list's shape, its status read by `paddleInvoiceStatus`. Its id is Paddle's (`txn_…`), the PDF route's key for Paddle's own
  * PDF; the row's uuid only orders the list. With an invoice number it is downloadable, as an issued
  * фактура is.
  */
@@ -593,7 +600,7 @@ function readSalesOpen(): { open: boolean } {
 
 /** The invoices list's filters, as the page builds them (`normalizeInvoiceQuery`). */
 const invoiceFilterFields = {
-	status: z.array(z.enum(invoiceStatus.enumValues)).max(10).optional(),
+	status: z.array(z.enum(INVOICE_DISPLAY_STATUSES)).max(10).optional(),
 	paidWithin: z.enum(INVOICE_PAID_WITHIN).optional(),
 	paidFrom: z.iso.datetime().optional(),
 	paidTo: z.iso.datetime().optional(),
