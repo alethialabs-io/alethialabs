@@ -33,8 +33,7 @@ import {
 	Workflow,
 	Zap,
 } from "lucide-react";
-import { ProviderIcon } from "@repo/ui/provider-icon";
-import type { CloudSlug } from "@repo/cloud-catalog";
+import { ProviderIcon, type Provider } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { AlethiaMark } from "../lockup";
 
@@ -156,11 +155,11 @@ export function Icon({
 
 /* ---------- provider / integration logos ---------- */
 /**
- * A catalog cloud slug, so the list follows packages/core/catalog/catalog.json. It is every
- * catalog cloud, not only the offered ones: the generated `AVAILABLE_CLOUDS` is typed
- * `readonly CloudSlug[]`, so which clouds are offered is a runtime value, not a type.
+ * A provider `ProviderIcon` draws a mark for: @repo/ui's slug union, which lists every catalog cloud
+ * (Hetzner included) so a row on any cloud renders. It is not a separate list here because
+ * @repo/brand is published and @repo/cloud-catalog is not, so the catalog's own type cannot be named.
  */
-export type ProviderId = CloudSlug;
+export type ProviderId = Provider;
 
 /** Grayscale cloud-provider logo. */
 export function Prov({ id, size = 14 }: { id: ProviderId; size?: number }) {

@@ -55,7 +55,6 @@
     "vitest": "^4.1.12"
   },
   "dependencies": {
-    "@repo/cloud-catalog": "workspace:*",
     "@repo/legal": "workspace:*",
     "@repo/privacy": "workspace:*",
     "@repo/ui": "workspace:*",

@@ -862,9 +862,6 @@ importers:
 
   packages/brand:
     dependencies:
-      '@repo/cloud-catalog':
-        specifier: workspace:*
-        version: link:../cloud-catalog
       '@repo/legal':
         specifier: workspace:*
         version: link:../legal
