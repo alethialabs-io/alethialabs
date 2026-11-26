@@ -23,7 +23,11 @@ vi.mock("@/lib/projects/placement-namespace-claim", () => ({
 import { CloudNotOfferedError, withHiddenClouds } from "@/lib/cloud-providers/availability";
 import type { Tx } from "@/lib/db";
 import { cloudIdentities, projectEnvironments, projectFabrics, projects } from "@/lib/db/schema";
-import { assertProjectCloudOffered, insertProjectWithDefaultFabric } from "@/lib/queries/projects";
+import {
+	assertProjectCloudOffered,
+	insertProjectWithDefaultFabric,
+	projectCloudRefusal,
+} from "@/lib/queries/projects";
 
 /** What the fake transaction holds, and what it was asked to write. */
 interface Store {
@@ -175,5 +179,27 @@ describe("assertProjectCloudOffered — an existing project", () => {
 		const store: Store = { accountCloud: "aws", projectAccount: "ci-1", inserts: [] };
 		await assertProjectCloudOffered(fakeTx(store), "p1");
 		expect(store.inserts).toEqual([]);
+	});
+});
+
+// #6964: the same question for the service-role paths that skip or block rather than throw.
+describe("projectCloudRefusal — the refusal as a value", () => {
+	it("returns the refusal for a project on a cloud that is not offered", async () => {
+		const store: Store = { accountCloud: "alibaba", projectAccount: "ci-1", inserts: [] };
+		const refusal = await projectCloudRefusal(fakeTx(store), "p1");
+		expect(refusal).toBeInstanceOf(CloudNotOfferedError);
+		expect(refusal?.slug).toBe("alibaba");
+	});
+
+	it("returns null for a project on an offered cloud", async () => {
+		const store: Store = { accountCloud: "aws", projectAccount: "ci-1", inserts: [] };
+		await expect(projectCloudRefusal(fakeTx(store), "p1")).resolves.toBeNull();
+	});
+
+	it("rethrows a failure that is not the refusal", async () => {
+		const broken = {
+			select: () => ({ from: () => ({ where: () => Promise.reject(new Error("connection reset")) }) }),
+		};
+		await expect(projectCloudRefusal(broken as unknown as Tx, "p1")).rejects.toThrow("connection reset");
 	});
 });

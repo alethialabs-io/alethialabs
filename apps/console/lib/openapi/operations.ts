@@ -191,7 +191,7 @@ const JOB_AND_PROJECT_OPERATIONS: readonly OpenApiOperation[] = [
 			{
 				status: 409,
 				description:
-					"The environment already has a job in flight, or — for a DESTROY without `cascade` — its Fabric still hosts live environments, which the body lists in `tenants`.",
+					"The environment already has a job in flight; or — for a DESTROY without `cascade` — its Fabric still hosts live environments, which the body lists in `tenants`; or — for a PLAN or DEPLOY — the project's cloud account is on a cloud this deployment does not offer, with `code` `cloud_not_offered`. A destroy and a destroy plan are never refused for the cloud.",
 			},
 			serverError,
 		],
@@ -298,7 +298,16 @@ const JOB_AND_PROJECT_OPERATIONS: readonly OpenApiOperation[] = [
 			"Creates a project in the caller's organization with its default Fabric and environments, as the console does. `instance_type` and `node_size` are mutually exclusive, and `instance_type` needs `cloud_identity_id`.",
 		permission: { action: "create", resource: "project" },
 		body: createProjectBody,
-		responses: [ok(cliProjectResponse, "The created project.", 201), badRequest, serverError],
+		responses: [
+			ok(cliProjectResponse, "The created project.", 201),
+			badRequest,
+			{
+				status: 409,
+				description:
+					"`cloud_identity_id` is an account on a cloud this deployment does not offer; `code` is `cloud_not_offered`. Nothing was created.",
+			},
+			serverError,
+		],
 	},
 	{
 		method: "post",

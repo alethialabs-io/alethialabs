@@ -102,8 +102,12 @@ vi.mock("@/lib/cost/previous-environment-cost", () => ({
 vi.mock("@/lib/queries/classification", () => ({ getEnforcingValuesForEnvironment: vi.fn(async () => []) }));
 vi.mock("@/lib/promotions/approve", () => ({ claimApprovalSlot: vi.fn() }));
 vi.mock("@/lib/db/signed-job", () => ({ signedJob: <T>(row: T): T => row }));
+// The cloud check's SQL is integration-tested (tests/integration/cloud-availability/); here it is a
+// seam whose answer decides whether the DEPLOY is queued.
+vi.mock("@/lib/queries/projects", () => ({ projectCloudRefusal: vi.fn(async () => null) }));
 
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import { getPreviousEnvironmentCost } from "@/lib/cost/previous-environment-cost";
 import { transitionEnv } from "@/lib/db/env-status";
 import { claimApprovalSlot } from "@/lib/promotions/approve";
@@ -114,6 +118,7 @@ import {
 	finalizePromotionOnDeploy,
 } from "@/lib/promotions/lifecycle";
 import { getEnforcingValuesForEnvironment } from "@/lib/queries/classification";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 import { notifyScaler } from "@/lib/scaler";
 
 const PROMOTION = {
@@ -254,6 +259,25 @@ describe("advancePromotionOnPlan", () => {
 			expect.objectContaining({
 				status: "BLOCKED",
 				error_message: expect.stringMatching(/no recorded plan digest.*Promote again/),
+			}),
+		]);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("blocks the promotion and queues nothing when the project's cloud is no longer offered", async () => {
+		vi.mocked(projectCloudRefusal).mockResolvedValueOnce(new CloudNotOfferedError("alibaba"));
+		fake.selects.push([PROMOTION], [PLAN_JOB]);
+		scriptGateContext({});
+
+		await advancePromotionOnPlan("plan-1");
+
+		expect(projectCloudRefusal).toHaveBeenCalledWith(fake.db, "proj-1");
+		expect(transitionEnv).not.toHaveBeenCalled();
+		expect(fake.inserted).toEqual([]);
+		expect(fake.updated).toEqual([
+			expect.objectContaining({
+				status: "BLOCKED",
+				error_message: "Alibaba Cloud is not available in this release.",
 			}),
 		]);
 		expect(notifyScaler).not.toHaveBeenCalled();

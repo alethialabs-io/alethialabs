@@ -27,6 +27,7 @@ import {
 	saveConnectorCredential,
 } from "@/app/server/actions/connectors";
 import { authorize, currentActor } from "@/lib/authz/guard";
+import { withHiddenClouds } from "@/lib/cloud-providers/availability";
 import { ForbiddenError } from "@/lib/authz/types";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import { encryptSecret } from "@/lib/crypto/secrets";
@@ -214,6 +215,40 @@ describe("saveConnectorCredential", () => {
 		expect(r).toEqual({ ok: false, error: { kind: "unexpected", ref: expect.any(String) } });
 		expect(JSON.stringify(r)).not.toContain("no key configured");
 		expect(dbh.spies.values).not.toHaveBeenCalled();
+	});
+});
+
+// #6964: a connector that signs in with the cluster's own identity is refused while its cloud is
+// not offered, by the rule the board lists by (lib/connectors/cloud-dependence.ts). The catalog is
+// the stored one: the connector and the cloud card that shares its sign-in method.
+describe("saveConnectorCredential — a connector on a cloud that is not offered (#6964)", () => {
+	const save = (slug: string) => saveConnectorCredential({ slug, fields: {} });
+	const CATALOG = [
+		{ slug: "alibaba", category: "cloud", auth_method: "alibaba_rrsa" },
+		{ slug: "alibaba-kms-xacct", category: "secrets", auth_method: "alibaba_rrsa" },
+		{ slug: "aws", category: "cloud", auth_method: "aws_irsa" },
+	];
+
+	it("refuses the Alibaba cross-account store, before pinging or writing anything", async () => {
+		dbh.setQueue([[{ id: "conn-kms" }], CATALOG]);
+		const r = await save("alibaba-kms-xacct");
+		expect(r).toEqual({
+			ok: false,
+			error: {
+				kind: "conflict",
+				message: expect.stringContaining("not available in this release"),
+			},
+		});
+		expect(pingConnector).not.toHaveBeenCalled();
+		expect(dbh.spies.values).not.toHaveBeenCalled();
+	});
+
+	it("saves it once the operator setting offers Alibaba", async () => {
+		vi.mocked(pingConnector).mockResolvedValue({ ok: true } as never);
+		dbh.setQueue([[{ id: "conn-kms" }], CATALOG, []]);
+		const r = await withHiddenClouds(["alibaba"], () => save("alibaba-kms-xacct"));
+		expect(r).toMatchObject({ ok: true });
+		expect(dbh.spies.values).toHaveBeenCalledTimes(1);
 	});
 });
 

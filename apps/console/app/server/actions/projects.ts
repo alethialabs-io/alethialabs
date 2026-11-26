@@ -122,6 +122,7 @@ import {
 } from "@/lib/queries/project-components-read";
 import { listAssignmentsFor } from "@/lib/queries/classification";
 import {
+	assertProjectCloudOffered,
 	type EnvironmentSpec,
 	insertProjectWithDefaultFabric,
 	isEnvironmentNameTaken,
@@ -135,6 +136,7 @@ import {
 	type HetznerChartedKind,
 } from "@/lib/cloud-providers/hetzner-services";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import {
 	type PlacementRow,
 	resolveComponentPlacement,
@@ -927,6 +929,11 @@ export async function tryCreateProject(
 		if (err instanceof CloudIdentityRefusedError) {
 			return { ok: false, error: err.message };
 		}
+		// The account is on a cloud this deployment does not offer (#6811, #6964). The sentence names
+		// the cloud, read from the stored account row, and nothing was written.
+		if (err instanceof CloudNotOfferedError) {
+			return { ok: false, error: err.message };
+		}
 		if (isProjectNameTaken(err)) {
 			return {
 				ok: false,
@@ -1285,6 +1292,14 @@ async function buildConfigSnapshot(
 			throw new JobRefusalError(
 				"Cloud account is not verified. Go to Connectors to verify.",
 			);
+		}
+
+		// A project on a cloud this deployment does not offer can still be read, checked for drift,
+		// given a kubeconfig and destroyed, but nothing new is put on that cloud (#6964): a plan, a
+		// deploy, and a build (whose success chains a deploy) are refused with `CloudNotOfferedError`.
+		// A destroy plan arrives here as "destroy", so a teardown can still be planned.
+		if (jobKind === "plan" || jobKind === "deploy") {
+			await assertProjectCloudOffered(tx, projectId);
 		}
 
 		// Snapshot the TARGET environment's components (config is environment-scoped).
@@ -2333,10 +2348,13 @@ export type QueueJobResult<T extends object> = ({ ok: true } & T) | ProjectRefus
 /**
  * Runs a job-queueing action and returns a refusal the user can act on as a VALUE.
  *
- * Exactly five types are refusals, each already written as a sentence for a person:
+ * These types are refusals, each already written as a sentence for a person:
  *   · `ApplyAuthorizationError` — the apply or destroy was not authorized for this caller
  *     (lib/approvals/types.ts): a credential that needs a person's approval presented none, or one
  *     that does not cover this job;
+ *   · `PlanBindingError` — a deploy named no current reviewed plan (lib/approvals/plan-binding.ts);
+ *   · `CloudNotOfferedError` — a plan or deploy of a project whose cloud this deployment does not
+ *     offer (lib/cloud-providers/availability.ts);
  *   · {@link JobRefusalError} — the deploy-time gates (no cloud account, a dangling binding, a WAF
  *     the cloud cannot provide, a Hetzner node name, no network selected, an unscanned IaC source…);
  *   · `EnvStateConflictError` — a job is already in flight on the environment; the same request
@@ -2355,6 +2373,7 @@ async function refusalAsValue<T extends object>(
 		if (
 			err instanceof ApplyAuthorizationError ||
 			err instanceof PlanBindingError ||
+			err instanceof CloudNotOfferedError ||
 			err instanceof JobRefusalError ||
 			err instanceof EnvStateConflictError ||
 			err instanceof UsageLimitError ||
@@ -2897,10 +2916,14 @@ export async function queueDriftDetection(
 	if (runnerId) await assertRunnerInOrg(getServiceDb(), runnerId, actor.orgId);
 	await assertJobQuotaAllowed(actor.orgId);
 	const owner = actor.userId;
+	// "drift", named: the parameter defaults to "deploy", so a drift check left on the default was
+	// gated as one, and #6964's cloud refusal would have refused it with the deploys. A drift check
+	// changes nothing on the cloud, so none of the gates for paths that create apply to it.
 	const { identity, environment, configSnapshot } = await buildConfigSnapshot(
 		actor,
 		projectId,
 		environmentId,
+		"drift",
 	);
 
 	const result = await withScope(
@@ -3397,10 +3420,17 @@ export interface DuplicatedProject {
 	warnings: ConversionWarning[];
 }
 
-/** {@link tryDuplicateProjectForProvider}'s result: the clone, or a refusal to render. */
+/**
+ * Where the duplicate dialog shows a refusal: `project_name` beside the name field (the name is
+ * taken, or no rule accepts it), `form` above the buttons (anything about the source project or the
+ * target account, which typing another name cannot fix).
+ */
+type DuplicateRefusalPlace = "project_name" | "form";
+
+/** {@link tryDuplicateProjectForProvider}'s result: the clone, or a refusal and where to show it. */
 export type DuplicateProjectResult =
 	| ({ ok: true } & DuplicatedProject)
-	| ProjectRefusal;
+	| (ProjectRefusal & { field: DuplicateRefusalPlace });
 
 /**
  * Duplicates a project config for a different cloud provider, mapping provider-specific values.
@@ -3494,7 +3524,8 @@ export async function duplicateProjectForProvider(
  * #4162's name field would otherwise be useless: the user could edit the name, but the sentence
  * saying WHY the old one was refused — too long, or already held by the org — never reached them.
  *
- * ONLY the two name refusals are mapped; anything else is rethrown, because an unexpected error is
+ * ONLY the refusals below are mapped, each with the place it is shown (`field`): the two name
+ * refusals beside the name field, the rest above the buttons. Anything else is rethrown, because an unexpected error is
  * a defect rather than advice and the dialog's `catch` is what handles it. `ProjectNameInvalidError`
  * is module-private (a `"use server"` file may export nothing but async functions), and this wrapper
  * lives in the same module for that reason.
@@ -3507,7 +3538,7 @@ export async function duplicateProjectForProvider(
  * @param targetCloudIdentityId the verified cloud account the clone is created against
  * @param targetRegion the clone's region on the target cloud
  * @param projectName the clone's display name; absent falls back to the derived default
- * @returns the clone, or `{ ok: false, error }` with a sentence to show beside the name field
+ * @returns the clone, or `{ ok: false, error, field }` with a sentence and where to show it
  */
 export async function tryDuplicateProjectForProvider(
 	sourceProjectId: string,
@@ -3525,10 +3556,15 @@ export async function tryDuplicateProjectForProvider(
 		return { ok: true, ...duplicated };
 	} catch (err) {
 		if (err instanceof ProjectNameInvalidError) {
-			return { ok: false, error: err.message };
+			return { ok: false, error: err.message, field: "project_name" };
 		}
 		if (err instanceof ProjectNameTakenError) {
-			return { ok: false, error: err.message };
+			return { ok: false, error: err.message, field: "project_name" };
+		}
+		// The target account is on a cloud this deployment does not offer (#6811, #6964), or is one
+		// the caller may not use. Neither is about the name, so neither is shown beside it.
+		if (err instanceof CloudNotOfferedError || err instanceof CloudIdentityRefusedError) {
+			return { ok: false, error: err.message, field: "form" };
 		}
 		// The source project still holds a credential in a component's provider_config from before
 		// #5565. Its own saves keep it (it is grandfathered there), but a duplicate is a NEW project,
@@ -3538,6 +3574,7 @@ export async function tryDuplicateProjectForProvider(
 			return {
 				ok: false,
 				error: `This project stores a credential in a component's settings (${err.where}), and a copy would store it again in plaintext. Open that component's Advanced section in the source project, choose "Remove the stored value" once the value is in its secret store, save, and duplicate again.`,
+				field: "form",
 			};
 		}
 		// `ProjectNameTakenError` above ALREADY covers the index race that `pickFreeProjectName`'s

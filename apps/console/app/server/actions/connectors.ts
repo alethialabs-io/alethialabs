@@ -15,6 +15,8 @@ import {
 } from "@/lib/db/schema";
 import type { CredentialScope } from "@/lib/db/schema/enums";
 import { encryptSecret } from "@/lib/crypto/secrets";
+import { offeredClouds } from "@/lib/cloud-providers/availability";
+import { connectorCloudOffered } from "@/lib/connectors/cloud-dependence";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { verifyConnectorCredential as pingConnector } from "@/lib/connectors/verify";
 import type { ConnectorCredentials } from "@/types/jsonb.types";
@@ -122,6 +124,29 @@ async function catalogConnectorId(slug: string): Promise<string> {
 }
 
 /**
+ * Refuses, with a `conflict`, a connector that signs in with the cluster's own identity on a cloud
+ * this deployment does not offer (#6964): no cluster it could run from can be created. The rule is
+ * `connectorCloudOffered`, the one the Connectors board lists by, read here over the stored catalog
+ * and the server's offered set (the operator setting that re-enables a hidden cloud included).
+ */
+async function refuseConnectorOnHiddenCloud(slug: string, name: string): Promise<void> {
+	const catalog = await getServiceDb()
+		.select({
+			slug: connectorsTable.slug,
+			category: connectorsTable.category,
+			auth_method: connectorsTable.auth_method,
+		})
+		.from(connectorsTable);
+	const connector = catalog.find((row) => row.slug === slug);
+	if (connector && !connectorCloudOffered(connector, catalog, offeredClouds())) {
+		throw new ActionRefusal(
+			"conflict",
+			`${name} runs with the identity of a cluster on a cloud that is not available in this release, so it cannot be connected.`,
+		);
+	}
+}
+
+/**
  * The api_key connect form's input: the connector and its fields. Each field the provider's
  * registry entry marks required must be filled — reported per field (`fields.<key>`), so the form
  * shows it under the input.
@@ -160,6 +185,7 @@ async function runSaveConnectorCredential(input: z.output<typeof saveConnectorCr
 	const provider = getConnectorProviderBySlug(input.slug);
 	if (!provider) throw new ActionRefusal("not-found", `Unknown connector: ${input.slug}`);
 	const connectorId = await catalogConnectorId(input.slug);
+	await refuseConnectorOnHiddenCloud(input.slug, provider.name);
 
 	// Partition into non-secret (stored plaintext) and secret (AEAD-encrypted).
 	const plain: Record<string, string> = {};
