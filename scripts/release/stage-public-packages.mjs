@@ -23,7 +23,7 @@
  * It REFUSES (exit 1) rather than publish something broken: a published package that depends on an
  * unpublished workspace package; an export outside `src/` that the manifest does not list in
  * `omitExports`; an export whose compiled file or type definition is missing after the build; a
- * dependency cycle.
+ * test or story file anywhere in the staged package; a dependency cycle.
  *
  * While one package compiles, imports of the other published packages resolve to THEIR staged
  * `dist/` type definitions (a `paths` map in a generated tsconfig), so a package's declarations are
@@ -44,6 +44,30 @@ const STAGE = path.join(ROOT, ".release", "packages");
 const REPO_URL = "git+https://github.com/alethialabs-io/alethialabs.git";
 const TS_SOURCE = /\.(ts|tsx|mts|cts)$/;
 const TEST_FILE = /(\.test\.|\.spec\.|__tests__|\.stories\.)/;
+
+/**
+ * The tsconfig `exclude` globs that keep tests and stories out of a package's build, anchored at its
+ * `src/`. They must be absolute: tsc resolves `exclude` relative to the tsconfig FILE, and the release
+ * tsconfig lives under `.release/`, so a bare `**\/*.test.ts` matched nothing in the package and
+ * 0.1.1 of @alethialabs/legal shipped its compiled tests.
+ */
+export function testExcludes(src) {
+	return ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/__tests__/**", "**/*.stories.tsx"].map((g) => path.join(src, g));
+}
+
+/** Lists every file under `dir` (relative paths) whose name marks it as a test or a story. */
+export function shippedTestFiles(dir) {
+	const out = [];
+	const walk = (d) => {
+		for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+			const full = path.join(d, entry.name);
+			if (entry.isDirectory()) walk(full);
+			else if (TEST_FILE.test(path.relative(dir, full))) out.push(path.relative(dir, full));
+		}
+	};
+	if (fs.existsSync(dir)) walk(dir);
+	return out;
+}
 
 /** Reads the publish manifest. */
 export function readManifest(root = ROOT) {
@@ -174,7 +198,7 @@ function compile(short, pkgDir, outDir, paths) {
 					paths,
 				},
 				include: [path.join(src, "**", "*")],
-				exclude: ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/__tests__/**", "**/*.stories.tsx"],
+				exclude: testExcludes(src),
 			},
 			null,
 			"\t",
@@ -217,6 +241,8 @@ export function stageAll({ root = ROOT, only } = {}) {
 		compile(short, pkgDir, dist, pathsFor(deps, (d) => pkgJson(d).exports ?? {}, STAGE));
 		copyTree(path.join(pkgDir, "src"), dist, (f) => !TS_SOURCE.test(f) && !TEST_FILE.test(f));
 		if (conf.shipSource) copyTree(path.join(pkgDir, "src"), path.join(outRoot, "src"), (f) => !TEST_FILE.test(f));
+
+		for (const f of shippedTestFiles(outRoot)) problems.push(`@repo/${short}: ${f} is a test or story file and would ship to npm`);
 
 		for (const [key, target] of Object.entries(ex.exports)) {
 			const files = typeof target === "string" ? [target] : [target.types, target.default];
@@ -296,6 +322,20 @@ function selfTest() {
 	const p = pathsFor(["ui"], () => ({ "./button": "./src/button.tsx", ".": "./src/index.ts" }), "/stage");
 	expect(p["@repo/ui/button"]?.[0] === path.join("/stage", "ui", "dist", "button"), "paths map does not point at the staged declarations");
 	expect(p["@repo/ui"]?.[0] === path.join("/stage", "ui", "dist", "index"), "root export missing from paths map");
+
+	for (const g of testExcludes("/pkg/src")) expect(g.startsWith("/pkg/src/"), `exclude glob ${g} is not anchored at the package's src/`);
+
+	const shipped = fs.mkdtempSync(path.join(os.tmpdir(), "stage-selftest-dist-"));
+	fs.mkdirSync(path.join(shipped, "dist", "__tests__"), { recursive: true });
+	for (const f of ["dist/a.js", "dist/a.d.ts", "dist/a.test.js", "dist/a.test.d.ts", "dist/b.spec.js", "dist/__tests__/c.js", "dist/d.stories.js"]) {
+		fs.writeFileSync(path.join(shipped, f), "");
+	}
+	const found = shippedTestFiles(shipped).sort();
+	expect(
+		JSON.stringify(found) === JSON.stringify(["dist/__tests__/c.js", "dist/a.test.d.ts", "dist/a.test.js", "dist/b.spec.js", "dist/d.stories.js"]),
+		`shipped test files not all found: ${JSON.stringify(found)}`,
+	);
+	fs.rmSync(shipped, { recursive: true, force: true });
 
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "stage-selftest-"));
 	fs.mkdirSync(path.join(tmp, "packages"), { recursive: true });
