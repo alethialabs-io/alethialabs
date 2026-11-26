@@ -3,7 +3,7 @@
 
 // The Elench agent against a REAL model, feature by feature (the AI soak, epic "AI feature soak
 // before 2026-12-12"). Runs in the `elench-live` project: nightly at Haiku, and several times a day
-// across the AI tiers from e2e-ai-soak.yml until the promotional credit expires.
+// across the AI tiers from the soak jobs in e2e-ai-nightly.yml until the promotional credit expires.
 //
 // What each journey asserts is BEHAVIOUR, never wording: which tool family ran (by the tool frame's
 // name and its "Completed" status), whether a person-approval card appeared, whether the grid got a
@@ -47,7 +47,7 @@ const THINKING_MODEL = "anthropic/claude-sonnet-4-6";
  * Whether this console meters AI usage into the ledger. A console with no billing provider is the
  * self-host shape: `assertAiAllowed` returns a zero fixed charge and NOTHING is written to
  * `ai_usage_ledger` (lib/billing/ai-guard.ts, "Self-host bypass"), so a ledger assertion there can
- * only read zero. e2e-ai-soak.yml boots the console with Stripe's TEST key — the hosted shape
+ * only read zero. The soak jobs in e2e-ai-nightly.yml boot the console with Stripe's TEST key — the hosted shape
  * production runs — and the ledger journeys run there; the nightly has no key and skips them.
  */
 const METERED = Boolean(process.env.STRIPE_SECRET_KEY);

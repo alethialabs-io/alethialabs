@@ -248,7 +248,7 @@ const NON_ASSERTING_UPLOADS = {
 		paths: "apps/console/playwright-report/",
 		reason: "Gated on the checkout, so it runs after the console build or the elench-live `--list` floor guard fails and the real-model suite never starts — leaving no HTML report to publish.",
 	},
-	"e2e-ai-soak.yml:Upload Playwright report:playwright-report-ai-soak-${{ matrix.tier }}": {
+	"e2e-ai-nightly.yml:Upload Playwright report:playwright-report-ai-soak-${{ matrix.tier }}": {
 		setting: "unset",
 		paths: "apps/console/playwright-report/",
 		reason: "The same shape as the nightly's: gated on the checkout, so it runs after the console build or the elench-live `--list` floor guard fails and the real-model suite never starts — leaving no HTML report to publish.",

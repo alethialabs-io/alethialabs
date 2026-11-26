@@ -11,7 +11,7 @@
 // but the NAMES, DESCRIPTIONS and INPUT SCHEMAS are the production ones — those are
 // exactly what steers the model's choice, so prompt/description regressions get caught.
 //
-// The AI soak (e2e-ai-soak.yml, until 2026-12-12) runs this file once per model the product can
+// The AI soak (the soak-eval job in e2e-ai-nightly.yml, until 2026-12-12) runs this file once per model the product can
 // route to — Haiku as the executor, Sonnet and Opus as the advisors — by setting
 // AI_EXECUTOR_MODEL. Each case accepts the SET of tools that would be a correct answer, not one
 // exact tool: a stronger model that reads more before it acts is not a regression. When

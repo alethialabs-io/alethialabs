@@ -4,7 +4,7 @@
 // Puts the shared `setup` persona's org on an AI tier for the real-model journeys, so the advisor
 // the product routes to is the one the run means to exercise (lib/config/ai.ts `getAdvisorModel`):
 // ai_plus → the Plus advisor plans step 0; ai_max → the same, upgrading to the Max advisor on the
-// deep-reasoning opt-in. The tier comes from `AI_SOAK_TIER` (set per leg by e2e-ai-soak.yml) and
+// deep-reasoning opt-in. The tier comes from `AI_SOAK_TIER` (set per leg by the soak jobs in e2e-ai-nightly.yml) and
 // defaults to `ai_plus`.
 //
 // Why a paid tier by default, even in the nightly: the free tier's session allowance is about

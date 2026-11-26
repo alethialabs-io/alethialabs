@@ -54,7 +54,7 @@ const RUN_POSTURE: Record<string, string | null> = {
 	"elench-ai":
 		"ci.yml · E2E (browser · Elench AI journeys · scripted model) · release-gate.yml · Release gate (elench-ai)",
 	"elench-live":
-		"e2e-ai-nightly.yml · Elench live-model journeys · e2e-ai-soak.yml · AI soak (browser · real model), until 2026-12-12",
+		"e2e-ai-nightly.yml · Elench live-model journeys · and its AI soak jobs (soak crons), until 2026-12-12",
 	// Nightly in ci.yml (that run refreshes ui-conformance-live.json) AND a leg of the release gate,
 	// where it is REQUIRED on main by ratchet: it fails on regression against gate-baseline.json,
 	// not on absolute red — which is what lets a suite with recorded findings gate a promotion

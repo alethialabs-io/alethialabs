@@ -179,17 +179,10 @@ export const SCHEDULED_MEASUREMENTS = {
 export const NOT_A_MEASUREMENT = {
 	"e2e-ai-nightly.yml": {
 		why:
-			"Uploads playwright-report-elench-live, but NO repo file consumes it — verified by grep across " +
-			"scripts/, .github/ and apps/. It is a human-read report, so there is no producer/consumer pair " +
-			"for S3 to check and no verdict derived from it to go stale.",
-		issue: "#4397",
-	},
-	"e2e-ai-soak.yml": {
-		why:
-			"A temporary real-model soak that no-ops from 2026-12-12 (its window job compares the date). It " +
-			"uploads playwright-report-ai-soak-<tier>, but NO repo file consumes it: the per-run token usage " +
-			"and cost go to the job summary for a person to read, and no verdict is derived from either. Like " +
-			"the nightly it checks out ref: dev, so the specs that run are dev's on the default branch's timer.",
+			"Uploads playwright-report-elench-live (and, until the AI soak ends on 2026-12-12, " +
+			"playwright-report-ai-soak-<tier>), but NO repo file consumes either — verified by grep across " +
+			"scripts/, .github/ and apps/. They are human-read reports (the soak's cost table is in the job " +
+			"summary), so there is no producer/consumer pair for S3 to check and no verdict derived from them to go stale.",
 		issue: "#4397",
 	},
 	"programme.yml": {
