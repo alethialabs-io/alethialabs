@@ -18,6 +18,9 @@
 //   - A `canvas` binding may be a bare key (a letter, Enter, Esc, Delete). The board is a tool
 //     surface with its own key map, and it registers that map through this file rather than
 //     through a second listener.
+//   - A `list` binding may be a bare key too: the list page's own keys, answered only while a list
+//     toolbar is mounted (`/` to search, #7737). Like every bare key, it never fires while the
+//     focus is in a field — the dispatcher's input rule, not this scope, is what keeps `/` typeable.
 //   - `allowInInput` may only be set on a modifier chord. A bare key can never fire while the
 //     focus is in a field, whatever the row says.
 //   - Two rows in the SAME scope may not answer the same chord. Two rows in DIFFERENT scopes may:
@@ -28,14 +31,17 @@
 // when its module loads — in every test that imports it — rather than on the one keystroke nobody
 // tried.
 
-/** Where a binding applies. `global` is the whole shell; `canvas` is the architecture board. */
-export type ShortcutScope = "global" | "canvas";
+/**
+ * Where a binding applies. `global` is the whole shell; `list` is a list page, while its toolbar is
+ * mounted; `canvas` is the architecture board.
+ */
+export type ShortcutScope = "global" | "list" | "canvas";
 
 /**
  * Which scope wins when two mounted bindings answer the same chord: the higher rank. The narrower
  * surface outranks the shell it sits in.
  */
-export const SCOPE_RANK: Record<ShortcutScope, number> = { global: 0, canvas: 1 };
+export const SCOPE_RANK: Record<ShortcutScope, number> = { global: 0, list: 1, canvas: 2 };
 
 /** A key combination. */
 export interface ShortcutChord {
@@ -78,6 +84,11 @@ export type ChordEvent = Pick<
 export const SHORTCUT_PALETTE_TOGGLE = "palette.toggle";
 /** Switch the project view to its next environment. */
 export const SHORTCUT_ENVIRONMENT_NEXT = "environment.next";
+/** Focus the list page's search (answered by `useListSearchShortcut`, #7737). */
+export const SHORTCUT_LIST_SEARCH = "list.search";
+
+/** The scopes in which a binding may be a bare key, with no ⌘/Ctrl or ⌥/Alt held. */
+const BARE_KEY_SCOPES: readonly ShortcutScope[] = ["list", "canvas"];
 
 const registry = new Map<string, ShortcutBinding>();
 
@@ -105,8 +116,8 @@ export function shortcutProblem(binding: ShortcutBinding): string | null {
 		return `${id}: chord.key must be lower-case ("${chord.key}")`;
 	if (chord.key === "tab" || chord.code === "Tab")
 		return `${id}: Tab is the browser's focus traversal and is never bound`;
-	if (scope === "global" && !isModifierChord(chord))
-		return `${id}: a global shortcut must hold ⌘/Ctrl or ⌥/Alt — a bare key is allowed only in the canvas scope`;
+	if (!BARE_KEY_SCOPES.includes(scope) && !isModifierChord(chord))
+		return `${id}: a ${scope} shortcut must hold ⌘/Ctrl or ⌥/Alt — a bare key is allowed only in the list and canvas scopes`;
 	if (binding.allowInInput === true && !isModifierChord(chord))
 		return `${id}: only a modifier chord may be allowed while typing in a field`;
 	return null;
@@ -241,5 +252,12 @@ registerShortcuts([
 		chord: { key: "e", code: "KeyE", alt: true, shift: false },
 		scope: "global",
 		label: "Next environment",
+	},
+	{
+		id: SHORTCUT_LIST_SEARCH,
+		// Shift is not read: on many keyboard layouts `/` is itself a shifted key.
+		chord: { key: "/" },
+		scope: "list",
+		label: "Search this list",
 	},
 ]);

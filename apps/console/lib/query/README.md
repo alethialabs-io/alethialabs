@@ -323,12 +323,12 @@ sort or pages — DataTable has no page numbers, rows-per-page picker or "Show m
 either mode since LST-14) or a card grid followed by `<ListFooter list={list} />` (`components/list/`): an
 invisible scroll sentinel PLUS an always-visible "Load more" button (keyboard, screen reader, no
 IntersectionObserver), a busy state while a page is in flight, a "Couldn't load more · Try again"
-line on a failed page with the rows kept, and **nothing** at the end. A route that prefetches the
+line on a failed page with the rows kept, and a mono `END OF LIST` at the end (never a count; #7737). A route that prefetches the
 first page uses `prefetchInfiniteQuery` with the same `infiniteOptions`, so the keys agree.
 
 **States**, one each: first page pending → the skeleton / DataTable placeholder rows;
 `universeEmpty === true` → `EmptyState` with the create action; rows empty and
-`universeEmpty === false` → `EmptyState` "No … match these filters" + "Clear filters";
+`universeEmpty === false` → `FilterEmpty` (`@repo/ui/filter-bar`, an `EmptyState`): "No … match these filters." + "Clear filters";
 first page failed → `RegionError` with retry (`list.query`); a refresh failed behind rows → rows
 stay plus DataTable's stale notice; a later page failed → rows stay plus `ListFooter`'s retry line.
 
