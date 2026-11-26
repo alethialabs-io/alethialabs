@@ -9,6 +9,7 @@
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ListToolbar, ListToolbarSkeleton } from "../src/list-toolbar";
@@ -91,26 +92,30 @@ describe("ListToolbar", () => {
 		expect(screen.getByRole("button", { name: /^Status/ })).toHaveAccessibleName("Status: Online");
 	});
 
-	it("binds `/` to its search by default, with the key hint (#7737)", async () => {
-		const user = userEvent.setup();
-		render(<ListToolbar search={{ value: "", onChange: () => {}, placeholder: "Search runners" }} />);
-		const input = screen.getByRole("textbox", { name: "Search runners" });
-		expect(input).toHaveAttribute("aria-keyshortcuts", "/");
-		await user.keyboard("/");
-		expect(input).toHaveFocus();
-	});
-
-	it("leaves `/` alone when the search opts out", async () => {
-		const user = userEvent.setup();
+	it("passes the search's inputRef and shortcut through to FilterSearch (#7737)", () => {
+		const ref = createRef<HTMLInputElement>();
 		render(
 			<ListToolbar
-				search={{ value: "", onChange: () => {}, placeholder: "Search runners", slashToFocus: false }}
+				search={{
+					value: "",
+					onChange: () => {},
+					placeholder: "Search runners",
+					inputRef: ref,
+					shortcut: { hint: "/", ariaKeyShortcuts: "/" },
+				}}
 			/>,
 		);
 		const input = screen.getByRole("textbox", { name: "Search runners" });
-		expect(input).not.toHaveAttribute("aria-keyshortcuts");
-		await user.keyboard("/");
-		expect(input).not.toHaveFocus();
+		expect(ref.current).toBe(input);
+		expect(input).toHaveAttribute("aria-keyshortcuts", "/");
+	});
+
+	it("draws no `/` hint when the page has not wired the shortcut", () => {
+		const { container } = render(
+			<ListToolbar search={{ value: "", onChange: () => {}, placeholder: "Search runners" }} />,
+		);
+		expect(screen.getByRole("textbox", { name: "Search runners" })).not.toHaveAttribute("aria-keyshortcuts");
+		expect(container.querySelector('[data-slot="filter-search-hint"]')).toBeNull();
 	});
 
 	it("hides Reset at zero and fires onReset when shown", async () => {

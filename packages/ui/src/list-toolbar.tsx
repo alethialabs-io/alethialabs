@@ -10,9 +10,12 @@
 //   search · facets · date range · extra · Reset · N ········· view · actions
 //
 // This file decides LAYOUT only. It renders the existing pieces unchanged; how they look is the
-// design unit's job, and it restyles them in their own files, not here. The one behaviour it adds is
-// the `/` shortcut: it is the page's one list toolbar, so its search is the one that binds `/`
-// (`FilterSearch`'s `slashToFocus`, #7737).
+// design unit's job, and it restyles them in their own files, not here.
+//
+// The `/` key that focuses the search (#7737) is not bound here either: a page-level key is a row
+// of the console's shortcut registry, and this package cannot import it. The console's
+// `useListSearchShortcut()` answers `list.search` and returns `{ inputRef, shortcut }`; the page
+// passes both through `search`, and the hint appears only once that binding is live.
 //
 // When the filters match nothing, the rows area renders `FilterEmpty` from `@repo/ui/filter-bar`
 // ("No <noun> match these filters." + Clear filters) with the same handler as `reset.onReset`.
@@ -21,7 +24,7 @@ import * as React from "react";
 
 import { FacetFilter } from "./facet-filter";
 import { FilterBar, FilterBarReset } from "./filter-bar";
-import { FilterSearch } from "./filter-search";
+import { FilterSearch, type FilterSearchShortcut } from "./filter-search";
 import { Skeleton } from "./skeleton";
 import { cn } from "./utils";
 
@@ -51,11 +54,13 @@ export interface ListToolbarSearch {
 	placeholder?: string;
 	/** Accessible name; falls back to the placeholder. */
 	ariaLabel?: string;
+	/** The search input, for the console's `/` shortcut to focus (`useListSearchShortcut`). */
+	inputRef?: React.Ref<HTMLInputElement>;
 	/**
-	 * Whether `/` focuses this search. On by default: a page has one list toolbar, so its search
-	 * is the one `/` belongs to. Turn it off only for a second toolbar on the same page.
+	 * The live shortcut that focuses the search, from `useListSearchShortcut`: shows the `/` hint and
+	 * sets `aria-keyshortcuts`. Omit it and no hint is drawn.
 	 */
-	slashToFocus?: boolean;
+	shortcut?: FilterSearchShortcut;
 }
 
 /** The `Reset · N` affordance: hidden while `count` is 0. */
@@ -91,8 +96,9 @@ export interface ListToolbarProps {
  * Renders nothing when given nothing, so a page with no filters gets no empty row.
  *
  * @example
+ * const { inputRef, shortcut } = useListSearchShortcut(); // console: @/lib/shortcuts/use-list-search-shortcut
  * <ListToolbar
- *   search={{ value: q, onChange: setQ, placeholder: "Search runners" }}
+ *   search={{ value: q, onChange: setQ, placeholder: "Search runners", inputRef, shortcut }}
  *   facets={[{ label: "Status", options, value: status, onChange: setStatus }]}
  *   reset={{ count: active, onReset: clear }}
  *   actions={<Button size="sm">Add runner</Button>}
@@ -129,7 +135,8 @@ export function ListToolbar({
 					onChange={search.onChange}
 					placeholder={search.placeholder}
 					ariaLabel={search.ariaLabel}
-					slashToFocus={search.slashToFocus ?? true}
+					inputRef={search.inputRef}
+					shortcut={search.shortcut}
 				/>
 			) : null}
 			{hasFacets ? facets.map((facet) => <FacetFilter key={facet.label} {...facet} />) : null}

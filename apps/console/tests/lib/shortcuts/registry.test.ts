@@ -4,8 +4,8 @@
 // The shortcut registry's rules, as plain functions (#6758).
 //
 // The table is the one place a key binding is written down, so what it REFUSES is the contract:
-// Tab is never bound, the shell only gets modifier chords, a bare key lives in the canvas scope
-// alone, and no two rows of one scope answer the same key press. Each refusal is exercised with a
+// Tab is never bound, the shell only gets modifier chords, a bare key lives in the list and canvas
+// scopes alone, and no two rows of one scope answer the same key press. Each refusal is exercised with a
 // row that differs from an accepted one in exactly the property under test, so a rule that stopped
 // being enforced fails here rather than passing on some unrelated difference.
 
@@ -20,7 +20,9 @@ import {
 	listShortcuts,
 	matchesChord,
 	registerShortcuts,
+	SCOPE_RANK,
 	SHORTCUT_ENVIRONMENT_NEXT,
+	SHORTCUT_LIST_SEARCH,
 	SHORTCUT_PALETTE_TOGGLE,
 	shortcutProblem,
 	type ChordEvent,
@@ -29,7 +31,7 @@ import {
 } from "@/lib/shortcuts/registry";
 
 /** Every scope the registry has. */
-const SCOPES: ShortcutScope[] = ["global", "canvas"];
+const SCOPES: ShortcutScope[] = ["global", "list", "canvas"];
 
 /** A key press with no modifiers held, overridden per case. */
 function press(over: Partial<ChordEvent>): ChordEvent {
@@ -122,6 +124,39 @@ describe("shortcutProblem", () => {
 		for (const chord of [{ key: "a" }, { key: "enter" }, { key: "escape" }, { key: "?" }]) {
 			expect(shortcutProblem(binding({ scope: "canvas", chord }))).toBeNull();
 		}
+	});
+
+	// #7737: the list page's `/` is a bare key, so it needs a scope that admits one — and the shell's
+	// global scope must go on refusing exactly the same chord.
+	it("allows a bare key in the list scope, and the global scope still refuses the same chord", () => {
+		for (const chord of [{ key: "/" }, { key: "a" }, { key: "escape" }]) {
+			expect(shortcutProblem(binding({ scope: "list", chord }))).toBeNull();
+			expect(shortcutProblem(binding({ scope: "global", chord }))).toMatch(/bare key/);
+		}
+	});
+
+	it("refuses allowInInput on a bare key in the list scope too", () => {
+		expect(
+			shortcutProblem(binding({ scope: "list", chord: { key: "/" }, allowInInput: true })),
+		).toMatch(/modifier chord/);
+	});
+
+	it("ranks the list scope between the shell and the board", () => {
+		expect(SCOPE_RANK.global).toBeLessThan(SCOPE_RANK.list);
+		expect(SCOPE_RANK.list).toBeLessThan(SCOPE_RANK.canvas);
+	});
+
+	it("registers list.search as a bare `/` in the list scope, labelled for a shortcut list", () => {
+		const row = getShortcut(SHORTCUT_LIST_SEARCH);
+		expect(row.scope).toBe("list");
+		expect(row.chord).toEqual({ key: "/" });
+		expect(row.allowInInput).not.toBe(true);
+		expect(row.label).toBe("Search this list");
+		expect(listShortcuts("list").map((b) => b.id)).toContain(SHORTCUT_LIST_SEARCH);
+		expect(matchesChord(row.chord, press({ key: "/", code: "Slash" }))).toBe(true);
+		// Shift is not read: on many layouts `/` is a shifted key.
+		expect(matchesChord(row.chord, press({ key: "/", shiftKey: true }))).toBe(true);
+		expect(matchesChord(row.chord, press({ key: "/", ctrlKey: true }))).toBe(false);
 	});
 
 	it("refuses allowInInput on a bare key, and allows it on a modifier chord", () => {
