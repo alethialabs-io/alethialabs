@@ -6,7 +6,10 @@ package sandbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -199,7 +202,13 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	// ALETHIA_RUNNER_EXEC_STAGE, an entrypoint that prints usage and leaves.
 	// Returning nil here posted the job COMPLETED with no tofu run, no state
 	// and no resources — fleet-wide from a single wrong image ref (#2033).
-	if _, err := os.Stat(filepath.Join(spec.WorkDir, "result.json")); err != nil {
+	//
+	// The proof counts only as a regular file at that name (readStageResultFile): a
+	// result.json that is a link or a directory is no proof the stage ran.
+	if _, err := readStageResultFile(spec.WorkDir); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("container sandbox: %s exited 0 but stage %q left no readable result.json: %w", c.Runtime, spec.Kind, err)
+		}
 		return fmt.Errorf(
 			"container sandbox: %s exited 0 but stage %q wrote no result.json — the stage never ran (wrong ALETHIA_SANDBOX_IMAGE, or an image that does not dispatch ALETHIA_RUNNER_EXEC_STAGE?)",
 			c.Runtime, spec.Kind,
@@ -538,10 +547,47 @@ func isDeniedEnvKey(key string) bool {
 	return false
 }
 
+// readStageResultFile returns the bytes of workDir/result.json, the file the stage writes
+// for the parent. The stage runs in a container that shares workDir, so the parent reads
+// the file only when it is a regular file at that name: a symbolic link (or anything else)
+// there is refused rather than followed. The name is checked with Lstat before opening and
+// the opened file is checked to be that same file afterwards, so a link swapped in between
+// the two is refused too.
+//
+// This is a local copy of the runner's helper of the same name
+// (apps/runner/internal/agent/stage.go): packages/core must not import the runner. Keep the
+// two in step, or move this one to a shared core package the runner imports.
+func readStageResultFile(workDir string) ([]byte, error) {
+	return readRegularFile(filepath.Join(workDir, "result.json"), os.Open)
+}
+
+// readRegularFile reads path only when it is a regular file, opening it with open (os.Open
+// in production). The name is checked with Lstat, and the opened file must be that same
+// file; a non-regular file, or one that is not the file that was checked, is refused.
+func readRegularFile(path string, open func(string) (*os.File, error)) ([]byte, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("stage result %s is not a regular file (mode %s); refusing to read it", path, before.Mode().Type())
+	}
+	f, err := open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if opened, err := f.Stat(); err != nil || !os.SameFile(before, opened) {
+		return nil, fmt.Errorf("stage result %s changed while it was being opened; refusing to read it", path)
+	}
+	return io.ReadAll(f)
+}
+
 // readStageError reads result.json from the workdir and returns its Error field (empty
-// if the file is missing/unparsable or the stage succeeded).
+// if the file is missing/unparsable or the stage succeeded). The file is read through
+// readStageResultFile, so a result.json that is not a regular file is an error.
 func readStageError(workDir string) (string, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return "", err
 	}
