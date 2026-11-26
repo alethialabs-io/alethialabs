@@ -4,7 +4,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FormProvider } from "react-hook-form";
 
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
@@ -38,7 +38,7 @@ import {
 	createProjectWizard,
 	sourceNeedsCloud,
 } from "./create-project.wizard";
-import { CreateProjectFormSkeleton, FieldRow } from "./create-project-skeletons";
+import { FieldRow } from "./create-project-skeletons";
 import {
 	type AccountOption,
 	type ExistingProject,
@@ -94,6 +94,20 @@ function browserTimeZone(): string {
 	} catch {
 		return "";
 	}
+}
+
+/** The time zone never changes under a page; there is nothing to subscribe to. */
+function noTimeZoneChanges(): () => void {
+	return () => undefined;
+}
+
+/**
+ * The browser's time zone, hydration-safe: `""` on the server and while hydrating (the server cannot
+ * know it, and a value only the browser renders would not match the server's HTML), the browser's
+ * own from the first render after that.
+ */
+function useBrowserTimeZone(): string {
+	return useSyncExternalStore(noTimeZoneChanges, browserTimeZone, () => "");
 }
 
 /** The accounts, with an account connected on this screen added until the route re-reads the list. */
@@ -194,7 +208,7 @@ export function CreateProjectScreen({
 	const [connected, setConnected] = useState<ConnectedAccount | null>(null);
 	const listed = cloudAccounts(integrations, offered);
 	const accounts = withConnected(listed.accounts, connected);
-	const [timeZone] = useState(browserTimeZone);
+	const timeZone = useBrowserTimeZone();
 
 	// The defaults, worked out once for the form's first values; a restored draft replaces them.
 	const [defaults] = useState((): CreateProjectValues => {
@@ -351,12 +365,31 @@ export function CreateProjectScreen({
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- once per scan, when it is ready
 	}, [wizard.ready, proposal, scanJobId]);
 
+	// The defaults were worked out before the browser's time zone was known (the server renders this
+	// form, and it cannot know it). Once the wizard has booted, a region nobody chose — no restored
+	// draft, untouched — moves to the one nearest the browser, when that is where deduction now lands.
+	useEffect(() => {
+		if (!wizard.ready || wizard.restored || timeZone === "" || form.getFieldState("region").isDirty) return;
+		const deduced = deduceRegion({
+			provider: form.getValues("provider"),
+			scanRegion: proposal?.proposedProject.project.region ?? null,
+			projects: existing,
+			timeZone,
+		});
+		if (deduced.reason === "location" && deduced.region !== form.getValues("region")) {
+			form.setValue("region", deduced.region);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the wizard boots knowing the time zone
+	}, [wizard.ready, timeZone]);
+
 	const nameRuleOk = projectSchema.shape.project_name.safeParse(values.name.trim()).success;
 	const { availability, checking, failed: checkFailed } = useNameAvailability(values.name, nameRuleOk);
 
-	if (!wizard.ready) {
-		return <CreateProjectFormSkeleton byoHelmEnabled={byoHelmEnabled} byoIacEnabled={byoIacEnabled} />;
-	}
+	// Until the engine has read the draft (`ready`), the form is drawn at its defaults and held INERT,
+	// never swapped for the skeleton: the server render is then the form itself, so a first paint
+	// whose hydration is slow (or stalled behind a held read) still shows every starting point and
+	// field (B1). A restored draft replaces the values once read; nothing can be pressed before then.
+	const booting = !wizard.ready;
 
 	const source = values.source;
 	const needsCloud = sourceNeedsCloud(source);
@@ -432,6 +465,8 @@ export function CreateProjectScreen({
 			<form
 				noValidate
 				className="space-y-6"
+				inert={booting}
+				aria-busy={booting || undefined}
 				onSubmit={(event) => {
 					event.preventDefault();
 					if (!pending && blocker === null) void wizard.submit();
