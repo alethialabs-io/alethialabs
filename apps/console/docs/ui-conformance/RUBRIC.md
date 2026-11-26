@@ -558,8 +558,13 @@ blocks side by side, the counts must agree (F007). The swap is driven twice and 
 verdict — `~/settings/general` flipped between runs on one capture. The origin of the navigation is
 chosen so that the fallback painted is the route's OWN loading boundary: it shares every segment with
 the route above that boundary and differs at it. When the loading state never paints while the
-response is held, B2 is NOT MEASURED saying so. **What B2 does not see**, stated: an open-ended list
-whose rows are the wrong shape, and a missing row above a matching block only through that block's move.
+response is held, B2 is NOT MEASURED saying so. **A visually-hidden element is not measured** —
+`clip-path: inset(50%)` or `clip: rect(0 0 0 0)` — because it paints nothing wherever its box sits:
+Base UI's Select pins its hidden input at `position: fixed; top: 0; left: 0`, and counting it put the
+page's outline at the viewport's origin on every route with a select (five routes FAILED on it from
+2026-11-13; the `swap-hidden-input` control holds it). **What B2 does not see**, stated: an open-ended list
+whose rows are the wrong shape, a missing row above a matching block only through that block's move,
+and anything a page hides with a clip other than those two forms.
 
 **Hosted-only pages are not measured by B2 here.** The release gate boots a SELF-MANAGED console. It
 never renders the hosted product's upsell on the plan-gated routes (`~/alerts`, `~/runners`,
@@ -609,7 +614,8 @@ PASS and, per predicate, pages one defect away that must FAIL: a client fetch on
 while pending, and one that appears only after hydration; an empty state on a failed refetch; content
 that vanishes with no error; a skeleton that never resolves; a failure that brings up the route's error
 page, and one that blanks both regions; a skeleton with the wrong columns, one whose frame moves, and
-one whose height alone is wrong, and a bars-only skeleton over a taller page. A shorter open-ended list,
+one whose height alone is wrong, and a bars-only skeleton over a taller page; and a matching page
+carrying a visually-hidden input at the viewport's origin, which must PASS. A shorter open-ended list,
 a `RegionError` with no `role`, a page with no reads and a page whose only read is its shell's (both NOT
 MEASURED, never PASS — the shell read classified through a fixture build manifest, by the same parser)
 are its other known answers — and a page read made over a server ACTION that every page entry

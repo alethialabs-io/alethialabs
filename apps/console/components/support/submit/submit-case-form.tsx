@@ -171,7 +171,12 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 		return () => window.removeEventListener("beforeunload", warn);
 	}, [holdingFiles]);
 
-	if (!wizard.ready) return <SubmitCaseFormSkeleton />;
+	// Until the engine has read the draft (`ready`), the first step is drawn at its defaults and held
+	// INERT, never swapped for the skeleton: the server render is then the page itself, so a first
+	// paint whose hydration is slow (or stalled behind a held read) still shows the step's heading
+	// and its Continue (B1). A restored draft replaces the values once read; nothing can be pressed
+	// before then.
+	const booting = !wizard.ready;
 
 	const step = wizard.current.id;
 	const index = wizard.stepNumber - 1;
@@ -197,7 +202,7 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 
 	return (
 		<FormProvider {...wizard.form}>
-			<div className={FRAME}>
+			<div className={FRAME} inert={booting} aria-busy={booting || undefined}>
 				<Stepper label={STEPPER_LABEL} items={wizard.items} onSelect={wizard.goTo} />
 				{wizard.restored ? <WizardRestoredNotice onStartOver={startOver} /> : null}
 
@@ -243,8 +248,7 @@ export function SubmitCaseForm({ orgSlug, defaultEmail }: SubmitCaseFormProps) {
 }
 
 /**
- * The new-case route's loading form (#6354, B2), also shown while the wizard reads its draft: the
- * wizard's frame on its first step — the real rail, step 1's heading and {@link StepTypeSkeleton}
+ * The new-case route's loading form (#6354, B2): the wizard's frame on its first step — the real rail, step 1's heading and {@link StepTypeSkeleton}
  * (the type cards in their own grid, with their own copy) and the button row with a Continue-sized
  * placeholder where the primary button stands.
  */
