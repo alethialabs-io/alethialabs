@@ -38,8 +38,9 @@ export type ErasureRequestResult =
  * to the privacy inbox.
  *
  * This is the account dialog's "Request deletion" button. It OPENS A CASE and erases nothing. It
- * does not call `fulfilErasure` — a person fulfils the case through the steps in `cases.ts`. Since
- * #4854 that step really does erase rows, which is a reason to keep the two apart and not a reason
+ * does not call `fulfilErasure` — a person fulfils the case through the handling steps
+ * (`lib/privacy/case-steps.ts`): for a case with no organization, which is what this opens, from
+ * the staff app's privacy register (#7222). Since #4854 that step really does erase rows, which is a reason to keep the two apart and not a reason
  * to join them.
  *
  * ⚠️ AND THE AUTHORIZATION LAYER NOW AGREES, which it did not at first. `fulfilErasure` is gated on
