@@ -9,6 +9,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { getOwnerScope } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
@@ -111,23 +112,52 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
 	return { orgId: org.id, isPersonal: false };
 }
 
+/**
+ * The id of the project `projectSlug` names under the scope `(userId, orgId)`, or `null` when it
+ * names none there. Memoised PER REQUEST with React `cache()`: the `[project]` layout, the page
+ * below it and the topbar's environment switcher read (`getEnvironmentsForSlug`) each ask this
+ * question about the same slug in one render, and it is now one query instead of three (#7736).
+ *
+ * WHY THE SCOPE IS IN THE KEY, NOT ONLY THE SLUG. `cache()` keys on its arguments, and the answer
+ * depends on the actor as much as on the slug: RLS (`withActorScope`) is what scopes the lookup to
+ * the active org, and slugs are unique per org only. `currentActor()` is resolved by the CALLER on
+ * every call — never memoised here — so a call made under a different actor (an injected actor, an
+ * org the address names differently) is a different key and a fresh, correctly scoped query. Two
+ * strings and a slug are compared by value, so equal scopes share one entry.
+ *
+ * NOT EXPORTED, deliberately: this module is `"use server"`, so every export is also a POST-able
+ * action endpoint, and one taking a caller-chosen `(userId, orgId)` would let a client name any
+ * scope. Only the actor-deriving exports below reach it.
+ *
+ * Outside a React server render (a server action's POST, a route handler) `cache()` memoises
+ * nothing and this simply runs the query, which is the behaviour every caller had before.
+ */
+const lookupProjectIdInScope = cache(
+	async (userId: string, orgId: string, projectSlug: string): Promise<string | null> =>
+		withActorScope({ userId, orgId }, async (tx) => {
+			const [project] = await tx
+				.select({ id: projects.id })
+				.from(projects)
+				.where(eq(projects.slug, projectSlug))
+				.limit(1);
+			return project?.id ?? null;
+		}),
+);
+
 /** Resolves a project (project) slug → project id within the active scope (404 → throws). Projects
- * are unique per org, so the slug resolves directly (RLS scopes to the active org). */
+ * are unique per org, so the slug resolves directly (RLS scopes to the active org). The lookup is
+ * memoised per request and per scope (`lookupProjectIdInScope`), so the layout and the page below it
+ * resolve the slug with ONE query. */
 export async function resolveProjectId(projectSlug: string): Promise<string> {
 	// Actor scope: a project is org-shared, so RLS must carry the real active org —
 	// withOwnerScope(userId) was personal-scoped, so a teammate couldn't resolve a
 	// project another member owns (matches resolveActiveEnvironmentId's org scoping).
+	// The actor is read on EVERY call, outside the memo — it is half of the memo's key.
 	const actor = await currentActor();
-	return withActorScope(actor, async (tx) => {
-		const [project] = await tx
-			.select({ id: projects.id })
-			.from(projects)
-			.where(eq(projects.slug, projectSlug))
-			.limit(1);
-		// Unresolvable slug = a 404 (stale link / crawler), not a bug — see resolveOrgScope above.
-		if (!project) notFound();
-		return project.id;
-	});
+	const projectId = await lookupProjectIdInScope(actor.userId, actor.orgId, projectSlug);
+	// Unresolvable slug = a 404 (stale link / crawler), not a bug — see resolveOrgScope above.
+	if (projectId === null) notFound();
+	return projectId;
 }
 
 /**
@@ -239,14 +269,12 @@ export async function getEnvironmentsForSlug(
 	projectSlug: string,
 ): Promise<SwitcherEnv[]> {
 	const actor = await currentActor();
-	return withActorScope(actor, async (tx) => {
-		const [project] = await tx
-			.select({ id: projects.id })
-			.from(projects)
-			.where(eq(projects.slug, projectSlug))
-			.limit(1);
-		if (!project) return [];
-		return tx
+	// The same per-request lookup `resolveProjectId` uses, so the `[project]` layout's switcher
+	// prefetch does not resolve the slug a second time (#7736).
+	const projectId = await lookupProjectIdInScope(actor.userId, actor.orgId, projectSlug);
+	if (projectId === null) return [];
+	return withActorScope(actor, async (tx) =>
+		tx
 			.select({
 				id: projectEnvironments.id,
 				project_id: projectEnvironments.project_id,
@@ -255,7 +283,7 @@ export async function getEnvironmentsForSlug(
 				is_default: projectEnvironments.is_default,
 			})
 			.from(projectEnvironments)
-			.where(eq(projectEnvironments.project_id, project.id))
-			.orderBy(projectEnvironments.created_at);
-	});
+			.where(eq(projectEnvironments.project_id, projectId))
+			.orderBy(projectEnvironments.created_at),
+	);
 }
