@@ -91,7 +91,8 @@ function row(over: Record<string, unknown> = {}) {
 		requester_name: "Dana Petrova",
 		requester_credential: "agent_oauth",
 		requester_credential_name: "Claude Code",
-		requester_credential_ref: "https://claude.ai/oauth",
+		requester_credential_ref: "https://claude.ai/code/oauth",
+		requester_credential_icon: null,
 		created_at: new Date(Date.now() - 8 * 60_000).toISOString(),
 		expires_at: new Date(Date.now() + 52 * 60_000).toISOString(),
 		decided_at: null,
@@ -181,7 +182,7 @@ describe("the approvals list's states", () => {
 				"When an agent, the Alethia CLI or a service token asks to deploy or destroy, the request waits here for a person.",
 			),
 		).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "Connect an agent" })).toHaveAttribute("href", "/docs/agents");
+		expect(screen.getByRole("link", { name: "Connect an agent" })).toHaveAttribute("href", "/acme/~/settings/connected");
 		expect(screen.getByText("alethia agent setup")).toBeInTheDocument();
 	});
 
@@ -259,6 +260,9 @@ describe("rows", () => {
 		expect(within(table).getByText("ci-deploy")).toBeInTheDocument();
 		expect(within(table).getByText("Alethia CLI")).toBeInTheDocument();
 		expect(within(table).queryByText("agent_oauth")).toBeNull();
+		// The connected agent wears its brand mark; the token and the CLI a neutral glyph.
+		expect(table.querySelectorAll('[data-mark="claudecode"]').length).toBeGreaterThan(0);
+		expect(table.querySelectorAll('[data-mark="credential"]')).toHaveLength(2);
 		expect(within(table).getByText("Production")).toBeInTheDocument();
 		expect(table.querySelector('[data-operation="destroy"]')).not.toBeNull();
 	});

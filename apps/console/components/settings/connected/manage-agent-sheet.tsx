@@ -15,7 +15,7 @@ import { DetailSheet } from "@repo/ui/detail-sheet";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { formatDate } from "@repo/format";
-import { AgentIcon } from "@/components/settings/connected/agent-icon";
+import { AgentIcon } from "@/components/agents/agent-icon";
 import { type AgentCardEntry, SCOPE_WORDS } from "@/components/settings/connected/connected-agents-board";
 
 interface ManageAgentSheetProps {
