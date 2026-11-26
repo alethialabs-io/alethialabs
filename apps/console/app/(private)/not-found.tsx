@@ -37,7 +37,7 @@ export default function PrivateNotFound() {
 			mark={<AlethiaMark />}
 			code="404"
 			title="Organization not found"
-			description="This organization doesn't exist, or you don't have access to it."
+			description="The address may be mistyped, or this organization isn't one you belong to."
 			actions={
 				// "Go home" is an `<a href>` and is announced as a link: `@repo/ui/button` gives a
 				// `render` element with an `href` `role="link"` (#5444), so it needs no role of its

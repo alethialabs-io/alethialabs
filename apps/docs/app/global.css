@@ -8,6 +8,8 @@
 @import '@repo/brand/tokens.css';
 
 @source '../../../packages/brand/src';
+/* The shared error and 404 surface (`@repo/ui/error-state`, `@repo/ui/button`). */
+@source '../../../packages/ui/src';
 
 /* fumadocs ships its own palette and its own font stack. Both are overridden onto
    the brand ink ramp here rather than page by page, so the docs sit on exactly the

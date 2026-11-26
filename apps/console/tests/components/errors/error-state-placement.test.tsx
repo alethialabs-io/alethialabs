@@ -33,6 +33,28 @@ const IMPORT = /from\s+["']@repo\/ui\/error-state["']/;
  */
 const OWED: Record<string, string> = {};
 
+/**
+ * The data-region boundaries (#7741): one `error.tsx` per region, so a failed region replaces
+ * itself and never the whole org page. Each is a ROUTE boundary in the sense above, so each renders
+ * `ErrorState`, which is what lets this walk find them. `route-boundaries.test.tsx` renders every
+ * one and asserts the region form; this list is what makes a deleted boundary a failure here.
+ */
+const REGION_BOUNDARIES = [
+	"app/(private)/[org]/~/clusters/error.tsx",
+	"app/(private)/[org]/[project]/clusters/error.tsx",
+	"app/(private)/[org]/[project]/environments/error.tsx",
+	"app/(private)/[org]/~/jobs/error.tsx",
+	"app/(private)/[org]/[project]/jobs/error.tsx",
+	"app/(private)/[org]/~/runners/error.tsx",
+	"app/(private)/[org]/~/alerts/error.tsx",
+	"app/(private)/[org]/~/approvals/error.tsx",
+	"app/(private)/[org]/~/evidence/error.tsx",
+	"app/(private)/[org]/~/connectors/error.tsx",
+	"app/(private)/[org]/~/settings/error.tsx",
+	"app/(private)/[org]/~/settings/billing/error.tsx",
+	"app/(private)/[org]/~/support/error.tsx",
+] as const;
+
 /** Every .tsx file under `dir`, recursively. */
 function walk(dir: string): string[] {
 	const out: string[] = [];
@@ -71,6 +93,11 @@ describe("ErrorState placement", () => {
 	it("is imported only by route boundaries and the owed sites", () => {
 		const regions = found.filter((f) => !ROUTE_FILES.has(basename(f)) && !(f in OWED));
 		expect(regions).toEqual([]);
+	});
+
+	it("finds every data-region boundary (#7741), so a deleted one fails here", () => {
+		const missing = REGION_BOUNDARIES.filter((f) => !found.includes(f));
+		expect(missing).toEqual([]);
 	});
 
 	it("lists no owed site that has already been converted", () => {

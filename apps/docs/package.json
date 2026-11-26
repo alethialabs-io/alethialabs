@@ -18,6 +18,7 @@
 	},
 	"dependencies": {
 		"@repo/brand": "workspace:*",
+		"@repo/ui": "workspace:*",
 		"fumadocs-core": "16.19.4",
 		"fumadocs-mdx": "14.3.2",
 		"fumadocs-ui": "16.19.4",
