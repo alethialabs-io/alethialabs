@@ -3,7 +3,7 @@
 
 // The create screen's loading shape (RUBRIC B2: the skeleton is the final layout).
 //   · CreateProjectSkeleton     ↔ the whole route: the agent prompt, then the form
-//   · CreateProjectFormSkeleton ↔ create-project-screen.tsx, also shown while the wizard reads its draft
+//   · CreateProjectFormSkeleton ↔ create-project-screen.tsx (the page's Suspense fallback)
 // Both are drawn from the screen's own parts — `FieldRow`, the starting-point grid and option box
 // (`source-options.ts`), the option copy — so the rows, the columns and the option heights cannot
 // drift from the screen. Text the viewer must not read yet is the real text, invisible inside its
