@@ -58,9 +58,10 @@ describe("SectionHeading", () => {
 });
 
 describe("Spinner", () => {
+	// The [·] mark loader since #7740: its motion is the `.ah-loader__*` keyframes, not a spin.
 	it("is a status named Loading, and merges the class", () => {
 		render(<Spinner className="size-6" />);
 		const spinner = screen.getByRole("status", { name: "Loading" });
-		expect(spinner).toHaveClass("animate-spin", "size-6");
+		expect(spinner).toHaveClass("ah-loader__glyph", "size-6");
 	});
 });
