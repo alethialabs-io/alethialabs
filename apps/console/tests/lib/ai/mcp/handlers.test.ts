@@ -23,7 +23,7 @@ vi.mock("@/lib/ai/mcp/approval-store", () => ({
 	findOwnApproval: vi.fn(),
 	requestOwnApproval: vi.fn(),
 	readOwnOrgApproval: vi.fn(),
-	appliedPlanFor: vi.fn(),
+	destroyPlanFor: vi.fn(),
 }));
 vi.mock("@/lib/ai/mcp/job-logs", () => ({ readJobLogPage: vi.fn() }));
 
@@ -76,7 +76,7 @@ function deps(over: Partial<HandlerDeps> = {}): HandlerDeps {
 		requestApproval: unexpected("requestApproval"),
 		readApproval: unexpected("readApproval"),
 		approvePath: vi.fn(async (_orgId: string, id: string) => `/acme/~/approvals?selected=${id}`),
-		appliedPlanFor: unexpected("appliedPlanFor"),
+		destroyPlanFor: unexpected("destroyPlanFor"),
 		jobStatus: unexpected("jobStatus"),
 		jobLogPage: unexpected("jobLogPage"),
 		cancelJob: unexpected("cancelJob"),
@@ -241,14 +241,14 @@ describe("request_destroy", () => {
 
 	it("without an approval: asks for one against the environment's applied plan and queues nothing", async () => {
 		const d = deps({
-			appliedPlanFor: vi.fn(async () => PLAN),
+			destroyPlanFor: vi.fn(async () => PLAN),
 			requestApproval: vi.fn(async () => destroyApproval("pending")),
 		});
 		const result = await createHandlers(d).request_destroy.call(
 			{ project_id: "proj-1", environment_id: "env-1" },
 			CTX,
 		);
-		expect(d.appliedPlanFor).toHaveBeenCalledWith(ACTOR, "proj-1", "env-1");
+		expect(d.destroyPlanFor).toHaveBeenCalledWith(ACTOR, "proj-1", "env-1");
 		expect(d.requestApproval).toHaveBeenCalledWith(ACTOR, { planJobId: PLAN, operation: "destroy", reason: null });
 		expect(result).toMatchObject({
 			status: "pending",
@@ -261,7 +261,7 @@ describe("request_destroy", () => {
 
 	it("once approved: queues the destroy once, presenting the approval", async () => {
 		const d = deps({
-			appliedPlanFor: vi.fn(async () => PLAN),
+			destroyPlanFor: vi.fn(async () => PLAN),
 			findOwnApproval: vi.fn(async () => destroyApproval("approved")),
 			queueDestroy: vi.fn(async () => ({ jobId: "destroy-1" })),
 		});
@@ -281,7 +281,7 @@ describe("request_destroy", () => {
 
 	it("refuses an environment the caller cannot see, before any approval is looked up", async () => {
 		const d = deps({
-			appliedPlanFor: vi.fn(async () => {
+			destroyPlanFor: vi.fn(async () => {
 				throw new ApprovalError("not_found", "That environment was not found in this organization.");
 			}),
 		});
@@ -301,7 +301,27 @@ describe("plan", () => {
 			CTX,
 		);
 		expect(result).toEqual({ job_id: "plan-1" });
-		expect(d.queuePlan).toHaveBeenCalledWith({ projectId: "proj-1", environmentId: "env-1", key: "mcp:key-12345" });
+		expect(d.queuePlan).toHaveBeenCalledWith({
+			projectId: "proj-1",
+			environmentId: "env-1",
+			key: "mcp:key-12345",
+			destroy: false,
+		});
+	});
+
+	it("queues a destroy plan under a key kept apart from the apply plan's", async () => {
+		const d = deps({ queuePlan: vi.fn(async () => ({ jobId: "dplan-1" })) });
+		const result = await createHandlers(d).plan.call(
+			{ project_id: "proj-1", environment_id: "env-1", destroy: true, idempotency_key: "key-12345" },
+			CTX,
+		);
+		expect(result).toEqual({ job_id: "dplan-1" });
+		expect(d.queuePlan).toHaveBeenCalledWith({
+			projectId: "proj-1",
+			environmentId: "env-1",
+			key: "mcp:destroy:key-12345",
+			destroy: true,
+		});
 	});
 });
 

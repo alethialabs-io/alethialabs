@@ -823,6 +823,11 @@ export interface ExecutionMetadata {
 	// here (opaque payloads parsed by lib/plan/parse-plan.ts / parse-cost.ts).
 	plan_result?: Record<string, unknown>;
 	cost_breakdown?: Record<string, unknown>;
+	// Destroy-mode PLAN jobs (#7455): the runner marks the plan as a teardown plan and records the
+	// lowercase-hex SHA-256 of the saved plan file it stored as the job's artifact. A destroy plan has
+	// no verify receipt, so this is where its digest comes from (lib/approvals/plan-binding.ts).
+	destroy_plan?: boolean;
+	plan_file_sha256?: string;
 	// ANALYZE_REPO jobs: the runner's static repo analysis (packages/core/scanner).
 	repo_digest?: RepoDigest;
 	// PLAN/DEPLOY jobs: the elench verification gate's result for the plan

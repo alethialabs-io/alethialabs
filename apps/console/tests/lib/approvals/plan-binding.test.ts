@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	configurationHashOf,
+	destroyPlanFileDigest,
 	PlanBindingError,
 	planDigestOf,
 	receiptPlanDigest,
@@ -52,6 +53,7 @@ function planRow(overrides: Record<string, unknown> = {}) {
 		configuration_hash: HASH,
 		plan_sha256: DIGEST,
 		execution_metadata: null,
+		destroy_plan: false,
 		created_at: new Date("2026-11-23T10:00:00Z"),
 		...overrides,
 	};
@@ -121,7 +123,26 @@ describe("planDigestOf", () => {
 	});
 });
 
+describe("destroyPlanFileDigest", () => {
+	it("reads the digest a destroy plan's runner recorded for its stored file, normalised to lowercase", () => {
+		expect(destroyPlanFileDigest({ plan_file_sha256: DIGEST.toUpperCase() })).toBe(DIGEST);
+	});
+
+	it("is null when none is recorded or it is not a SHA-256 digest, and never reads a verify receipt", () => {
+		expect(destroyPlanFileDigest({ plan_file_sha256: "abc" })).toBeNull();
+		expect(destroyPlanFileDigest(withReceipt(DIGEST))).toBeNull();
+		expect(destroyPlanFileDigest(null)).toBeNull();
+	});
+});
+
 describe("resolveReviewedPlan", () => {
+	it("refuses a destroy plan as plan_is_destroy_plan, whatever its digest: a deploy never applies a teardown", async () => {
+		const { tx, selects } = txAnswering([planRow({ destroy_plan: true })]);
+		await expect(resolveWith(tx)).rejects.toMatchObject({ name: "PlanBindingError", code: "plan_is_destroy_plan" });
+		// Refused on the plan read alone, before the "anything since" read.
+		expect(selects()).toBe(1);
+	});
+
 	it("returns the plan id and its digest for a current, succeeded plan with a digest", async () => {
 		const { tx } = txAnswering([planRow()]);
 		await expect(resolveWith(tx)).resolves.toEqual({ planJobId: PLAN, planSha256: DIGEST });

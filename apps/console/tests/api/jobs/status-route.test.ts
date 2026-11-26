@@ -456,4 +456,30 @@ describe("PUT /api/jobs/[id]/status — a succeeded PLAN records its plan digest
 		await put("job-plan", { status: "FAILED", error_message: "boom" });
 		expect(failed.updateSets).not.toContainEqual(expect.objectContaining({ plan_sha256: expect.anything() }));
 	});
+
+	/** A destroy-mode PLAN job (#7455) whose runner recorded `fileSha256` for the plan file it stored. */
+	function destroyPlanJob(metadata: Record<string, unknown>): Record<string, unknown> {
+		return { ...deployJob(metadata), job_type: "PLAN", destroy_plan: true };
+	}
+
+	it("stamps a destroy plan with the digest its runner recorded for the stored plan file", async () => {
+		const { updateSets } = mockDb(true, destroyPlanJob({ destroy_plan: true, plan_file_sha256: DIGEST.toUpperCase() }));
+		expect((await put("job-dplan", { status: "SUCCESS" })).status).toBe(200);
+		expect(updateSets).toContainEqual({ plan_sha256: DIGEST });
+	});
+
+	it("never stamps a destroy plan from a verify receipt, and never an apply plan from a recorded file digest", async () => {
+		// A destroy plan's digest comes only from the stored file's recorded digest: no fallback.
+		const receiptOnly = mockDb(
+			true,
+			destroyPlanJob({ verify_receipt: { algorithm: "none", receipt: { plan_sha256: DIGEST } } }),
+		);
+		await put("job-dplan", { status: "SUCCESS" });
+		expect(receiptOnly.updateSets).not.toContainEqual(expect.objectContaining({ plan_sha256: expect.anything() }));
+
+		// The column, not the runner's metadata, says which kind of plan this is.
+		const applyPlan = mockDb(true, { ...deployJob({ destroy_plan: true, plan_file_sha256: DIGEST }), job_type: "PLAN" });
+		await put("job-plan", { status: "SUCCESS" });
+		expect(applyPlan.updateSets).not.toContainEqual(expect.objectContaining({ plan_sha256: expect.anything() }));
+	});
 });
