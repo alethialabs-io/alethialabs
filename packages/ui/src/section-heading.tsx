@@ -3,7 +3,6 @@
 
 import * as React from "react";
 
-import { CountPill } from "./count-pill";
 import { cn } from "./utils";
 
 /**
@@ -26,11 +25,12 @@ import { cn } from "./utils";
  *
  * The rung is `--text-ui-lg` (15px) from `packages/brand/src/tokens.css`, which is the size the
  * console's own section headings already cluster at.
+ *
+ * No `count` prop (LST-14, #7496): the console carries no list counts beside a heading (epic #7481).
  */
 function SectionHeading({
 	title,
 	description,
-	count,
 	actions,
 	level = 2,
 	className,
@@ -40,8 +40,6 @@ function SectionHeading({
 	title: React.ReactNode;
 	/** One line of supporting copy under the heading. Omit rather than restating the title. */
 	description?: React.ReactNode;
-	/** Result count for a filtered list; null/undefined while loading renders nothing. */
-	count?: number | null;
 	/** Buttons for this section. Right-aligned, and they wrap under the heading on narrow screens. */
 	actions?: React.ReactNode;
 	/** Heading level — the OUTLINE rung, never the size. `2` unless it nests under another. */
@@ -67,7 +65,6 @@ function SectionHeading({
 					>
 						{title}
 					</Heading>
-					<CountPill count={count} />
 				</div>
 				{/* The body rung, not the 14px `text-sm` this used to be. See the note in
 				    page-toolbar.tsx: it is a role choice, because 14px's own band is `--text-ui-lg`

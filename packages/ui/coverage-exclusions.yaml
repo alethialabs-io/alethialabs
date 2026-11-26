@@ -67,10 +67,10 @@ infrastructural:
 
 tier_separation:
   - path: src/count-pill.tsx
-    suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx, tests/page-toolbar.test.tsx]
-    symbols: [CountFigure, CountPill, rowAccessibleName]
+    suite: [tests/filter-chip.test.tsx, tests/facet-filter.test.tsx, tests/multi-combobox.test.tsx]
+    symbols: [CountFigure, rowAccessibleName]
     issue: "#2649"
-    reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. CountPill is rendered for real by the page-toolbar suite, which asserts it is content-sized, renders 0, and is the skeleton's count placeholder (#6117). rowAccessibleName is executed by the facet-filter suite, which asserts each option's accessible name ("Built-in, 4") through it (#6734).
+    reason: The mono count figure, executed for real by the composed filter suites — filter-chip, facet-filter and multi-combobox each render it as their count. rowAccessibleName is executed by the facet-filter suite, which asserts each option's accessible name ("Built-in, 4") through it (#6734).
 
   - path: src/skeleton.tsx
     suite: [tests/page-toolbar.test.tsx]
