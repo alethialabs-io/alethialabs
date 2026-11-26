@@ -33,7 +33,7 @@ vi.mock("@repo/email/config", () => ({
 }));
 vi.mock("@/lib/email/guard", () => ({ sendGuardedEmail: vi.fn() }));
 
-import { sendTrialEndedEmail, sendTrialEndingEmail } from "@/lib/email/billing-email";
+import { sendLocalTrialNoticeEmail, sendTrialEndedEmail, sendTrialEndingEmail } from "@/lib/email/billing-email";
 import { sendGuardedEmail } from "@/lib/email/guard";
 
 const TRIAL_END = 1_796_083_200;
@@ -118,5 +118,31 @@ describe("the notice at the trial's end", () => {
 		stripe.customersRetrieve.mockResolvedValue({ id: "cus_1", deleted: true });
 		await sendTrialEndedEmail(sub({ status: "canceled", trial_end: null }));
 		expect(sendGuardedEmail).not.toHaveBeenCalled();
+	});
+});
+
+describe("a local trial's emails (the trial-notice sweep)", () => {
+	const trialEnd = new Date("2026-12-13T12:00:00Z");
+
+	it("reminds the org owner to SUBSCRIBE, never to add a card to a subscription it lacks", async () => {
+		expect(await sendLocalTrialNoticeEmail({ orgId: "org-1", notice: "ending", trialEnd })).toBe(true);
+		const email = await lastEmail();
+		expect(email.to).toBe("owner@example.test");
+		expect(email.subject).toMatch(/trial ends soon/);
+		expect(email.text).toMatch(/13 Dec 2026/);
+		expect(email.text).toMatch(/Subscribe to keep Pro/);
+		expect(email.text).toMatch(/Subscribe to Pro/);
+		expect(email.text).not.toMatch(/Add a payment method|Add payment method/);
+		expect(email.text).toMatch(/Nothing is deleted/);
+		expect(stripe.customersRetrieve).not.toHaveBeenCalled();
+	});
+
+	it("tells the owner the trial ended with no subscription started", async () => {
+		expect(await sendLocalTrialNoticeEmail({ orgId: "org-1", notice: "ended", trialEnd })).toBe(true);
+		const email = await lastEmail();
+		expect(email.subject).toMatch(/trial has ended/);
+		expect(email.text).toMatch(/no subscription was started/);
+		expect(email.text).not.toMatch(/no payment method was added/);
+		expect(email.text).toMatch(/free Hobby plan/);
 	});
 });

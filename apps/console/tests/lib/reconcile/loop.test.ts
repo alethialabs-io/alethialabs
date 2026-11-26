@@ -26,6 +26,9 @@ vi.mock("@/lib/billing/events/backfill", () => ({
 	paddleTransactionBackfillEnabled: vi.fn(() => false),
 	runPaddleTransactionBackfill: vi.fn(async () => ({ applied: 0, ignored: 0, refused: 0, deferred: 0, unreadable: 0 })),
 }));
+vi.mock("@/lib/billing/trial/notices", () => ({
+	runTrialNoticeSweep: vi.fn(async () => ({ endingSent: 0, endedSent: 0, noRecipient: 0, claimLost: 0, failed: 0 })),
+}));
 vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async () => ({ converged: 0, candidates: 0 })) }));
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
@@ -59,6 +62,7 @@ import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { paddleTransactionBackfillEnabled, runPaddleTransactionBackfill } from "@/lib/billing/events/backfill";
 import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
 import { paddleOverageSweepEnabled, runPaddleOverageSweep } from "@/lib/billing/paddle/overage-sweeper";
+import { runTrialNoticeSweep } from "@/lib/billing/trial/notices";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
 import { sweepExpiredKubeconfigMints } from "@/lib/kubeconfig-mint/sweep";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
@@ -183,6 +187,20 @@ describe("tick — the Paddle transaction backfill (#7672)", () => {
 	});
 });
 
+describe("tick — the local-trial notice sweep", () => {
+	it("runs under its own heartbeat, then waits an hour", async () => {
+		const t0 = new Date();
+		await tick(t0);
+		expect(runTrialNoticeSweep).toHaveBeenCalledWith(t0);
+		expect(getHeartbeats().map((h) => h.task)).toContain("trial-notice-sweep");
+		vi.mocked(runTrialNoticeSweep).mockClear();
+		await tick(new Date(t0.getTime() + 30 * 60_000));
+		expect(runTrialNoticeSweep).not.toHaveBeenCalled();
+		await tick(new Date(t0.getTime() + 61 * 60_000));
+		expect(runTrialNoticeSweep).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("tick — fan-out", () => {
 	it("runs every reconciler on a fresh (all-due) tick", async () => {
 		await tick(new Date());
@@ -198,6 +216,7 @@ describe("tick — fan-out", () => {
 		expect(sweepExpiredRateLimitBuckets).toHaveBeenCalledTimes(1);
 		expect(sweepElenchDrafts).toHaveBeenCalledTimes(1);
 		expect(releaseCancelledStateLocks).toHaveBeenCalledTimes(1);
+		expect(runTrialNoticeSweep).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -214,6 +233,7 @@ describe("tick — fan-out", () => {
 			"rate-limit-sweep",
 			"release-ai-holds",
 			"release-cancelled-state-locks",
+			"trial-notice-sweep",
 		]);
 	});
 
