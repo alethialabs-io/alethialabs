@@ -11,8 +11,7 @@
  * - A package still at 0.0.0 is REFUSED: it has never been through a "Version packages" PR. The dry
  *   run only warns, because every PR before the first version bump would otherwise fail.
  * - Each real publish passes `--provenance`, which needs the job's OIDC token (`id-token: write`).
- *   Authentication is npm trusted publishing once a package has a trusted publisher; until then, for
- *   the very first release only, NODE_AUTH_TOKEN from the `npm-release` environment.
+ *   Authentication is npm trusted publishing only; no npm token is stored.
  * - `--dry-run` runs `npm publish --dry-run` (packs, prints the tarball contents, uploads nothing).
  *   CI runs it on every PR that touches a published package.
  *
