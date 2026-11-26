@@ -55,9 +55,8 @@ stored as written, so any new secret-bearing setting must be a typed `secret` fi
 
 ### 6. Open-core ee/ boundary
 Check: no file **outside** `ee/` imports from `ee/` (CI guards this — don't regress it). The license
-entitlement must be a real signed-JWT check, not the `ALETHIA_LICENSE_ACTIVE` env placeholder
-(`ee/src/index.ts` — this is a known open item; new ee-gated features must gate on the real entitlement, not
-the env flag).
+entitlement is a signed-JWT check (`ee/src/license.ts`); `ALETHIA_LICENSE_ACTIVE` is a development switch
+that release images ignore. New ee-gated features gate on the verified entitlement, never on the env flag.
 
 ### 7. Runner — mint-bind, scoping, signed evidence
 Check: minted tokens are bound to the job/cluster they were issued for (mint-bind), scoped least-privilege
