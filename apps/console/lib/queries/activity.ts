@@ -27,12 +27,12 @@ import { asOptions, type FacetOption, orderedOptions, searchTerm } from "./facet
 import {
 	KEYSET_DEFAULT_LIMIT,
 	type KeysetPageRequest,
-	keysetAfter,
 	keysetFetchLimit,
 	keysetListPage,
 	keysetOrderBy,
 	keysetPage,
-	keysetSortKey,
+	keysetUtcAfter,
+	keysetUtcSortKey,
 } from "./keyset";
 
 // Settings › Activity, filtered in SQL (the console filter standard's server half). Service path
@@ -63,8 +63,12 @@ import {
 // that pair. It used to be an id-only cursor (`id < n`) with its own number-typed input; ordering
 // by the event's time instead of its insertion id is what the shared codec carries, and the id
 // tiebreak keeps the order total for the many events one request records in one millisecond.
-// The (org_id, id DESC) index no longer serves this ORDER BY: the read is bounded by the time
-// window (`ts >=`, idx_authz_activity_ts) and the org predicate, then top-N sorted.
+// The sort key is the INDEXABLE form, `date_trunc('milliseconds', ts AT TIME ZONE 'UTC')`
+// (`keysetUtcSortKey`, same order): the plain `date_trunc(text, timestamptz)` is STABLE and no
+// index can hold it. `idx_authz_activity_org_ts_ms_id` names that exact expression after `org_id`,
+// so the first page and every cursor page are one index range scan in this order, with no sort —
+// for a large org over a wide window too (#7539). The expression here and in the index must stay
+// byte-for-byte the same, or the planner falls back to a top-N sort without a word.
 
 /** The Activity bar's facet options, counted over the scope's unfiltered log. */
 export interface ActivityFacets {
@@ -136,12 +140,13 @@ export async function queryActivityPage(
 	const search = searchTerm(query.search);
 	// A relative window (`within`) is resolved now, at read time (#6740).
 	const bounds = activityTimeBounds(query);
-	// The order and the cursor predicate read the SAME ms-truncated expression (keyset.ts).
-	const sortKey = keysetSortKey(authzActivityLog.ts);
+	// The order and the cursor predicate read the SAME ms-truncated expression (keyset.ts), in
+	// the UTC form the (org_id, sort key, id) index holds.
+	const sortKey = keysetUtcSortKey(authzActivityLog.ts);
 
 	const conditions: (SQL | undefined)[] = [
 		...scope,
-		keysetAfter(sortKey, authzActivityLog.id, cursor, "integer"),
+		keysetUtcAfter(sortKey, authzActivityLog.id, cursor, "integer"),
 		bounds.from ? gte(authzActivityLog.ts, bounds.from) : undefined,
 		bounds.to ? lte(authzActivityLog.ts, bounds.to) : undefined,
 		query.actorIds?.length
