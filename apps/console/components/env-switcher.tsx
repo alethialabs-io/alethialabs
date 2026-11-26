@@ -60,8 +60,8 @@ export function isEnvironmentView(pathname: string): boolean {
 
 /**
  * The current view with `environmentId` as its active environment. Every other query parameter is
- * kept, except the ones that name something inside the environment being left (a page number, a
- * selection), which would point at nothing in the next one.
+ * kept, except the ones that name something inside the environment being left (a selection), which
+ * would point at nothing in the next one.
  */
 export function environmentHref(pathname: string, search: string, environmentId: string): string {
 	const patch: Record<string, string | null> = { [ENVIRONMENT_PARAM]: environmentId };

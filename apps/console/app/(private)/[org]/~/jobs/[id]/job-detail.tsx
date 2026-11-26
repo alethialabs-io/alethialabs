@@ -75,7 +75,7 @@ function DetailSection({ title, children }: { title: string; children: ReactNode
 			    row; `min-w-0` is what lets its `truncate` still shorten instead of overflowing. Without
 			    the pair, four fifths of the row is dead — a smaller target than the full-width
 			    `<button>` this replaced, and every other Collapsible in the console keeps `w-full`.
-			    (`CountPill` renders null at this call site, so nothing else competes for the row.) */}
+			    (`SectionHeading` renders no count, so nothing else competes for the row.) */}
 			<SectionHeading
 				className="py-2.5 [&>div]:w-full [&_h2]:min-w-0 [&_h2]:flex-1"
 				level={2}

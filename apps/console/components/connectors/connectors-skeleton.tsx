@@ -45,7 +45,7 @@ export function ConnectorsSkeleton() {
 		// `SkeletonRoot` (RUBRIC, "The skeleton rules", rule 1): the root says the region is pending
 		// (`aria-busy`). It used to be `aria-hidden`, which says nothing is here at all.
 		<SkeletonRoot data-skeleton="connectors" className="space-y-6">
-			<PageToolbarSkeleton count />
+			<PageToolbarSkeleton />
 
 			<div className="mb-4 flex flex-wrap items-center gap-2.5">
 				<Skeleton className="h-9 w-[200px] rounded-md" />

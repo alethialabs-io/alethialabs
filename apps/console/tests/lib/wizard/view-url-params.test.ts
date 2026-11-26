@@ -15,9 +15,6 @@ import {
 	hrefWithParamPatch,
 	isViewId,
 	isWizardOpenInUrl,
-	PAGE_PARAM,
-	pageFromUrl,
-	pagePatch,
 	RANGE_PARAM,
 	rangeFromUrl,
 	rangePatch,
@@ -112,44 +109,6 @@ describe("patches", () => {
 	});
 });
 
-describe("a list's page", () => {
-	it("reads a whole number of 1 or more, the same from a client reader and a server record", () => {
-		expect(pageFromUrl(new URLSearchParams("page=3"))).toBe(3);
-		expect(pageFromUrl(paramReader({ page: ["3", "9"] }))).toBe(3);
-		expect(pageFromUrl(new URLSearchParams("page=999999"))).toBe(999_999);
-	});
-
-	it("reads anything else as the first page", () => {
-		for (const raw of ["", "page=", "page=0", "page=-2", "page=1.5", "page=03", "page=2e3", "page=abc", "page=+4", "page=%204", "page=1000000"]) {
-			expect(pageFromUrl(new URLSearchParams(raw))).toBe(1);
-		}
-	});
-
-	it("writes the first page as the absent param, so a pristine list keeps a clean URL", () => {
-		expect(pagePatch(3)).toEqual({ page: "3" });
-		expect(pagePatch(1)).toEqual({ page: null });
-		expect(hrefWithParamPatch("/acme/~/jobs", "statuses=FAILED&page=3", pagePatch(1))).toBe(
-			"/acme/~/jobs?statuses=FAILED",
-		);
-	});
-
-	it("never writes a page it would not read back", () => {
-		for (const page of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1_000_000]) {
-			expect(pagePatch(page)).toEqual({ page: null });
-		}
-		expect(pagePatch(2.9)).toEqual({ page: "2" });
-		for (const page of [2, 17, 999_999]) {
-			const search = applyParamPatch("", pagePatch(page));
-			expect(pageFromUrl(new URLSearchParams(search))).toBe(page);
-		}
-	});
-
-	it("reads and writes under another name when a page has two lists", () => {
-		expect(pageFromUrl(new URLSearchParams("page=2&deliveriesPage=5"), "deliveriesPage")).toBe(5);
-		expect(pagePatch(4, "deliveriesPage")).toEqual({ deliveriesPage: "4" });
-	});
-});
-
 describe("a list's selected row", () => {
 	const ROW = "0b8f6d0e-6c1b-4d57-9a55-2f1f3a1c9e10";
 
@@ -202,8 +161,9 @@ describe("a list's time window", () => {
 });
 
 describe("the params a filter change resets", () => {
-	it("are the page and the selection, and not the time window", () => {
-		expect([...FILTER_DEPENDENT_PARAMS].sort()).toEqual([PAGE_PARAM, SELECTION_PARAM].sort());
+	it("are the selection, and neither the time window nor the retired page (LST-14)", () => {
+		expect([...FILTER_DEPENDENT_PARAMS]).toEqual([SELECTION_PARAM]);
+		expect(FILTER_DEPENDENT_PARAMS).not.toContain("page");
 		expect(FILTER_DEPENDENT_PARAMS).not.toContain(RANGE_PARAM);
 	});
 });

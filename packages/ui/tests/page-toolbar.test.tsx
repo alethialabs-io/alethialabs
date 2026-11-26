@@ -1,13 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// PageToolbar's count pill is sized to its content, and PageToolbarSkeleton is the same row.
-//
-// F016 (#6117): the pill sat in a flex COLUMN, which stretches its children by default, so it grew
-// to the width of the description beside it with the number in its far-left corner. jsdom does no
-// layout, so this cannot measure a width. What it can read is the one class that decides it: the
-// column's cross-axis alignment. Anything but `items-start` (or a `self-*`/`w-fit` on the pill
-// itself) puts the stretch back.
+// PageToolbar has no count (LST-14, #7496), and PageToolbarSkeleton is the same row.
 //
 // The skeleton half asserts the skeleton is built from the SAME row and column classes as the real
 // toolbar, because that is the property that keeps the page from moving when data lands.
@@ -24,24 +18,18 @@ function slot(root: HTMLElement, name: string): HTMLElement {
 	return el;
 }
 
-describe("PageToolbar count pill (F016)", () => {
-	it("does not stretch the pill across the column", () => {
-		const { container } = render(
-			<PageToolbar count={42} description="A long line of supporting copy for the page." />,
-		);
+describe("PageToolbar", () => {
+	it("renders no count pill, and keeps its column start-aligned (F016)", () => {
+		const { container } = render(<PageToolbar description="A long line of supporting copy for the page." />);
+		expect(container.querySelector('[data-slot="count-pill"]')).toBeNull();
 		const lead = slot(container, "page-toolbar-lead");
-		const pill = slot(container, "count-pill");
-		expect(pill.parentElement).toBe(lead);
 		expect(lead.classList).toContain("flex-col");
-		// The column's cross-axis alignment is what sizes the pill. `stretch` is the default.
 		expect(lead.classList).toContain("items-start");
-		expect(lead.classList).not.toContain("items-stretch");
-		expect(pill.textContent).toBe("42");
 	});
 
-	it("still renders 0 as a count", () => {
-		const { container } = render(<PageToolbar count={0} />);
-		expect(slot(container, "count-pill").textContent).toBe("0");
+	it("renders nothing when it has neither copy nor actions", () => {
+		const { container } = render(<PageToolbar />);
+		expect(container.firstChild).toBeNull();
 	});
 });
 
@@ -53,9 +41,9 @@ describe("PageToolbarSkeleton", () => {
 
 	it("draws the same row and column as the real toolbar", () => {
 		const real = render(
-			<PageToolbar count={3} description="Copy" actions={<button type="button">Add</button>} />,
+			<PageToolbar description="Copy" actions={<button type="button">Add</button>} />,
 		).container;
-		const skel = render(<PageToolbarSkeleton count actions={1} />).container;
+		const skel = render(<PageToolbarSkeleton actions={1} />).container;
 
 		const realRow = slot(real, "page-toolbar");
 		const skelRow = slot(skel, "page-toolbar-skeleton");
@@ -71,10 +59,9 @@ describe("PageToolbarSkeleton", () => {
 		expect(skelActions?.className).toBe(realActions.className);
 	});
 
-	it("draws the count as a real, transparent CountPill and one placeholder per action", () => {
-		const { container } = render(<PageToolbarSkeleton count actions={2} />);
-		const pill = slot(container, "count-pill");
-		expect(pill.classList).toContain("text-transparent");
+	it("draws one placeholder per action and no count", () => {
+		const { container } = render(<PageToolbarSkeleton actions={2} />);
+		expect(container.querySelector('[data-slot="count-pill"]')).toBeNull();
 		expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(2);
 	});
 

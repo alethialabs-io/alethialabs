@@ -26,6 +26,9 @@ import { cn } from "./utils";
  *
  * Override the tier through `className` when the element is on inverted ink — see `FilterChip`,
  * whose filled state passes `text-inherit` — and see the token gap recorded there.
+ *
+ * The module kept its name when `CountPill`, the heading form of this figure, was deleted with the
+ * console's list counts (LST-14, #7496): the module path is what five filter primitives import.
  */
 function CountFigure({ className, children, ...props }: React.ComponentProps<"span">) {
 	return (
@@ -36,42 +39,6 @@ function CountFigure({ className, children, ...props }: React.ComponentProps<"sp
 		>
 			{children}
 		</span>
-	);
-}
-
-/**
- * The mono count that sits beside a section heading.
- *
- * `apps/console/lib/query/README.md` has required this since the filter standard was written —
- * "Result counts live in the count pill next to the section heading — never 'N of M' prose in the
- * bar" — but no component backed it, so the one implementation lived privately inside an agent
- * panel and every other page wrote prose instead.
- *
- * The HEADING form of {@link CountFigure}: the same mono tertiary figure, one rung larger and set
- * in a `--surface-muted` chip, because beside a heading it is a labelled quantity rather than a
- * column of trailing counts.
- *
- * Renders nothing when `count` is null or undefined, so a page can pass a still-loading query
- * result straight through without a ternary at the call site. A count of `0` DOES render: "0" is
- * a result, and hiding it is how an empty filtered list comes to look like a broken one.
- */
-function CountPill({
-	count,
-	className,
-	...props
-}: React.ComponentProps<"span"> & { count: number | null | undefined }) {
-	if (count === null || count === undefined) return null;
-	return (
-		<CountFigure
-			data-slot="count-pill"
-			className={cn(
-				"inline-flex items-center rounded-sm bg-surface-muted px-1.5 py-0.5 text-ui-xs leading-none",
-				className,
-			)}
-			{...props}
-		>
-			{count.toLocaleString()}
-		</CountFigure>
 	);
 }
 
@@ -88,4 +55,4 @@ function rowAccessibleName(label: string, ...trailing: Array<string | number | n
 	return [label, ...trailing.filter((t) => t !== undefined && t !== null && t !== "").map(String)].join(", ");
 }
 
-export { CountFigure, CountPill, rowAccessibleName };
+export { CountFigure, rowAccessibleName };

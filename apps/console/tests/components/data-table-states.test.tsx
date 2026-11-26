@@ -154,15 +154,13 @@ describe("DataTable body states", () => {
 		expect(screen.queryByRole("status")).toBeNull();
 	});
 
-	it("hides the paging footer while the first load fails", () => {
+	it("keeps every row behind a failed refresh, with no paging footer", () => {
 		const many = Array.from({ length: 30 }, (_, i) => ({ id: String(i), name: `r${i}`, status: "ok" }));
-		const ready = render(<DataTable columns={COLUMNS} data={many} pageSize={10} />);
-		expect(within(ready.container).getByText(/Page 1 of 3/)).toBeInTheDocument();
-		ready.unmount();
-		const failed = render(
-			<DataTable columns={COLUMNS} data={many} pageSize={10} query={q({ isError: true })} />,
+		const { container } = render(
+			<DataTable columns={COLUMNS} data={many} query={q({ isError: true, data: many })} />,
 		);
-		expect(within(failed.container).queryByText(/Page 1 of/)).toBeNull();
+		expect(container.querySelectorAll("[data-list-item]")).toHaveLength(30);
+		expect(within(container).queryByText(/Page \d+ of/)).toBeNull();
 	});
 });
 

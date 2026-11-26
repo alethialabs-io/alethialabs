@@ -83,7 +83,7 @@ export function RolesSkeleton() {
 	const granted = new Set(role.permissionKeys);
 	return (
 		<div aria-busy data-slot="roles-skeleton">
-			<PageToolbarSkeleton className="mb-4" count actions={1} />
+			<PageToolbarSkeleton className="mb-4" actions={1} />
 			<div aria-hidden data-slot="roles-skeleton-filter-bar" className="mb-4 flex flex-wrap items-center gap-2.5">
 				<SearchSlot />
 				<Skeleton className="h-8 w-28 rounded-md" />

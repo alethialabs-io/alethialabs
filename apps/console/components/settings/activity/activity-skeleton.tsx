@@ -46,7 +46,7 @@ export function ActivityFeedSkeleton({
 }) {
 	return (
 		<SkeletonRoot>
-			<PageToolbarSkeleton className="mb-4" count actions={exportSlot ? 1 : 0} />
+			<PageToolbarSkeleton className="mb-4" actions={exportSlot ? 1 : 0} />
 			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
 				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
 				<Skeleton className="h-8 w-32 rounded-md" />

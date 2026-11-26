@@ -14,7 +14,7 @@ import { CaseListSkeletonRows } from "@/components/support/cases/case-list-skele
 export default function MyCasesLoading() {
 	return (
 		<div className="space-y-4">
-			<PageToolbarSkeleton count actions={1} />
+			<PageToolbarSkeleton actions={1} />
 
 			<div className="mb-4 flex flex-wrap items-center gap-2.5" aria-hidden>
 				<Skeleton className="h-9 w-[240px] rounded-sm" />

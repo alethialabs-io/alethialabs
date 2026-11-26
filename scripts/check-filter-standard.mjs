@@ -1696,8 +1696,9 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
 //   count-pill     `<CountPill`, or `count=` on a `<PageToolbar>` / `<SectionHeading>` opening
 //                  tag, anywhere under the console roots. Read from the element's OWN opening tag
 //                  at brace depth 0, so a `count` prop of a child element passed in `actions={…}`
-//                  is not read as the toolbar's. Where the number IS the content (the agent
-//                  artifact tile) the ledger records a `content` decision.
+//                  is not read as the toolbar's. LST-14 (#7496) deleted `CountPill` and both
+//                  props, so `tsc` refuses all three today; this rule is what catches one being
+//                  ADDED BACK, which a type error cannot (the diff that re-adds the prop compiles).
 //   count-prose    "N of M", "Showing …", "N total" — in the list census, the filter surfaces'
 //                  neighbourhoods and the DataTable shell. Not tree-wide: "Step {n} of {total}"
 //                  in a wizard is not a list count, and the census is where a list is.
@@ -1705,11 +1706,14 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
 //                  page-ish identifier, or name a page size.
 //   render-window  `.slice(0, x)` where `x` is a `useState` binding of the same module — a "Show
 //                  more" that grows a window over rows that were all fetched.
-//   page-url       a `pageFromUrl(` call — `?page=` is retired.
+//   page-url       a `pageFromUrl(` call — `?page=` is retired, and LST-14 deleted the helper;
+//                  a call means it came back.
 //   grown-limit    `limit + …` in a client module — a "Show more" that re-reads a bigger window.
-//   client-table   a `<DataTable` in CLIENT mode (no `keyset=`). DataTable pages a client-mode
-//                  table by default (20 rows), which is how alert deliveries got page numbers over
-//                  50 rows without asking for them. The mode goes with its last caller (LST-14).
+//   client-table   a `<DataTable` in CLIENT mode (no `keyset=`). DataTable used to page a
+//                  client-mode table by default (20 rows), which is how alert deliveries got page
+//                  numbers over 50 rows without asking for them. LST-14 deleted that paging: client
+//                  mode now renders every row it is given, so a client-mode table over a FETCHED
+//                  list is an unpaged list, and needs a `bounded` decision naming its bound.
 //   keyset-contract a list that does not page through the contract: a raw `useInfiniteQuery(` or
 //                  `useInfiniteScrollSentinel(` outside the primitives; a `.tsx` module that calls
 //                  `useKeysetList(` and renders neither `<ListFooter` nor `<DataTable keyset=`
@@ -1725,23 +1729,22 @@ export function checkConformance(surfaces, perSurface, debt = FILTER_STANDARD_DE
 // trimming its `limit + 1` read) is not paging in the browser and is not read. A count passed to a
 // component other than the three named is not read (`ProgressRing total=` is not a list count).
 //
-// THE LEDGER is `apps/console/list-standard/*.json`, ONE FILE PER SURFACE, so the lanes converting
-// surfaces in parallel never edit the same file. Each file is one of:
+// THE LEDGER is `apps/console/list-standard/*.json`, ONE FILE PER SURFACE. Each file is:
 //
-//   { "kind": "debt",    "owner": "#7483", "why": "…", "findings": { subject: { rule: n } } }
-//   { "kind": "bounded", "decided": "…", "decision": "…", "bound": "…", "findings": { … } }
-//   { "kind": "content", "decided": "…", "decision": "…", "findings": { … } }
+//   { "kind": "bounded", "decided": "…", "decision": "…", "bound": "…", "findings": { subject: { rule: n } } }
 //
-// `debt` is a known finding with the open LST issue that removes it; the owner must be one of
-// {@link LIST_STANDARD_OWNERS}, so new debt cannot be filed against an unrelated issue. `bounded`
-// is an unpaged list whose size the product caps, with the SERVER-SIDE bound named; it may excuse
-// only paging rules. `content` is a count that is the content, not list chrome; it may excuse only
-// `count-pill`. The per-(subject, rule) sum over every file must EQUAL the measured count, in both
-// directions: a new site in an indebted module is undeclared, and a converted one leaves a
-// declaration that now overstates — which fails until the number comes down, so fixing a surface
-// deletes or shrinks its file in the same commit, and that deletion is the proof of the fix.
-// `bounded` and `content` are held under ceilings ({@link LIST_STANDARD_CEILINGS}): growing either
-// past the epic's named set is a reviewed edit of this file.
+// `bounded` is an unpaged list whose size the product caps, with the SERVER-SIDE bound named; it
+// may excuse only paging rules. It is the ONLY kind. Two more existed while epic #7481 converted
+// the console: `debt` (a known finding, owned by the open LST issue that removed it) and `content`
+// (a count that was the content — the agent artifact tile, which now renders a plain figure). The
+// last debt file was deleted by LST-14 (#7496), the epic's close-out, and both kinds were retired
+// with it: a file of either kind now fails, so a new count or a new client page cannot be parked
+// against an issue — it is fixed, or it is a bounded list with a named bound.
+//
+// The per-(subject, rule) sum over every file must EQUAL the measured count, in both directions: a
+// new site in a declared module is undeclared, and a fixed one leaves a declaration that now
+// overstates — which fails until the number comes down. `bounded` is held under a ceiling
+// ({@link LIST_STANDARD_CEILINGS}): growing it past the epic's named set is a reviewed edit here.
 
 /** Every rule the list standard measures. */
 export const LIST_RULES = /** @type {const} */ ([
@@ -1759,31 +1762,16 @@ export const LIST_RULES = /** @type {const} */ ([
 /** The rules a `bounded` decision may excuse: the paging ones — never a count, never a builder. */
 const BOUNDED_RULES = new Set(["page-slice", "render-window", "client-table", "keyset-contract"]);
 
-/** The rules a `content` decision may excuse. */
-const CONTENT_RULES = new Set(["count-pill"]);
-
 /** Where the per-surface ledger lives. */
 export const LIST_LEDGER_DIR = "apps/console/list-standard";
 
 /**
- * The issues that may own list-standard debt: the epic's children (#7481), LST-1 to LST-14. A debt
- * file naming any other owner fails — the way new debt is kept from being filed against whatever
- * issue is to hand. LST-0 (#7482) is not here: it is the unit that seeds the ledger, and owns none.
- */
-export const LIST_STANDARD_OWNERS = /** @type {const} */ ([
-	"#7483", "#7484", "#7485", "#7486", "#7487", "#7488", "#7489",
-	"#7490", "#7491", "#7492", "#7493", "#7494", "#7495", "#7496",
-]);
-
-/**
- * Ceilings on the decision kinds, counted in FILES. The epic names seven bounded lists (roles, SSO
+ * The ceiling on bounded decisions, counted in FILES. The epic names seven bounded lists (roles, SSO
  * providers, alert policies, alert channels, classification dimensions, the connectors catalog,
- * evidence's per-environment roll-up) plus the agent suggestion carousel measured here, and two
- * content counts (the agent artifact tile, the canvas review's pending tally). A lane converting
- * one of those into a decision stays under the ceiling without touching this file; a NINTH bounded
- * list is a reviewed line here.
+ * evidence's per-environment roll-up) plus the agent suggestion carousel measured here. A NINTH
+ * bounded list is a reviewed line here.
  */
-export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 8, content: 2 });
+export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 8 });
 
 /** The paging primitives themselves — they implement the machinery the census bans elsewhere. */
 const LIST_PRIMITIVES = new Set([
@@ -2222,18 +2210,17 @@ export function readListLedger(io) {
 			const v = /** @type {Record<string, unknown>} */ (row)[k];
 			return typeof v === "string" && v.trim() !== "";
 		};
-		if (kind === "debt") {
-			const owner = /** @type {Record<string, unknown>} */ (row).owner;
-			if (typeof owner !== "string" || !LIST_STANDARD_OWNERS.some((o) => o === owner)) {
-				problems.push(`${file}: debt owner \`${String(owner)}\` is not one of the list standard's LST issues (${LIST_STANDARD_OWNERS.join(", ")}).`);
-			}
-			if (!text("why")) problems.push(`${file}: debt needs a \`why\` — the mechanism, never "not got to it yet".`);
-		} else if (kind === "bounded") {
+		if (kind === "bounded") {
 			for (const k of ["decided", "decision", "bound"]) if (!text(k)) problems.push(`${file}: a bounded decision needs \`${k}\`.`);
-		} else if (kind === "content") {
-			for (const k of ["decided", "decision"]) if (!text(k)) problems.push(`${file}: a content decision needs \`${k}\`.`);
+		} else if (kind === "debt" || kind === "content") {
+			problems.push(
+				`${file}: \`${kind}\` was retired when epic #7481 closed with LST-14 (#7496). Fix the finding — a list ` +
+					"count is deleted, a client page is a keyset page — or, for an unpaged list the product caps, record a " +
+					"`bounded` decision naming the server-side bound.",
+			);
+			continue;
 		} else {
-			problems.push(`${file}: \`kind\` is \`debt\`, \`bounded\` or \`content\`, not \`${String(kind)}\`.`);
+			problems.push(`${file}: \`kind\` is \`bounded\`, not \`${String(kind)}\`.`);
 			continue;
 		}
 		if (findings === null || typeof findings !== "object" || Array.isArray(findings) || Object.keys(findings).length === 0) {
@@ -2257,9 +2244,8 @@ export function readListLedger(io) {
 					problems.push(`${file}: \`${subject}\` ${rule} is a site count, a positive integer — not \`${String(n)}\`.`);
 					continue;
 				}
-				const allowed = kind === "bounded" ? BOUNDED_RULES : kind === "content" ? CONTENT_RULES : null;
-				if (allowed !== null && !allowed.has(rule)) {
-					problems.push(`${file}: a \`${kind}\` decision cannot excuse \`${rule}\` (it may excuse ${[...allowed].join(", ")}). That finding is debt, with an LST owner.`);
+				if (!BOUNDED_RULES.has(rule)) {
+					problems.push(`${file}: a \`bounded\` decision cannot excuse \`${rule}\` (it may excuse ${[...BOUNDED_RULES].join(", ")}). Fix the finding.`);
 					continue;
 				}
 				clean[subject][rule] = n;
@@ -2277,7 +2263,7 @@ export function readListLedger(io) {
  * @param {Map<string, Map<string, number>>} findings
  * @param {ReturnType<typeof readListLedger>["entries"]} entries
  * @param {Set<string>} subjects every subject that exists (modules read, `store:` surfaces)
- * @param {{ bounded: number, content: number }} [ceilings]
+ * @param {{ bounded: number }} [ceilings]
  * @returns {string[]}
  */
 export function checkListStandard(findings, entries, subjects, ceilings = LIST_STANDARD_CEILINGS) {
@@ -2313,7 +2299,7 @@ export function checkListStandard(findings, entries, subjects, ceilings = LIST_S
 				);
 			} else if (d.n < n) {
 				problems.push(
-					`${subject}: ${n} \`${rule}\` site(s), but ${d.files.join(", ")} declare(s) ${d.n}. A NEW site in an indebted ` +
+					`${subject}: ${n} \`${rule}\` site(s), but ${d.files.join(", ")} declare(s) ${d.n}. A NEW site in a declared ` +
 						`module is still a new site. ${LIST_RULE_ADVICE[rule]}`,
 				);
 			}
@@ -2330,21 +2316,19 @@ export function checkListStandard(findings, entries, subjects, ceilings = LIST_S
 			);
 		}
 	}
-	for (const kind of /** @type {const} */ (["bounded", "content"])) {
-		const got = entries.filter((e) => e.kind === kind).length;
-		if (got > ceilings[kind]) {
-			problems.push(
-				`${got} \`${kind}\` ledger file(s), above the ceiling of ${ceilings[kind]} in \`LIST_STANDARD_CEILINGS\`. ` +
-					"Raising it is a reviewed line in scripts/check-filter-standard.mjs, not a new file.",
-			);
-		}
+	const bounded = entries.filter((e) => e.kind === "bounded").length;
+	if (bounded > ceilings.bounded) {
+		problems.push(
+			`${bounded} \`bounded\` ledger file(s), above the ceiling of ${ceilings.bounded} in \`LIST_STANDARD_CEILINGS\`. ` +
+				"Raising it is a reviewed line in scripts/check-filter-standard.mjs, not a new file.",
+		);
 	}
 	return problems;
 }
 
 /** What to do about each rule, said once and appended to its finding. */
 const LIST_RULE_ADVICE = {
-	"count-pill": "The console carries no list counts: drop the `count` (a number that IS the content is a `content` decision).",
+	"count-pill": "The console carries no list counts: drop the pill (a number that IS the content renders as plain content, e.g. `CountFigure`).",
 	"count-prose": 'No "N of M", "Showing …" or "N total" around a list — totals exist only as facet option counts.',
 	"page-slice": "The browser must not page rows it fetched: read a page from a keyset builder (`useKeysetList`).",
 	"render-window": 'A "Show more" window over fetched rows is a client page: page from the server (`useKeysetList` + `ListFooter`).',
@@ -2974,50 +2958,53 @@ export function positiveControl() {
 		/widgets-list\.tsx: 1 `keyset-builder`/,
 	);
 
-	// The ledger, both directions.
+	// The ledger, both directions. `bounded` is the only kind (LST-14 retired `debt` and `content`),
+	// so the controls drive it over the paging rule it exists for: a client-mode table.
+	const TABLE = "apps/console/components/ledger-table.tsx";
+	const oneTable = "export function LedgerTable({ rows }) { return <DataTable columns={c} data={rows} />; }";
+	const twoTables = "export function LedgerTable({ rows }) { return <><DataTable columns={c} data={rows} /><DataTable columns={c} data={rows} /></>; }";
 	const pill = { [LIST]: withFooter('<SectionHeading title="W" count={list.rows.length} />') };
-	const debtRow = (findings, extra = {}) =>
-		JSON.stringify({ kind: "debt", owner: LIST_STANDARD_OWNERS[0], why: "the control", findings, ...extra });
-	listQuiet("a DECLARED count-pill passes", { ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }) });
+	const boundedRow = (findings, extra = {}) =>
+		JSON.stringify({ kind: "bounded", decided: "the control", decision: "the control", bound: "the control", findings, ...extra });
+	listQuiet("a DECLARED bounded client table passes", { [TABLE]: oneTable, [LEDGER]: boundedRow({ [TABLE]: { "client-table": 1 } }) });
 	listFires(
-		"a SECOND pill in a module whose ledger declares one fails",
-		{ [LIST]: withFooter('<SectionHeading title="W" count={a} /><SectionHeading title="V" count={b} />'), [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }) },
-		/2 `count-pill` site\(s\), but .* declare\(s\) 1/,
+		"a SECOND table in a module whose ledger declares one fails",
+		{ [TABLE]: twoTables, [LEDGER]: boundedRow({ [TABLE]: { "client-table": 1 } }) },
+		/2 `client-table` site\(s\), but .* declare\(s\) 1/,
 	);
-	listFires("a declaration that OUTLIVED its finding fails", { [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }) }, /and 0 remain/);
+	listFires("a declaration that OUTLIVED its finding fails", { [LEDGER]: boundedRow({ [LIST]: { "client-table": 1 } }) }, /and 0 remain/);
 	listFires(
 		"a declaration naming a subject that does not exist fails",
-		{ ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 }, "apps/console/components/gone.tsx": { "count-pill": 1 } }) },
+		{ [TABLE]: oneTable, [LEDGER]: boundedRow({ [TABLE]: { "client-table": 1 }, "apps/console/components/gone.tsx": { "client-table": 1 } }) },
 		/which is not a module or filter surface in this tree/,
 	);
-	listFires("debt owned by an issue outside the LST set fails", { ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1 } }, { owner: "#1" }) }, /is not one of the list standard's LST issues/);
 	listFires(
-		"a `content` decision cannot excuse a paging rule",
-		{
-			[LIST]: withFooter("{list.rows.slice(page * PAGE_SIZE).map(String)}"),
-			[LEDGER]: JSON.stringify({ kind: "content", decided: "x", decision: "x", findings: { [LIST]: { "page-slice": 1 } } }),
-		},
-		/a `content` decision cannot excuse `page-slice`/,
+		"a `bounded` decision missing its bound fails",
+		{ [TABLE]: oneTable, [LEDGER]: boundedRow({ [TABLE]: { "client-table": 1 } }, { bound: "" }) },
+		/a bounded decision needs `bound`/,
 	);
 	listFires(
 		"a `bounded` decision cannot excuse a count",
-		{ ...pill, [LEDGER]: JSON.stringify({ kind: "bounded", decided: "x", decision: "x", bound: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
+		{ ...pill, [LEDGER]: boundedRow({ [LIST]: { "count-pill": 1 } }) },
 		/a `bounded` decision cannot excuse `count-pill`/,
 	);
-	listQuiet(
-		"a `content` decision excuses a count that is the content",
+	listFires(
+		"a retired `debt` file fails, whatever it names",
+		{ ...pill, [LEDGER]: JSON.stringify({ kind: "debt", owner: "#7496", why: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
+		/`debt` was retired/,
+	);
+	listFires(
+		"a retired `content` file fails, so a count cannot be parked as content",
 		{ ...pill, [LEDGER]: JSON.stringify({ kind: "content", decided: "x", decision: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
+		/`content` was retired/,
 	);
 	{
-		const over = listScan(
-			{ ...pill, [LEDGER]: JSON.stringify({ kind: "content", decided: "x", decision: "x", findings: { [LIST]: { "count-pill": 1 } } }) },
-			{ bounded: 0, content: 0 },
-		);
+		const over = listScan({ [TABLE]: oneTable, [LEDGER]: boundedRow({ [TABLE]: { "client-table": 1 } }) }, { bounded: 0 });
 		if (!over.some((p) => /above the ceiling of 0/.test(p))) problems.push(`a decision file above its ceiling did not fail: ${over.join(" | ")}`);
 	}
 	listFires("a ledger file that is not JSON fails", { ...pill, [LEDGER]: "{ nope" }, /does not parse as JSON/);
-	listFires("a ledger kind outside the three fails", { ...pill, [LEDGER]: JSON.stringify({ kind: "maybe", findings: {} }) }, /`kind` is `debt`, `bounded` or `content`/);
-	listFires("a ledger rule outside the set fails", { ...pill, [LEDGER]: debtRow({ [LIST]: { "count-pill": 1, "count-pils": 1 } }) }, /which is not a list-standard rule/);
+	listFires("a ledger kind outside the set fails", { ...pill, [LEDGER]: JSON.stringify({ kind: "maybe", findings: {} }) }, /`kind` is `bounded`, not `maybe`/);
+	listFires("a ledger rule outside the set fails", { [TABLE]: oneTable, [LEDGER]: boundedRow({ [TABLE]: { "client-table": 1, "count-pils": 1 } }) }, /which is not a list-standard rule/);
 	listFires("a missing list primitive is a broken read", { "apps/console/components/list/list-footer.tsx": null }, /list-footer\.tsx` was not read/);
 
 	// A comment must never satisfy a predicate. `use-settings-filters.ts` names `useFilterUrlSync`
@@ -3398,13 +3385,12 @@ function main() {
 			"  still joins the same verdicts to the route set for `ui-conformance-baseline.json`, which is now a\n" +
 			"  per-route RECORD of a thing already enforced rather than the only place it was noticed.",
 	);
-	const kinds = { debt: 0, bounded: 0, content: 0 };
-	for (const e of scanned.ledger.entries) kinds[/** @type {"debt"|"bounded"|"content"} */ (e.kind)] += 1;
+	const bounded = scanned.ledger.entries.filter((e) => e.kind === "bounded").length;
 	const sites = [...scanned.list.findings.values()].reduce((n, rules) => n + [...rules.values()].reduce((a, b) => a + b, 0), 0);
 	console.log(
 		`  LIST STANDARD (#7482): ${sites} count/paging site(s) across ${scanned.list.findings.size} subject(s), every one ` +
-			`declared in ${LIST_LEDGER_DIR}/ — ${kinds.debt} debt file(s) owned by LST issues, ${kinds.bounded}/${LIST_STANDARD_CEILINGS.bounded} ` +
-			`bounded, ${kinds.content}/${LIST_STANDARD_CEILINGS.content} content; ${scanned.keysetBuilders.size} keyset builder(s). ` +
+			`declared in ${LIST_LEDGER_DIR}/ as ${bounded}/${LIST_STANDARD_CEILINGS.bounded} bounded decision(s); ` +
+			`${scanned.keysetBuilders.size} keyset builder(s). ` +
 			"F5 is gated there, not by `FILTER_STANDARD_DEBT`.",
 	);
 	const declared = Object.entries(FILTER_STANDARD_DEBT);
