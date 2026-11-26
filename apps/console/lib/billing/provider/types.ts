@@ -200,6 +200,8 @@ export interface SubscriptionUpsertedEvent extends NormalizedEventBase {
 	businessId?: string | null;
 	/** The provider's address record on the subscription, when it has one. */
 	addressId?: string | null;
+	/** The transaction that created the subscription, when the event says (Paddle: `subscription.created`). */
+	transactionId?: string | null;
 }
 
 /** A subscription ended for good. */
@@ -255,7 +257,7 @@ export interface TransactionPaymentFailedEvent extends NormalizedEventBase {
 	transaction: TransactionSnapshot;
 }
 
-/** A transaction moved without completing (paid, past due) — the mirror follows it, nothing else. */
+/** A transaction moved without completing (billed, paid, past due) — the mirror follows it, nothing else. */
 export interface TransactionUpdatedEvent extends NormalizedEventBase {
 	kind: "transaction_updated";
 	transactionId: string;

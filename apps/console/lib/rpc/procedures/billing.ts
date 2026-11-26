@@ -11,9 +11,7 @@ import { ActionRefusal } from "@/lib/actions/result";
 import { authorizeQuiet, authorizeRead, currentActor } from "@/lib/authz/guard";
 import { isBillingConfigured, isStripeConfigured } from "@/lib/billing/config";
 import { paidSalesOpen } from "@/lib/billing/eligibility";
-import { type InvoiceListFilters, listOrgInvoices } from "@/lib/billing/invoices";
-import { providerDocumentsForOrg } from "@/lib/billing/provider/documents";
-import type { BillingDocument } from "@/lib/billing/provider/types";
+import { listOrgInvoices } from "@/lib/billing/invoices";
 import { backupRankOf } from "@/lib/billing/payment-methods";
 import { isManualGrantExpired, PAST_DUE_GRACE_MS } from "@/lib/billing/plan";
 import { getAllAiPrices, getAllPlanPrices, getPlanPrice, type LiveAiPriceMap } from "@/lib/billing/pricing";
@@ -365,7 +363,7 @@ export async function listPaymentMethods(): Promise<PaymentMethodInfo[]> {
 
 /** An invoice row for the billing UI — sourced from our locally-mirrored `invoice` table
  *  (only invoices for which money moved), never a live Stripe API call; for a Paddle customer,
- *  also Paddle's own invoices (`documentToInvoiceInfo`). */
+ *  also Paddle's invoices from the `paddle_transaction` mirror (`paddleTransactionToInvoiceInfo`). */
 export interface InvoiceInfo {
 	/** Our invoice id, or a Paddle transaction id (`txn_…`) — either way the preview + PDF-download route's key. */
 	id: string;
@@ -428,63 +426,25 @@ export type { InvoiceListParams } from "@/lib/rpc/inputs/invoices";
 // empty list, not an error.
 
 /**
- * Lists the active org's invoices (newest paid first): the mirrored ones from the local table — no
- * Stripe call, so only real paid invoices — plus, for an org with a Paddle customer, Paddle's own
- * invoices fetched LIVE (lib/billing/provider/documents.ts; one Paddle read per page of history).
- * Filterable by period range + status. Bounded by `limit`, so it is an in-process glance, not the
- * ledger: the `billing.invoices` read pages both sources in SQL through {@link readInvoicesPage}.
+ * Lists the active org's Stripe-era invoices (newest paid first) from the local `invoice` mirror — no
+ * Stripe call, so only real paid invoices — filterable by period range + status and bounded by
+ * `limit`. It does NOT list Paddle invoices: the billing UI reads {@link readInvoicesPage}, which
+ * pages this mirror and the `paddle_transaction` mirror together in SQL. (It used to add Paddle's
+ * invoices from a LIVE Paddle read; nothing in the UI called that after #7528, so it went, #7672.)
  */
 export async function listInvoices(
 	params: InvoiceListParams = {},
 ): Promise<InvoiceInfo[]> {
 	const actor = await authorizeRead("manage_billing", { type: "billing" });
-	const filters = invoiceReaderFilters(params);
-	const limit = filters.limit ?? 200;
-	const [rows, docs] = await Promise.all([
-		listOrgInvoices(actor.orgId, filters),
-		providerDocumentsForOrg(actor.orgId, { limit }),
-	]);
-	const hosted = docs.map(documentToInvoiceInfo).filter((d) => matchesInvoiceFilters(d, filters));
-	if (hosted.length === 0) return rows.map(toInvoiceInfo);
-	return [...rows.map(toInvoiceInfo), ...hosted]
-		.sort((a, b) => b.paidAt.localeCompare(a.paidAt))
-		.slice(0, limit);
-}
-
-/**
- * A provider-hosted document (Paddle's invoice — Paddle is the merchant of record) in the list's
- * shape. Its id is the provider's (`txn_…`), which the PDF route recognises and answers with the
- * provider's own PDF. It lists only billed/completed documents, so it reads as paid; with a number
- * it is downloadable, as an issued фактура is.
- */
-export function documentToInvoiceInfo(doc: BillingDocument): InvoiceInfo {
-	return {
-		id: doc.id,
-		number: doc.number,
-		total: doc.total.minor,
-		currency: doc.total.currency.toLowerCase(),
-		status: "paid",
-		paidAt: (doc.issuedAt ?? new Date(0)).toISOString(),
-		periodStart: doc.periodStart?.toISOString() ?? null,
-		periodEnd: doc.periodEnd?.toISOString() ?? null,
-		description: null,
-		facturaIssued: doc.number !== null,
-	};
-}
-
-/** Applies the list's status and paid-date filters to a row built outside the SQL query. */
-function matchesInvoiceFilters(row: InvoiceInfo, filters: InvoiceListFilters): boolean {
-	if (filters.status?.length && !filters.status.includes(row.status)) return false;
-	if (filters.paidFrom && row.paidAt < new Date(filters.paidFrom).toISOString()) return false;
-	if (filters.paidTo && row.paidAt > new Date(filters.paidTo).toISOString()) return false;
-	return true;
+	const rows = await listOrgInvoices(actor.orgId, invoiceReaderFilters(params));
+	return rows.map(toInvoiceInfo);
 }
 
 /**
  * A mirrored Paddle invoice (`paddle_transaction`, billed or completed — Paddle is the merchant of
- * record) in the list's shape, the mirror's twin of {@link documentToInvoiceInfo}. Its id is
- * Paddle's (`txn_…`), the PDF route's key for Paddle's own PDF; the row's uuid only orders the
- * list. With an invoice number it is downloadable, as an issued фактура is.
+ * record) in the list's shape. Its id is Paddle's (`txn_…`), the PDF route's key for Paddle's own
+ * PDF; the row's uuid only orders the list. With an invoice number it is downloadable, as an issued
+ * фактура is.
  */
 export function paddleTransactionToInvoiceInfo(row: PaddleTransaction): InvoiceInfo {
 	return {
