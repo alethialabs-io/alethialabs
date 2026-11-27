@@ -11,7 +11,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { SwitcherEnv } from "@/app/server/actions/resolve";
 import type { EnvironmentFacetSet, EnvironmentFacts, EnvironmentsPage } from "@/lib/queries/environments";
 import type { PromotionsPage } from "@/lib/queries/promotions";
-import type { EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
+import type { EnvFacts, EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
 
 export const PROJECT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -89,13 +89,32 @@ export function canonicalOf(envs: EnvRow[]): SwitcherEnv[] {
 }
 
 /**
+ * The overview read, together with the environments it was built from. The read itself carries only
+ * facts keyed by id (#7895); a test's environments — their names, stages and default — are what the
+ * canonical list and the table pages are seeded from, so the fixture keeps them beside the read.
+ */
+export type OverviewFixture = EnvironmentsOverview & { envs: EnvRow[] };
+
+/** The overview's facts for `envs`, keyed by id: everything a row carries but its identity. */
+export function factsById(envs: EnvRow[]): Record<string, EnvFacts> {
+	return Object.fromEntries(
+		envs.map(({ id, name: _name, stage: _stage, is_default: _isDefault, ...facts }): [string, EnvFacts] => [id, facts]),
+	);
+}
+
+/** The read itself, as the server answers it: the fixture without the environments it was built from. */
+export function readOf({ envs: _envs, ...read }: OverviewFixture): EnvironmentsOverview {
+	return read;
+}
+
+/**
  * Seeds the table's first page (`page`, default: every environment of `overview`), an empty
  * promotions history, and the canonical environments list (default: every environment of
  * `overview`), as the route's and the `[project]` layout's prefetches leave them.
  */
 export function seedLists(
 	qc: QueryClient,
-	overview: EnvironmentsOverview,
+	overview: OverviewFixture,
 	page: EnvironmentsPage = pageOf(overview.envs),
 	promotions: PromotionsPage = { rows: [], nextCursor: null, facets: null, universeEmpty: true },
 	canonical: SwitcherEnv[] = canonicalOf(overview.envs),
@@ -105,18 +124,22 @@ export function seedLists(
 	qc.setQueryData(CANONICAL_KEY, canonical);
 }
 
-/** The panels' read. */
-export function overviewOf(over: Partial<EnvironmentsOverview> = {}): EnvironmentsOverview {
+/**
+ * The panels' read for `envs` (default: development and production): its `facts` are derived from
+ * them unless the test gives its own.
+ */
+export function overviewOf(over: Partial<OverviewFixture> = {}): OverviewFixture {
 	const envs = over.envs ?? [DEV, PROD];
 	return {
 		projectId: PROJECT_ID,
 		canManage: true,
 		canPromote: true,
-		envs,
+		facts: factsById(envs),
 		consistency: { envs: [], rows: [] },
 		reconcile: [],
 		activePromotion: null,
 		protectionByEnv: {},
 		...over,
+		envs,
 	};
 }

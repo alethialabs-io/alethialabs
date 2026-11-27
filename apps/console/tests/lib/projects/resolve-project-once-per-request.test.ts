@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // #7736: a `[project]` request resolves its project slug ONCE. The `[project]` layout, the page
-// below it and the topbar switcher's environments read (`getEnvironmentsForSlug`) each turned the
-// same slug into an id with its own query; `resolveProjectOr404` and the lookup under
-// `resolveProjectId` are now memoised per request with React `cache()`.
+// below it and the topbar switcher's environments read each turned the same slug into an id with its
+// own query; `resolveProjectOr404` and the lookup under `resolveProjectId` are now memoised per
+// request with React `cache()`. The switcher's read is `readEnvironmentsForSlug` now (the server
+// action that duplicated it is gone, #7895); that it reaches this lookup through `resolveProjectId`,
+// and shares the environment list with the Environments page, is pinned in
+// tests/lib/rpc/environments-procedures.test.ts.
 //
 // HOW A "REQUEST" IS MADE HERE. The `react` vitest resolves is the CLIENT build, whose `cache()` is
 // a pass-through that memoises nothing, so a test on it would pass whether or not anything is
@@ -41,22 +44,21 @@ vi.mock("react", async (importOriginal) => {
 
 /** The actor `currentActor()` answers with; a test may switch it mid-request. */
 const scope = vi.hoisted(() => ({ actor: { userId: "u1", orgId: "o1" } }));
-/** The project rows the lookup's query returns, and the environments rows the switcher's returns. */
+/** The project rows the lookup's query returns. */
 const rows = vi.hoisted(() => ({
 	projects: [{ id: "proj-1" }] as { id: string }[],
-	envs: [{ id: "env-1", project_id: "proj-1", name: "dev", stage: "development", is_default: true }],
 }));
 
 vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn(async () => scope.actor) }));
 vi.mock("@/lib/db", () => {
-	/** A drizzle-shaped chain: `limit` ends the project lookup, `orderBy` the environments read. */
+	/** A drizzle-shaped chain: `limit` ends the project lookup. */
 	const chain = {
 		select: () => chain,
 		from: () => chain,
 		innerJoin: () => chain,
 		where: () => chain,
 		limit: async () => rows.projects,
-		orderBy: async () => rows.envs,
+		orderBy: async () => [],
 	};
 	return {
 		withActorScope: vi.fn(async (_actor: unknown, fn: (tx: typeof chain) => Promise<unknown>) => fn(chain)),
@@ -98,7 +100,7 @@ vi.mock("@/app/(private)/[org]/~/clusters/clusters-client", () => ({ ClustersCli
 
 import ProjectClustersPage from "@/app/(private)/[org]/[project]/clusters/page";
 import ProjectLayout from "@/app/(private)/[org]/[project]/layout";
-import { getEnvironmentsForSlug, resolveProjectId } from "@/app/server/actions/resolve";
+import { resolveProjectId } from "@/app/server/actions/resolve";
 import { withActorScope } from "@/lib/db";
 import { resolveProjectOr404 } from "@/lib/projects/resolve-project-or-404";
 
@@ -157,21 +159,11 @@ describe("a [project] request resolves its project once", () => {
 		expect(lookups()).toBe(1);
 	});
 
-	it("the switcher's environments read reuses the lookup and adds only its own query", async () => {
-		await inRequest(async () => {
-			await resolveProjectOr404("payments");
-			await expect(getEnvironmentsForSlug("payments")).resolves.toEqual(rows.envs);
-		});
-		// One lookup, shared, plus the environments read itself.
-		expect(lookups()).toBe(2);
-	});
-
 	it("an unknown slug is looked up once and answers 404 to every caller", async () => {
 		rows.projects = [];
 		await inRequest(async () => {
 			await expect(resolveProjectOr404("nope")).resolves.toBeNull();
-			await expect(resolveProjectOr404("nope")).resolves.toBeNull();
-			await expect(getEnvironmentsForSlug("nope")).resolves.toEqual([]);
+			await expect(resolveProjectId("nope")).rejects.toThrow();
 		});
 		expect(lookups()).toBe(1);
 	});

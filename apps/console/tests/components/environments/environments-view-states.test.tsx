@@ -22,7 +22,19 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FakeHandler } from "@/tests/helpers/fake-orpc";
-import { CANONICAL_KEY, DEV, PROD, canonicalOf, envRow, overviewOf, pageOf, seedLists } from "./fixtures";
+import {
+	CANONICAL_KEY,
+	DEV,
+	PROD,
+	type OverviewFixture,
+	canonicalOf,
+	envRow,
+	factsById,
+	overviewOf,
+	pageOf,
+	readOf,
+	seedLists,
+} from "./fixtures";
 
 const h = vi.hoisted(() => ({
 	handlers: {} as Record<string, FakeHandler>,
@@ -68,7 +80,6 @@ import { EnvironmentsView, listedEnvironments } from "@/components/environments/
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { orpc } from "@/lib/rpc/client";
 import type { EnvironmentsPage } from "@/lib/queries/environments";
-import type { EnvironmentsOverview } from "@/lib/rpc/procedures/environments";
 import { useEnvironmentsFilters } from "@/lib/stores/use-environments-filters";
 
 const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" } });
@@ -91,9 +102,9 @@ function renderView(seed: (qc: QueryClient) => void) {
 }
 
 /** Seeds the pristine overview with `data`, and the table's first page (`page`, default: every environment). */
-function seeded(data: EnvironmentsOverview, page: EnvironmentsPage = pageOf(data.envs)) {
+function seeded(data: OverviewFixture, page: EnvironmentsPage = pageOf(data.envs)) {
 	return (qc: QueryClient) => {
-		qc.setQueryData(KEY, data);
+		qc.setQueryData(KEY, readOf(data));
 		seedLists(qc, data, page);
 	};
 }
@@ -113,7 +124,7 @@ beforeEach(() => {
 	h.inputs.length = 0;
 	h.search = new URLSearchParams();
 	for (const key of Object.keys(h.handlers)) delete h.handlers[key];
-	h.handlers["environments.overview"] = async () => overviewOf();
+	h.handlers["environments.overview"] = async () => readOf(overviewOf());
 	h.handlers["workspace.environments"] = async () => canonicalOf([DEV, PROD]);
 	h.handlers["environments.page"] = async (input) => {
 		h.inputs.push(input);
@@ -421,7 +432,7 @@ describe("EnvironmentsView — the table pages by keyset (LST-3 #7485)", () => {
 			throw new Error("network");
 		};
 		const qc = (client: QueryClient) => {
-			client.setQueryData(KEY, overviewOf());
+			client.setQueryData(KEY, readOf(overviewOf()));
 			client.setQueryData(CANONICAL_KEY, canonicalOf([DEV, PROD]));
 		};
 		renderView(qc);
@@ -512,7 +523,7 @@ describe("listedEnvironments — the join (#7877)", () => {
 		const canonical = canonicalOf([DEV, PROD, QA]).map((env) =>
 			env.id === PROD.id ? { ...env, name: "live", is_default: true } : { ...env, is_default: false },
 		);
-		const listed = listedEnvironments(canonical, [QA, DEV, PROD]);
+		const listed = listedEnvironments(canonical, factsById([QA, DEV, PROD]));
 		expect(listed.map((e) => [e.name, e.is_default])).toEqual([
 			["live", true],
 			["development", false],
@@ -523,6 +534,6 @@ describe("listedEnvironments — the join (#7877)", () => {
 
 	it("leaves out an environment the overview does not hold yet, and one the canonical list no longer holds", () => {
 		const QA = envRow({ id: "env-qa", name: "qa" });
-		expect(listedEnvironments(canonicalOf([DEV, QA]), [DEV, PROD]).map((e) => e.id)).toEqual([DEV.id]);
+		expect(listedEnvironments(canonicalOf([DEV, QA]), factsById([DEV, PROD])).map((e) => e.id)).toEqual([DEV.id]);
 	});
 });
