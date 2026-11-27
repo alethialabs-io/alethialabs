@@ -33,7 +33,7 @@ import {
 	Workflow,
 	Zap,
 } from "lucide-react";
-import { ProviderIcon } from "@repo/ui/provider-icon";
+import { ProviderIcon, type Provider } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { AlethiaMark } from "../lockup";
 
@@ -154,7 +154,12 @@ export function Icon({
 }
 
 /* ---------- provider / integration logos ---------- */
-export type ProviderId = "aws" | "gcp" | "azure";
+/**
+ * A provider `ProviderIcon` draws a mark for: @repo/ui's slug union, which lists every catalog cloud
+ * (Hetzner included) so a row on any cloud renders. It is not a separate list here because
+ * @repo/brand is published and @repo/cloud-catalog is not, so the catalog's own type cannot be named.
+ */
+export type ProviderId = Provider;
 
 /** Grayscale cloud-provider logo. */
 export function Prov({ id, size = 14 }: { id: ProviderId; size?: number }) {
