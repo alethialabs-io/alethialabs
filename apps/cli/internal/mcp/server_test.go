@@ -26,14 +26,17 @@ import (
 type fakeRunner struct {
 	mu    sync.Mutex
 	argvs [][]string
+	tools []string
 	res   Result
 	block bool
 }
 
-// Run records argv and returns the fixed result, or waits for ctx when block is set.
+// Run records argv and the tool it was made for, and returns the fixed result, or waits for ctx when
+// block is set.
 func (f *fakeRunner) Run(ctx context.Context, argv []string) (Result, error) {
 	f.mu.Lock()
 	f.argvs = append(f.argvs, argv)
+	f.tools = append(f.tools, toolFrom(ctx))
 	f.mu.Unlock()
 	if f.block {
 		<-ctx.Done()
@@ -184,6 +187,10 @@ func TestServer_ACallRunsTheCommandAndReturnsItsJSON(t *testing.T) {
 	if want := [][]string{{"project", "list", "--org=acme"}}; !reflect.DeepEqual(runner.argvs, want) {
 		t.Errorf("ran %q, want %q", runner.argvs, want)
 	}
+	// The run is marked with the tool it was made for, which the child sends on every request.
+	if want := []string{"project_list"}; !reflect.DeepEqual(runner.tools, want) {
+		t.Errorf("ran for tools %q, want %q", runner.tools, want)
+	}
 }
 
 func TestServer_AFailedCommandIsAToolErrorWithItsReport(t *testing.T) {
@@ -278,8 +285,8 @@ func TestServer_CancellationStopsTheCall(t *testing.T) {
 }
 
 func TestChildEnv_RunsInAgentModeWithoutDiagnostics(t *testing.T) {
-	got := childEnv([]string{"HOME=/h", "ALETHIA_DEBUG=api", "ALETHIA_AGENT=no", "ALETHIA_TOKEN=t"})
-	want := []string{"HOME=/h", "ALETHIA_TOKEN=t", "ALETHIA_AGENT=yes"}
+	got := childEnv([]string{"HOME=/h", "ALETHIA_DEBUG=api", "ALETHIA_AGENT=no", "ALETHIA_MCP_TOOL=other", "ALETHIA_TOKEN=t"}, "project_list")
+	want := []string{"HOME=/h", "ALETHIA_TOKEN=t", "ALETHIA_AGENT=yes", "ALETHIA_MCP_TOOL=project_list"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("env = %q, want %q", got, want)
 	}
@@ -305,12 +312,12 @@ func TestExecRunner_ReportsOutputAndExitCode(t *testing.T) {
 	if _, err := os.Stat(sh); err != nil {
 		t.Skip("no /bin/sh")
 	}
-	res, err := ExecRunner{Path: sh, Environ: []string{"ALETHIA_DEBUG=api"}}.Run(context.Background(),
-		[]string{"-c", `printf '%s|%s' "$ALETHIA_AGENT" "$ALETHIA_DEBUG"; read line; echo "stdin:$line" >&2; exit 3`})
+	res, err := ExecRunner{Path: sh, Environ: []string{"ALETHIA_DEBUG=api"}}.Run(WithTool(context.Background(), "project_list"),
+		[]string{"-c", `printf '%s|%s|%s' "$ALETHIA_AGENT" "$ALETHIA_DEBUG" "$ALETHIA_MCP_TOOL"; read line; echo "stdin:$line" >&2; exit 3`})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(res.Stdout) != "yes|" || res.ExitCode != 3 || !slices.Contains(strings.Fields(string(res.Stderr)), "stdin:") {
+	if string(res.Stdout) != "yes||project_list" || res.ExitCode != 3 || !slices.Contains(strings.Fields(string(res.Stderr)), "stdin:") {
 		t.Errorf("result = stdout %q stderr %q exit %d", res.Stdout, res.Stderr, res.ExitCode)
 	}
 }

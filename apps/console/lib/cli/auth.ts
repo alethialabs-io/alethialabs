@@ -3,6 +3,7 @@
 
 import * as jose from "jose";
 import { env } from "next-runtime-env";
+import { cliAgentRefusal } from "@/lib/agents/cli-agent";
 import { isServiceToken, resolveServiceToken } from "@/lib/cli/service-token";
 
 /**
@@ -32,9 +33,26 @@ function unauthorized(message: string) {
 	return new Response(JSON.stringify({ error: message }), { status: 401 });
 }
 
-export async function verifyCliToken(
-	req: Request,
-): Promise<{ payload: CliTokenPayload; error: null } | { payload: null; error: Response }> {
+/** What verifying a CLI bearer answers: the credential's payload, or the Response to return. */
+type CliTokenVerification = { payload: CliTokenPayload; error: null } | { payload: null; error: Response };
+
+/**
+ * Verifies the CLI bearer on `req` (a service token or a device-login JWT) and returns its payload.
+ *
+ * A request marked as made on behalf of an agent (`alethia mcp`, lib/agents/cli-agent.ts) is then
+ * held to the org's agent access switch: while it is off the request is refused here, before any
+ * route runs, and every marked request is recorded with the agent tool calls. An unmarked request is
+ * answered exactly as the bearer alone decides.
+ */
+export async function verifyCliToken(req: Request): Promise<CliTokenVerification> {
+	const verified = await verifyCliBearer(req);
+	if (verified.error) return verified;
+	const refusal = await cliAgentRefusal(req, verified.payload);
+	return refusal ? { payload: null, error: refusal } : verified;
+}
+
+/** The bearer check {@link verifyCliToken} runs before the agent mark is read. */
+async function verifyCliBearer(req: Request): Promise<CliTokenVerification> {
 	const authHeader = req.headers.get("Authorization");
 	if (!authHeader || !authHeader.startsWith("Bearer ")) {
 		return {
