@@ -31,8 +31,55 @@ const PUBLIC_DEV_ORIGINS = (() => {
 	return [...out];
 })();
 
+/**
+ * The console's only same-origin framed response: the invoice PDF route, which the billing
+ * invoice dialog (`components/settings/billing/invoice-preview-dialog.tsx`) shows in an
+ * `<iframe>`, written as a Next `source` pattern.
+ */
+const SAME_ORIGIN_FRAMED_SOURCE = "/:org/~/settings/billing/invoices/:id/pdf";
+
+/**
+ * The frame headers every console response carries: no page may be shown inside a frame, except
+ * the invoice PDF, which only the console itself may frame.
+ *
+ * Both headers, because they cover different browsers: `frame-ancestors` is the standard and wins
+ * where it is understood, `X-Frame-Options` is what older engines read. The CSP carries ONLY
+ * `frame-ancestors` — there is no other policy today, and this one restricts nothing else on the
+ * page. Extend this header rather than adding a second `Content-Security-Policy`: two policies are
+ * both enforced, so a second one could only ever tighten, never loosen.
+ *
+ * Order is load-bearing. Next applies every rule whose `source` matches, in order, and a later rule
+ * REPLACES an earlier one's value for the same key (`resolve-routes.js`, `resHeaders[key] = value`),
+ * so the PDF rule must come after the catch-all and spell the keys identically.
+ *
+ * Frames the console itself embeds (Stripe Elements, Paddle checkout) are governed by THEIR sites'
+ * headers, not these, and sign-in popups are top-level windows, so neither needs an exemption. A
+ * Paddle-era invoice's PDF route answers with a redirect to Paddle, whose own headers then decide.
+ */
+async function frameHeaders() {
+	return [
+		{
+			// `/(.*)`, not `/:path*`: Next's `getPathMatch`, called with the options it builds custom
+			// routes with, does not match the bare root `/` against `/:path*` (measured in the test).
+			source: "/(.*)",
+			headers: [
+				{ key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+				{ key: "X-Frame-Options", value: "DENY" },
+			],
+		},
+		{
+			source: SAME_ORIGIN_FRAMED_SOURCE,
+			headers: [
+				{ key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+				{ key: "X-Frame-Options", value: "SAMEORIGIN" },
+			],
+		},
+	];
+}
+
 const nextConfig: NextConfig = {
 	output: "standalone",
+	headers: frameHeaders,
 	// `next build` type-checks against tsconfig.build.json — tsconfig.json minus every file the
 	// image does not ship (tests, e2e + its helpers, scripts, tooling configs). The production
 	// image installs a PRUNED closure, so a non-shipped file can resolve in CI's full install and
