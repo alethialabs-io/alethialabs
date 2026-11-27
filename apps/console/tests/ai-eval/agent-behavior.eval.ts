@@ -11,12 +11,14 @@
 // but the NAMES, DESCRIPTIONS and INPUT SCHEMAS are the production ones — those are
 // exactly what steers the model's choice, so prompt/description regressions get caught.
 //
-// The AI soak (the soak-eval job in e2e-ai-nightly.yml, until 2026-12-12) runs this file once per model the product can
-// route to — Haiku as the executor, Sonnet and Opus as the advisors — by setting
-// AI_EXECUTOR_MODEL. Each case accepts the SET of tools that would be a correct answer, not one
-// exact tool: a stronger model that reads more before it acts is not a regression. When
-// AI_EVAL_USAGE_FILE is set, the token usage and cost of every case is written there for the job
-// summary, priced by the same table that prices the product's ledger.
+// It runs nightly (e2e-ai-nightly.yml — a failing case files the `ai-eval-regression` issue) and on
+// every PR that changes AI code (ai-eval-pr.yml), where it runs on the PR's head AND its base so each
+// case reads as better, worse or unchanged (scripts/ci/ai-eval-report.mjs). AI_EXECUTOR_MODEL picks
+// the model; both workflows use Haiku, the production executor. Each case accepts the SET of tools
+// that would be a correct answer, not one exact tool: a stronger model that reads more before it acts
+// is not a regression. When AI_EVAL_USAGE_FILE is set, the token usage and cost of every case is
+// written there for the job summary, priced by the same table that prices the product's ledger; each
+// row carries `test` (vitest's current test name) so the report can join it to the case's result.
 
 import { writeFile } from "node:fs/promises";
 import { stepCountIs, streamText, type ToolSet } from "ai";
@@ -101,6 +103,8 @@ function evalTools(mode: AgentMode): ToolSet {
 
 interface CaseUsage {
 	name: string;
+	/** Vitest's current test name ("suite > title"), the key the report joins on. */
+	test: string;
 	inputTokens: number;
 	cachedInputTokens: number;
 	outputTokens: number;
@@ -135,7 +139,7 @@ async function toolTrace(
 		}),
 		{ inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 },
 	);
-	usage.push({ name, ...u, costUsd: Number(aiCostUsd({ model: MODEL, ...u }).toFixed(4)) });
+	usage.push({ name, test: expect.getState().currentTestName ?? name, ...u, costUsd: Number(aiCostUsd({ model: MODEL, ...u }).toFixed(4)) });
 	return steps.flatMap((s) =>
 		s.toolCalls.map((c) => ({ toolName: c.toolName, input: c.input })),
 	);

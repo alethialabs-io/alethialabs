@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The real-model paths with no browser journey of their own, driven over the console's own HTTP
-// surface (the AI soak, epic #7840, lane #7839). Runs in the `elench-live` project: nightly at Haiku,
-// and from the soak jobs in e2e-ai-nightly.yml until the promotional credit expires.
+// surface (written for the AI soak, epic #7840, lane #7839). Runs in the `elench-live` project:
+// nightly at Haiku, and on a PR that changes these paths (ai-eval-pr.yml, until 2026-12-12).
 //
 // · REPO-SCAN INFERENCE. `inferStack` (lib/scanner/infer.ts, `generateObject`) runs when the Configure
 //   screen reads `projects.scanProposal` for a finished ANALYZE_REPO job — the same read

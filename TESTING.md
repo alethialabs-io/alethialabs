@@ -250,7 +250,7 @@ console, and `qa` on every such PR that touches what it measures; seven are the 
 | `qa` | `E2E qa leg (release gate · affected PRs) / Release gate (qa)` — the same leg, called from `ci.yml` (#7647); required when it runs | `Release gate (qa)` | needs `ALETHIA_QA_E2E=1` |
 | `audit` | — | `Release gate (audit)` | `UI conformance audit (console · non-required)`, nightly |
 | `audit-interaction` | — | `Release gate (audit-interaction)` | the only leg that activates destructive controls |
-| `elench-live` | — | — | `e2e-ai-nightly.yml` — real model, never gating |
+| `elench-live` | — | — | `e2e-ai-nightly.yml` — real model, never gating; also `ai-eval-pr.yml` (the journeys a PR's AI change touches, until 2026-12-12) |
 
 `hero` and `elench-ai` are twice-homed, and their `ci.yml` copies skip themselves on a PR into
 `main` or `staging`, so a promotion does not boot the same console twice. `qa` alone matches all 26

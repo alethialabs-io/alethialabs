@@ -3,8 +3,8 @@
 
 // The PROJECT assistant (Elench opened inside a project → POST /api/projects/[projectId]/assistant,
 // `buildProjectAgentTools`) against a REAL model — the AI soak's project lane (epic "AI feature soak
-// before 2026-12-12"). Runs in the `elench-live` project: nightly at Haiku, and across the AI tiers
-// from the soak jobs in e2e-ai-nightly.yml until the promotional credit expires.
+// before 2026-12-12", #7840). Runs in the `elench-live` project: nightly at Haiku, and on a PR that
+// changes the project assistant (ai-eval-pr.yml, until 2026-12-12).
 //
 // Behaviour, never wording:
 //   · a cost question reaches `estimate_cost` (which prices the live canvas the panel sends) and
