@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.12.0...cli-v0.13.0) (2026-11-27)
+
+
+### Features
+
+* **cli:** project preview --destroy and a destroy approved against a destroy plan ([#7802](https://github.com/alethialabs-io/alethialabs/issues/7802)) ([1a2ce5e](https://github.com/alethialabs-io/alethialabs/commit/1a2ce5efc8f7e951e26bdd9d4c94e60f978c89b5)), closes [#7795](https://github.com/alethialabs-io/alethialabs/issues/7795)
+
 ## [0.12.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.11.1...cli-v0.12.0) (2026-11-25)
 
 
