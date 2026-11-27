@@ -78,7 +78,7 @@ function firstLine(msg) {
 /**
  * Load one eval run directory: results, usage and the recorded exit code.
  * @param {string} dir
- * @returns {{cases: Map<string, {status: string, message: string}> | null, usage: any, exit: string | null}}
+ * @returns {{cases: Map<string, {status: string, message: string}> | null, usage: any, exit: string | null, suiteError: string}}
  */
 export function loadRun(dir) {
 	const results = readJson(path.join(dir, "results.json"));
@@ -88,7 +88,12 @@ export function loadRun(dir) {
 	} catch {
 		// no exit file: the step never ran
 	}
-	return { cases: results ? vitestCases(results) : null, usage: readJson(path.join(dir, "usage.json")), exit };
+	// A results file with ZERO cases is a run that never reached a model — a suite that failed to
+	// import (an env var the module graph needs) writes exactly that, and an empty Map would
+	// otherwise read as "no regressions". The first run of this workflow did just that.
+	const cases = results ? vitestCases(results) : null;
+	const suiteError = (results?.testResults ?? []).map((f) => firstLine(f.message ?? "")).find(Boolean) ?? "";
+	return { cases: cases && cases.size > 0 ? cases : null, usage: readJson(path.join(dir, "usage.json")), exit, suiteError };
 }
 
 /**
@@ -154,6 +159,7 @@ export function renderEval(cmp, head, base) {
 	const out = [`### Tool-choice eval — ${model}`, ""];
 	if (!head.cases) {
 		out.push(`The eval produced no results (vitest exit ${head.exit ?? "unknown"}) — it never reached a model, so nothing here says the tools are fine.`);
+		if (head.suiteError) out.push("", `Suite error: \`${head.suiteError}\``);
 		return out.join("\n");
 	}
 	const passed = cmp.rows.filter((r) => r.head === "passed").length;
@@ -277,6 +283,7 @@ function selfTest() {
 	}, "1");
 	write(path.join(tmp, "base"), vr([["a", "passed"], ["b", "failed"], ["c", "failed"]]), null, "1");
 	write(path.join(tmp, "empty"), null, null, "1");
+	write(path.join(tmp, "import-failed"), { testResults: [{ message: "Error: Invalid auth configuration:\n - baseURL", assertionResults: [] }] }, null, "1");
 
 	const head = loadRun(path.join(tmp, "head"));
 	const base = loadRun(path.join(tmp, "base"));
@@ -314,6 +321,9 @@ function selfTest() {
 			process.exitCode = saved;
 		}
 	};
+	const imp = loadRun(path.join(tmp, "import-failed"));
+	check("zero cases reads as no results", imp.cases === null && imp.suiteError === "Error: Invalid auth configuration:");
+	check("zero cases fails the PR", run(["eval", "--head-dir", path.join(tmp, "import-failed"), "--fail-on-regression"]) === 1);
 	check("regression fails the PR", run(["eval", "--head-dir", path.join(tmp, "head"), "--base-dir", path.join(tmp, "base"), "--fail-on-regression"]) === 1);
 	check("no results fails the PR", run(["eval", "--head-dir", path.join(tmp, "empty"), "--fail-on-regression"]) === 1);
 	write(path.join(tmp, "ok"), vr([["a", "passed"], ["c", "failed"]]), null, "1");

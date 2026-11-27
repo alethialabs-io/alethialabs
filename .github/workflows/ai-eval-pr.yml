@@ -163,6 +163,10 @@ jobs:
       ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
       ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
       BETTER_AUTH_SECRET: not-a-secret-e2e-placeholder
+      # lib/config/auth.ts validates at import and refuses a missing base URL; without these the eval
+      # file fails to load and reports zero tests (this workflow's first run).
+      BETTER_AUTH_URL: http://localhost:3000
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
     steps:
       - id: checkout
         uses: actions/checkout@v7
