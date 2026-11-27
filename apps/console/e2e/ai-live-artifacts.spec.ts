@@ -3,7 +3,7 @@
 
 // Dashboards and saved artifacts against a REAL model (the AI soak, epic #7840, lane #7838). Runs
 // in the `elench-live` project: nightly at Haiku, and on a PR that changes the dashboard or artifact
-// tools (ai-eval-pr.yml, until 2026-12-12).
+// tools (e2e-ai-nightly.yml on the PR, until 2026-12-12).
 //
 // The journeys, in declaration order (CI runs one worker):
 //   1. the model builds a dashboard on the grid, and the person saves it as a named artifact through

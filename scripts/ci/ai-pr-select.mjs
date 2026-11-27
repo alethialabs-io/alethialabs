@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// ai-pr-select — which real-model journeys a PR's changed files warrant (ai-eval-pr.yml, epic #7840).
+// ai-pr-select — which real-model journeys a PR's changed files warrant (e2e-ai-nightly.yml, epic #7840).
 //
 // The paid AI runs exist to answer one question for the person changing an AI tool: did it get
 // better or worse? So the PR leg spends exactly where the change is. The tool-choice eval runs on
@@ -59,7 +59,7 @@ export const RULES = [
 	// The eval itself: the eval always runs, nothing more is needed.
 	{ re: /^apps\/console\/(tests\/ai-eval\/|vitest\.ai-eval\.config\.ts$)/, specs: [], why: "the eval itself" },
 	// The workflow and its scripts: run everything once, so a change to the instrument is measured.
-	{ re: /^(\.github\/workflows\/ai-eval-pr\.yml|scripts\/ci\/ai-(pr-select|eval-report)\.mjs)$/, specs: ALL, why: "the instrument changed" },
+	{ re: /^(\.github\/workflows\/e2e-ai-nightly\.yml|scripts\/ci\/ai-(pr-select|eval-report)\.mjs)$/, specs: ALL, why: "the instrument changed" },
 ];
 
 /**
@@ -80,7 +80,7 @@ export function select(files) {
 }
 
 /**
- * The `paths:` globs of ai-eval-pr.yml's pull_request trigger (line-based; the file is ours).
+ * The `paths:` globs of e2e-ai-nightly.yml's pull_request trigger (line-based; the file is ours).
  * @param {string} text
  * @returns {string[]}
  */
@@ -125,11 +125,11 @@ function selfTest() {
 	eq("union of two features", select(["apps/console/lib/ai/support/case.ts", "apps/console/lib/scanner/infer.ts"]).specs, [...API, ...SUPPORT].sort());
 
 	// Coverage: every path the workflow triggers on is answered by a rule (even if the answer is []).
-	const wf = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../.github/workflows/ai-eval-pr.yml");
+	const wf = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../.github/workflows/e2e-ai-nightly.yml");
 	const globs = workflowPaths(fs.readFileSync(wf, "utf8"));
 	if (globs.length < 5) {
 		failures++;
-		console.error(`FAIL read only ${globs.length} paths from ai-eval-pr.yml — the line parser went blind`);
+		console.error(`FAIL read only ${globs.length} paths from e2e-ai-nightly.yml — the line parser went blind`);
 	}
 	for (const g of globs) {
 		const s = sample(g);

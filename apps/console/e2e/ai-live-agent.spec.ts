@@ -3,7 +3,7 @@
 
 // The Elench agent against a REAL model, feature by feature (written for the AI soak, epic #7840).
 // Runs in the `elench-live` project: nightly at Haiku (e2e-ai-nightly.yml), and on a PR that changes
-// the agent's code (ai-eval-pr.yml, until 2026-12-12). The soak's tier crons were removed 2026-11-27.
+// the agent's code (e2e-ai-nightly.yml on the PR, until 2026-12-12). The soak's tier crons were removed 2026-11-27.
 //
 // What each journey asserts is BEHAVIOUR, never wording: which tool family ran (by the tool frame's
 // name and its "Completed" status), whether a person-approval card appeared, whether the grid got a

@@ -12,7 +12,7 @@
 // exactly what steers the model's choice, so prompt/description regressions get caught.
 //
 // It runs nightly (e2e-ai-nightly.yml — a failing case files the `ai-eval-regression` issue) and on
-// every PR that changes AI code (ai-eval-pr.yml), where it runs on the PR's head AND its base so each
+// every PR that changes AI code (e2e-ai-nightly.yml on the PR), where it runs on the PR's head AND its base so each
 // case reads as better, worse or unchanged (scripts/ci/ai-eval-report.mjs). AI_EXECUTOR_MODEL picks
 // the model; both workflows use Haiku, the production executor. Each case accepts the SET of tools
 // that would be a correct answer, not one exact tool: a stronger model that reads more before it acts

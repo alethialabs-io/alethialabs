@@ -3,7 +3,7 @@
 
 // The real-model paths with no browser journey of their own, driven over the console's own HTTP
 // surface (written for the AI soak, epic #7840, lane #7839). Runs in the `elench-live` project:
-// nightly at Haiku, and on a PR that changes these paths (ai-eval-pr.yml, until 2026-12-12).
+// nightly at Haiku, and on a PR that changes these paths (e2e-ai-nightly.yml on the PR, until 2026-12-12).
 //
 // · REPO-SCAN INFERENCE. `inferStack` (lib/scanner/infer.ts, `generateObject`) runs when the Configure
 //   screen reads `projects.scanProposal` for a finished ANALYZE_REPO job — the same read

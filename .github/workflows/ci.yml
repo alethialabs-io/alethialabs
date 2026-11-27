@@ -2069,7 +2069,7 @@ jobs:
       - name: The promotion picker's rules (green-by-tree, older-PR handling) hold
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/promote.mjs --self-test
-      # The paid AI runs read their verdicts from these two (ai-eval-pr.yml, e2e-ai-nightly.yml):
+      # The paid AI runs read their verdicts from these two (e2e-ai-nightly.yml, on a PR and nightly):
       # which journeys a PR's AI change selects — every path the workflow filters on must map to a
       # rule — and when an eval comparison fails the PR or files the regression issue.
       - name: The AI PR run's journey selection and eval verdicts hold
