@@ -123,7 +123,12 @@ export const TOPIC_KEYS = {
 		// which is not a column the `environments` trigger fires on.
 		orpc.overview.projects.key(),
 	],
-	// The env switcher's list (#6114); an environment's status and its components' lifecycles (the
+	// The env switcher's list (#6114), which is also the CANONICAL environments entry the
+	// Environments page's panels derive from (#7877) — a `project_environments` change fires this
+	// topic, so an environment added, renamed or removed reaches it here. It is deliberately NOT on
+	// `jobs`: what a job moves on that page (a promotion, a reconcile badge) is the overview's, and
+	// the switcher is mounted on every environment view, where a refetch per job hint is pure cost.
+	// An environment's status and its components' lifecycles (the
 	// board's node states), its described chart workloads and its BYO IaC source (#6119). The
 	// clusters grid (#6122) shows each cluster's environment lifecycle and its data services too.
 	// Every read of the Environments page — the page itself, a protection-rules drawer, a promote

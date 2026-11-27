@@ -7,7 +7,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getGettingStartedState } from "@/app/server/actions/onboarding";
 import { getProjects } from "@/app/server/actions/projects";
-import { getEnvironmentsForSlug } from "@/app/server/actions/resolve";
+import { readEnvironmentsForSlug } from "@/lib/rpc/procedures/environments";
 import { listSupportCases } from "@/lib/rpc/procedures/support";
 import { getJobs, type JobWithMeta } from "@/app/server/actions/jobs";
 import { authorize } from "@/lib/authz/guard";
@@ -224,6 +224,11 @@ export async function readRecentJobs(): Promise<ShellJob[]> {
  * `context` owns its body (moved here from the workspace server action). The others call their
  * domain's existing reader IN-PROCESS — a plain function call, not a server-action POST — exactly as
  * `jobs.page` started (#6113): moving those bodies is their domain lane's (stress test R10).
+ *
+ * `environments` is the CANONICAL environments entry of a project on the client (#7877): the
+ * `[project]` layout seeds it, the switcher reads it, and the Environments page derives which
+ * environments exist from it. Its body is the environments domain's canonical read
+ * (`readEnvironmentsForSlug`), memoised per request with the overview and the table on the server.
  */
 export const workspaceRouter = {
 	context: query.handler(({ context }) => readWorkspaceContext(context.actor)),
@@ -234,5 +239,5 @@ export const workspaceRouter = {
 	setupGuide: query.handler(() => getGettingStartedState()),
 	environments: query
 		.input(z.object({ project: z.string().min(1).max(200) }))
-		.handler(({ input }) => getEnvironmentsForSlug(input.project)),
+		.handler(({ input }) => readEnvironmentsForSlug(input.project)),
 };
