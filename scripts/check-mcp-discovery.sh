@@ -33,7 +33,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.url === "/.well-known/oauth-protected-resource/api/mcp") {
     res.writeHead(200, {...cors,"content-type":"application/json"});
-    return res.end(JSON.stringify({resource:`${origin}/api/mcp`,authorization_servers:[`${origin}/api/auth`]}));
+    return res.end(JSON.stringify({resource:`${origin}/api/mcp`,authorization_servers:[`${origin}/api/auth`],scopes_supported:["read","design","plan","apply","destroy"]}));
   }
   if (req.url === "/.well-known/oauth-protected-resource") {
     res.writeHead(200, {...cors,"content-type":"application/json"});
@@ -41,7 +41,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.url === "/.well-known/oauth-authorization-server/api/auth") {
     res.writeHead(200, {...cors,"content-type":"application/json"});
-    return res.end(JSON.stringify({issuer:`${origin}/api/auth`,authorization_endpoint:`${origin}/api/auth/oauth2/authorize`,token_endpoint:`${origin}/api/auth/oauth2/token`,jwks_uri:`${origin}/api/auth/jwks`,client_id_metadata_document_supported:true}));
+    return res.end(JSON.stringify({issuer:`${origin}/api/auth`,authorization_endpoint:`${origin}/api/auth/oauth2/authorize`,token_endpoint:`${origin}/api/auth/oauth2/token`,jwks_uri:`${origin}/api/auth/jwks`,client_id_metadata_document_supported:true,code_challenge_methods_supported:["S256"],token_endpoint_auth_methods_supported:["none"]}));
   }
   res.writeHead(404, {...cors,"content-type":"application/json"}); res.end('{"error":"not_found"}');
 });
@@ -81,6 +81,10 @@ auth_server="$(jq -er '.authorization_servers[0]' "$tmp/protected.body")"
 case "$resource" in */api/mcp) ;; *) fail "protected resource does not end /api/mcp: $resource";; esac
 case "$resource" in */api/auth*) fail "protected resource incorrectly names /api/auth: $resource";; esac
 absolute_url "$auth_server" authorization_servers
+for scope in read design plan apply destroy; do
+  jq -e --arg s "$scope" '(.scopes_supported // []) | index($s) != null' "$tmp/protected.body" >/dev/null ||
+    fail "protected-resource scopes_supported lacks the agent scope $scope"
+done
 pass "protected-resource metadata is canonical JSON"
 
 request protected_bare GET "$base/.well-known/oauth-protected-resource"
@@ -91,7 +95,20 @@ status_is auth_server 200; json_type auth_server; cors auth_server; not_html aut
 [ "$(jq -er '.issuer' "$tmp/auth_server.body")" = "$auth_server" ] || fail "authorization-server issuer disagrees with protected-resource metadata"
 for field in authorization_endpoint token_endpoint jwks_uri; do absolute_url "$(jq -er ".$field" "$tmp/auth_server.body")" "$field"; done
 [ "$(jq -er '.client_id_metadata_document_supported' "$tmp/auth_server.body")" = true ] || fail "CIMD support not advertised"
+# What an MCP client needs of the server to finish OAuth as a public client (AGT-L6, #6863): PKCE
+# with S256, and a token endpoint that takes a client with no secret.
+jq -e '(.code_challenge_methods_supported // []) | index("S256") != null' "$tmp/auth_server.body" >/dev/null ||
+  fail "PKCE S256 not advertised"
+jq -e '(.token_endpoint_auth_methods_supported // []) | index("none") != null' "$tmp/auth_server.body" >/dev/null ||
+  fail "public clients (token_endpoint_auth_method none) not advertised"
 pass "authorization-server metadata completes the discovery chain"
+# Reported, not failed: the server registers clients by CIMD, so a client that knows only dynamic
+# client registration cannot register. docs/agent-compat.md records which clients that affects.
+if jq -e 'has("registration_endpoint")' "$tmp/auth_server.body" >/dev/null; then
+  echo "· a dynamic client registration endpoint is advertised"
+else
+  echo "· no dynamic client registration endpoint: a client that knows only DCR cannot register"
+fi
 
 for name_path in 'auth_bare /.well-known/oauth-authorization-server' 'wrong_resource /.well-known/oauth-protected-resource/api/auth'; do
   read -r check_name check_path <<<"$name_path"
