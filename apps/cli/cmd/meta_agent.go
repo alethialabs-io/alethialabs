@@ -13,8 +13,19 @@ import "github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 // entry.
 var metaAgent = []cmdmeta.Meta{
 	{Path: "alethia agent", Group: groupOrganization},
-	{Path: "alethia agent list", Idempotent: true, Output: cmdmeta.OutputTable},
-	{Path: "alethia agent get", Idempotent: true, Output: cmdmeta.OutputTable},
+	{
+		Path: "alethia agent list", Idempotent: true, Output: cmdmeta.OutputTable,
+		Examples: []cmdmeta.Example{
+			{Cmd: "alethia agent list", Note: "The agent identities you can see"},
+			{Cmd: "alethia agent list -o json", Note: "The same list, for a script"},
+		},
+	},
+	{
+		Path: "alethia agent get", Idempotent: true, Output: cmdmeta.OutputTable,
+		Examples: []cmdmeta.Example{
+			{Cmd: "alethia agent get", Note: "Pick an agent identity from a list and show it"},
+		},
+	},
 	{
 		Path: "alethia agent setup", Mutates: true, Idempotent: true, DryRun: cmdmeta.DryRunClient, Output: cmdmeta.OutputTable,
 		Examples: []cmdmeta.Example{

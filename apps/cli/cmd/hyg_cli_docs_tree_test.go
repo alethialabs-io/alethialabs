@@ -35,6 +35,8 @@ var docsLeafPages = map[string]string{
 	"open":    "apps/docs/content/docs/reference/cli/identity.mdx",
 	"version": "apps/docs/content/docs/reference/cli/identity.mdx",
 	"update":  "apps/docs/content/docs/get-started/install-the-cli.mdx",
+	// The local MCP server (#6866) is a verb on the root too, and has a page of its own.
+	"mcp": "apps/docs/content/docs/reference/cli/mcp.mdx",
 }
 
 // docsTreeArgSpec is the argument shape of one command line, as brackets alone.

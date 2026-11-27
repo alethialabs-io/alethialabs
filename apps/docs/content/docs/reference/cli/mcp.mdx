@@ -1,0 +1,63 @@
+---
+title: Local MCP server
+description: Run the alethia CLI as a local MCP server over stdio, so a coding agent can call its commands as tools.
+---
+
+`alethia mcp` serves the CLI's commands to a coding agent as a local
+[MCP](https://modelcontextprotocol.io) server, on standard input and output. Use it for an agent
+that starts local servers. For an agent that connects to a remote server, run
+[`alethia agent setup`](/reference/cli/agents) instead: it configures the control plane's own MCP
+server.
+
+## `alethia mcp`
+
+Each tool is one `alethia` command. A call runs that command in agent mode, as the person signed in
+to this CLI. A tool can do exactly what the command can, and the control plane asks for the same
+approvals. A deploy or a destroy waits for a person to approve the plan in the console. No tool
+approves, signs in, changes this CLI's settings, or prints a credential.
+
+Your MCP client starts the server itself. When you run the command on a terminal, it asks which
+tools to offer and prints the configuration to add to your client. It does not serve.
+
+{/* gendocs: examples alethia mcp */}
+
+```bash
+# On a terminal: choose the tools and print the client configuration
+alethia mcp
+
+# Serve only the commands that change nothing (what a client runs)
+alethia mcp --tools read-only
+
+# Also offer removals and teardowns, with a longer bound per call
+alethia mcp --tools destructive --call-timeout 30m
+```
+
+{/* /gendocs */}
+
+### Which tools are offered
+
+`--tools` chooses how much the server offers:
+
+| Value | What the server offers |
+| --- | --- |
+| `read-only` | The commands that change nothing |
+| `standard` | Also the deploy and inspect commands that change something without removing it |
+| `destructive` | Also the deploy and inspect commands that remove records or tear infrastructure down |
+
+Some commands are offered read-only at every level: the commands that decide who may do what
+(`members`, `grants`, `roles`, `token`), which cloud accounts are trusted (`connector`), and how far
+runners scale (`fleet`).
+
+### Flags
+
+{/* gendocs: flags alethia mcp */}
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--call-timeout` | `10m0s` | Stop a tool call that runs longer than this (0: no bound) |
+| `--tools` | `standard` | Which commands to offer: read-only, standard or destructive (asked on a terminal) |
+
+{/* /gendocs */}
+
+A command that is still waiting on a job when `--call-timeout` passes is stopped, and the agent is
+told to read the job instead.

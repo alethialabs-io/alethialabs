@@ -130,6 +130,38 @@ alethia --version
 Each release also ships `checksums.txt` — verify with `sha256sum -c` (Linux) or
 `shasum -a 256 -c` (macOS) before installing.
 
+## Shell completion and man pages
+
+Every release carries a completion script for bash, zsh, fish and PowerShell, and a man page for
+every command that `alethia --help` lists. Both are generated from the command registry that
+`--help` reads, so they describe the release you installed.
+
+- **Homebrew** installs the bash, zsh and fish completions and the man pages. Open a new shell
+  and run `man alethia`.
+- **The Linux packages** put the completions where bash-completion, zsh and fish look for them,
+  and the man pages in `/usr/share/man/man1`.
+- **The archives** carry them in `completions/` and `manpages/`, next to the binary.
+
+If `man alethia` finds no page, your installation predates them. Run `alethia update`.
+
+With the install script, Scoop or a binary download, load the completions from the CLI itself:
+
+```bash
+# bash: add to ~/.bashrc
+source <(alethia completion bash)
+
+# zsh: write the script to a directory on your $fpath, then start a new shell
+alethia completion zsh > "${fpath[1]}/_alethia"
+
+# fish
+alethia completion fish > ~/.config/fish/completions/alethia.fish
+```
+
+```powershell
+# PowerShell: add to your $PROFILE
+alethia completion powershell | Out-String | Invoke-Expression
+```
+
 ## From source
 
 Requires Go 1.27+:
@@ -146,7 +178,8 @@ Alethia releases are built by [GoReleaser](https://goreleaser.com/) via GitHub A
 `cli-v*` tag. See [Release System](https://github.com/alethialabs-io/alethialabs/blob/dev/docs/contributing/release-system.md) for the full pipeline.
 
 The GoReleaser config (`apps/cli/.goreleaser.yml`) produces:
-- binaries for macOS / Linux / Windows × amd64 / arm64 (CGO disabled), archived with checksums
+- binaries for macOS / Linux / Windows × amd64 / arm64 (CGO disabled), archived with checksums,
+  the shell completions and the man pages (written by `apps/cli/tools/gendocs` before the build)
 - Linux packages (`.deb` / `.rpm` / `.apk`) and Docker images (GHCR)
 - the Homebrew formula (`alethialabs-io/tap`) and Scoop manifest (`alethialabs-io/scoop-bucket`), updated automatically
 

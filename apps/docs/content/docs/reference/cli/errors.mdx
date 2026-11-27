@@ -1,0 +1,80 @@
+---
+title: Errors and exit codes
+description: Every exit code and error code the alethia CLI produces, generated from the CLI's error registry.
+---
+
+When a command fails, it writes nothing on stdout. It writes the error to stderr and exits with a
+code that names the class of the failure. Under `--output json`, the error is one line in the
+`alethia.error/v1` format, and its `code` names the failure exactly. See
+[how the CLI behaves for an agent](/agents/cli#output-and-errors) for that format.
+
+Branch a script on the exit code or on `code`. Do not branch on the message, which can change in
+any release.
+
+The tables on this page are generated from the CLI's error registry, so they list every code the
+CLI can produce and nothing else.
+
+## Exit codes
+
+`0` is success. `2` and `3` are not in this table: `alethia plan` and `alethia apply` give them their
+own meanings, described in [plan and apply](/reference/cli/plan-and-apply#exit-codes). Every other
+code means the same thing for every command, and a code never changes its meaning between releases.
+
+{/* gendocs: exit-codes */}
+
+| Exit code | Class | Meaning | Retry |
+| --- | --- | --- | --- |
+| `1` | `unclassified` | Unclassified failure | No |
+| `4` | `auth` | Authentication required or expired | After `alethia login` |
+| `5` | `forbidden` | Permission denied | No |
+| `6` | `not_found` | Not found | No |
+| `7` | `conflict` | Conflict or failed precondition | After a state change |
+| `8` | `usage` | Usage or validation error | After fixing the input |
+| `9` | `input_required` | Confirmation or input required, and prompting is unavailable | With `--yes` or the missing flag |
+| `10` | `limited` | Rate limit, quota or plan limit | After the wait the error names |
+| `11` | `unavailable` | Unavailable: network, TLS or a server fault | Yes, with backoff |
+| `12` | `wait_timeout` | The wait deadline passed; the operation is still running | Resume with the operation id |
+| `13` | `operation_failed` | The remote operation finished and failed | No |
+| `14` | `cli_too_old` | This CLI is too old for the control plane | After `alethia update` |
+| `130` | `interrupted` | Interrupted | No |
+
+{/* /gendocs */}
+
+## Error codes
+
+Each error code belongs to one class, so it always gives the same exit code. A control plane can
+send a code that is not in this table. The CLI then keeps that code and chooses the exit code from
+the HTTP status of the response.
+
+{/* gendocs: error-codes */}
+
+| Code | Exit code | Meaning |
+| --- | --- | --- |
+| `internal` | `1` | The CLI could not classify the failure. |
+| `auth_required` | `4` | The command needs a signed-in session or a service token. |
+| `token_expired` | `4` | The stored credential has expired and could not be refreshed. |
+| `forbidden` | `5` | The signed-in identity is not permitted to do this. |
+| `approval_rejected` | `5` | A person rejected the approval this deploy or destroy asked for. |
+| `not_found` | `6` | The resource named does not exist in the active organization. |
+| `conflict` | `7` | The resource is not in a state that allows this. |
+| `already_exists` | `7` | A resource with this name already exists. |
+| `operation_in_progress` | `7` | Another operation on this resource is still running. |
+| `approval_invalid` | `7` | The approval expired, was superseded by a newer plan, or was already used. |
+| `invalid_flag` | `8` | A flag is unknown, or its value could not be read. |
+| `invalid_usage` | `8` | The command or its arguments are not valid. |
+| `missing_argument` | `8` | A required argument was not given. |
+| `validation_failed` | `8` | The input was read and is not valid. |
+| `confirmation_required` | `9` | The command needs a confirmation and prompting is unavailable. |
+| `input_required` | `9` | The command needs a value and prompting is unavailable. |
+| `approval_required` | `9` | A person has to approve this deploy or destroy in the console before it runs. |
+| `rate_limited` | `10` | Too many requests; wait and retry. |
+| `quota_exceeded` | `10` | A quota of the organization is used up. |
+| `plan_limit` | `10` | The organization's plan does not include this. |
+| `service_unavailable` | `11` | The control plane answered with a server fault. |
+| `network_unreachable` | `11` | The control plane could not be reached. |
+| `wait_timeout` | `12` | The wait deadline passed while the operation was still running. |
+| `operation_failed` | `13` | The remote operation finished and reported a failure. |
+| `cli_too_old` | `14` | The control plane requires a newer CLI. |
+| `interrupted` | `130` | The command was interrupted before it finished. |
+
+{/* /gendocs */}
