@@ -9,6 +9,10 @@
 // standard and the list standard (LST-3 #7485): the server decides which rows match and pages them
 // by keyset (`environments.page`), and the bar's selection is that read's key.
 //
+// #7877 — WHICH environments the panels list comes from the canonical entry the topbar switcher
+// reads (`workspace.environments`, seeded by the `[project]` layout), joined to the overview's facts:
+// the switcher and the page read one cache entry, so they cannot disagree about what exists.
+//
 // It also says what a person must not miss: a control they may not use is disabled WITH its reason,
 // and a FAILED environment may still hold cloud resources that only Destroy removes.
 
@@ -18,7 +22,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FakeHandler } from "@/tests/helpers/fake-orpc";
-import { DEV, PROD, envRow, overviewOf, pageOf, seedLists } from "./fixtures";
+import { CANONICAL_KEY, DEV, PROD, canonicalOf, envRow, overviewOf, pageOf, seedLists } from "./fixtures";
 
 const h = vi.hoisted(() => ({
 	handlers: {} as Record<string, FakeHandler>,
@@ -60,7 +64,7 @@ vi.mock("@/components/classification/classification-control", () => ({
 }));
 
 import { ENVIRONMENT_COLUMN_COUNT } from "@/components/environments/environment-status";
-import { EnvironmentsView } from "@/components/environments/environments-view";
+import { EnvironmentsView, listedEnvironments } from "@/components/environments/environments-view";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { orpc } from "@/lib/rpc/client";
 import type { EnvironmentsPage } from "@/lib/queries/environments";
@@ -78,11 +82,12 @@ function renderView(seed: (qc: QueryClient) => void) {
 		defaultOptions: { queries: { retry: false, retryDelay: 0, staleTime: Infinity, retryOnMount: false } },
 	});
 	seed(qc);
-	return render(
+	const view = render(
 		<QueryClientProvider client={qc}>
 			<EnvironmentsView org="acme" project="payments" />
 		</QueryClientProvider>,
 	);
+	return Object.assign(view, { qc });
 }
 
 /** Seeds the pristine overview with `data`, and the table's first page (`page`, default: every environment). */
@@ -109,6 +114,7 @@ beforeEach(() => {
 	h.search = new URLSearchParams();
 	for (const key of Object.keys(h.handlers)) delete h.handlers[key];
 	h.handlers["environments.overview"] = async () => overviewOf();
+	h.handlers["workspace.environments"] = async () => canonicalOf([DEV, PROD]);
 	h.handlers["environments.page"] = async (input) => {
 		h.inputs.push(input);
 		return pageOf([DEV, PROD]);
@@ -414,7 +420,10 @@ describe("EnvironmentsView — the table pages by keyset (LST-3 #7485)", () => {
 		h.handlers["environments.page"] = async () => {
 			throw new Error("network");
 		};
-		const qc = (client: QueryClient) => client.setQueryData(KEY, overviewOf());
+		const qc = (client: QueryClient) => {
+			client.setQueryData(KEY, overviewOf());
+			client.setQueryData(CANONICAL_KEY, canonicalOf([DEV, PROD]));
+		};
 		renderView(qc);
 		expect(await screen.findByText("Couldn't load environments")).toBeInTheDocument();
 		// The overview still rendered: the toolbar's actions are there — and its filters are not, over
@@ -437,5 +446,83 @@ describe("EnvironmentsView — the table pages by keyset (LST-3 #7485)", () => {
 		await waitFor(() => expect(h.inputs).toContainEqual({ project: "payments", stages: ["production"] }));
 		act(() => useEnvironmentsFilters.getState().reset());
 		expect(useEnvironmentsFilters.getState().filters).toEqual({ search: "", stages: [], statuses: [] });
+	});
+});
+
+describe("EnvironmentsView — one canonical environments entry, shared with the switcher (#7877)", () => {
+	/** The panels' environments, as the page's "decide" and table regions name them. */
+	function tableNames(): string[] {
+		return within(screen.getByRole("table"))
+			.getAllByRole("link")
+			.map((link) => link.textContent ?? "");
+	}
+
+	it("the panels list what the switcher's entry lists: an environment it does not hold is not on the page", () => {
+		// The overview still names PROD (its refetch has not landed); the canonical entry does not.
+		renderView((qc) => {
+			qc.setQueryData(KEY, overviewOf());
+			seedLists(qc, overviewOf(), pageOf([DEV, PROD]), undefined, canonicalOf([DEV]));
+		});
+		expect(tableNames()).toEqual(["development"]);
+		// One environment, so the page says so and Promote waits — the panels agree with the switcher.
+		expect(screen.getByText(/Only one environment\./)).toBeInTheDocument();
+	});
+
+	it("a rename in the switcher's entry is the name the panels show — they read the same cache entry", async () => {
+		const { qc } = renderView(seeded(overviewOf()));
+		expect(tableNames()).toContain("production");
+		// What the switcher's refetch writes, into the client the view is under.
+		const renamed = canonicalOf([DEV, PROD]).map((env) => (env.id === PROD.id ? { ...env, name: "live" } : env));
+		act(() => {
+			qc.setQueryData(CANONICAL_KEY, renamed);
+		});
+		await waitFor(() => expect(tableNames()).toContain("live"));
+		expect(tableNames()).not.toContain("production");
+	});
+
+	it("a canonical list still on its way is the skeleton, never the empty state", () => {
+		h.handlers["workspace.environments"] = () => new Promise(() => {});
+		renderView((qc) => qc.setQueryData(KEY, overviewOf()));
+		expect(document.body.querySelector('[data-skeleton="environments"][aria-busy="true"]')).not.toBeNull();
+		expect(screen.queryByText("No environments")).toBeNull();
+	});
+
+	it("a failed canonical list is the page's error with a retry, and the retry asks for it again", async () => {
+		let calls = 0;
+		h.handlers["workspace.environments"] = async () => {
+			calls += 1;
+			if (calls === 1) throw new Error("network");
+			return canonicalOf([DEV, PROD]);
+		};
+		renderView((qc) => {
+			qc.setQueryData(KEY, overviewOf());
+			seedLists(qc, overviewOf());
+			qc.removeQueries({ queryKey: CANONICAL_KEY });
+		});
+		expect(await screen.findByText("Couldn't load environments")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+		await waitFor(() => expect(screen.getByRole("table")).toBeInTheDocument());
+		expect(calls).toBe(2);
+	});
+});
+
+describe("listedEnvironments — the join (#7877)", () => {
+	it("keeps the canonical membership, names and default; the overview's facts; the default first, then oldest first", () => {
+		const QA = envRow({ id: "env-qa", name: "qa", stage: "staging", status: "FAILED" });
+		const canonical = canonicalOf([DEV, PROD, QA]).map((env) =>
+			env.id === PROD.id ? { ...env, name: "live", is_default: true } : { ...env, is_default: false },
+		);
+		const listed = listedEnvironments(canonical, [QA, DEV, PROD]);
+		expect(listed.map((e) => [e.name, e.is_default])).toEqual([
+			["live", true],
+			["development", false],
+			["qa", false],
+		]);
+		expect(listed.find((e) => e.id === QA.id)?.status).toBe("FAILED");
+	});
+
+	it("leaves out an environment the overview does not hold yet, and one the canonical list no longer holds", () => {
+		const QA = envRow({ id: "env-qa", name: "qa" });
+		expect(listedEnvironments(canonicalOf([DEV, QA]), [DEV, PROD]).map((e) => e.id)).toEqual([DEV.id]);
 	});
 });

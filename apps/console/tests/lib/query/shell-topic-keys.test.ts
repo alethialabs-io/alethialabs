@@ -23,7 +23,7 @@ const SHELL_READS: Array<[string, Topic, readonly unknown[]]> = [
 	["the project list", "projects", orpc.workspace.projects.queryOptions().queryKey],
 	["the setup guide, on a project", "projects", orpc.workspace.setupGuide.queryOptions().queryKey],
 	[
-		"the environment switcher",
+		"the environment switcher (the canonical environments entry, #7877)",
 		"environments",
 		orpc.workspace.environments.queryOptions({ input: { project: "shop" } }).queryKey,
 	],
