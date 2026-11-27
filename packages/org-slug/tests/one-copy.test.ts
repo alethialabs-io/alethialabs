@@ -3,12 +3,13 @@
 
 // The claim src/index.ts makes — that it is the only copy of the org-slug pattern — and what
 // enforces it. #5509 found two drifted copies: the console's paid-setup schema (`*` for `+`) and the
-// staff app's create flow (a 64-character cap against the console's 63). This reads the source of
-// both apps and of every package for the pattern's text, so a new copy fails here.
+// staff app's create flow (a 64-character cap against the console's 63). This reads the console's
+// source and every package's for the pattern's text, so a new copy fails here.
 //
-// Its bound: it matches the pattern's EXACT source text in .ts/.tsx files under apps/console and
-// apps/admin (app/, components/, lib/) and under packages/*/src. A copy re-spelled differently
-// (another group, `[0-9a-z]`) is not seen, and neither is one in a test file or a script.
+// Its bound: it matches the pattern's EXACT source text in .ts/.tsx files under apps/console
+// (app/, components/, lib/) and under packages/*/src. A copy re-spelled differently (another group,
+// `[0-9a-z]`) is not seen, and neither is one in a test file or a script. The staff app moved to the
+// private alethialabs-io/web repo, which this test cannot read; that repo runs its own copy.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -29,9 +30,9 @@ function sources(dir: string): string[] {
 	});
 }
 
-/** The directories scanned: both apps' source roots, and every package's src/. */
+/** The directories scanned: the console's source roots, and every package's src/. */
 function scannedDirs(): string[] {
-	const apps = ["console", "admin"].flatMap((app) =>
+	const apps = ["console"].flatMap((app) =>
 		["app", "components", "lib"].map((d) => join(repoRoot, "apps", app, d)),
 	);
 	const packages = readdirSync(join(repoRoot, "packages")).map((p) => join(repoRoot, "packages", p, "src"));
@@ -39,8 +40,8 @@ function scannedDirs(): string[] {
 }
 
 describe("the org-slug pattern has one copy", () => {
-	it("scans real directories in both apps (a renamed root would scan nothing and pass)", () => {
-		for (const app of ["console", "admin"]) {
+	it("scans real directories in the console (a renamed root would scan nothing and pass)", () => {
+		for (const app of ["console"]) {
 			expect(sources(join(repoRoot, "apps", app, "app")).length).toBeGreaterThan(0);
 		}
 	});

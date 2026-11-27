@@ -27,7 +27,7 @@
 // The residual gap is named rather than papered over: a case that belongs to NO ORGANIZATION —
 // the request that arrives by email from a former user, and equally every self-serve request,
 // because a personal org is recorded as none — has no console authority that can decide it. Those
-// reach the controller directly, and the platform-admin surface for them is `apps/admin/app/privacy`
+// reach the controller directly, and the platform-admin surface for them is `alethialabs-io/web:apps/admin/app/privacy`
 // (#7222), behind Cloudflare Access and `PLATFORM_ADMIN_EMAILS`, which reaches the same steps through
 // `app/api/internal/platform/privacy/**`. It is not reachable from here, so these actions refuse such
 // a case instead of admitting whoever asked — including the subject, who may read their own case
@@ -153,7 +153,7 @@ export async function verifyPrivacyCaseIdentity(
  * ⚠️ THE CONSEQUENCE, STATED RATHER THAN DISCOVERED: a case with NO organization — which is every
  * self-serve request, because a personal org is recorded as none — can now be decided by nobody in
  * the console. That is the same residual gap the module header names, reached from the other side:
- * those are controller-level requests, and the controller's surface is `apps/admin`. An erasure
+ * those are controller-level requests, and the controller's surface is `alethialabs-io/web:apps/admin`. An erasure
  * that needs a second party and has none is refused, not quietly performed by the first.
  *
  * Anything else is refused, INCLUDING a reference that matches no case: the answers are one
@@ -319,7 +319,7 @@ export async function refusePrivacyCase(
  * and "who here has an open privacy request" is not a viewer's business — the bar for a row is the
  * same whether it is read one at a time or in a list. A controller-wide list is not
  * available from the console and is not made available here: that is the platform-admin surface
- * (`apps/admin/app/privacy`, reading `queryOverdueCases` with no scope through the platform route),
+ * (`alethialabs-io/web:apps/admin/app/privacy`, reading `queryOverdueCases` with no scope through the platform route),
  * and alerting that needs the whole deployment reads the database directly.
  */
 export async function overduePrivacyCases(now = new Date()) {

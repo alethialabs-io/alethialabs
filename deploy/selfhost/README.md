@@ -46,8 +46,8 @@ What the overlay sets, relative to the base bundle:
 - The bundled runner is self-operated: `ALETHIA_RUNNER_OPERATOR: self`. It registers with the
   console using `ALETHIA_RUNNER_BOOTSTRAP_TOKEN`, which the overlay passes to both `app` and
   `runner`.
-- The `marketing` and `admin` services are hosted-only. The overlay moves them to a profile it never
-  enables, so `COMPOSE_PROFILES=marketing` or `=admin` does not start them.
+- The `marketing` service is hosted-only. The overlay moves it to a profile it never enables, so
+  `COMPOSE_PROFILES=marketing` does not start it.
 - Caddy serves `ALETHIA_DOMAIN` with automatic TLS, using `deploy/selfhost/Caddyfile`. With
   `ALETHIA_DOMAIN` empty it serves plain HTTP on port 80.
 - A one-shot `preflight` service runs `preflight.sh` in the `console-migrate` image before

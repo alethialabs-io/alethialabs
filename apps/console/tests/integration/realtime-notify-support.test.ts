@@ -11,7 +11,7 @@
 // zero, and every zero has a control in this file that emits one.
 //
 // The writes are the ones the two apps make, column for column: a customer reply
-// (app/server/actions/support.ts `postCaseMessage`) and a staff reply (apps/admin `postStaffReply`)
+// (app/server/actions/support.ts `postCaseMessage`) and a staff reply (alethialabs-io/web:apps/admin `postStaffReply`)
 // both insert a support_messages row and bump the case's last_message_at / last_author_type /
 // status in one transaction; an INTERNAL staff note inserts the message only; assigning a case
 // writes assigned_staff_id + updated_at.

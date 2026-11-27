@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Platform-internal: create an org shell + invite its owner. Called by the staff app (apps/admin)
+// Platform-internal: create an org shell + invite its owner. Called by the staff app (alethialabs-io/web:apps/admin)
 // during Enterprise onboarding. Guarded by PLATFORM_PROVISION_SECRET — a DEDICATED secret, not the
 // broadly-shared cron secret, because minting an org and inviting an owner is far higher blast
 // radius than an idempotent sweep. Fails closed when unset. The org/slug/authz rules are enforced

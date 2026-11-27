@@ -9,7 +9,7 @@
 // `process.env` (the byo-*-flag pattern), synchronous and default-off.
 //
 // Authorization is a SEPARATE allowlist from the read-only support-staff one (SUPPORT_STAFF_EMAILS,
-// apps/admin). Being able to READ cross-tenant (support) is NOT being able to ACT (break-glass) —
+// alethialabs-io/web:apps/admin). Being able to READ cross-tenant (support) is NOT being able to ACT (break-glass) —
 // so BREAKGLASS_OPERATORS is its own env var, and the two lists are intentionally decoupled.
 
 /** Whether the break-glass surface is enabled at all. Default-off: unset ⇒ false ⇒ everything refuses. */
@@ -32,7 +32,7 @@ export function isBreakglassOperator(email: string | null | undefined): boolean 
 }
 
 /**
- * Local-dev fallback identity, mirroring apps/admin's SUPPORT_ADMIN_DEV_EMAIL. Only consulted when
+ * Local-dev fallback identity, mirroring alethialabs-io/web:apps/admin's SUPPORT_ADMIN_DEV_EMAIL. Only consulted when
  * no CF-Access header and no CLI bearer are present (no tunnel in front); it must ALSO be in
  * BREAKGLASS_OPERATORS to authorize anything.
  *

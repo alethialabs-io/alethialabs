@@ -42,9 +42,10 @@ OPENFGA_DB_PASSWORD
 ALETHIA_STORAGE_ACCESS_KEY_ID
 ALETHIA_STORAGE_SECRET_ACCESS_KEY
 
-# The Cloudflare Access team domain and application AUD apps/admin verifies the Access token against
-# (packages/platform/src/access-jwt.ts, #7765). Either one empty ⇒ admin admits nobody in production.
-# The console reads the same two to verify the token the admin forwards on its privacy calls
-# (apps/console/lib/auth/staff-access.ts, #7951); empty there ⇒ every privacy call is refused.
+# The Cloudflare Access team domain and application AUD the staff app verifies the Access token against
+# (alethialabs-io/web: apps/admin, #7765). Either one empty ⇒ admin admits nobody in production.
+# The console reads the same two to verify the token the staff app forwards on its privacy calls
+# (apps/console/lib/auth/staff-access.ts over packages/platform/src/access-jwt.ts, #7951); empty there
+# ⇒ every privacy call is refused.
 CF_ACCESS_TEAM_DOMAIN
 CF_ACCESS_AUD

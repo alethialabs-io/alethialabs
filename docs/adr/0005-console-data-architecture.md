@@ -520,7 +520,7 @@ Each step unblocks the next; nothing later depends on anything earlier being *fi
 ## 8. What this ADR does not decide
 
 Chat/agent streaming (`ai` SDK routes, ADR 0003), the job-log stream's internals, the admin app's
-realtime (`apps/admin/lib/realtime.ts`), and CLI wire contracts.
+realtime (`apps/admin/lib/realtime.ts`, now in the private `alethialabs-io/web` repo), and CLI wire contracts.
 
 ---
 

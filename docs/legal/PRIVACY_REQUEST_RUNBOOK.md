@@ -16,8 +16,8 @@ Target response: one month from receipt
    `apps/console/app/server/actions/privacy/self-serve.ts`), recorded as
    session-verified, and the privacy inbox is emailed. A request that arrives
    by email is recorded by a platform admin on the staff app's **Privacy**
-   page (`apps/admin/app/privacy`), with the day it arrived so the clock starts
-   at receipt. The same page lists every overdue and open case, and each case
+   page (in the private `alethialabs-io/web` repository), with the day it
+   arrived so the clock starts at receipt. The same page lists every overdue and open case, and each case
    page verifies identity, extends once, applies a legal hold, fulfils an
    erasure (behind a typed confirmation) or refuses with grounds. Every step
    is written to the case ledger and to `platform_audit`. The case table does

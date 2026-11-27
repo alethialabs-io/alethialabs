@@ -64,16 +64,17 @@ REQ_STORAGE_ACCESS_KEY_ID="$(val ALETHIA_STORAGE_ACCESS_KEY_ID)"
 [ -n "$REQ_STORAGE_ACCESS_KEY_ID" ] || { echo "::error::ALETHIA_STORAGE_ACCESS_KEY_ID is required: docker-compose.yml refuses to render without it."; exit 1; }
 REQ_STORAGE_SECRET_ACCESS_KEY="$(val ALETHIA_STORAGE_SECRET_ACCESS_KEY)"
 [ -n "$REQ_STORAGE_SECRET_ACCESS_KEY" ] || { echo "::error::ALETHIA_STORAGE_SECRET_ACCESS_KEY is required: docker-compose.yml refuses to render without it."; exit 1; }
-# The Cloudflare Access verification apps/admin performs (packages/platform/src/access-jwt.ts, #7765),
-# and the console repeats on the token admin forwards to its privacy routes (#7951).
+# The Cloudflare Access verification the staff app performs (alethialabs-io/web: apps/admin, #7765),
+# and the console repeats on the token the staff app forwards to its privacy routes
+# (packages/platform/src/access-jwt.ts, #7951).
 # With either value empty the admin app admits NOBODY in production, so an absent key is not a
 # degraded admin but a locked-out one, and the staff support surface goes with it. Refused here and
 # in the preflight, through deploy/prod/required-vault-keys.txt, before any image is built — the
 # previous admin keeps serving until the vault holds both. Presence only; no value is printed.
 REQ_CF_ACCESS_TEAM_DOMAIN="$(val CF_ACCESS_TEAM_DOMAIN)"
-[ -n "$REQ_CF_ACCESS_TEAM_DOMAIN" ] || { echo "::error::CF_ACCESS_TEAM_DOMAIN is required: apps/admin refuses every request in production without it."; exit 1; }
+[ -n "$REQ_CF_ACCESS_TEAM_DOMAIN" ] || { echo "::error::CF_ACCESS_TEAM_DOMAIN is required: the staff app (admin) refuses every request in production without it."; exit 1; }
 REQ_CF_ACCESS_AUD="$(val CF_ACCESS_AUD)"
-[ -n "$REQ_CF_ACCESS_AUD" ] || { echo "::error::CF_ACCESS_AUD is required: apps/admin refuses every request in production without it."; exit 1; }
+[ -n "$REQ_CF_ACCESS_AUD" ] || { echo "::error::CF_ACCESS_AUD is required: the staff app (admin) refuses every request in production without it."; exit 1; }
 unset REQ_DB_PASSWORD REQ_APP_DB_PASSWORD REQ_CRED_ENCRYPTION_KEY REQ_OPENFGA_DB_PASSWORD REQ_STORAGE_ACCESS_KEY_ID REQ_STORAGE_SECRET_ACCESS_KEY REQ_CF_ACCESS_TEAM_DOMAIN REQ_CF_ACCESS_AUD
 # The transport, chosen in the VAULT so switching between SES and an SMTP relay is a vault edit and
 # a redeploy, not a PR (infra/email-ses-account/README.md, "Rollback"). Unset means ses: hosted
@@ -341,9 +342,9 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   echo "ALETHIA_SES_EVENTS_TOPIC_ARNS=$SES_TOPIC_ARNS"
   # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
   emit SUPPORT_SLACK_WEBHOOK_URL
-  # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the staff allowlist
-  # (apps/admin/lib/auth/staff.ts), the Cloudflare Access team domain + application AUD the app
-  # verifies the Access token against (packages/platform/src/access-jwt.ts — both empty ⇒ admin
+  # Admin staff dashboard @ admin.alethialabs.io (source in the private alethialabs-io/web
+  # repo; it runs on this box from this .env): the staff allowlist, the Cloudflare Access team
+  # domain + application AUD the app verifies the Access token against (both empty ⇒ admin
   # admits nobody in production), and the console URL its case deep-links target.
   # COMPOSE_PROFILES activates the profiled `admin` service on the box (docker compose reads it
   # from this .env).
@@ -352,7 +353,7 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   emit CF_ACCESS_AUD
   echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
   echo "COMPOSE_PROFILES=admin"
-  # Platform-operator plane (Enterprise onboarding, apps/admin /orgs → console internal
+  # Platform-operator plane (Enterprise onboarding, the staff app's /orgs → console internal
   # routes). The dedicated provisioning bearer is [auto] (bootstrap-secrets.sh, NOT the cron
   # secret); the operator + system-user are the maintainer's own account (const, not
   # secrets); the Stripe Product for enterprise line items comes from the vault ([ext]).
@@ -376,10 +377,8 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   echo "AUTH_EMAIL_FROM=$AUTH_FROM"
   echo "EMAIL_FROM=$GENERAL_FROM"
   echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"
-  # The admin image's tag. This deploy's own tag by default; on the box, a tag the web
-  # repo's deploy recorded in admin.image.env replaces it (see the REMOTE block below),
-  # so a console deploy never moves admin to an image the web repo did not ship.
-  echo "ALETHIA_ADMIN_IMAGE_TAG=$IMAGE_TAG"
+  # No ALETHIA_ADMIN_IMAGE_TAG here: this repo no longer builds the admin image. Its tag is
+  # whatever alethialabs-io/web last shipped, read from the box (see the REMOTE block below).
 } > env.deploy
 
 SSHOPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
@@ -411,19 +410,23 @@ git fetch origin main
 git checkout -f "$IMAGE_TAG"
 mv -f .env.new .env
 # admin.image.env is untracked and written only by alethialabs-io/web's deploy: one
-# line, ALETHIA_ADMIN_IMAGE_TAG=<that repo's sha>. When it is there, its tag replaces
-# the default written above. Anything else in the file refuses the deploy, so the file
-# can move admin's image tag and nothing else.
-if [ -f admin.image.env ]; then
-  admin_line="$(grep -E '^ALETHIA_ADMIN_IMAGE_TAG=[0-9a-f]{7,40}$' admin.image.env || true)"
-  if [ "$(grep -cv '^[[:space:]]*$' admin.image.env)" != 1 ] || [ -z "$admin_line" ]; then
-    echo "admin.image.env must hold exactly one line ALETHIA_ADMIN_IMAGE_TAG=<sha>; refusing to deploy" >&2
-    exit 1
-  fi
-  grep -v '^ALETHIA_ADMIN_IMAGE_TAG=' .env > .env.admin-tag && mv -f .env.admin-tag .env
-  echo "$admin_line" >> .env
-  echo "admin image tag from admin.image.env: ${admin_line#*=}"
+# line, ALETHIA_ADMIN_IMAGE_TAG=<that repo's sha>. It is the ONLY source of admin's tag,
+# because this repo no longer builds that image. The file is required: .env above starts
+# the `admin` profile, and without a tag compose would pull `admin:unset` and fail half-way
+# through `up`, so refuse here, before any container changes, with the fix named.
+# Anything else in the file refuses too, so the file can set admin's tag and nothing else.
+if [ ! -f admin.image.env ]; then
+  echo "::error::/opt/alethia/admin.image.env is missing, so admin has no image tag. Run the \"Deploy admin\" workflow in alethialabs-io/web (it writes the file), then re-run this deploy." >&2
+  exit 1
 fi
+admin_line="$(grep -E '^ALETHIA_ADMIN_IMAGE_TAG=[0-9a-f]{7,40}$' admin.image.env || true)"
+if [ "$(grep -cv '^[[:space:]]*$' admin.image.env)" != 1 ] || [ -z "$admin_line" ]; then
+  echo "admin.image.env must hold exactly one line ALETHIA_ADMIN_IMAGE_TAG=<sha>; refusing to deploy" >&2
+  exit 1
+fi
+grep -v '^ALETHIA_ADMIN_IMAGE_TAG=' .env > .env.admin-tag && mv -f .env.admin-tag .env
+echo "$admin_line" >> .env
+echo "admin image tag from admin.image.env: ${admin_line#*=}"
 AK="$(grep -m1 '^ALETHIA_STORAGE_ACCESS_KEY_ID=' .env | cut -d= -f2-)"
 SK="$(grep -m1 '^ALETHIA_STORAGE_SECRET_ACCESS_KEY=' .env | cut -d= -f2-)"
 cat > deploy/seaweedfs/s3.json <<JSON

@@ -4,7 +4,7 @@
 
 // The staff identity the console's platform privacy routes act as (lib/auth/staff-access.ts). The
 // verifier itself is @repo/platform/access-jwt, exercised case by case in
-// apps/admin/tests/lib/auth/access-jwt.test.ts; these tests pin what the console adds: WHICH header
+// tests/lib/auth/access-jwt.test.ts; these tests pin what the console adds: WHICH header
 // it reads, WHICH settings it verifies against, and that the dev stand-in exists only outside
 // production. Real tokens from a locally generated keypair; the team's key endpoint is stubbed.
 

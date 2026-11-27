@@ -231,36 +231,6 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
-  # Admin (internal staff support dashboard). OPT-IN internal path —
-  # runs on its own subdomain behind Cloudflare Access (like the Umami dashboard);
-  # the app verifies the Access token (CF_ACCESS_TEAM_DOMAIN + CF_ACCESS_AUD) and then
-  # checks SUPPORT_STAFF_EMAILS. Enable
-  # with the `admin` profile AND uncomment `import admin*.caddy` in the active
-  # Caddyfile (copy admin.caddy.example → admin.caddy).
-  admin:
-    profiles: ["admin"]
-    build:
-      context: .
-      dockerfile: apps/admin/Dockerfile
-    env_file: .env
-    environment:
-      NODE_ENV: production
-      PORT: "3000"
-      HOSTNAME: 0.0.0.0
-      # Internal service URLs (like `app`): staff read the shared service DB cross-tenant
-      # (RLS-bypass) and presign attachment downloads from the same object store. The staff
-      # allowlist + NEXT_PUBLIC_CONSOLE_URL come from .env (env_file above).
-      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
-      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
   # Runner (Go). Talks to the console over HTTP + S3 only; self-registers on
   # boot. Bundles Terraform/cloud CLIs, so the image is large to build.
   runner:

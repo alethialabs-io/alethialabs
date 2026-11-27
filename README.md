@@ -50,7 +50,7 @@ packages/
   ui/                — Shared shadcn/ui design system (@repo/ui)
   brand/             — Logo, design tokens, metadata generators
   email/             — Transactional email infrastructure (SES + react-email)
-  platform/          — Schema owned by apps/admin, re-exported into console
+  platform/          — Schema owned by the staff app (private repo), re-exported into console
   support/           — Support-case schema, storage, validations
   plan-catalog/      — Plan display catalog (console billing + marketing pricing)
   assets/            — Static files synced into each app's public/

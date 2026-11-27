@@ -3,8 +3,9 @@
 
 // THE organization-slug rule: what an org's URL segment may look like — its characters and its
 // length. It lives in a package because two apps check it (#5509): a copy kept in apps/console
-// could not be imported by apps/admin, so the staff app held its own regex and a 64-character cap
-// while the console capped at 63.
+// could not be imported by the staff app, so it held its own regex and a 64-character cap while
+// the console capped at 63. The staff app now lives in the private alethialabs-io/web repo and
+// takes this package from npm (@alethialabs/org-slug).
 //
 // Read by, in apps/console: `configureOnboardingOrg`, `provisionOrg` and the provision-org route
 // in front of it, the create-a-team form, the server's record of a paid setup
@@ -12,12 +13,13 @@
 // which marketing paths could collide with a slug, and — injected through `CoreContext`, because
 // ee/ takes no runtime import from core — ee's `beforeCreateOrganization` /
 // `beforeUpdateOrganization` hooks, so a better-auth call that skips every form is held to it too.
-// In apps/admin: the Enterprise create flow's `createSchema` (app/orgs/actions.ts).
+// In the staff app (alethialabs-io/web): the Enterprise create flow's `createSchema` (apps/admin/app/orgs/actions.ts).
 //
 // What enforces "one copy": tests/one-copy.test.ts fails when this pattern's exact source text
-// appears in a .ts/.tsx file under apps/console or apps/admin (app/, components/, lib/) or under any
+// appears in a .ts/.tsx file under apps/console (app/, components/, lib/) or under any
 // packages/*/src other than this file. It reads the exact text only, so a copy spelled differently
-// is not seen.
+// is not seen, and it cannot see the staff app's private repo at all: that repo holds its own copy
+// of the check.
 //
 // Availability is NOT part of this rule: reserved console routes (apps/console lib/routing.ts
 // RESERVED_SLUGS) and global uniqueness are each caller's to check. Keep this file dependency-free —

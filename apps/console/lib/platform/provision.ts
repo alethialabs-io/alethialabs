@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Generic org PROVISIONING primitives, called by the staff app (apps/admin) over a cron-secret
+// Generic org PROVISIONING primitives, called by the staff app (alethialabs-io/web:apps/admin) over a cron-secret
 // internal route. This is console-domain infrastructure — the same "create an org + wire its owner"
 // that provisionPrimaryOrg does at signup — NOT sales logic (nothing here knows the word "contract").
 // Keeping org creation, slug validation, and the owner grant HERE means the staff app never imports
