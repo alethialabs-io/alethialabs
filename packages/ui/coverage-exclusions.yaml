@@ -98,6 +98,12 @@ tier_separation:
     issue: "#2649"
     reason: The list-toolbar suite mounts a real FunnelFilter and asserts its trigger is the 40px square (h-10 w-10) that ListToolbarSkeleton's `icon` extra part draws (#7876). Only the trigger is executed, not the popover's facet, group or sort menus, so the file stays outside the coverage scope under #2649.
 
+  - path: src/sonner.tsx
+    suite: [tests/sonner.test.tsx]
+    symbols: [Toaster]
+    issue: "#2649"
+    reason: The sonner suite mounts a real Toaster, raises a loading toast and asserts its icon is the decorative inline [·] mark rather than a spinning Loader2 (#7871). Only the loading icon is asserted, not the theme or the other toast types, so the file stays outside the coverage scope under #2649.
+
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
   # No suite of their own. Each is executed because a component that IS tested renders it, which is
@@ -341,12 +347,6 @@ baseline:
     issue: "#2649"
     state: no-test
     reason: The separator is named by no suite in this package.
-
-  - path: src/sonner.tsx
-    symbols: [Toaster]
-    issue: "#2649"
-    state: no-test
-    reason: The toast host is named by no suite in this package.
 
   - path: src/switch.tsx
     symbols: [Switch]
