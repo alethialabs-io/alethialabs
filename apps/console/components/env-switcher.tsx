@@ -114,8 +114,9 @@ export function EnvSwitcher() {
 		[],
 	);
 
-	// The project's environments, over the read router (#6114). The `[project]` layout prefetches
-	// them for a project that resolves, so the switcher paints with the active env. It asks only for
+	// The project's environments, over the read router (#6114) — the project's CANONICAL environments
+	// entry, which the Environments page's panels derive from too (#7877). The `[project]` layout
+	// prefetches it for a project that resolves, so the switcher paints with the active env. It asks only for
 	// a slug the org's (layout-prefetched) project list contains: a 404 project route makes no
 	// request beyond its layout.
 	const { data: projects } = useProjectsQuery();

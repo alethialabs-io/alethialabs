@@ -125,6 +125,9 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
  * org the address names differently) is a different key and a fresh, correctly scoped query. Two
  * strings and a slug are compared by value, so equal scopes share one entry.
  *
+ * The switcher's GET read (`readEnvironmentsForSlug`, lib/rpc/procedures/environments.ts) reaches
+ * it through `resolveProjectId`, so the `[project]` layout's switcher seed shares it too (#7877).
+ *
  * NOT EXPORTED, deliberately: this module is `"use server"`, so every export is also a POST-able
  * action endpoint, and one taking a caller-chosen `(userId, orgId)` would let a client name any
  * scope. Only the actor-deriving exports below reach it.
@@ -262,8 +265,14 @@ export interface SwitcherEnv {
 }
 
 /**
- * Lists a project's environments resolved by project slug (for the EnvSwitcher).
- * Returns [] if the slugs don't resolve in the active scope (the switcher hides).
+ * Lists a project's environments resolved by project slug, as a server ACTION — the Elench scope
+ * chip calls it from the browser. Returns [] if the slug doesn't resolve in the active scope.
+ *
+ * The topbar switcher no longer reads through here: its GET read, `workspace.environments`, is the
+ * environments domain's canonical read (`readEnvironmentsForSlug`, lib/rpc/procedures/environments.ts,
+ * #7877), memoised per request with the Environments page's overview and table. Both answer the same
+ * rows in the same order under the same RLS scope; this one stays because an action POST memoises
+ * nothing and its callers outside the render keep their call shape.
  */
 export async function getEnvironmentsForSlug(
 	projectSlug: string,
