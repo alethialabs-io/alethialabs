@@ -1076,8 +1076,12 @@ jobs:
     permissions:
       contents: read
       id-token: write # assume the read-only vault role via GitHub OIDC — no stored secrets
+      packages: read # GHCR_PULL_TOKEN below: the box pulls the (private) admin image with it
     env:
       IMAGE_TAG: ${{ github.sha }}
+      # This job's own short-lived token, used only to log the box in to ghcr.io for the pull
+      # and logged out when the script exits (scripts/ci/deploy-console-assemble-env.sh).
+      GHCR_PULL_TOKEN: ${{ github.token }}
       # Whether `build-amd64` rebuilt the apps images in THIS run (a dispatch does, whatever changed).
       APPS_BUILT: ${{ needs.changes.outputs.apps_build }}
       ASM_SECRET_ID: alethia/prod/env
