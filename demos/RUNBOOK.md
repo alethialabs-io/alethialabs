@@ -412,7 +412,7 @@ artifact, never on a green harness.
   you promise the BYO story.
 - **BYO IaC will not attach to an environment that already has template state** — a 409. It is a
   separate demo on a fresh environment, not an add-on to this one.
-- **`demos/DEMO-READINESS.md` is a historical ledger, not a status page.** It tracks #294–#348 against
-  a HEAD past #2320. Do not quote it.
+- **The old demo-readiness ledger is history, not a status page.** It tracked #294–#348 and now lives
+  in the private company repo. Do not quote it.
 - **Keep `Formula/grape.rb` off the screen.** Stale cruft from the pre-rename era, with a
   "Proprietary" license line in it.
