@@ -130,6 +130,28 @@ describe("base options", () => {
 		expect(opts.advanced.ipAddress.ipAddressHeaders).toEqual(["cf-connecting-ip"]);
 	});
 
+	it("does not serve the OAuth provider's consent update and delete endpoints over HTTP", () => {
+		// An agent's consent changes only through the console's connect and disconnect flows, which keep
+		// the consent, its grant and the issued tokens together (lib/agents/grants.ts).
+		expect(opts.disabledPaths).toEqual(["/oauth2/update-consent", "/oauth2/delete-consent"]);
+	});
+
+	it("names consent endpoints the real MCP provider plugin actually registers", async () => {
+		// A disabled path that names no endpoint disables nothing: pin the names against the plugin.
+		const real = await vi.importActual<typeof import("@better-auth/mcp")>("@better-auth/mcp");
+		const plugin = real.mcp({
+			loginPage: "/login",
+			consentPage: "/auth/oauth/consent",
+			resource: "https://app.test/api/mcp",
+			scopes: ["openid", "read"],
+		});
+		const paths = Object.values(plugin.endpoints ?? {}).map((e) => e.path);
+		for (const disabled of opts.disabledPaths) expect(paths).toContain(disabled);
+		// Reading a consent stays available.
+		expect(opts.disabledPaths).not.toContain("/oauth2/get-consents");
+		expect(paths).toContain("/oauth2/get-consents");
+	});
+
 	it("ends the plugin chain with nextCookies (must be last to set cookies)", () => {
 		const last = opts.plugins[opts.plugins.length - 1];
 		expect(last.id).toBe("nextCookies");

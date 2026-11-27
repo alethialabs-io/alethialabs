@@ -79,7 +79,8 @@ function refusalResponse(reason: McpActorRefusal, resource: string): Response {
 				invalidTokenChallenge(resource),
 			);
 		case "grant_missing":
-			// The consent was released with the refusal, so connecting again shows the consent screen.
+			// No consent is left that grants anything (a consent without a grant is released with the
+			// refusal), so connecting again shows the consent screen.
 			return jsonError(
 				401,
 				"This connection has no permissions recorded. Connect this MCP server again in your client.",
