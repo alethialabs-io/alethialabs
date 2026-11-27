@@ -25,7 +25,7 @@
 // request it describes.
 
 import { createHash } from "node:crypto";
-import { and, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, notExists, notInArray, sql } from "drizzle-orm";
 import type { Executor } from "@/lib/approvals/binding";
 import { readAgentPolicy } from "@/lib/approvals/context";
 import { enterpriseAgentPolicy } from "@/lib/approvals/enterprise-policy";
@@ -212,6 +212,73 @@ export async function writeGrantForConsent(db: Tx, choice: GrantChoice): Promise
 		})
 		.returning({ id: agentOauthGrants.id });
 	return grant?.id ?? null;
+}
+
+/** The fields of one `oauth_consent` row that Better Auth's consent call writes. */
+interface ConsentRowState {
+	id: string;
+	scopes: string[];
+	resources: string[] | null;
+	requestedUserInfoClaims: string[] | null;
+	updatedAt: Date;
+}
+
+/**
+ * The person's consent rows for a client as they stood BEFORE Better Auth's consent call: what
+ * `restoreConsent` puts back when the grant that belongs with the answer cannot be written.
+ */
+export interface ConsentSnapshot {
+	clientId: string;
+	userId: string;
+	rows: ConsentRowState[];
+}
+
+/** Reads the person's consent rows for `clientId`, before the consent call that may change them. */
+export async function readConsentSnapshot(clientId: string, userId: string): Promise<ConsentSnapshot> {
+	const rows = await getServiceDb()
+		.select({
+			id: oauthConsent.id,
+			scopes: oauthConsent.scopes,
+			resources: oauthConsent.resources,
+			requestedUserInfoClaims: oauthConsent.requestedUserInfoClaims,
+			updatedAt: oauthConsent.updatedAt,
+		})
+		.from(oauthConsent)
+		.where(and(eq(oauthConsent.clientId, clientId), eq(oauthConsent.userId, userId)));
+	return { clientId, userId, rows };
+}
+
+/**
+ * Puts the person's consent rows for the snapshot's client back as they were: a row the consent call
+ * created is deleted (unless a grant was written for it meanwhile), and a row it updated gets its
+ * earlier scopes, resources and claims again. The
+ * consent and its grant are recorded together or not at all, so this runs whenever the grant was not
+ * written. One transaction, on the service connection (Better Auth's rows carry no tenant column).
+ */
+export async function restoreConsent(snapshot: ConsentSnapshot): Promise<void> {
+	const ids = snapshot.rows.map((r) => r.id);
+	await getServiceDb().transaction(async (tx) => {
+		const mine = and(eq(oauthConsent.clientId, snapshot.clientId), eq(oauthConsent.userId, snapshot.userId));
+		// A row with a grant beside it was answered in full (another tab, say) and is never deleted
+		// here: deleting it would take its grant with it.
+		const ungranted = notExists(
+			tx.select({ id: agentOauthGrants.id }).from(agentOauthGrants).where(eq(agentOauthGrants.consent_id, oauthConsent.id)),
+		);
+		await tx
+			.delete(oauthConsent)
+			.where(ids.length === 0 ? and(mine, ungranted) : and(mine, ungranted, notInArray(oauthConsent.id, ids)));
+		for (const row of snapshot.rows) {
+			await tx
+				.update(oauthConsent)
+				.set({
+					scopes: row.scopes,
+					resources: row.resources,
+					requestedUserInfoClaims: row.requestedUserInfoClaims,
+					updatedAt: row.updatedAt,
+				})
+				.where(and(mine, eq(oauthConsent.id, row.id)));
+		}
+	});
 }
 
 /** The person's live grant to `clientId` in `orgId`, for the re-consent diff; null when none. */

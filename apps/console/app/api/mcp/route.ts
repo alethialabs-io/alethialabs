@@ -78,6 +78,13 @@ function refusalResponse(reason: McpActorRefusal, resource: string): Response {
 				"This connection was disconnected. Connect this MCP server again in your client.",
 				invalidTokenChallenge(resource),
 			);
+		case "grant_missing":
+			// The consent was released with the refusal, so connecting again shows the consent screen.
+			return jsonError(
+				401,
+				"This connection has no permissions recorded. Connect this MCP server again in your client.",
+				invalidTokenChallenge(resource),
+			);
 		case "insufficient_scope":
 			// RFC 6750 §3.1: a client may step up by asking for the scope again. Connections made before
 			// the agent scopes existed hold only OIDC scopes, so the body names the fix for a person.
