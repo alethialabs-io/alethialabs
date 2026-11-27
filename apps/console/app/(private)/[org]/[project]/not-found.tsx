@@ -10,6 +10,10 @@
 //
 // Non-leaky like the org one: a project that never existed and a project belonging to another org
 // read the same — we never disclose existence.
+//
+// The signed-off 404 form (spec §4, #7875): `[ 404 ]`, "Nothing here.", then the reason line, which
+// names the project as the missing thing and the org it was looked for in. That line is what tells
+// this boundary apart from the org-level fallback (e2e navigation-shell and projects specs).
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -17,15 +21,20 @@ import { ErrorState } from "@repo/ui/error-state";
 import { orgHref } from "@/lib/routing";
 import { Button } from "@repo/ui/button";
 
-/** The project segment's 404: names the project, and leads back to the org's project list. */
+/** The project segment's 404: says the project is what is missing, and leads back to the org's projects. */
 export default function ProjectNotFound() {
 	// `/{org}/{project}/…` — the org segment resolved, so the way back is its project list.
 	const org = usePathname().split("/").filter(Boolean)[0];
 	return (
 		<ErrorState
 			code="404"
-			title="Project not found"
-			description="The address may be mistyped, or the project was renamed or deleted. It may also be one you don't have access to."
+			codeVariant="bracketed"
+			title="Nothing here."
+			description={
+				org
+					? `This project doesn't exist in ${org}, or you don't have access to it.`
+					: "This project doesn't exist, or you don't have access to it."
+			}
 			actions={
 				// The only way out of this page — an `<a href>` — is announced as a link, as on the
 				// other two 404 boundaries: `@repo/ui/button` gives a `render` element with an

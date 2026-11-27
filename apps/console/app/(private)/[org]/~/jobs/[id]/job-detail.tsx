@@ -8,7 +8,6 @@ import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
 import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { ClockSlot, JOB_TYPES, JobDuration, RelativeTime } from "@/components/jobs/columns";
-import { JobNotFoundState } from "@/components/jobs/job-not-found-state";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
 // `FactList`/`Fact` are the console's ONE label-and-value list. They live under `settings/usage`
 // because that is where they were first needed, and this page is their second consumer — which is
@@ -42,7 +41,7 @@ import { type QueryKey, useQuery } from "@tanstack/react-query";
 import { Ban, ChevronRight, Loader2, RefreshCw, Rocket, XCircle } from "lucide-react";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { notFound, useParams, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
@@ -274,9 +273,15 @@ export function JobDetail({
 	}
 
 	if (!job) {
-		// The same state the route's `not-found.tsx` draws (D-25): one sentence and one way back,
-		// however the address was wrong. `deploy-jobs.negative.spec` pins the sentence and the link.
-		return <JobNotFoundState orgSlug={org} />;
+		// A SETTLED read that found no job the reader can see — absent and invisible alike — is the
+		// route's 404, so this hands it to the segment's `not-found.tsx` (#7875) and both ways an
+		// address can be wrong read the same: `[ 404 ]`, "Nothing here.", the job reason line, and
+		// "Back to jobs" (D-25). Only a definitive answer reaches here: a pending read returned the
+		// skeleton above, and a refusal or a failure returned its own region above. `notFound()`
+		// throws Next's 404 digest, which the segment's `HTTPAccessFallbackBoundary` — a client
+		// error boundary — catches, so it works from this client render. `deploy-jobs.negative.spec`
+		// pins the result.
+		notFound();
 	}
 
 	return (

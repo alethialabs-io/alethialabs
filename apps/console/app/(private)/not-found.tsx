@@ -21,11 +21,12 @@
 // org did not resolve, so there is no id to render the dashboard chrome with.
 //
 // Copy is deliberately non-leaky: an unknown org and a forbidden org read the same — we never
-// disclose existence. Nothing else under `(private)` calls notFound() outside `[org]` today, and
+// disclose existence. It is the signed-off 404 form (spec §4, #7875): `[ 404 ]`, "Nothing here.",
+// then the reason line, which is what tells this page apart from the root and project 404s (the
+// e2e navigation-shell spec asserts it exactly). Nothing else under `(private)` calls notFound() outside `[org]` today, and
 // `scripts/check-route-states.mjs` reports any layout that starts to.
 
 import Link from "next/link";
-import { AlethiaMark } from "@repo/brand/lockup";
 import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 
@@ -34,10 +35,10 @@ export default function PrivateNotFound() {
 	return (
 		<ErrorState
 			fullPage
-			mark={<AlethiaMark />}
 			code="404"
-			title="Organization not found"
-			description="The address may be mistyped, or this organization isn't one you belong to."
+			codeVariant="bracketed"
+			title="Nothing here."
+			description="This organization doesn't exist, or you don't have access to it."
 			actions={
 				// "Go home" is an `<a href>` and is announced as a link: `@repo/ui/button` gives a
 				// `render` element with an `href` `role="link"` (#5444), so it needs no role of its

@@ -51,11 +51,16 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		const ghost = "00000000-0000-4000-8000-000000000000";
 		await visit(owner.page, `/${owner.orgSlug}/~/jobs/${ghost}`);
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		// A real heading, not a bare paragraph: this is `EmptyState level={2}`, so a reader moving
-		// by heading lands on the thing that went wrong.
+		// The segment's `not-found.tsx` (#7875): `JobDetail` hands a settled no-job read to
+		// notFound(), so this is the same 404 an id that cannot be a job gets — a real heading, then
+		// the reason line that says the JOB is what is missing (exact, so no other 404's line can
+		// match), so a reader moving by heading lands on the thing that went wrong.
 		await expect(
-			owner.page.getByRole("heading", { name: "Job not found." }),
+			owner.page.getByRole("heading", { name: "Nothing here.", exact: true }),
 		).toBeVisible({ timeout: 25_000 });
+		await expect(
+			owner.page.getByText("This job doesn't exist, or it belongs to another organization.", { exact: true }),
+		).toBeVisible();
 		// An empty state with nowhere to go from it is the defect the shared component replaced.
 		//
 		// ROLE `link`. This assertion used to read `getByRole("button")`, deliberately: the action
