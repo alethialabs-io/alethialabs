@@ -39,6 +39,7 @@
     "check:no-network-fonts": "node scripts/check-no-network-fonts.mjs",
     "check:closing-keyword-parsers": "node scripts/check-closing-keyword-parsers.mjs",
     "check:shared-surface": "node scripts/check-shared-surface.mjs",
+    "check:no-adhoc-spinner": "node scripts/check-no-adhoc-spinner.mjs",
     "check:secure-context-apis": "node scripts/check-secure-context-apis.mjs",
     "check:single-keydown": "node scripts/check-single-keydown.mjs",
     "check:cloud-availability": "node scripts/check-cloud-availability.mjs",
