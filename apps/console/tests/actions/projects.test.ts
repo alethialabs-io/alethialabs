@@ -32,6 +32,9 @@ vi.mock("@/lib/db", () => ({
 	getServiceDb: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The environments domain's canonical list read (#7895): `getEnvConsistency` reads its environments
+// through it (lazily imported) instead of selecting them itself.
+vi.mock("@/lib/rpc/procedures/environments", () => ({ projectEnvironmentsFor: vi.fn(async () => []) }));
 // `readDuplicateTargets` lives with the other projects reads in lib/rpc/procedures/projects.ts
 // (#6131); that module also serves the import flow, whose git-account and model readers are not
 // this file's subject and would otherwise load Better Auth and the AI SDK here.
@@ -83,6 +86,7 @@ import { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { configurationHashOf, PlanBindingError, resolveReviewedPlan } from "@/lib/approvals/plan-binding";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
+import { projectEnvironmentsFor } from "@/lib/rpc/procedures/environments";
 import { readDuplicateTargets } from "@/lib/rpc/procedures/projects";
 import {
 	type DestroyTreeSubject,
@@ -3705,12 +3709,58 @@ describe("getProjectEnvironments", () => {
 });
 
 describe("getEnvConsistency", () => {
-	it("uses the read check for itself and for the list it reads, never the recording one", async () => {
+	/** The actor the `view` check answers with — what the canonical read must be asked as. */
+	const CHECKED = { userId: "user-1", orgId: "org-checked", credential: "session" as const };
+
+	/** One row of the canonical environments read, as `projectEnvironmentsFor` answers it. */
+	type CanonicalRow = Awaited<ReturnType<typeof projectEnvironmentsFor>>[number];
+
+	/** One row of the canonical environments read; the test names what it is about. */
+	function canonicalEnv(over: Pick<CanonicalRow, "id" | "name" | "stage" | "is_default">): CanonicalRow {
+		const at = new Date("2026-10-01T00:00:00Z");
+		return {
+			project_id: "p1",
+			status: "ACTIVE",
+			byo_admission_enforce: false,
+			auto_heal: false,
+			deployed_config_hash: null,
+			last_deployed_at: null,
+			created_at: at,
+			updated_at: at,
+			...over,
+		};
+	}
+
+	it("uses the read check, never the recording one", async () => {
 		setupDb({ select: new Map([[projectEnvironments, []]]) });
 		const r = await getEnvConsistency("p1");
 		expect(r).toEqual({ envs: [], rows: [] });
 		expect(authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
 		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("reads its environments through the canonical read, as the checked actor, AFTER the check (#7895)", async () => {
+		setupDb({ select: new Map([[projectEnvironments, []]]) });
+		const order: string[] = [];
+		vi.mocked(authorizeRead).mockImplementationOnce(async () => {
+			order.push("check");
+			return CHECKED;
+		});
+		vi.mocked(projectEnvironmentsFor).mockImplementationOnce(async () => {
+			order.push("list");
+			return [
+				canonicalEnv({ id: "env-b", name: "prod", stage: "production", is_default: false }),
+				canonicalEnv({ id: "env-a", name: "dev", stage: "development", is_default: true }),
+			];
+		});
+		const r = await getEnvConsistency("p1");
+		expect(order).toEqual(["check", "list"]);
+		expect(projectEnvironmentsFor).toHaveBeenCalledWith(CHECKED, "p1");
+		// The default first, then the canonical (oldest-first) order.
+		expect(r.envs).toEqual([
+			{ id: "env-a", name: "dev", stage: "development" },
+			{ id: "env-b", name: "prod", stage: "production" },
+		]);
 	});
 });
 

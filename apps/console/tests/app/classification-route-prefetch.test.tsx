@@ -72,7 +72,7 @@ beforeEach(() => {
 	for (const k of Object.keys(h.handlers)) delete h.handlers[k];
 	h.client = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 0 } } });
 	h.handlers["settings.project"] = async () => ({ id: PROJECT_ID, project_name: "Payments", slug: "payments" });
-	h.handlers["environments.overview"] = async () => ({ projectId: PROJECT_ID, envs: [{ id: ENV_A }, { id: ENV_B }] });
+	h.handlers["environments.overview"] = async () => ({ projectId: PROJECT_ID, facts: { [ENV_A]: {}, [ENV_B]: {} } });
 	h.handlers["classification.canEdit"] = async () => true;
 	h.handlers["classification.dimensions"] = async () => [];
 	h.handlers["classification.assignments"] = async () => [];
