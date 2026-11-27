@@ -6,6 +6,21 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
 	output: "standalone",
+	// No page of this app may be shown inside a frame (#7848). Both headers: `frame-ancestors` is the
+	// standard, `X-Frame-Options` is what older engines read. The CSP carries only this directive —
+	// extend it rather than adding a second Content-Security-Policy. The console's next.config.ts
+	// states the same rule and its one same-origin exemption.
+	async headers() {
+		return [
+			{
+				source: "/(.*)",
+				headers: [
+					{ key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+					{ key: "X-Frame-Options", value: "DENY" },
+				],
+			},
+		];
+	},
 	// Monorepo: trace workspace files from the repo root so the standalone
 	// bundle is self-contained inside Docker.
 	outputFileTracingRoot: path.join(__dirname, "../../"),
