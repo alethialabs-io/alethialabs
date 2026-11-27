@@ -58,8 +58,10 @@ export default async function ProjectLayout({
 	// No project, no shell — the page below answers the miss inside the boundary (see above).
 	if (projectId === null) return <>{children}</>;
 
-	// The topbar's environment switcher reads this project's environments; prefetching them here
-	// lets it paint the active env with the page instead of fetching after hydration (#6114).
+	// The project's CANONICAL environments entry (#7877): the topbar switcher reads it, and the
+	// Environments page derives which environments its panels list from it. Prefetching it here lets
+	// both paint with the page instead of fetching after hydration (#6114). On the server it is the
+	// environments domain's request-memoised read, so the page below reusing it costs no query.
 	const queryClient = getQueryClient();
 	const [identities] = await Promise.all([
 		getVerifiedCloudIdentities(),
