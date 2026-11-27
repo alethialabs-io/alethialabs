@@ -172,6 +172,8 @@ func allowed(c cmdmeta.CommandDoc, set ToolSet) bool {
 		return false
 	}
 	switch set {
+	case ToolSetReadOnly:
+		return false
 	case ToolSetStandard:
 		return !c.Destructive
 	case ToolSetDestructive:
@@ -298,7 +300,7 @@ func flagSchema(f cmdmeta.FlagDoc) map[string]any {
 	case kindList:
 		s["type"] = "array"
 		s["items"] = map[string]any{"type": "string"}
-	default:
+	case kindString:
 		s["type"] = "string"
 	}
 	return s

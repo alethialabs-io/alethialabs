@@ -108,6 +108,7 @@ func flagValues(kind valueKind, raw json.RawMessage) ([]string, error) {
 			return nil, fmt.Errorf("want an array of strings")
 		}
 		return items, nil
+	case kindString:
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {
