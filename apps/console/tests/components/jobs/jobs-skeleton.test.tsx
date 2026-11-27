@@ -5,7 +5,8 @@
 // row is the one-row `ListToolbar`, and the skeleton is its `ListToolbarSkeleton`, built from the
 // same layout classes. jsdom has no layout, so what is pinned here is that the skeleton draws ONE
 // placeholder per control the list renders — the search, each facet (the Project facet exactly when
-// the list has one), the range — no description line, and the same table columns, on both routes.
+// the list has one), the two range controls — no description line, and the same table columns, on
+// both routes.
 
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -82,7 +83,8 @@ describe.each([
 		const drawn = skeletonToolbarOf(skeleton.container);
 		expect(drawn.querySelectorAll('[data-part="search"]')).toHaveLength(1);
 		expect(drawn.querySelectorAll('[data-part="facet"]')).toHaveLength(facets);
-		expect(drawn.querySelectorAll('[data-part="date-range"]')).toHaveLength(1);
+		// `JobsRangeControls` renders two range controls: the quick range and the date range (#7876).
+		expect(drawn.querySelectorAll('[data-part="date-range"]')).toHaveLength(2);
 		expect(drawn.querySelectorAll('[data-part="action"]')).toHaveLength(0);
 		expect(skeleton.container.querySelector('[data-slot="page-toolbar-skeleton"]')).toBeNull();
 		skeleton.unmount();

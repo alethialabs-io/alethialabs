@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /**
@@ -9,7 +10,10 @@ import { Skeleton } from "@repo/ui/skeleton";
  *
  * Without this file the route inherited `../loading.tsx` — the BILLING panel's skeleton, which is a
  * plan card and a few content lines, not a filtered table. Mirrors what this page renders: the back
- * link, the section header with its count pill, the filter bar, then the invoice rows.
+ * link, then `InvoicesPanel` — its `SettingsSection` heading row (the title and the hairline rule, no
+ * count beside it), its `ListToolbar` (no search; the Status facet, then the quick range and the
+ * date range it passes as `extra`), then the invoice rows. The toolbar is `ListToolbarSkeleton`, so
+ * it is built from the real row's own layout classes.
  */
 export default function InvoicesLoading() {
 	return (
@@ -17,20 +21,17 @@ export default function InvoicesLoading() {
 			{/* ← Billing */}
 			<Skeleton className="mb-4 h-4 w-20" />
 
-			{/* Section header + count pill. */}
-			<div className="mb-4 flex items-center gap-2.5">
-				<Skeleton className="h-5 w-24" />
-				<Skeleton className="h-4 w-8 rounded-full" />
-			</div>
+			<div className="mb-[18px]">
+				{/* `SettingsSection`'s heading row: the "Invoices" title and the rule after it. */}
+				<div className="mb-3 flex items-center gap-3">
+					<Skeleton className="h-4 w-24" />
+					<span className="h-px flex-1 bg-border" />
+				</div>
 
-			{/* Filter bar — status facet, quick range, date range. */}
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-8 w-28 rounded-md" />
-				<Skeleton className="h-8 w-32 rounded-md" />
-				<Skeleton className="h-8 w-40 rounded-md" />
-			</div>
+				<ListToolbarSkeleton search={false} facets={1} extra={["control", "control"]} />
 
-			<DataTableSkeleton columns={5} rows={8} />
+				<DataTableSkeleton columns={6} rows={8} />
+			</div>
 		</div>
 	);
 }
