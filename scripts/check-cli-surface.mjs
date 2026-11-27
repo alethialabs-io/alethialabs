@@ -25,7 +25,7 @@
 // ── THE REQUIREMENT THAT OUTRANKS THE NUMBERS ────────────────────────────────────────────────
 //
 // A COUNTER THAT FINDS NOTHING MUST BE DISTINGUISHABLE FROM A COUNTER THAT FINDS NOTHING WRONG.
-// `cli_gap = 0` was once green while the product was unusable. All four counters here therefore
+// `cli_gap = 0` was once green while the product was unusable. All five counters here therefore
 // carry an explicit vacuity refusal, and each refusal exits 1 with a message naming the census
 // that came back empty:
 //
@@ -34,6 +34,8 @@
 //   allowlist rows    refuses when `apps/cli/cmd` itself is missing — an absence check run
 //                     against a tree that is not there proves nothing (see counter 3)
 //   unlocked mirrors  refuses when it finds ZERO `Mirrors the Go X` claims to check
+//   examples          refuses when it parses ZERO registry entries (`[]cmdmeta.Meta{…}`), fewer
+//                     than its floor, or zero runnable commands to hold them against
 //
 // Bare zero is the floor, not the whole control. A counter that reads 3 of 35 docs pages is also
 // broken, and a bare-zero refusal cannot see that — so each corpus also has a CENSUS FLOOR
@@ -111,7 +113,7 @@
 //     with no claim, or a phrase with no type in it) is not a finding, and an UNENFORCED claim (a
 //     backticked type no mechanism answers) is.
 //
-// ── THE FOUR COUNTERS ────────────────────────────────────────────────────────────────────────
+// ── THE FIVE COUNTERS ────────────────────────────────────────────────────────────────────────
 //
 // 1 · HANDOFFS. `<placeholder>` tokens a reader must copy from one command's output into the next,
 //     in the golden-path docs (`apps/docs/content/docs/{reference/cli,get-started}/**/*.mdx`). An example carrying
@@ -157,6 +159,18 @@
 //     vocabulary (`GoType:`) or a named entry in `unlockableClaims`. Both halves are read out of
 //     that file rather than restated here, so the census cannot claim a lock the test does not
 //     have. A claim in any OTHER file is unlocked by construction — nothing is watching it.
+//
+// 5 · EXAMPLES (#6954, CLI-L14). Runnable commands with no example in the command registry. The
+//     registry (`apps/cli/pkg/cmdmeta`, entries in `apps/cli/cmd/meta_*.go` and beside a command)
+//     is where `--help`, the man pages and the generated docs reference (`apps/cli/tools/gendocs`)
+//     all take their examples from, so a command without one ships with none anywhere. "Runnable"
+//     is counter 2's set, walked the same way: a command the registry HIDES (a capability that is
+//     off, a cloud that is not offered) is still counted, because it still runs when named and
+//     still prints its help. An entry is read from its LITERAL: `Examples: []cmdmeta.Example{…}`
+//     with at least one `Cmd:` inside. An `Examples:` that is not a literal cannot be read here
+//     and is a finding, not a pass — the same direction every other blind spot in this file errs.
+//     Examples use literal values or `--latest`, never a `<placeholder>`; counter 1 holds the
+//     docs to that and the generated docs inherit it.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -1002,31 +1016,7 @@ function censusFormCoverage(io, filesFloor) {
 
 	// Walk from the root. A command NOT reachable from rootCmd is not part of the user's surface —
 	// but it is also the shape a broken AddCommand parse takes, so the count is reported.
-	/** @type {Array<{varName: string, path: string[], ancestors: string[]}>} */
-	const stack = [{ varName: "rootCmd", path: [], ancestors: [] }];
-	/** @type {Array<{cmd: GoCommand, path: string, ancestors: string[]}>} */
-	const reachable = [];
-	const visited = new Set();
-	while (stack.length > 0) {
-		const item = stack.pop();
-		if (item === undefined) break;
-		if (visited.has(item.varName)) continue;
-		visited.add(item.varName);
-		const cmd = cmds.get(item.varName);
-		if (cmd === undefined) continue;
-		const isRoot = item.varName === "rootCmd";
-		if (!isRoot) {
-			if (cmd.hidden || cmd.nameToken === "help" || cmd.nameToken === "completion") continue;
-			reachable.push({ cmd, path: ["alethia", ...item.path, cmd.nameToken].join(" "), ancestors: item.ancestors });
-		}
-		for (const child of edges.get(item.varName) ?? []) {
-			stack.push({
-				varName: child,
-				path: isRoot ? [] : [...item.path, cmd.nameToken],
-				ancestors: isRoot ? [] : [...item.ancestors, item.varName],
-			});
-		}
-	}
+	const { reachable, visited } = reachableCommands(cmds, edges);
 
 	const runnable = reachable.filter((r) => r.cmd.runnable);
 	if (runnable.length === 0) {
@@ -1146,6 +1136,44 @@ function censusFormCoverage(io, filesFloor) {
 	};
 }
 
+/**
+ * The commands a user can reach, by a walk from `rootCmd` over the parsed `AddCommand` edges: every
+ * command below the root except a literal `Hidden: true` one, cobra's own `help` and `completion`,
+ * and everything beneath those. Shared by counters 2 and 5 so the two cannot disagree about which
+ * commands exist.
+ * @param {Map<string, GoCommand>} cmds
+ * @param {Map<string, string[]>} edges
+ * @returns {{reachable: Array<{cmd: GoCommand, path: string, ancestors: string[]}>, visited: Set<string>}}
+ */
+function reachableCommands(cmds, edges) {
+	/** @type {Array<{varName: string, path: string[], ancestors: string[]}>} */
+	const stack = [{ varName: "rootCmd", path: [], ancestors: [] }];
+	/** @type {Array<{cmd: GoCommand, path: string, ancestors: string[]}>} */
+	const reachable = [];
+	const visited = new Set();
+	while (stack.length > 0) {
+		const item = stack.pop();
+		if (item === undefined) break;
+		if (visited.has(item.varName)) continue;
+		visited.add(item.varName);
+		const cmd = cmds.get(item.varName);
+		if (cmd === undefined) continue;
+		const isRoot = item.varName === "rootCmd";
+		if (!isRoot) {
+			if (cmd.hidden || cmd.nameToken === "help" || cmd.nameToken === "completion") continue;
+			reachable.push({ cmd, path: ["alethia", ...item.path, cmd.nameToken].join(" "), ancestors: item.ancestors });
+		}
+		for (const child of edges.get(item.varName) ?? []) {
+			stack.push({
+				varName: child,
+				path: isRoot ? [] : [...item.path, cmd.nameToken],
+				ancestors: isRoot ? [] : [...item.ancestors, item.varName],
+			});
+		}
+	}
+	return { reachable, visited };
+}
+
 // ── counter 3 · allowlist rows ────────────────────────────────────────────────────────────────
 
 /** The CLI's former shared-surface allowlist, deleted by #3664. Its PRESENCE is the violation. */
@@ -1154,10 +1182,11 @@ const ALLOWLIST_PATH = "apps/cli/cli-surface-allowlist.yaml";
 /**
  * The fewest files each corpus may read before its counter is REFUSED. Moved here verbatim from
  * the deleted allowlist's `scanned:` block (measured 2026-09-09: 35 CLI docs pages, 109 non-test
- * files in apps/cli/cmd). The corpora only grow, so these may be raised freely; lowering one is
+ * files in apps/cli/cmd). `cli_meta` is counter 5's: registry ENTRIES rather than files, measured
+ * 2026-11-27 at 170. The corpora only grow, so these may be raised freely; lowering one is
  * the change review stops.
  */
-const CENSUS_FLOORS = { cli_docs: 30, cli_cmd: 100 };
+const CENSUS_FLOORS = { cli_docs: 30, cli_cmd: 100, cli_meta: 140 };
 
 /**
  * Counter 3: the deleted allowlist must stay deleted.
@@ -1489,10 +1518,167 @@ function censusMirrors(io) {
 	return { name, method, refusal: null, value: unlocked, gap: unlocked, rendered: String(unlocked), notes, findings };
 }
 
+// ── counter 5 · examples ──────────────────────────────────────────────────────────────────────
+
+/** Where a registry entry list starts: `var metaX = []cmdmeta.Meta{`. */
+const META_SLICE = /\[\]cmdmeta\.Meta\s*\{/g;
+
+/**
+ * @typedef {object} MetaEntry
+ * @property {string} path      the entry's `Path:`, e.g. "alethia project list"
+ * @property {number} examples  `Cmd:` fields inside a literal `Examples: []cmdmeta.Example{…}`,
+ *                              written as an interpreted ("…") or a raw (`…`) string
+ * @property {boolean} unreadable  the entry has an `Examples:` this parse cannot read as a literal
+ * @property {string} file
+ */
+
+/**
+ * Every registry entry in the package: each top-level `{…}` inside a `[]cmdmeta.Meta{…}` literal,
+ * with its path and how many examples it writes down. Comments and strings between and inside
+ * entries are skipped with the same `literalEnd` the brace matcher uses, so a `{` in a note cannot
+ * open a phantom entry.
+ * @param {Io} io
+ * @param {string[]} files repo-relative .go paths
+ * @returns {MetaEntry[]}
+ */
+function parseRegistry(io, files) {
+	/** @type {MetaEntry[]} */
+	const out = [];
+	for (const file of files) {
+		const src = io.read(file);
+		for (const m of src.matchAll(META_SLICE)) {
+			const open = (m.index ?? 0) + m[0].length - 1;
+			const close = matchBrace(src, open);
+			if (close === -1) continue;
+			for (let i = open + 1; i < close; i++) {
+				const skip = literalEnd(src, i);
+				if (skip !== -1) {
+					i = skip;
+					continue;
+				}
+				if (src[i] !== "{") continue;
+				const end = matchBrace(src, i);
+				if (end === -1 || end > close) break;
+				const body = src.slice(i, end + 1);
+				i = end;
+				const path = /\bPath:\s*"((?:[^"\\]|\\.)*)"/.exec(body);
+				if (path === null) continue;
+				let examples = 0;
+				let unreadable = false;
+				const ex = /\bExamples:\s*/.exec(body);
+				if (ex !== null) {
+					const after = body.slice(ex.index + ex[0].length);
+					const lit = /^\[\]cmdmeta\.Example\s*\{/.exec(after);
+					if (lit === null) {
+						unreadable = true;
+					} else {
+						const litOpen = ex.index + ex[0].length + lit[0].length - 1;
+						const litClose = matchBrace(body, litOpen);
+						const inner = litClose === -1 ? "" : body.slice(litOpen, litClose + 1);
+						examples = [...inner.matchAll(/\bCmd:\s*["`]/g)].length;
+						unreadable = litClose === -1;
+					}
+				}
+				out.push({ path: path[1], examples, unreadable, file });
+			}
+		}
+	}
+	return out;
+}
+
+/**
+ * Counter 5: runnable commands with no example in the command registry.
+ * @param {Io} io
+ * @param {number} filesFloor the fewest .go files this census may read before it is refused
+ * @param {number} entriesFloor the fewest registry entries it may parse before it is refused
+ * @returns {Census}
+ */
+function censusExamples(io, filesFloor, entriesFloor) {
+	const name = "examples";
+	const method =
+		`registry entries parsed from every \`[]cmdmeta.Meta{…}\` literal across ${CLI_CMD_DIR}/*.go ` +
+		`(tests excluded), each read for a literal \`Examples: []cmdmeta.Example{…}\` holding a ` +
+		`\`Cmd:\`; held against counter 2's runnable set (Run/RunE, reachable from rootCmd, not ` +
+		`literal-Hidden, not cobra's help/completion). A command the registry hides is still counted`;
+
+	const files = io.list(CLI_CMD_DIR, ".go").filter((f) => !f.endsWith("_test.go"));
+	if (files.length < Math.max(1, filesFloor)) {
+		return refused(
+			name,
+			method,
+			`read ${files.length} non-test .go files under ${CLI_CMD_DIR}, below the floor of ` +
+				`${Math.max(1, filesFloor)}. "No command lacks an example" over a package that is not ` +
+				`there is the vacuous all-clear.`,
+		);
+	}
+	const entries = parseRegistry(io, files);
+	if (entries.length === 0) {
+		return refused(
+			name,
+			method,
+			`parsed ZERO registry entries from ${files.length} files. The \`[]cmdmeta.Meta{…}\` shape ` +
+				`changed or moved, and every command would read as missing its example — or, worse, ` +
+				`a future reader would make this counter skip what it cannot find.`,
+		);
+	}
+	if (entries.length < entriesFloor) {
+		return refused(
+			name,
+			method,
+			`parsed ${entries.length} registry entries, below the census floor of ${entriesFloor} in ` +
+				`CENSUS_FLOORS. The registry moved, or this parse stopped seeing most of it.`,
+		);
+	}
+	const cmds = parseCommands(io, files);
+	const funcs = parseFuncs(io, files);
+	const { edges } = parseEdges(io, files, funcs);
+	const runnable = reachableCommands(cmds, edges).reachable.filter((r) => r.cmd.runnable);
+	if (runnable.length === 0) {
+		return refused(
+			name,
+			method,
+			`parsed ${entries.length} registry entries but ZERO runnable commands to hold them ` +
+				`against. The command parse (counter 2's) stopped matching.`,
+		);
+	}
+
+	/** @type {Map<string, MetaEntry>} */
+	const byPath = new Map();
+	for (const e of entries) if (!byPath.has(e.path)) byPath.set(e.path, e);
+
+	/** @type {string[]} */
+	const findings = [];
+	for (const r of runnable) {
+		const e = byPath.get(r.path);
+		if (e === undefined) findings.push(`${r.path} (${r.cmd.file}) has no registry entry, so no example`);
+		else if (e.unreadable) findings.push(`${r.path} (${e.file}) has an \`Examples:\` that is not a literal this census can read`);
+		else if (e.examples === 0) findings.push(`${r.path} (${e.file}) has no example`);
+	}
+	const runnablePaths = new Set(runnable.map((r) => r.path));
+	const elsewhere = entries.filter((e) => !runnablePaths.has(e.path)).length;
+	return {
+		name,
+		method,
+		refusal: null,
+		value: findings.length,
+		gap: findings.length,
+		rendered: `${findings.length} of ${runnable.length} runnable commands without an example`,
+		notes: [
+			`primary: ${entries.length} registry entries parsed, ${runnable.length} runnable commands, ` +
+				`${runnable.length - findings.length} of them with at least one example.`,
+			`${elsewhere} entr${elsewhere === 1 ? "y names" : "ies name"} a path outside the runnable set — ` +
+				`groups, cobra's help/completion, literal-Hidden commands. Whether an entry names a ` +
+				`command that exists at all is TestMeta_TheRegistryAndTheTreeAgree's question (it walks ` +
+				`the real tree), not this counter's.`,
+		],
+		findings,
+	};
+}
+
 // ── the run ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Run all four counters, with the corpus floors from CENSUS_FLOORS.
+ * Run all five counters, with the corpus floors from CENSUS_FLOORS.
  * @param {Io} io
  * @returns {Census[]}
  */
@@ -1502,6 +1688,7 @@ function runCensus(io) {
 		censusFormCoverage(io, CENSUS_FLOORS.cli_cmd),
 		censusAllowlist(io),
 		censusMirrors(io),
+		censusExamples(io, CENSUS_FLOORS.cli_cmd, CENSUS_FLOORS.cli_meta),
 	];
 }
 
@@ -1517,7 +1704,7 @@ function violations(censuses) {
 
 /**
  * Print the census and return the process exit code: 1 when any counter REFUSED or measured a
- * non-zero gap, 0 only when all four measured zero over a non-empty census. A refusal is printed in
+ * non-zero gap, 0 only when all five measured zero over a non-empty census. A refusal is printed in
  * place of the number it would otherwise have replaced, never beside one.
  * @param {Census[]} censuses
  * @param {boolean} asJson
@@ -1564,7 +1751,7 @@ function report(censuses, asJson) {
 		);
 	}
 	if (refusals.length > 0 || violated.length > 0) return 1;
-	console.log("All four counters measured a zero gap over a non-empty census.");
+	console.log("All five counters measured a zero gap over a non-empty census.");
 	return 0;
 }
 
@@ -2449,11 +2636,78 @@ function selfTest() {
 		);
 	}
 
+	// ── counter 5 · examples ──────────────────────────────────────────────────────────────────
+	console.log("\ncounter 5 · examples");
+	{
+		const root = 'package cmd\nvar rootCmd = &cobra.Command{Use: "alethia"}\n';
+		const cmdsSrc =
+			'var aCmd = &cobra.Command{\n\tUse: "list",\n\tRun: func() { fmt.Println(1) },\n}\n' +
+			'var bCmd = &cobra.Command{\n\tUse: "get [id]",\n\tRunE: func() error { return nil },\n}\n' +
+			"func init() { rootCmd.AddCommand(aCmd, bCmd) }\n";
+		/** @param {string} meta @returns {Io} */
+		const tree = (meta) => memoryIo({ [`${CLI_CMD_DIR}/root.go`]: root + cmdsSrc, [`${CLI_CMD_DIR}/meta_x.go`]: meta });
+
+		const dirty = censusExamples(
+			tree(
+				"var metaX = []cmdmeta.Meta{\n" +
+					'\t// a comment with a { brace\n' +
+					'\t{Path: "alethia list", Output: cmdmeta.OutputTable, Examples: []cmdmeta.Example{{Cmd: "alethia list", Note: "a } brace"}}},\n' +
+					'\t{Path: "alethia get", Output: cmdmeta.OutputTable},\n' +
+					"}\n",
+			),
+			1,
+			1,
+		);
+		ok(
+			"a runnable command whose entry has no example is a finding",
+			dirty.refusal === null && dirty.gap === 1 && dirty.findings.length === 1 && dirty.findings[0].startsWith("alethia get "),
+		);
+
+		const missing = censusExamples(
+			tree('var metaX = []cmdmeta.Meta{\n\t{Path: "alethia list", Examples: []cmdmeta.Example{{Cmd: "alethia list"}}},\n}\n'),
+			1,
+			1,
+		);
+		ok("a runnable command with NO entry is a finding too", missing.gap === 1 && missing.findings[0].includes("no registry entry"));
+
+		const opaque = censusExamples(
+			tree(
+				'var metaX = []cmdmeta.Meta{\n\t{Path: "alethia list", Examples: listExamples},\n' +
+					'\t{Path: "alethia get", Examples: []cmdmeta.Example{{Cmd: "alethia get --latest"}}},\n}\n',
+			),
+			1,
+			1,
+		);
+		ok("an Examples: this parse cannot read is a finding, never a pass", opaque.gap === 1 && opaque.findings[0].includes("not a literal"));
+
+		const clean = censusExamples(
+			tree(
+				"var metaX = []cmdmeta.Meta{\n" +
+					'\t{Path: "alethia list", Examples: []cmdmeta.Example{{Cmd: "alethia list"}}},\n' +
+					'\t{\n\t\tPath: "alethia get",\n\t\tExamples: []cmdmeta.Example{\n\t\t\t{Cmd: `alethia get "My thing"`, Note: "a raw string"},\n\t\t},\n\t},\n' +
+					"}\n",
+			),
+			1,
+			1,
+		);
+		ok("every runnable command with an example is a clean zero", clean.refusal === null && clean.gap === 0 && clean.value === 0);
+
+		ok(
+			"a package with NO registry entries is a refusal, not 'every command lacks one'",
+			censusExamples(tree("package cmd\n"), 1, 1).refusal !== null,
+		);
+		ok(
+			"a registry below its entry floor is a refusal",
+			censusExamples(tree('var metaX = []cmdmeta.Meta{\n\t{Path: "alethia list"},\n}\n'), 1, 5).refusal !== null,
+		);
+		ok("an empty tree is a refusal", censusExamples(memoryIo({}), 1, 1).refusal !== null);
+	}
+
 	// ── the run, and the parser ───────────────────────────────────────────────────────────────
 	console.log("\nthe run");
 	{
 		const anyRefusal = runCensus(memoryIo({}));
-		ok("an empty repository refuses ALL FOUR counters", anyRefusal.every((c) => c.refusal !== null));
+		ok("an empty repository refuses ALL FIVE counters", anyRefusal.length === 5 && anyRefusal.every((c) => c.refusal !== null));
 		ok("...and none of them renders a number", anyRefusal.every((c) => c.rendered === "REFUSED"));
 		ok("a refused run reports a non-zero exit code", silently(() => report(anyRefusal, true)) === 1);
 
@@ -2462,9 +2716,9 @@ function selfTest() {
 		// value IS the process exit code — rather than through violations() alone.
 		/** @param {string} name @param {number} gap @returns {Census} */
 		const measured = (name, gap) => ({ name, method: "fixture", refusal: null, value: gap, gap, rendered: String(gap), notes: [], findings: [] });
-		const clean = ["handoffs", "form coverage", "allowlist entries", "unlocked mirrors"].map((n) => measured(n, 0));
-		ok("four zero gaps exit 0", silently(() => report(clean, true)) === 0);
-		for (const i of [0, 1, 2, 3]) {
+		const clean = ["handoffs", "form coverage", "allowlist entries", "unlocked mirrors", "examples"].map((n) => measured(n, 0));
+		ok("five zero gaps exit 0", silently(() => report(clean, true)) === 0);
+		for (const i of [0, 1, 2, 3, 4]) {
 			const one = clean.map((c, k) => (k === i ? measured(c.name, 1) : c));
 			ok(`a gap of 1 in ${clean[i].name} exits 1`, silently(() => report(one, true)) === 1 && violations(one).length === 1);
 		}
@@ -2507,7 +2761,7 @@ function selfTest() {
 const USAGE = [
 	"Usage: node scripts/check-cli-surface.mjs [--json|--self-test|--help]",
 	"",
-	"  (no flag)      run the census, print the four counters with their methods, enforce them",
+	"  (no flag)      run the census, print the five counters with their methods, enforce them",
 	"  --json         the same census as a machine-readable record, findings included",
 	"  --self-test    run the fixture suite; exit 1 on any failure",
 	"  --help         this text",

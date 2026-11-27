@@ -13,6 +13,12 @@ project_name: alethia
 before:
     hooks:
         - 'sh -c "cd apps/cli && go mod tidy"'
+        # The man pages and completion scripts, generated from the command registry
+        # (apps/cli/tools/gendocs). The archives, the Linux packages and the Homebrew formula below
+        # read them from these two directories; tools/gendocs/release_test.go holds the names here
+        # and there together. The version is linked in so each man page names its release.
+        - 'sh -c "rm -rf manpages completions && cd apps/cli && go run -ldflags=-X=github.com/alethialabs-io/alethialabs/apps/cli/internal/version.Version={{ .Version }} ./tools/gendocs -man ../../manpages -completions ../../completions"'
+        - 'sh -c "gzip -9n manpages/*.1"'
 
 builds:
     - id: alethia
@@ -43,6 +49,16 @@ archives:
       format_overrides:
           - goos: windows
             formats: ["zip"]
+      # Naming files replaces GoReleaser's default list, so the default's README, LICENSE and
+      # CHANGELOG globs are restated here.
+      files:
+          - "README*"
+          - "LICENSE*"
+          - "CHANGELOG*"
+          - src: "manpages/*"
+            dst: manpages
+          - src: "completions/*"
+            dst: completions
 
 checksum:
     name_template: "checksums.txt"
@@ -90,6 +106,10 @@ brews:
       # The install block for the formula.
       install: |
           bin.install "alethia"
+          bash_completion.install "completions/alethia.bash" => "alethia"
+          zsh_completion.install "completions/_alethia"
+          fish_completion.install "completions/alethia.fish"
+          man1.install Dir["manpages/*.1.gz"]
 
       test: |
           system "#{bin}/alethia", "--version"
@@ -126,6 +146,23 @@ nfpms:
           - rpm
           - apk
       bindir: /usr/bin
+      contents:
+          - src: ./manpages/*.1.gz
+            dst: /usr/share/man/man1/
+            file_info:
+                mode: 0644
+          - src: ./completions/alethia.bash
+            dst: /usr/share/bash-completion/completions/alethia
+            file_info:
+                mode: 0644
+          - src: ./completions/_alethia
+            dst: /usr/share/zsh/vendor-completions/_alethia
+            file_info:
+                mode: 0644
+          - src: ./completions/alethia.fish
+            dst: /usr/share/fish/vendor_completions.d/alethia.fish
+            file_info:
+                mode: 0644
 
 dockers:
     - image_templates:

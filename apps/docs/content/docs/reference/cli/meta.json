@@ -28,9 +28,11 @@
 		"cloud",
 		"organizations",
 		"agents",
+		"mcp",
 		"notifications",
 		"access",
 		"classification",
-		"billing"
+		"billing",
+		"errors"
 	]
 }

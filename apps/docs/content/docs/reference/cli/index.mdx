@@ -39,6 +39,7 @@ alethia
 ├── update                            # update through Homebrew, Scoop, or a verified standalone release
 ├── open [console|docs]               # aliases: docs, dashboard
 ├── completion [bash|zsh|fish|powershell]
+├── mcp [--tools read-only|standard|destructive] [--call-timeout <d>]   # serve the CLI to a coding agent over stdio
 ├── org                               # aliases: orgs
 │   ├── list
 │   ├── switch [org]                  # id, slug or name — asks when omitted
@@ -207,6 +208,165 @@ that hasn't armed it) is refused with `403`/`404`. High-blast verbs (`force-rele
 confirms at the terminal, naming the resource and the consequence; `-y`/`--yes` is how a runbook
 opts in ahead of time. Every id is optional: omit it and the command offers a list.
 </Callout>
+
+## Every command
+
+The tables below list every command that a default installation shows, by the group that
+`alethia --help` lists it under. They are generated from the CLI's command registry, the same
+source as `--help` and the man pages, so a command cannot be missing from them. The **Effect**
+column says what a command does outside the CLI: **Reads only**, **Changes** state, or **Removes**
+a record or a resource. It also says when a command queues a job that keeps running after the
+command returns, and when the command takes `--dry-run`.
+
+For what a failed command returns, see [errors and exit codes](/reference/cli/errors).
+
+{/* gendocs: commands */}
+
+### Start here
+
+| Command | What it does | Effect |
+| --- | --- | --- |
+| `alethia init` | Set up the CLI on this machine and write an alethia.yaml for this directory | Changes |
+| `alethia login` | Sign in to the control plane from the browser | Changes |
+| `alethia up` | From nothing to a running project: sign in, write alethia.yaml, and deploy it | Changes, queues a job |
+
+### Deploy
+
+| Command | What it does | Effect |
+| --- | --- | --- |
+| `alethia addon bump` | Open a pull request that moves a GitOps add-on to the chart version Alethia would seed | Changes |
+| `alethia addon disable` | Disable a catalog add-on in an environment | Removes |
+| `alethia addon enable` | Enable or reconfigure a catalog add-on in an environment | Changes |
+| `alethia addon list` | List the add-ons installed in a project environment | Reads only |
+| `alethia apply` | Create or update a project from alethia.yaml and deploy it | Changes, queues a job |
+| `alethia approve` | Open the console page where a person approves a deploy or destroy | Reads only |
+| `alethia chart attach` | Attach (or update) your own Helm chart in an environment | Changes |
+| `alethia chart detach` | Detach your own Helm chart from an environment | Removes |
+| `alethia chart list` | List the BYO Helm charts attached to a project environment | Reads only |
+| `alethia chart scan` | Scan an attached chart so it can be deployed | Changes, queues a job |
+| `alethia connector aws` | Connect an AWS account | Changes, `--dry-run` |
+| `alethia connector azure` | Connect an Azure subscription | Changes, `--dry-run` |
+| `alethia connector gcp` | Connect a Google Cloud project | Changes, `--dry-run` |
+| `alethia connector hetzner` | Connect a Hetzner Cloud account | Changes, `--dry-run` |
+| `alethia connector list` | List connected cloud accounts | Reads only |
+| `alethia connector remove` | Disconnect a cloud account | Removes, `--dry-run` |
+| `alethia export` | Write a project, or one environment of it, as alethia.yaml | Reads only |
+| `alethia fleet list` | List the managed fleet's warm pools | Reads only |
+| `alethia fleet set` | Create or resize one cloud's warm pool | Changes, `--dry-run` |
+| `alethia iac attach` | Attach your own Terraform/OpenTofu source to an environment | Changes |
+| `alethia iac detach` | Detach the environment's Terraform/OpenTofu source | Removes |
+| `alethia iac scan` | Scan the environment's IaC source so it can be deployed | Changes, queues a job |
+| `alethia iac show` | Show the BYO IaC source attached to a project environment | Reads only |
+| `alethia plan` | Show what `alethia apply` would create, without changing anything | Reads only |
+| `alethia project component add` | Add a component to a project | Changes, `--dry-run` |
+| `alethia project component kinds` | List the component kinds a project can use | Reads only |
+| `alethia project component list` | List a project's components | Reads only |
+| `alethia project component remove` | Remove a component from a project | Removes, `--dry-run` |
+| `alethia project create` | Create a new project | Changes, `--dry-run` |
+| `alethia project deploy` | Deploy a project environment's infrastructure | Changes, queues a job, `--dry-run` |
+| `alethia project design apply` | Apply a design document to an environment | Removes, `--dry-run` |
+| `alethia project destroy` | Destroy a project environment's infrastructure | Removes, queues a job, `--dry-run` |
+| `alethia project env add` | Add an environment to a project | Changes, `--dry-run` |
+| `alethia project env list` | List a project's environments | Reads only |
+| `alethia project get` | Show one project's configuration | Reads only |
+| `alethia project list` | List the projects in the active organization | Reads only |
+| `alethia project preview` | Preview what a deploy would change | Changes, queues a job, `--dry-run` |
+| `alethia runner deploy` | Have Alethia build a runner inside your AWS account | Changes, queues a job, `--dry-run` |
+| `alethia runner destroy` | Tear down a deployed runner's cloud resources | Removes, queues a job, `--dry-run` |
+| `alethia runner list` | List the runners that can take your jobs | Reads only |
+| `alethia runner register` | Register a runner you run yourself, on any cloud | Changes, `--dry-run` |
+| `alethia runner remove` | Delete a runner's record (tears nothing down) | Removes, `--dry-run` |
+
+### Inspect
+
+| Command | What it does | Effect |
+| --- | --- | --- |
+| `alethia activity` | Show the organization's activity log | Reads only |
+| `alethia cloud inventory` | Show the networks, subnets and regions discovered in a connected cloud account | Reads only |
+| `alethia cluster get` | Get a project's cluster, including kubeconfig and ArgoCD access | Reads only |
+| `alethia cluster kubeconfig` | Get a short-lived kubeconfig for a cluster, minted through Alethia | Changes |
+| `alethia cluster list` | List the clusters of every project environment | Reads only |
+| `alethia cluster token` | Print a cluster credential for kubectl (the exec plugin an Alethia kubeconfig runs) | Changes |
+| `alethia cost show` | Show the latest cost for a project environment | Reads only |
+| `alethia drift show` | Show the latest drift posture for a project | Reads only |
+| `alethia jobs cancel` | Cancel a queued or running job | Removes, `--dry-run` |
+| `alethia jobs get` | Show one job: its type, status, timings, verdict and warnings | Reads only |
+| `alethia jobs list` | List provisioning jobs, newest first | Reads only |
+| `alethia jobs logs` | Print a job's log, or follow it until the job ends | Reads only |
+| `alethia probes list` | List a project's latest per-environment cluster probes | Reads only |
+| `alethia promotion get` | Show a promotion's status and approval slots | Reads only |
+| `alethia promotion list` | List a project's promotions | Reads only |
+| `alethia protection list` | List a project's per-environment protection rules | Reads only |
+| `alethia provider status` | Show whether a cloud is connected and the identity Alethia uses on it | Reads only |
+| `alethia provider verify` | Run the health probe against a connected cloud account again | Changes |
+| `alethia repo list` | List repositories for a connected git provider | Reads only |
+| `alethia staged list` | List an environment's staged changes | Reads only |
+| `alethia verify receipt` | Fetch a job's evidence receipt and check its signature | Reads only |
+| `alethia verify show` | Show the per-control verification report behind a job's verdict | Reads only |
+
+### Organization
+
+| Command | What it does | Effect |
+| --- | --- | --- |
+| `alethia agent get` | Show an agent identity's persona, mission, and tool scope | Reads only |
+| `alethia agent list` | List the agent identities you can see | Reads only |
+| `alethia agent setup` | Connect Claude Code, Cursor, Codex or VS Code to this control plane | Changes, `--dry-run` |
+| `alethia alerts create` | Create an alert rule | Changes, `--dry-run` |
+| `alethia alerts delete` | Delete an alert rule | Removes, `--dry-run` |
+| `alethia alerts list` | List alert rules | Reads only |
+| `alethia billing` | Show the active organization's plan and subscription | Reads only |
+| `alethia channels create` | Create a notification channel | Changes, `--dry-run` |
+| `alethia channels delete` | Delete a notification channel | Removes, `--dry-run` |
+| `alethia channels list` | List notification channels | Reads only |
+| `alethia channels verify` | Send a test event through a channel and mark it verified | Changes, `--dry-run` |
+| `alethia classification assign` | Assign a classification value to a resource | Changes, `--dry-run` |
+| `alethia classification dimensions` | List the org's classification dimensions and values | Reads only |
+| `alethia classification show` | Show the classification values assigned to a resource | Reads only |
+| `alethia classification unassign` | Clear a classification value from a resource | Removes, `--dry-run` |
+| `alethia grants add` | Assign an access grant | Changes, `--dry-run` |
+| `alethia grants list` | List access grants | Reads only |
+| `alethia grants remove` | Revoke an access grant | Removes, `--dry-run` |
+| `alethia members add` | Invite a member to the active organization | Changes, `--dry-run` |
+| `alethia members list` | List members of the active organization | Reads only |
+| `alethia members remove` | Remove a member from the active organization | Removes, `--dry-run` |
+| `alethia org list` | List the organizations you belong to | Reads only |
+| `alethia org settings` | Show the active organization's general settings | Reads only |
+| `alethia org switch` | Switch the active organization | Changes |
+| `alethia roles create` | Create a custom role | Changes, `--dry-run` |
+| `alethia roles delete` | Delete a custom role | Removes, `--dry-run` |
+| `alethia roles list` | List roles (built-in templates + custom roles) | Reads only |
+| `alethia sso get` | Show a single SSO provider | Reads only |
+| `alethia sso list` | List configured SSO providers | Reads only |
+| `alethia teams create` | Create a team in the active organization | Changes, `--dry-run` |
+| `alethia teams delete` | Delete a team from the active organization | Removes, `--dry-run` |
+| `alethia teams list` | List teams in the active organization | Reads only |
+| `alethia token create` | Mint a service-account token (shown ONCE) | Changes, `--dry-run` |
+| `alethia token list` | List this organization's service-account tokens | Reads only |
+| `alethia token revoke` | Revoke a service-account token | Removes, `--dry-run` |
+| `alethia usage` | Show the active organization's current usage | Reads only |
+
+### Settings
+
+| Command | What it does | Effect |
+| --- | --- | --- |
+| `alethia auth status` | Show who you are signed in as, where the credential is stored and when it expires | Reads only |
+| `alethia completion bash` | Generate the autocompletion script for bash | Reads only |
+| `alethia completion fish` | Generate the autocompletion script for fish | Reads only |
+| `alethia completion powershell` | Generate the autocompletion script for powershell | Reads only |
+| `alethia completion zsh` | Generate the autocompletion script for zsh | Reads only |
+| `alethia config` | Show or edit CLI configuration | Reads only |
+| `alethia config clear-context` | Clear the active organization context | Changes |
+| `alethia config get` | Get a config value | Reads only |
+| `alethia config set` | Set a config value | Changes |
+| `alethia help` | Help about any command | Reads only |
+| `alethia logout` | Sign out and delete the stored credential and cached kubeconfig credentials | Changes |
+| `alethia mcp` | Serve this CLI's commands to a coding agent as a local MCP server over stdio | Reads only |
+| `alethia open` | Open the Alethia console or the docs in your browser | Reads only |
+| `alethia update` | Update this CLI to the newest release | Changes |
+| `alethia version` | Print the version of this CLI, with the commit it was built from | Reads only |
+| `alethia whoami` | Show the current user and active organization | Reads only |
+
+{/* /gendocs */}
 
 ## Interactive Selection
 
