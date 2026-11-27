@@ -43,6 +43,13 @@ const END = "ml-auto flex items-center gap-2.5";
 const CONTROL_SKELETON = "h-8 w-24 rounded-none";
 // `FilterSearch`'s field height.
 const SEARCH_SKELETON = "h-9 rounded-sm";
+// The box each named `extra` size stands in for. `control` is the `size="sm"` button above; `icon`
+// is `FunnelFilter`'s trigger, a square `h-10 w-10` icon button — taller than the row's other
+// controls, so drawing it as a `control` left the skeleton row 4px short and 56px too wide.
+const EXTRA_SKELETON: Record<ListToolbarSkeletonExtra, string> = {
+	control: CONTROL_SKELETON,
+	icon: "size-10 rounded-none",
+};
 
 /** The props one `FacetFilter` takes; `ListToolbar` renders one per entry, in order. */
 export type ListToolbarFacet = React.ComponentProps<typeof FacetFilter>;
@@ -153,13 +160,29 @@ export function ListToolbar({
 	);
 }
 
+/**
+ * The size of one `extra` placeholder, named for the control it stands in for rather than given in
+ * pixels, so a skeleton cannot carry a number the real control does not have:
+ *
+ * - `control` — a `size="sm"` button (`FacetFilter`, `QuickRangeFilter`, `DateRangeFilter`).
+ * - `icon` — `FunnelFilter`'s square trigger.
+ */
+export type ListToolbarSkeletonExtra = "control" | "icon";
+
 export interface ListToolbarSkeletonProps {
 	/** The real toolbar has a search. Defaults to true. */
 	search?: boolean;
 	/** How many facets the real toolbar shows. */
 	facets?: number;
-	/** The real toolbar has a date-range control. */
-	dateRange?: boolean;
+	/**
+	 * The real toolbar's date-range controls: `true` for one, or how many (`QuickRangeFilter` plus
+	 * `DateRangeFilter` is 2).
+	 */
+	dateRange?: boolean | number;
+	/**
+	 * The real toolbar's `extra` controls, one size per control in order, or a single size for one.
+	 */
+	extra?: ListToolbarSkeletonExtra | readonly ListToolbarSkeletonExtra[];
 	/** The real toolbar has a view switch. */
 	view?: boolean;
 	/** How many action buttons the real toolbar shows. */
@@ -177,24 +200,39 @@ export interface ListToolbarSkeletonProps {
  *
  * @example
  * <ListToolbarSkeleton facets={2} actions={1} />
+ * <ListToolbarSkeleton facets={4} dateRange={2} />
+ * <ListToolbarSkeleton extra="icon" />
  */
 export function ListToolbarSkeleton({
 	search = true,
 	facets = 0,
 	dateRange = false,
+	extra = [],
 	view = false,
 	actions = 0,
 	className,
 }: ListToolbarSkeletonProps) {
 	const hasEnd = view || actions > 0;
-	if (!search && facets <= 0 && !dateRange && !hasEnd) return null;
+	const ranges = rangeCount(dateRange);
+	const extras = typeof extra === "string" ? [extra] : extra;
+	if (!search && facets <= 0 && ranges === 0 && extras.length === 0 && !hasEnd) return null;
 	return (
 		<div data-slot="list-toolbar-skeleton" aria-hidden className={cn(ROW, className)}>
 			{search ? <Skeleton data-part="search" className={cn(SEARCH, SEARCH_SKELETON)} /> : null}
 			{Array.from({ length: Math.max(0, facets) }, (_, i) => (
 				<Skeleton key={`facet-${i}`} data-part="facet" className={CONTROL_SKELETON} />
 			))}
-			{dateRange ? <Skeleton data-part="date-range" className={CONTROL_SKELETON} /> : null}
+			{Array.from({ length: ranges }, (_, i) => (
+				<Skeleton key={`date-range-${i}`} data-part="date-range" className={CONTROL_SKELETON} />
+			))}
+			{extras.map((size, i) => (
+				<Skeleton
+					key={`extra-${i}`}
+					data-part="extra"
+					data-size={size}
+					className={EXTRA_SKELETON[size]}
+				/>
+			))}
 			{hasEnd ? (
 				<div className={END}>
 					{view ? <Skeleton data-part="view" className={CONTROL_SKELETON} /> : null}
@@ -205,4 +243,10 @@ export function ListToolbarSkeleton({
 			) : null}
 		</div>
 	);
+}
+
+/** How many date-range placeholders `dateRange` asks for: `true` is one, a number is that many. */
+function rangeCount(dateRange: boolean | number): number {
+	if (typeof dateRange === "number") return Math.max(0, Math.floor(dateRange));
+	return dateRange ? 1 : 0;
 }

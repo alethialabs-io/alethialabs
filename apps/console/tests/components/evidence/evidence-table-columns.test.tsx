@@ -90,6 +90,15 @@ describe("evidence column widths (F019)", () => {
 		expect(wrapper?.className).toMatch(/(^|\s)min-w-full(\s|$)/);
 	});
 
+	it("the loading skeleton's toolbar is the page's: the search, then the funnel as `extra` (#7876)", () => {
+		const { container } = render(<EvidenceSkeleton />);
+		const row = container.querySelector('[data-slot="list-toolbar-skeleton"]');
+		const parts = [...(row?.children ?? [])].map((el) => el.getAttribute("data-part"));
+		expect(parts).toEqual(["search", "extra"]);
+		// FunnelFilter's trigger is a 40px square, not a facet's `size="sm"` button.
+		expect(row?.querySelector('[data-part="extra"]')?.getAttribute("data-size")).toBe("icon");
+	});
+
 	it("the loading skeleton draws the table's own header cells, widths and all", () => {
 		const { container } = render(<EvidenceSkeleton />);
 		expect(container.querySelector("colgroup")).toBeNull();

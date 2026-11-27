@@ -12,8 +12,9 @@ import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
  * The loading form of the jobs list (`JobsClient`), in the order and the boxes it renders:
  *
  * - the one-row `ListToolbar` — the search, one placeholder per facet (Author, Environment, Project
- *   on the org route only, Status, Type) and the range. No count (the list standard carries no list
- *   sizes) and no description line (polish-wave spec §3, #7738);
+ *   on the org route only, Status, Type) and the two range controls `JobsRangeControls` renders (the
+ *   quick range, then the date range). No count (the list standard carries no list sizes) and no
+ *   description line (polish-wave spec §3, #7738);
  * - the table — Type, Status, Project (org route only), Runner, Environment, Initiated. It grows
  *   with the page, as the list's does (the keyset footer's scroll sentinel watches the viewport, so
  *   the list has no fixed-height scroll frame); the rows landing extend it downward and move
@@ -25,7 +26,7 @@ import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";
 export function JobsListSkeleton({ showProject = true }: { showProject?: boolean }) {
 	return (
 		<div className="space-y-6" aria-busy inert data-slot="jobs-list-skeleton">
-			<ListToolbarSkeleton facets={showProject ? 5 : 4} dateRange />
+			<ListToolbarSkeleton facets={showProject ? 5 : 4} dateRange={2} />
 			<DataTableSkeleton columns={showProject ? 6 : 5} rows={11} />
 		</div>
 	);

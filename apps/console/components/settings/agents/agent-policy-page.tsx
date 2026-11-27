@@ -31,7 +31,6 @@ import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
 import { RegionError } from "@repo/ui/region-error";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Switch } from "@repo/ui/switch";
@@ -81,7 +80,6 @@ import {
 	lastChangedLine,
 	noProdConsequence,
 	offBannerBody,
-	policyDescription,
 	readOnlyBody,
 	savedMessage,
 	turnOffTitle,
@@ -279,8 +277,6 @@ export function AgentPolicyPage() {
 	return (
 		<div className="space-y-6">
 			{on ? null : <AccessOffBanner org={org} onTurnOn={canManage ? turnOn : null} busy={busy} />}
-
-			<PageToolbar description={policyDescription(org)} />
 
 			{canManage ? null : (
 				<Alert role="status">

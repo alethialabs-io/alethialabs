@@ -23,11 +23,6 @@ export const TTL_PRESET_LABELS: readonly TtlPresetLabel[] = [
 	{ minutes: 1440, label: "24 hours" },
 ];
 
-/** The page's one-line description, carried by `PageToolbar`. */
-export function policyDescription(org: string): string {
-	return `Decide what agents may do in ${org}, and how approvals work for everything that isn't a person in the console.`;
-}
-
 /** The kill switch's title, which is also its accessible name. */
 export function accessTitle(org: string): string {
 	return `Let agents work in ${org}`;
