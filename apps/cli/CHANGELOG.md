@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.13.0...cli-v0.14.0) (2026-11-27)
+
+
+### Features
+
+* **cli,console:** requests made through alethia mcp are held to the org's agent policy ([#7921](https://github.com/alethialabs-io/alethialabs/issues/7921)) ([#7931](https://github.com/alethialabs-io/alethialabs/issues/7931)) ([1c5ce57](https://github.com/alethialabs-io/alethialabs/commit/1c5ce574b2efcba4cd61fca5b4abd9f813eef647))
+* **cli:** alethia mcp — the CLI as a local stdio MCP server ([#6866](https://github.com/alethialabs-io/alethialabs/issues/6866)) ([#7916](https://github.com/alethialabs-io/alethialabs/issues/7916)) ([66fb960](https://github.com/alethialabs-io/alethialabs/commit/66fb96020013f00769a9abf9e5dba43e1c754fb6))
+* **cli:** generated docs reference, man pages and completions from the command registry ([#6954](https://github.com/alethialabs-io/alethialabs/issues/6954)) ([#7932](https://github.com/alethialabs-io/alethialabs/issues/7932)) ([0434639](https://github.com/alethialabs-io/alethialabs/commit/0434639f18f835a3099e49b24068a336116e8cc3))
+
+
+### Bug Fixes
+
+* **cli:** alethia mcp refuses unsupported envelope revisions with -32022 and stamps 2026-07-28 result metadata ([#7941](https://github.com/alethialabs-io/alethialabs/issues/7941)) ([#7942](https://github.com/alethialabs-io/alethialabs/issues/7942)) ([e0ea5b2](https://github.com/alethialabs-io/alethialabs/commit/e0ea5b25fa10c3582a69237bca22ec49da4e0637))
+
 ## [0.13.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.12.0...cli-v0.13.0) (2026-11-27)
 
 
