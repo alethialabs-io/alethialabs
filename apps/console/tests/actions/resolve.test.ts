@@ -7,7 +7,7 @@
 // membership/404 throws, the active-org sync, and the returned shapes.
 //
 // currentActor MUST be mocked directly: the org-shared slug resolvers (resolveProjectId /
-// getProjectSlug / getEnvironmentsForSlug) call it, and its real getActiveScope() hits the ee
+// getProjectSlug) call it, and its real getActiveScope() hits the ee
 // resolver — `core.db.execute(<member lookup>)` — under the enterprise build (CI). With @/lib/db
 // mocked (no `execute`), the real path throws "core.db.execute is not a function"; the community
 // build accidentally hides it (getActiveScope is DB-free there). So stub currentActor at the seam.
@@ -23,7 +23,6 @@ vi.mock("@/app/server/actions/workspace", () => ({
 
 import {
 	getActiveOrgSlug,
-	getEnvironmentsForSlug,
 	getProjectSlug,
 	resolveOrgScope,
 	resolveProjectId,
@@ -64,18 +63,6 @@ function mockActorScope(...results: unknown[][]) {
 	vi.mocked(withActorScope).mockImplementation(
 		(async (_actor: { userId: string; orgId: string }, cb: (tx: unknown) => unknown) =>
 			cb(makeChain(results))) as never,
-	);
-}
-
-/**
- * Stub withActorScope so its Nth call runs its callback with a tx chain seeded with the Nth list of
- * results — for a read that opens more than one transaction.
- */
-function mockActorScopePerTransaction(...transactions: unknown[][][]) {
-	const queue = [...transactions];
-	vi.mocked(withActorScope).mockImplementation(
-		(async (_actor: { userId: string; orgId: string }, cb: (tx: unknown) => unknown) =>
-			cb(makeChain(queue.shift() ?? []))) as never,
 	);
 }
 
@@ -230,24 +217,5 @@ describe("getProjectSlug", () => {
 	it("returns null when the project id isn't in scope", async () => {
 		mockActorScope([]);
 		await expect(getProjectSlug("proj-x")).resolves.toBeNull();
-	});
-});
-
-describe("getEnvironmentsForSlug", () => {
-	it("returns [] when the project slug doesn't resolve", async () => {
-		mockActorScope([]); // project lookup empty
-		await expect(getEnvironmentsForSlug("nope")).resolves.toEqual([]);
-	});
-
-	it("lists the project's environments when the slug resolves", async () => {
-		const envs = [
-			{ id: "env-1", name: "staging", stage: "staging", is_default: true },
-			{ id: "env-2", name: "prod", stage: "production", is_default: false },
-		];
-		// Two transactions since #7736: the per-request project lookup it shares with
-		// resolveProjectId, then the env list.
-		mockActorScopePerTransaction([[{ id: "proj-1" }]], [envs]);
-		await expect(getEnvironmentsForSlug("api")).resolves.toEqual(envs);
-		expect(withActorScope).toHaveBeenCalledTimes(2);
 	});
 });

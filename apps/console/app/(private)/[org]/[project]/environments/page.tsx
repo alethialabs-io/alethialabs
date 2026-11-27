@@ -75,13 +75,11 @@ export default async function ProjectEnvironmentsPage({
 		queryClient.prefetchQuery(overview),
 		prefetchEnvironmentsLists(queryClient, project, paramReader(await searchParams)),
 	]);
-	const envs = queryClient.getQueryData(overview.queryKey)?.envs;
-	if (envs !== undefined) {
-		await prefetchClassificationOfList(
-			queryClient,
-			"project_environment",
-			envs.map((e) => e.id),
-		);
+	// The overview's facts are keyed by environment id, in the order the view lists them (the default
+	// first, then oldest first — #7895), so their keys are the view's batch key exactly.
+	const facts = queryClient.getQueryData(overview.queryKey)?.facts;
+	if (facts !== undefined) {
+		await prefetchClassificationOfList(queryClient, "project_environment", Object.keys(facts));
 	}
 
 	return (
