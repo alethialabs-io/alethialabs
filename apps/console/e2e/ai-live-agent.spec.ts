@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Elench agent against a REAL model, feature by feature (the AI soak, epic "AI feature soak
-// before 2026-12-12"). Runs in the `elench-live` project: nightly at Haiku, and several times a day
-// across the AI tiers from the soak jobs in e2e-ai-nightly.yml until the promotional credit expires.
+// The Elench agent against a REAL model, feature by feature (written for the AI soak, epic #7840).
+// Runs in the `elench-live` project: nightly at Haiku (e2e-ai-nightly.yml), and on a PR that changes
+// the agent's code (e2e-ai-nightly.yml on the PR, until 2026-12-12). The soak's tier crons were removed 2026-11-27.
 //
 // What each journey asserts is BEHAVIOUR, never wording: which tool family ran (by the tool frame's
 // name and its "Completed" status), whether a person-approval card appeared, whether the grid got a
@@ -47,8 +47,9 @@ const THINKING_MODEL = "anthropic/claude-sonnet-4-6";
  * Whether this console meters AI usage into the ledger. A console with no billing provider is the
  * self-host shape: `assertAiAllowed` returns a zero fixed charge and NOTHING is written to
  * `ai_usage_ledger` (lib/billing/ai-guard.ts, "Self-host bypass"), so a ledger assertion there can
- * only read zero. The soak jobs in e2e-ai-nightly.yml boot the console with Stripe's TEST key — the hosted shape
- * production runs — and the ledger journeys run there; the nightly has no key and skips them.
+ * only read zero. A run that boots the console with Stripe's TEST key (the hosted shape production
+ * runs) exercises the ledger journeys; the nightly and the PR run have no key and skip them. The soak
+ * jobs that booted that shape were removed on 2026-11-27 (epic #7840).
  */
 const METERED = Boolean(process.env.STRIPE_SECRET_KEY);
 

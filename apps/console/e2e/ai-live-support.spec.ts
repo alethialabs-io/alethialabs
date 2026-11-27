@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The support "Ask AI" chat (/{org}/~/support/ask → POST /api/support/ask) against a REAL model —
-// the AI soak's support lane. Behaviour only: the answer streams to completion without the error
+// the AI soak's support lane (epic #7840); nightly at Haiku and on a PR that changes support AI code. Behaviour only: the answer streams to completion without the error
 // card, a how-to question is grounded in a tool, and a request to open a case raises the
 // person-approval card (`create_support_case` has no execute — nothing is filed until Submit).
 
