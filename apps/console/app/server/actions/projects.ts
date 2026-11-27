@@ -3830,13 +3830,24 @@ export interface EnvConsistency {
  * Builds the cross-environment consistency matrix: each promotable component (keyed by type + name)
  * marked per environment as present / differs / absent. `differs` = the component exists in more than
  * one env with a diverging *structural* signature (from `designInventory`).
+ *
+ * The environment list is the environments domain's canonical read (`projectEnvironmentsFor`,
+ * lib/rpc/procedures/environments.ts), memoised per request: inside the Environments page's render
+ * it is the select the overview already made, not a second one (#7895). It is asked for with the
+ * actor the `view` check answered with, so RLS scopes it exactly as before. The module is imported
+ * lazily, at call time: it imports this one, and every importer of this module need not load it.
  */
 export async function getEnvConsistency(
 	projectId: string,
 ): Promise<EnvConsistency> {
 	// A live-refetched read: quiet on allow, recorded once on refusal (see getProjectEnvironments).
-	await authorizeRead("view", { type: "project", id: projectId });
-	const { environments } = await getProjectEnvironments(projectId);
+	const actor = await authorizeRead("view", { type: "project", id: projectId });
+	const { projectEnvironmentsFor } = await import("@/lib/rpc/procedures/environments");
+	// The default first, then oldest first — the order the matrix's columns read in. A copy: the
+	// memoised rows are shared with every other reader in the request.
+	const environments = [...(await projectEnvironmentsFor(actor, projectId))].sort(
+		(a, b) => Number(b.is_default) - Number(a.is_default),
+	);
 	const designs = await Promise.all(
 		environments.map(async (e) => {
 			// Reading an env's design can throw (e.g. a since-deleted cloud identity). Degrade that

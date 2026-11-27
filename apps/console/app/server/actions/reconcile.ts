@@ -10,8 +10,8 @@
 
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
-import { getServiceDb, withActorScope } from "@/lib/db";
-import { environmentDrift, jobs, projectEnvironments } from "@/lib/db/schema";
+import { getServiceDb } from "@/lib/db";
+import { environmentDrift, jobs } from "@/lib/db/schema";
 import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { structuralHash } from "@/lib/promotions/diff";
 import { getLatestProbesByEnv } from "@/lib/probes/persistence";
@@ -92,17 +92,21 @@ export interface EnvReconcileState {
 	probe: EnvProbeState;
 }
 
-/** The reconcile state of every environment in a project (drift + config-vs-desired + auto-heal). */
+/**
+ * The reconcile state of every environment in a project (drift + config-vs-desired + auto-heal).
+ *
+ * The environment list is the environments domain's canonical read (`projectEnvironmentsFor`,
+ * lib/rpc/procedures/environments.ts), memoised per request: inside the Environments page's render
+ * it is the select the overview already made, not a second one (#7895). It is asked for with the
+ * actor the `view` check answered with, so RLS scopes it exactly as before. The module is imported
+ * lazily, at call time, because it imports this one.
+ */
 export async function getEnvReconcileStates(
 	projectId: string,
 ): Promise<EnvReconcileState[]> {
 	const actor = await authorize("view", { type: "project", id: projectId });
-	const envs = await withActorScope(actor, (tx) =>
-		tx
-			.select()
-			.from(projectEnvironments)
-			.where(eq(projectEnvironments.project_id, projectId)),
-	);
+	const { projectEnvironmentsFor } = await import("@/lib/rpc/procedures/environments");
+	const envs = await projectEnvironmentsFor(actor, projectId);
 
 	// Latest cluster-alive probe per env (BYOC B2), fetched once for the project (org-scoped join
 	// inside). Envs never probed are simply absent → the badge shows null (never probed).

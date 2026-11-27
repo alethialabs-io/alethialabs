@@ -15,9 +15,10 @@
 //     entry the topbar switcher reads, seeded by the `[project]` layout. WHICH environments the
 //     panels list, and their names, stages and default, come from here, so the switcher and the page
 //     can never disagree about what exists;
-//   · `environments.overview` — the panels' facts about each of them (status, BYO admission) and the
-//     rest of the page (the failure notices, the active promotion, the matrix, the promote dialog),
-//     which need EVERY environment whatever the bar selects. Joined to the canonical list by id;
+//   · `environments.overview` — the panels' facts about each of them (status, BYO admission), keyed
+//     by id and carrying no names or stages of its own (#7895), and the rest of the page (the failure
+//     notices, the active promotion, the matrix, the promote dialog), which need EVERY environment
+//     whatever the bar selects. Joined to the canonical list by id;
 //   · `environments.page` — the TABLE's rows, one keyset page at a time, paged in memory on the
 //     server (lib/queries/environments.ts) and joined here to the overview's record of each;
 //   · `environments.promotions` — the promotions history, its own SQL keyset read
@@ -74,7 +75,7 @@ import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut"
 import type { EnvironmentFacetSet, EnvironmentFacts } from "@/lib/queries/environments";
 import { envHref } from "@/lib/routing";
 import { orpc } from "@/lib/rpc/client";
-import type { EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
+import type { EnvFacts, EnvironmentsOverview, EnvRow } from "@/lib/rpc/procedures/environments";
 import { readRefusalOf } from "@/lib/rpc/refusal";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEnvironmentsFilters } from "@/lib/stores/use-environments-filters";
@@ -116,13 +117,16 @@ export const FAILED_NOTICE =
  * environment the overview does not (yet) hold is left out until both reads agree — the stream
  * invalidates them together — exactly as a table row the overview does not hold is.
  */
-export function listedEnvironments(canonical: readonly SwitcherEnv[], facts: readonly EnvRow[]): EnvRow[] {
-	const factsById = new Map(facts.map((env) => [env.id, env]));
+export function listedEnvironments(
+	canonical: readonly SwitcherEnv[],
+	facts: Readonly<Record<string, EnvFacts>>,
+): EnvRow[] {
 	const listed: EnvRow[] = [];
 	for (const env of canonical) {
-		const known = factsById.get(env.id);
+		// An own-property read: the record is keyed by environment id, nothing else.
+		const known = Object.hasOwn(facts, env.id) ? facts[env.id] : undefined;
 		if (!known) continue;
-		listed.push({ ...known, name: env.name, stage: env.stage, is_default: env.is_default });
+		listed.push({ ...known, id: env.id, name: env.name, stage: env.stage, is_default: env.is_default });
 	}
 	// Stable: within each half the canonical order (oldest first) is kept.
 	return listed.sort((a, b) => Number(b.is_default) - Number(a.is_default));
@@ -220,7 +224,7 @@ function EnvironmentsBody({
 	busy: boolean;
 }) {
 	const { projectId, consistency, reconcile, activePromotion, protectionByEnv } = data;
-	const envs = useMemo(() => listedEnvironments(canonical, data.envs), [canonical, data.envs]);
+	const envs = useMemo(() => listedEnvironments(canonical, data.facts), [canonical, data.facts]);
 	const filters = useEnvironmentsFilters((s) => s.filters);
 	const set = useEnvironmentsFilters((s) => s.set);
 	const reset = useEnvironmentsFilters((s) => s.reset);

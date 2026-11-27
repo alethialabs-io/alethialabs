@@ -139,10 +139,13 @@ describeIfDb("the Environments page's reads follow project visibility (#6120)", 
 	});
 
 	describe("the control: a viewer without the deny", () => {
-		it("reads P's overview, naming P and its environment", async () => {
+		it("reads P's overview, naming P and keying its environment's facts by id (#7895)", async () => {
 			const out = await readAs(VIEWER, () => readEnvironmentsOverview(SLUG));
 			expect(out.projectId).toBe(P);
-			expect(out.envs.map((e) => e.id)).toEqual([envP]);
+			expect(Object.keys(out.facts)).toEqual([envP]);
+			expect(out.facts[envP]).toMatchObject({ status: "DRAFT" });
+			// The reconcile badges read the same environment, through the shared canonical read.
+			expect(out.reconcile.map((r) => r.environmentId)).toEqual([envP]);
 		});
 
 		it("reads P's protection rules and a promote preview", async () => {

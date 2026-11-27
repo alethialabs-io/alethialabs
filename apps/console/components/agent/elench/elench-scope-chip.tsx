@@ -2,14 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useQuery } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import {
-	getEnvironmentsForSlug,
-	type SwitcherEnv,
-} from "@/app/server/actions/resolve";
 import { projectScope } from "@/components/shell/nav-config";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
+import { orpc } from "@/lib/rpc/client";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
 import { cn } from "@repo/ui/utils";
 
@@ -20,9 +17,12 @@ import { cn } from "@repo/ui/utils";
  * Two sources, cheapest first. `useEnvironmentStatus()` is free — it is the environment the
  * board already read — but it only answers under the canvas's `EnvironmentStatusScope` (#6119),
  * and the Elench surface is mounted in the app shell as a SIBLING of `<main>` (so the panel can
- * squeeze the main column), which is outside it. So the common case falls through to the same server action the
- * topbar switcher uses, resolved by the project slug in the path. Both degrade to null rather
- * than throwing: a chip that cannot name the environment says "project", never a wrong name.
+ * squeeze the main column), which is outside it. So the common case falls through to the project's
+ * canonical environments entry — the GET read `workspace.environments`, by the project slug in the
+ * path, with the SAME options and so the same cache entry the topbar switcher reads and the
+ * `[project]` layout seeds (#7895). On a project route it is usually already cached, and the chip
+ * asks nothing of the server. Both degrade to null rather than throwing: a chip that cannot name the
+ * environment says "project", never a wrong name.
  */
 function useScopeEnvironmentName(
 	environmentId: string | null,
@@ -31,7 +31,6 @@ function useScopeEnvironmentName(
 	const status = useEnvironmentStatus();
 	const pathname = usePathname();
 	const slug = projectScope(pathname)?.projectSlug;
-	const [envs, setEnvs] = useState<SwitcherEnv[]>([]);
 
 	// A null `environmentId` means "the project's default", which only the server can name — so
 	// the list is fetched either way, and matched by id or by `is_default`.
@@ -41,20 +40,10 @@ function useScopeEnvironmentName(
 			? status.environment.name
 			: null;
 
-	useEffect(() => {
-		if (!enabled || fromStatus !== null || !slug) return;
-		let live = true;
-		void getEnvironmentsForSlug(slug)
-			.then((rows) => {
-				if (live) setEnvs(rows);
-			})
-			.catch(() => {
-				if (live) setEnvs([]);
-			});
-		return () => {
-			live = false;
-		};
-	}, [enabled, fromStatus, slug]);
+	const { data: envs = [] } = useQuery({
+		...orpc.workspace.environments.queryOptions({ input: { project: slug ?? "" } }),
+		enabled: enabled && fromStatus === null && !!slug,
+	});
 
 	if (fromStatus !== null) return fromStatus;
 	const match =

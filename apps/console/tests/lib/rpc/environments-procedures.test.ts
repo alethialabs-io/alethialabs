@@ -32,6 +32,15 @@
 // server build and installs a per-request dispatcher the way the RSC renderer does. Outside
 // `inRequest` no dispatcher is installed and nothing is memoised, which every other test here relies
 // on (and the last test pins).
+//
+// #7895 CLOSES THE LAST TWO. Inside the overview, the consistency matrix (`getEnvConsistency`) and the
+// reconcile badges (`getEnvReconcileStates`) each used to select the environment list again. They now
+// read it through `projectEnvironmentsFor`, the same memo. The final block runs the REAL reconcile read
+// (`vi.importActual`) inside the render and counts one list select overall. The matrix's real body
+// reads every environment's design through `getProjectAsFormData` in ITS OWN module, which this
+// file's database script cannot answer, so here it is a stand-in that keeps its contract — the
+// `view` check, then `projectEnvironmentsFor` as the checked actor — and tests/actions/projects.test.ts
+// pins that the real one does exactly that.
 
 import { createRouterClient, ORPCError } from "@orpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -150,7 +159,12 @@ vi.mock("@/app/server/actions/projects", () => ({
 }));
 vi.mock("@/app/server/actions/resolve", () => ({ resolveProjectId: h.resolveProjectId }));
 vi.mock("@/app/server/actions/reconcile", () => ({ getEnvReconcileStates: h.getEnvReconcileStates }));
-vi.mock("@/lib/promotions/diff", () => ({ diffDesigns: h.diffDesigns }));
+vi.mock("@/lib/promotions/diff", () => ({ diffDesigns: h.diffDesigns, structuralHash: () => "hash" }));
+// The real reconcile read's own collaborators (#7895 block): no probe, no cluster evidence.
+vi.mock("@/lib/probes/persistence", () => ({ getLatestProbesByEnv: async () => new Map() }));
+vi.mock("@/lib/clusters/observed-evidence", () => ({
+	readClusterEvidence: async () => ({ drift: new Map(), probes: new Map() }),
+}));
 vi.mock("@/lib/promotions/lifecycle", () => ({
 	IN_FLIGHT: ["PENDING_PLAN", "PENDING_APPROVAL", "APPROVED", "DEPLOYING"],
 }));
@@ -159,7 +173,11 @@ import { notFound } from "next/navigation";
 import { UnauthorizedError } from "@/lib/auth/errors";
 import { ForbiddenError } from "@/lib/authz/types";
 import { projectEnvironments, projects } from "@/lib/db/schema";
-import { environmentsRouter, readEnvironmentsForSlug } from "@/lib/rpc/procedures/environments";
+import {
+	environmentsRouter,
+	projectEnvironmentsFor,
+	readEnvironmentsForSlug,
+} from "@/lib/rpc/procedures/environments";
 
 const client = createRouterClient(environmentsRouter, { context: { actor: ACTOR } });
 
@@ -287,7 +305,7 @@ describe("environments.overview", () => {
 		const out = await client.overview({ project: "payments" });
 		expect(out).toMatchObject({
 			projectId: PROJECT,
-			envs: [{ id: ENV_A, name: "dev", updated_at: "2026-10-01T00:00:00.000Z" }],
+			facts: { [ENV_A]: { updated_at: "2026-10-01T00:00:00.000Z" } },
 			consistency: { envs: [{ id: ENV_A, name: "dev", stage: "development" }], rows: [] },
 			activePromotion: null,
 			protectionByEnv: {},
@@ -300,8 +318,35 @@ describe("environments.overview", () => {
 		expect(h.scopes[0]).toEqual({ userId: ACTOR.userId, orgId: ACTOR.orgId });
 	});
 
-	it("lists the default first, then oldest first — the canonical read is oldest first", async () => {
+	it("carries per-environment facts keyed by id — no names, stages or default, which the canonical entry owns (#7895)", async () => {
 		h.serviceRows.push([{ id: PROJECT }]);
+		const at = (day: number) => new Date(`2026-10-0${day}T00:00:00Z`);
+		h.scopedRows.push(
+			[
+				{ id: ENV_B, name: "qa", stage: "staging", is_default: false, status: "FAILED", byo_admission_enforce: true, updated_at: at(1) },
+				{ id: ENV_A, name: "dev", stage: "development", is_default: true, status: "ACTIVE", byo_admission_enforce: false, updated_at: at(2) },
+			],
+			[],
+			[],
+		);
+		const out = await client.overview({ project: "payments" });
+		expect(Object.keys(out.facts).sort()).toEqual([ENV_A, ENV_B].sort());
+		expect(out.facts[ENV_B]).toMatchObject({
+			status: "FAILED",
+			updated_at: "2026-10-01T00:00:00.000Z",
+			byo_admission_enforce: true,
+		});
+		for (const facts of Object.values(out.facts)) {
+			expect(facts).not.toHaveProperty("name");
+			expect(facts).not.toHaveProperty("stage");
+			expect(facts).not.toHaveProperty("is_default");
+		}
+		expect(out).not.toHaveProperty("envs");
+	});
+
+	it("the matrix's fallback still lists the default first, then oldest first", async () => {
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.getEnvConsistency.mockRejectedValue(new Error("a deleted cloud identity"));
 		const at = (day: number) => new Date(`2026-10-0${day}T00:00:00Z`);
 		h.scopedRows.push(
 			[
@@ -312,7 +357,7 @@ describe("environments.overview", () => {
 			[],
 		);
 		const out = await client.overview({ project: "payments" });
-		expect(out.envs.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
+		expect(out.consistency.envs.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
 	});
 
 	it("a PDP refusal reads no environment", async () => {
@@ -533,7 +578,7 @@ describe("one [project]/environments render: one environment-list read, one proj
 		expect(reads(projectEnvironments)).toBe(1);
 		// …and every one of them answered from it.
 		expect(seed.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
-		expect(overview.envs.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
+		expect(Object.keys(overview.facts)).toEqual([ENV_A, ENV_B]);
 		expect(pristine.rows.map((e) => e.id)).toEqual([ENV_B, ENV_A]);
 		expect(filtered.rows.map((e) => e.id)).toEqual([ENV_B]);
 	});
@@ -577,5 +622,67 @@ describe("one [project]/environments render: one environment-list read, one proj
 		await client.page({ project: "payments" });
 		expect(reads(projects)).toBe(2);
 		expect(reads(projectEnvironments)).toBe(2);
+	});
+});
+
+describe("#7895: one environment-list select per render — the matrix and the reconcile badges included", () => {
+	const at = (day: number) => new Date(`2026-10-0${day}T00:00:00Z`);
+	const ENVS = [
+		{ id: ENV_A, project_id: PROJECT, name: "dev", stage: "development", is_default: true, status: "ACTIVE", byo_admission_enforce: false, auto_heal: true, deployed_config_hash: null, last_deployed_at: null, created_at: at(1), updated_at: at(1) },
+		{ id: ENV_B, project_id: PROJECT, name: "prod", stage: "production", is_default: false, status: "ACTIVE", byo_admission_enforce: false, auto_heal: false, deployed_config_hash: null, last_deployed_at: at(2), created_at: at(2), updated_at: at(2) },
+	];
+
+	/** How many selects read each table. */
+	const reads = (table: unknown) => h.froms.filter((t) => t === table).length;
+
+	beforeEach(async () => {
+		// The org-bound slug lookup answers the project ONCE (memoised); every later service select
+		// (the reconcile read's drift and delivery rows, BYO admission) answers its default `[]`. The
+		// FIRST actor-scoped select is the list.
+		h.serviceRows.push([{ id: PROJECT }]);
+		h.scopedRows.push(ENVS);
+		h.authorize.mockImplementation(async () => scope.actor);
+		// The REAL reconcile read: its own `view` check, then the canonical list as that actor.
+		const reconcile = await vi.importActual<typeof import("@/app/server/actions/reconcile")>(
+			"@/app/server/actions/reconcile",
+		);
+		h.getEnvReconcileStates.mockImplementation(reconcile.getEnvReconcileStates);
+		// The matrix's contract (see the file header): the read check, then the canonical list as the
+		// checked actor — never a select of its own.
+		h.getEnvConsistency.mockImplementation(async (projectId: string) => {
+			const actor = await h.authorizeRead("view", { type: "project", id: projectId });
+			const rows = await projectEnvironmentsFor(actor, projectId);
+			return { envs: rows.map((e) => ({ id: e.id, name: e.name, stage: e.stage })), rows: [] };
+		});
+	});
+
+	/** The `[project]` layout's switcher seed, then the page's overview and its pristine table page. */
+	async function renderEnvironmentsPage() {
+		const seed = await readEnvironmentsForSlug("payments");
+		const overview = await client.overview({ project: "payments" });
+		const page = await client.page({ project: "payments" });
+		return { seed, overview, page };
+	}
+
+	it("the seed, the overview — its matrix and its badges — and the table share ONE list select", async () => {
+		const { seed, overview, page } = await inRequest(renderEnvironmentsPage);
+		expect(reads(projectEnvironments)).toBe(1);
+		// Every reader answered from that one select: the badges name both environments, with the
+		// columns the canonical read now carries for them.
+		expect(seed.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
+		expect(overview.reconcile.map((r) => [r.environmentId, r.autoHeal, r.lastDeployedAt])).toEqual([
+			[ENV_A, true, null],
+			[ENV_B, false, "2026-10-02T00:00:00.000Z"],
+		]);
+		expect(overview.consistency.envs.map((e) => e.id)).toEqual([ENV_A, ENV_B]);
+		expect(page.rows.map((e) => e.id)).toEqual([ENV_B, ENV_A]);
+	});
+
+	it("every check is still asked — the badges' recording `view`, the matrix's and each gated read's — and RLS scopes the one select", async () => {
+		await inRequest(renderEnvironmentsPage);
+		expect(h.authorize).toHaveBeenCalledWith("view", { type: "project", id: PROJECT });
+		// overview, the matrix, the table page: three read checks; none skipped by the memo.
+		expect(h.authorizeRead).toHaveBeenCalledTimes(3);
+		expect(h.scopes[0]).toEqual({ userId: ACTOR.userId, orgId: ACTOR.orgId });
 	});
 });
