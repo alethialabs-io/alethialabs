@@ -385,19 +385,22 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	const ciToken = await serviceToken(`filters-ci-${stamp}`, false);
 	await serviceToken(`filters-old-${stamp}`, true);
 
-	// Approvals (`/[org]/~/approvals`, #7629): differ on STATUS and on the CREDENTIAL that asked —
-	// the shape the product writes: a pipeline's request through the service token above, still
-	// pending, and a person's own console request that was rejected, with its decider and time (the
-	// `apply_approvals_decision_shape` check). Both name the SUCCESS PLAN job above in this project's
-	// default environment, which `apply_approvals_bind_target` requires. Both are DEPLOYS: a destroy
-	// approval needs a destroy-mode plan, which this file does not write. The pending one expires in
-	// 24 hours, the longest TTL an org can set, so a restored family-B run still reads it live. No
-	// background loop reads `apply_approvals` (`lib/reconcile/` consumes none), and a pending approval
-	// is consumed only by a request that presents it. `cleanFilterFixtures()` deletes both by id
-	// before the jobs they name (the FK would cascade anyway).
-	/** Insert one deploy approval on the seeded plan job. */
-	const approval = async (row: { status: "pending" | "rejected"; credential: "service_token" | "session"; ref: string | null; reason: string }) => {
-		const decided = row.status === "rejected";
+	// Approvals (`/[org]/~/approvals`, #7629): both WAITING, differing on the CREDENTIAL that asked —
+	// the shape the product writes: a pipeline's request through the service token above, and a
+	// person's own console request (`session`, no credential ref). Both must be waiting because the
+	// list opens on Status: Waiting (`DEFAULT_APPROVALS_FILTERS`), and F8–F10 count the list a bare
+	// link opens on: a pending + rejected pair rendered ONE row there, so the audit had nothing to
+	// narrow (#7922). "Requested through" is the facet that splits them; Status cannot, since picking
+	// a second status WIDENS the default view. Two live requests on one plan are allowed because they
+	// differ on the credential (`uq_apply_approvals_live_request`). Both name the SUCCESS PLAN job
+	// above in this project's default environment, which `apply_approvals_bind_target` requires. Both
+	// are DEPLOYS: a destroy approval needs a destroy-mode plan, which this file does not write. Each
+	// expires in 24 hours, the longest TTL an org can set, so a restored family-B run still reads them
+	// live. No background loop reads `apply_approvals` (`lib/reconcile/` consumes none), and a pending
+	// approval is consumed only by a request that presents it. `cleanFilterFixtures()` deletes both by
+	// id before the jobs they name (the FK would cascade anyway).
+	/** Insert one waiting deploy approval on the seeded plan job. */
+	const approval = async (row: { credential: "service_token" | "session"; ref: string | null; reason: string }) => {
 		const [inserted] = await sql<{ id: string }[]>`
 			insert into apply_approvals ${sql({
 				org_id: owner.orgId,
@@ -410,17 +413,14 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 				requester_credential: row.credential,
 				requester_credential_ref: row.ref,
 				reason: row.reason,
-				status: row.status,
-				approver_user_id: decided ? owner.userId : null,
-				decided_at: decided ? new Date() : null,
-				decision_reason: decided ? "e2e filter fixture" : null,
+				status: "pending",
 				expires_at: new Date(Date.now() + 24 * 60 * 60_000),
 			})}
 			returning id`;
 		return inserted.id;
 	};
-	written.approvalIds.push(await approval({ status: "pending", credential: "service_token", ref: ciToken, reason: "Deploy from CI (e2e filter fixture)" }));
-	written.approvalIds.push(await approval({ status: "rejected", credential: "session", ref: null, reason: "Manual deploy (e2e filter fixture)" }));
+	written.approvalIds.push(await approval({ credential: "service_token", ref: ciToken, reason: "Deploy from CI (e2e filter fixture)" }));
+	written.approvalIds.push(await approval({ credential: "session", ref: null, reason: "Manual deploy (e2e filter fixture)" }));
 }
 
 /**
