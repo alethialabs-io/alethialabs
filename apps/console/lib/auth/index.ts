@@ -225,6 +225,9 @@ const plugins: BetterAuthOptions["plugins"] = [
  */
 export const mcpResourceUrl: string | null = mcpResourceFromBaseUrl(cfg.baseURL);
 
+/** Better Auth endpoints the console does not serve over HTTP (see `disabledPaths` below). */
+const DISABLED_AUTH_PATHS = ["/oauth2/update-consent", "/oauth2/delete-consent"];
+
 // OAuth 2.1 authorization server for the MCP endpoint (B7): lets remote MCP clients (Claude /
 // claude.ai connectors) obtain an access token that the /api/mcp route resolves into a PDP-scoped
 // actor. No new authority — the token's user drives getActiveScope() like any other caller.
@@ -269,6 +272,14 @@ export const auth = betterAuth({
 	secret: cfg.secret,
 	baseURL: cfg.baseURL,
 	trustedOrigins: [cfg.baseURL],
+	// The OAuth provider's own consent-management endpoints answer 404. An agent's consent record is
+	// paired with its grant (lib/agents/consent.ts) and changes only through the console: the consent
+	// screen writes both, and disconnecting (lib/agents/grants.ts) revokes the grant, deletes the
+	// client's tokens and empties the consent together. Changing or deleting the consent alone would
+	// leave the grant and the issued tokens out of step with it. Reading consents stays available.
+	// Paths are matched after the /api/auth base path is removed; in-process auth.api calls are not
+	// affected, and the console makes none to these.
+	disabledPaths: DISABLED_AUTH_PATHS,
 	// Linked accounts' OAuth tokens are encrypted at rest with the credential keyring; the wrapper
 	// seals them on write and opens them on read, so Better Auth only handles plaintext
 	// (lib/auth/oauth-token-crypto.ts).
