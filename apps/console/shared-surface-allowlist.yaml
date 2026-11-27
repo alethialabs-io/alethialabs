@@ -163,8 +163,8 @@ page_title:
   - path: apps/console/components/auth/onboarding-form.tsx
     hits: 1
     reason: The first screen after sign-up, still outside the console shell — it welcomes you, and there is no breadcrumb above it to welcome you instead.
-  - path: apps/console/components/forms/oauth-consent-form.tsx
-    hits: 2
+  - path: apps/console/components/auth/consent/consent-heading.tsx
+    hits: 1
     reason: A consent screen has to read as its own moment, not as a page inside the console you happen to be on, because the decision it asks for is about handing access to someone else — and it renders outside the shell, with no breadcrumb.
   - path: apps/console/components/org/org-purchase-ui.tsx
     hits: 2
