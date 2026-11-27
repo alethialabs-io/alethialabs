@@ -20,13 +20,10 @@ import {
 	Boxes,
 	GitBranch,
 	GitCommitHorizontal,
-	Loader2,
 	Rocket,
-	ShieldAlert,
-	ShieldCheck,
-	ShieldQuestion,
 	X,
 } from "lucide-react";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { detachIacSourceAction, type IacSourceState } from "@/app/server/actions/byo-iac";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
@@ -36,27 +33,28 @@ import { useIacSourceCanvas } from "@/components/design-project/byo/iac-source-c
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
 import type { IacScanReport } from "@/types/jsonb.types";
 
-/** The scan-status chip — label + tone + icon, derived from the scan lifecycle + the report's
- * ok/finding count (a not-ok scan draws destructive ink; a clean module stays calm). */
+/**
+ * The scan-status chip — a label plus a StatusBadge tier, derived from the scan lifecycle and the
+ * report's ok/finding count. State is read through the dot's shape and the mono label, never hue:
+ * a scan in flight is `pending` (the haloed dot), a not-ok scan or a failed run is `failed`, a scan
+ * whose verdict passes is `active` (its label still carries any advisory finding count), and a
+ * module with no scan yet is `idle`.
+ */
 function scanChip(
 	scanStatus: string,
 	report: IacScanReport | null,
-): { label: string; cls: string; Icon: typeof ShieldCheck; spin?: boolean } {
-	if (scanStatus === "scanning")
-		return { label: "Scanning…", cls: "text-muted-foreground", Icon: Loader2, spin: true };
-	if (scanStatus === "failed")
-		return { label: "Scan failed", cls: "text-destructive", Icon: ShieldAlert };
+): { label: string; tier: StatusTier } {
+	if (scanStatus === "scanning") return { label: "Scanning…", tier: "pending" };
+	if (scanStatus === "failed") return { label: "Scan failed", tier: "failed" };
 	if (scanStatus === "done" && report) {
 		const issues = report.findings.length;
-		if (report.ok && issues === 0)
-			return { label: "Clean", cls: "text-foreground", Icon: ShieldCheck };
+		if (report.ok && issues === 0) return { label: "Clean", tier: "active" };
 		return {
 			label: `${issues} finding${issues === 1 ? "" : "s"}`,
-			cls: report.ok ? "text-muted-foreground" : "text-destructive",
-			Icon: ShieldAlert,
+			tier: report.ok ? "active" : "failed",
 		};
 	}
-	return { label: "Not scanned", cls: "text-text-tertiary", Icon: ShieldQuestion };
+	return { label: "Not scanned", tier: "idle" };
 }
 
 /** Short 7-char sha for display (git-style); empty string passes through. */
@@ -88,7 +86,6 @@ export function IacNode({ source }: { source: IacSourceState }) {
 	// half is not on this card, so the dialog's copy names the precondition too.
 	const holdsDeployedState = source.deployedCommitSha !== null;
 	const chip = scanChip(source.scanStatus, source.scanReport);
-	const ChipIcon = chip.Icon;
 	const repoLabel = source.repoUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\.git$/, "");
 	const pinned = shortSha(source.commitSha);
 	const deployed = shortSha(source.deployedCommitSha);
@@ -143,10 +140,9 @@ export function IacNode({ source }: { source: IacSourceState }) {
 					type="button"
 					onClick={() => board.view.getState().openCard({ kind: "iac-scan" })}
 					title="IaC safety scan"
-					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
+					className="flex items-center self-start rounded-none border border-border px-2 py-1 transition-colors hover:bg-muted"
 				>
-					<ChipIcon className={cn("h-3 w-3", chip.cls, chip.spin && "animate-spin")} />
-					<span className={chip.cls}>{chip.label}</span>
+					<StatusBadge status={source.scanStatus} tier={chip.tier} label={chip.label} />
 				</button>
 
 				{ctx && (
