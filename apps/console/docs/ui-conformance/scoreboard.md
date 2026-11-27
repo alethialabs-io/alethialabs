@@ -327,7 +327,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **20 occurrences across 13 files**. This section
+`check-shared-surface` found **19 occurrences across 13 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -338,12 +338,12 @@ of the scoreboard cannot be quiet.
 | `format` | H5 | 4 | 4 | 0 | 0 | 1 | 3 | 0 | 0 |
 | `ink_alpha` | **none** — #4309 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `layer_token` | H7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `page_title` | H1 | 15 | 15 | 0 | 0 | 6 | 1 | 0 | 8 |
+| `page_title` | H1 | 14 | 14 | 0 | 0 | 6 | 1 | 0 | 7 |
 | `section_header` | H2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `status_badge` | H3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `type_scale` | H8 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| **total** | | 20 | 20 | 0 | 0 | 7 | 4 | 0 | 9 |
+| **total** | | 19 | 19 | 0 | 0 | 7 | 4 | 0 | 8 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -381,7 +381,7 @@ stated subject and are listed here rather than scored. A file reached only throu
 | file | occurrences |
 |---|---:|
 | `apps/console/components/auth/auth-form.tsx` | 5 |
-| `apps/console/components/forms/oauth-consent-form.tsx` | 2 |
+| `apps/console/components/auth/consent/consent-heading.tsx` | 1 |
 | `apps/console/components/auth/onboarding-form.tsx` | 1 |
 | `apps/console/components/legal/accept-terms-form.tsx` | 1 |
 

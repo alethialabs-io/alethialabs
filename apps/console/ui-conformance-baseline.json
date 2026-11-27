@@ -21,7 +21,7 @@
 		"scoredHere": 24,
 		"live": 19,
 		"notInstrumented": 1,
-		"findings": 20,
+		"findings": 19,
 		"findingFiles": 13,
 		"liveNotMeasured": 197
 	},
@@ -14092,14 +14092,14 @@
 	"reconciliation": {
 		"byRule": {
 			"page_title": {
-				"total": 15,
-				"decision": 15,
+				"total": 14,
+				"decision": 14,
 				"debt": 0,
 				"unlisted": 0,
 				"inPageClosure": 6,
 				"chromeOnly": 1,
 				"sharedPackage": 0,
-				"offTree": 8,
+				"offTree": 7,
 				"predicate": "H1",
 				"owner": null
 			},
@@ -14233,8 +14233,8 @@
 				"hits": 5
 			},
 			{
-				"file": "apps/console/components/forms/oauth-consent-form.tsx",
-				"hits": 2
+				"file": "apps/console/components/auth/consent/consent-heading.tsx",
+				"hits": 1
 			},
 			{
 				"file": "apps/console/components/auth/onboarding-form.tsx",
