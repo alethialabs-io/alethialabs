@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import { FunnelFilter } from "../src/funnel-filter";
 import { ListToolbar, ListToolbarSkeleton } from "../src/list-toolbar";
 
 const OPTIONS = [
@@ -176,8 +177,54 @@ describe("ListToolbarSkeleton", () => {
 		expect(end ? [...end.classList].sort() : []).toEqual(realEndClasses);
 	});
 
+	it("draws the date-range part once for `true` and as many times as a count asks", () => {
+		const one = render(<ListToolbarSkeleton dateRange />);
+		expect(one.container.querySelectorAll('[data-part="date-range"]')).toHaveLength(1);
+		one.unmount();
+		const two = render(<ListToolbarSkeleton dateRange={2} />);
+		expect(two.container.querySelectorAll('[data-part="date-range"]')).toHaveLength(2);
+		two.unmount();
+		const none = render(<ListToolbarSkeleton dateRange={false} />);
+		expect(none.container.querySelectorAll('[data-part="date-range"]')).toHaveLength(0);
+	});
+
+	it("draws each extra part at its named size, after the facets and the range, in order", () => {
+		const { container } = render(
+			<ListToolbarSkeleton facets={1} dateRange extra={["control", "icon"]} actions={1} />,
+		);
+		const row = slot(container, "list-toolbar-skeleton");
+		const parts = [...row.children].map((el) => el.getAttribute("data-part") ?? "end");
+		expect(parts).toEqual(["search", "facet", "date-range", "extra", "extra", "end"]);
+		const extras = [...row.querySelectorAll('[data-part="extra"]')];
+		expect(extras.map((el) => el.getAttribute("data-size"))).toEqual(["control", "icon"]);
+		// `control` is the facet's own box; `icon` is FunnelFilter's square `h-10 w-10` trigger.
+		const facet = row.querySelector('[data-part="facet"]');
+		expect([...(extras[0]?.classList ?? [])].sort()).toEqual([...(facet?.classList ?? [])].sort());
+		expect(extras[1]?.classList).toContain("size-10");
+	});
+
+	it("draws `icon` as FunnelFilter's real trigger box: 40px square", () => {
+		const real = render(<FunnelFilter facets={[]} selected={{}} onToggle={() => {}} onReset={() => {}} dirty={false} />);
+		const trigger = real.getByRole("button");
+		// Tailwind's `h-10 w-10` and `size-10` are both 2.5rem by 2.5rem.
+		expect(trigger.classList).toContain("h-10");
+		expect(trigger.classList).toContain("w-10");
+		real.unmount();
+		const { container } = render(<ListToolbarSkeleton search={false} extra="icon" />);
+		expect(container.querySelector('[data-part="extra"]')?.classList).toContain("size-10");
+	});
+
+	it("takes a single extra size as one part", () => {
+		const { container } = render(<ListToolbarSkeleton search={false} extra="icon" />);
+		const extras = container.querySelectorAll('[data-part="extra"]');
+		expect(extras).toHaveLength(1);
+		expect(extras[0]?.getAttribute("data-size")).toBe("icon");
+	});
+
 	it("renders nothing when asked for nothing", () => {
 		const { container } = render(<ListToolbarSkeleton search={false} />);
 		expect(container).toBeEmptyDOMElement();
+		const empty = render(<ListToolbarSkeleton search={false} dateRange={0} extra={[]} />);
+		expect(empty.container).toBeEmptyDOMElement();
 	});
 });

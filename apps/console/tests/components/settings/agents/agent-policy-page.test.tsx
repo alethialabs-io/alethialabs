@@ -82,6 +82,8 @@ describe("AgentPolicyPage — the read's states", () => {
 		h.policy = () => new Promise(() => {});
 		const { container } = renderPage();
 		expect(container.querySelector('[data-skeleton="agent-policy"]')).not.toBeNull();
+		// No toolbar row on the page, so none in its skeleton either (#7876).
+		expect(container.querySelector('[data-slot="page-toolbar-skeleton"]')).toBeNull();
 	});
 
 	it("error: a region error saying the current settings still apply", async () => {
@@ -104,17 +106,15 @@ describe("AgentPolicyPage — the read's states", () => {
 });
 
 describe("AgentPolicyPage — can manage agents", () => {
-	it("shows every control editable, with the spec's copy and no page heading", async () => {
+	it("shows every control editable, with the spec's copy, no page heading and no description line", async () => {
 		renderPage();
 		const access = await screen.findByRole("switch", { name: "Let agents work in acme" });
 		expect(access.getAttribute("aria-checked")).toBe("true");
 		expect(access.hasAttribute("aria-disabled") && access.getAttribute("aria-disabled") === "true").toBe(false);
 		expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
-		expect(
-			screen.getByText(
-				"Decide what agents may do in acme, and how approvals work for everything that isn't a person in the console.",
-			),
-		).toBeTruthy();
+		// The maintainer dropped the PageToolbar description (#7876), and with it the toolbar row.
+		expect(screen.queryByText(/^Decide what agents may do/)).toBeNull();
+		expect(document.querySelector('[data-slot="page-toolbar"]')).toBeNull();
 		expect(screen.queryByText("You can't change agent settings")).toBeNull();
 		expect(screen.queryByText("Agent access is off.")).toBeNull();
 		expect(screen.getByText(/^Last changed by Maria Petrova · .+\. Every change is recorded in Activity\.$/)).toBeTruthy();
