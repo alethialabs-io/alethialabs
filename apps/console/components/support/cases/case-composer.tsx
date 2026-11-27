@@ -5,7 +5,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@repo/ui/button";
 import { Textarea } from "@repo/ui/textarea";
-import { Loader2, SendHorizontal } from "lucide-react";
+import { SendHorizontal } from "lucide-react";
 import { useEffect } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -126,10 +126,11 @@ export function CaseComposer({ caseId }: { caseId: string }) {
 					type="submit"
 					size="sm"
 					className="shrink-0"
-					disabled={send.isPending || body.trim().length === 0}
+					disabled={body.trim().length === 0}
+					pending={send.isPending}
 				>
-					{send.isPending ? <Loader2 className="size-4 animate-spin" /> : <SendHorizontal className="size-4" />}
-					Send
+					<SendHorizontal className="size-4" />
+					{send.isPending ? "Sending…" : "Send"}
 				</Button>
 			</div>
 		</form>

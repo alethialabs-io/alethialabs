@@ -39,7 +39,6 @@ import {
 	BookOpen,
 	Check,
 	ExternalLink,
-	Loader2,
 	Pencil,
 	Plus,
 	RefreshCw,
@@ -149,15 +148,10 @@ function AccountRenameForm({ account, onDone }: { account: CloudAccount; onDone:
 									variant="ghost"
 									className="size-7 shrink-0 p-0"
 									title="Save name"
-									aria-label="Save name"
-									aria-busy={rename.isPending}
-									disabled={rename.isPending}
+									aria-label={rename.isPending ? "Renaming…" : "Save name"}
+									pending={rename.isPending}
 								>
-									{rename.isPending ? (
-										<Loader2 className="size-3.5 animate-spin" aria-hidden />
-									) : (
-										<Check className="size-3.5" aria-hidden />
-									)}
+									<Check className="size-3.5" aria-hidden />
 								</Button>
 								<Button
 									type="button"
@@ -278,15 +272,11 @@ export function ConnectorDetailSheet({
 					<Button
 						variant="outline"
 						className="w-full border-border/50 text-xs"
-						disabled={isConnecting}
+						pending={isConnecting}
 						onClick={onConnect}
 					>
-						{isConnecting ? (
-							<Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />
-						) : (
-							<Plus className="mr-1.5 size-3.5" aria-hidden />
-						)}
-						Add another account
+						<Plus className="mr-1.5 size-3.5" aria-hidden />
+						{isConnecting ? "Connecting…" : "Add another account"}
 					</Button>
 				</DisabledReason>
 			) : null;
@@ -294,9 +284,8 @@ export function ConnectorDetailSheet({
 			footer =
 				offered && state.health !== "unavailable" ? (
 					<DisabledReason reason={denied} className="flex w-full">
-						<Button className="w-full" disabled={isConnecting} onClick={onConnect}>
-							{isConnecting && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />}
-							Connect {integration.name}
+						<Button className="w-full" pending={isConnecting} onClick={onConnect}>
+							{isConnecting ? `Connecting ${integration.name}…` : `Connect ${integration.name}`}
 						</Button>
 					</DisabledReason>
 				) : null;
@@ -455,11 +444,13 @@ export function ConnectorDetailSheet({
 													variant="ghost"
 													className="size-7 p-0 text-muted-foreground"
 													title={`Re-verify ${acc.name} with the stored configuration`}
-													aria-label={`Re-verify ${acc.name}`}
-													aria-busy={reverifyingId === acc.identityId}
-													disabled={
-														reverifyingId === acc.identityId || acc.status === "testing"
+													aria-label={
+														reverifyingId === acc.identityId
+															? `Re-verifying ${acc.name}…`
+															: `Re-verify ${acc.name}`
 													}
+													pending={reverifyingId === acc.identityId}
+													disabled={acc.status === "testing"}
 													onClick={async () => {
 														setReverifyingId(acc.identityId);
 														try {
@@ -469,11 +460,7 @@ export function ConnectorDetailSheet({
 														}
 													}}
 												>
-													{reverifyingId === acc.identityId ? (
-														<Loader2 className="size-3.5 animate-spin" aria-hidden />
-													) : (
-														<RefreshCw className="size-3.5" aria-hidden />
-													)}
+													<RefreshCw className="size-3.5" aria-hidden />
 												</Button>
 											</DisabledReason>
 											<DisabledReason reason={denied}>

@@ -8,6 +8,7 @@
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
+import { INLINE_STROKE, MarkGlyph } from "@repo/ui/spinner";
 import {
   Tooltip,
   TooltipContent,
@@ -26,7 +27,7 @@ import {
 } from "@/lib/query/use-runners-query";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
-import { ArrowUpCircle, Loader2, Star } from "lucide-react";
+import { ArrowUpCircle, Star } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -201,7 +202,9 @@ export function RunnerActions({ runner }: { runner: RunnerRow }) {
         onClick={(e) => e.stopPropagation()}
         className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
       >
-        <Loader2 className="h-3 w-3 animate-spin" />
+        {/* Decorative: the link's words name the job in flight, and a status region inside a link
+            would be read as part of its name. */}
+        <MarkGlyph width={12} height={12} bracketStroke={INLINE_STROKE} aria-hidden="true" />
         {label}
       </Link>
     );

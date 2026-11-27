@@ -32,6 +32,7 @@ vi.mock("@/app/server/actions/support", () => ({
 	closeCase: vi.fn(async ({ id }: { id: string }) => ({ ok: true, data: { id } })),
 }));
 
+import { reopenCase } from "@/app/server/actions/support";
 import { CaseActions } from "@/components/support/cases/case-actions";
 import { orpc } from "@/lib/rpc/client";
 
@@ -63,5 +64,22 @@ describe("case actions refresh the bell (#6114)", () => {
 		await waitFor(() => expect(client.getQueryState(bell)?.isInvalidated).toBe(true));
 		expect(client.getQueryState(list)?.isInvalidated).toBe(true);
 		expect(client.getQueryState(detail)?.isInvalidated).toBe(true);
+	});
+});
+
+describe("a transition in flight says which one (#7872)", () => {
+	it("the closed-case Reopen button reads Reopening… with the [·] mark, disabled and busy", async () => {
+		vi.mocked(reopenCase).mockReturnValueOnce(new Promise(() => {}));
+		render(
+			<QueryClientProvider client={new QueryClient()}>
+				<CaseActions caseId={CASE} status="closed" variant="reopen" />
+			</QueryClientProvider>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Reopen case" }));
+		const pending = await screen.findByRole("button", { name: "Reopening…" });
+		expect(pending).toBeDisabled();
+		expect(pending).toHaveAttribute("aria-busy", "true");
+		expect(pending.querySelector('[data-slot="button-pending-mark"]')).not.toBeNull();
+		expect(pending.querySelector(".animate-spin")).toBeNull();
 	});
 });
