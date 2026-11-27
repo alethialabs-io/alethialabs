@@ -3,8 +3,9 @@
 
 // Integration: the MCP request's binding to its consent grant (AGT-L2-F) against real Postgres.
 //
-//   · `readGrantBinding` answers live / revoked / ungranted / none for (subject, client), never
-//     another person's or another client's grant, and a live grant over a revoked one;
+//   · `readGrantBinding` answers live / revoked / ungranted / unconsented / none for (subject,
+//     client), never another person's or another client's grant, and a live grant over a revoked
+//     one; `none` only for a client marked `skip_consent`;
 //   · `resolveMcpActor` with that real read acts in the grant's org and projects, a disconnect
 //     through the real `revokeAgentGrant` refuses the next resolution of the same claims, and a
 //     consent with no grant is refused and released (its scopes emptied) without touching a consent
@@ -36,7 +37,8 @@ const OTHER_CLIENT = `https://agent-${randomUUID().slice(0, 8)}.example.test/cli
 const NEVER_GRANTED_CLIENT = `https://agent-${randomUUID().slice(0, 8)}.example.test/client.json`;
 const CONSENT_ONLY_CLIENT = `https://agent-${randomUUID().slice(0, 8)}.example.test/client.json`;
 const RESTORE_CLIENT = `https://agent-${randomUUID().slice(0, 8)}.example.test/client.json`;
-const ALL_CLIENTS = [CLIENT, OTHER_CLIENT, NEVER_GRANTED_CLIENT, CONSENT_ONLY_CLIENT, RESTORE_CLIENT];
+const SKIP_CONSENT_CLIENT = `skip-consent-${randomUUID().slice(0, 8)}`;
+const ALL_CLIENTS = [CLIENT, OTHER_CLIENT, NEVER_GRANTED_CLIENT, CONSENT_ONLY_CLIENT, RESTORE_CLIENT, SKIP_CONSENT_CLIENT];
 
 /** The scopes of every consent row (`userId`, `clientId`) has, by row id. */
 async function consentScopes(userId: string, clientId: string): Promise<Map<string, string[]>> {
@@ -95,6 +97,7 @@ describeIfDb("MCP grant binding", () => {
 				clientId,
 				name: "Agent",
 				redirectUris: ["https://example.test/cb"],
+				skipConsent: clientId === SKIP_CONSENT_CLIENT ? true : null,
 			})),
 		);
 		// An older revoked grant in another org beside the live one: the live one must win.
@@ -127,8 +130,21 @@ describeIfDb("MCP grant binding", () => {
 		expect(await readGrantBinding(PERSON, OTHER_CLIENT)).toEqual({ kind: "revoked" });
 	});
 
-	it("answers none for a client the person never granted", async () => {
-		expect(await readGrantBinding(PERSON, NEVER_GRANTED_CLIENT)).toEqual({ kind: "none" });
+	it("answers unconsented for a client the person never granted that shows the consent screen", async () => {
+		expect(await readGrantBinding(PERSON, NEVER_GRANTED_CLIENT)).toEqual({ kind: "unconsented" });
+	});
+
+	it("refuses a token with neither a consent nor a grant for a client that shows the consent screen", async () => {
+		const result = await resolveMcpActor({ sub: PERSON, scope: "openid read", azp: NEVER_GRANTED_CLIENT }, null, deps());
+		expect(result).toEqual({ ok: false, reason: "grant_missing" });
+	});
+
+	it("answers none for a client marked skip_consent, and keeps its token on the token's own scopes", async () => {
+		expect(await readGrantBinding(PERSON, SKIP_CONSENT_CLIENT)).toEqual({ kind: "none" });
+		expect(await resolveMcpActor({ sub: PERSON, scope: "openid read", azp: SKIP_CONSENT_CLIENT }, null, deps())).toMatchObject({
+			ok: true,
+			actor: { userId: PERSON, credentialRef: SKIP_CONSENT_CLIENT, ceiling: { scopes: ["read"], projectIds: null } },
+		});
 	});
 
 	it("binds the actor to the grant's org and projects", async () => {

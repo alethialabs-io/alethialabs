@@ -32,7 +32,10 @@ export type McpActorRefusal =
 	| "no_client"
 	/** Every consent grant the person gave this client is revoked: the connection was disconnected. */
 	| "grant_revoked"
-	/** The person has a consent record for this client but no grant was recorded with it. */
+	/**
+	 * No grant was recorded for this client: a consent record without one, or neither a consent nor a
+	 * grant for a client that is not marked to skip consent.
+	 */
 	| "grant_missing"
 	/** The token carries no agent scope this server reads, or none the grant leaves. */
 	| "insufficient_scope"
@@ -48,7 +51,7 @@ export type McpActorResolution = { ok: true; actor: Actor } | { ok: false; reaso
 
 /** What resolving reads, so tests can stand each one in. */
 export interface McpActorDeps {
-	/** The person's grant to OAuth client `clientId`: live, all revoked, consent without one, or none. */
+	/** The person's grant to OAuth client `clientId`: live, all revoked, consent without one, neither, or none for a skip-consent client. */
 	readGrant(userId: string, clientId: string): Promise<GrantBinding>;
 	/** Returns a consent that has no grant to the consent screen on the client's next authorization. */
 	releaseUngrantedConsent(userId: string, clientId: string): Promise<void>;
@@ -79,14 +82,15 @@ export function clientIdFromClaims(claims: { azp?: unknown; client_id?: unknown 
 /**
  * Resolves verified access-token `claims` into the actor the MCP request runs as, with `projectPin`
  * the URL's `?project=` value. Fails closed at every step: a token with no subject, no readable agent
- * scope or no client; a client whose every grant is revoked; a consent recorded without a grant; a live grant with no organization, an
+ * scope or no client; a client whose every grant is revoked; a consent recorded without a grant;
+ * neither a consent nor a grant for a client not marked to skip consent; a live grant with no organization, an
  * organization the person is not an active member of, or no project; a pin outside the grant; or an
  * organization whose agent access is off — each yields no actor.
  *
  * With a live grant the actor acts in the grant's organization ONLY (never the person's default),
- * with the token's scopes narrowed to the grant's and its projects to the grant's list. With no grant
- * row and no consent record at all (a client that skips the consent screen) it acts as before: the
- * person's resolved org, the token's scopes, every project.
+ * with the token's scopes narrowed to the grant's and its projects to the grant's list. Only for a
+ * client marked `skip_consent` (no consent screen, so no grant is ever written) does a token with no
+ * grant row act as before: the person's resolved org, the token's scopes, every project.
  *
  * The actor is bound as `agent_oauth`, with the OAuth client as its credential reference, so an
  * approval one client requested can be used by that client only (lib/approvals/gate.ts).
@@ -115,6 +119,10 @@ export async function resolveMcpActor(
 		await deps.releaseUngrantedConsent(subject, clientId).catch(() => undefined);
 		return { ok: false, reason: "grant_missing" };
 	}
+	// Neither a consent nor a grant, for a client that shows the consent screen: the consent the token
+	// was issued under is gone, and nothing names an org, scopes or projects. Nothing to release; the
+	// client's next authorization finds no consent and shows the consent screen.
+	if (binding.kind === "unconsented") return { ok: false, reason: "grant_missing" };
 
 	let scope: ResolvedScope;
 	let grantScopes: readonly AgentScope[] | null = null;

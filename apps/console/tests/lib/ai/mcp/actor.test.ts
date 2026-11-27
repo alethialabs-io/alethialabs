@@ -29,7 +29,7 @@ function live(grant: AgentGrant): GrantBinding {
 	return { kind: "live", grant };
 }
 
-/** Reads that answer a person in org-1 with no grant and agent access on, unless overridden. */
+/** Reads that answer a person in org-1, a skip-consent client with no grant, and agent access on, unless overridden. */
 function deps(over: Partial<McpActorDeps> = {}): McpActorDeps {
 	return {
 		readGrant: vi.fn(async (): Promise<GrantBinding> => ({ kind: "none" })),
@@ -128,6 +128,16 @@ describe("resolveMcpActor", () => {
 		expect(d.agentAccessEnabled).not.toHaveBeenCalled();
 	});
 
+	it("refuses a token with neither a consent nor a grant for a client that shows the consent screen", async () => {
+		const d = deps({ readGrant: vi.fn(async (): Promise<GrantBinding> => ({ kind: "unconsented" })) });
+		expect(await resolveMcpActor(CLAIMS, null, d)).toEqual({ ok: false, reason: "grant_missing" });
+		// Never the no-grant path (the person's default org, the token's scopes, every project), and
+		// there is no consent to release.
+		expect(d.resolveScope).not.toHaveBeenCalled();
+		expect(d.agentAccessEnabled).not.toHaveBeenCalled();
+		expect(d.releaseUngrantedConsent).not.toHaveBeenCalled();
+	});
+
 	it("still refuses a consent without a grant when releasing it fails", async () => {
 		const d = deps({
 			readGrant: vi.fn(async (): Promise<GrantBinding> => ({ kind: "ungranted" })),
@@ -175,7 +185,7 @@ describe("resolveMcpActor", () => {
 		expect(d.readGrant).not.toHaveBeenCalled();
 	});
 
-	it("keeps a token with no grant row on the token's own scopes over every project", async () => {
+	it("keeps a skip-consent client's token with no grant row on the token's own scopes over every project", async () => {
 		const d = deps();
 		expect(await resolveMcpActor(CLAIMS, null, d)).toMatchObject({
 			ok: true,
@@ -240,11 +250,18 @@ describe("readGrantBinding", () => {
 		expect(await (await realRead())("user-1", "client-1")).toEqual({ kind: "revoked" });
 	});
 
-	it("answers none when the client has no grant row and no consent record", async () => {
-		const db = txAnswering([], []);
+	it("answers none when a client marked skip_consent has no grant row and no consent record", async () => {
+		const db = txAnswering([], [], [{ skipConsent: true }]);
 		vi.mocked(getServiceDb).mockReturnValue(db as never);
 		expect(await (await realRead())("user-1", "client-1")).toEqual({ kind: "none" });
-		expect(db.select).toHaveBeenCalledTimes(2);
+		expect(db.select).toHaveBeenCalledTimes(3);
+	});
+
+	it("answers unconsented when a client not marked skip_consent has no grant row and no consent record", async () => {
+		for (const clientRows of [[{ skipConsent: false }], [{ skipConsent: null }], []]) {
+			vi.mocked(getServiceDb).mockReturnValue(txAnswering([], [], clientRows) as never);
+			expect(await (await realRead())("user-1", "client-1")).toEqual({ kind: "unconsented" });
+		}
 	});
 
 	it("answers ungranted when the client has a consent record but no grant row", async () => {
