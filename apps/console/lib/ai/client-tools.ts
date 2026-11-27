@@ -73,15 +73,21 @@ export const createSupportCaseOutputSchema = z.discriminatedUnion("status", [
 ]);
 
 /**
- * `propose_changes`' output: what `components/agent/render-tool-parts/project-tool-parts.tsx`
- * sends when the user clicks Accept, the only output that card produces. `label` echoes the
- * proposal's own label, which the model wrote, so it is bounded at 2,000 characters (ADR 0003
- * §5.1 step 8) like a denial's reason; slice 6 truncates it in the browser to fit.
+ * `propose_changes`' output: the discriminated union
+ * `components/agent/render-tool-parts/project-tool-parts.tsx` sends — accepted (the actions were
+ * applied to the canvas) or dismissed (the user declined, and the canvas was left as it was). The
+ * tool's own description promises the model the user can "accept or dismiss"; before `dismissed`
+ * existed the card offered only Accept, so a declined proposal never reached the model at all.
+ * `label` echoes the proposal's own label, which the model wrote, so it is bounded at 2,000
+ * characters (ADR 0003 §5.1 step 8) like a denial's reason; slice 6 truncates it in the browser.
  */
-export const proposeChangesOutputSchema = z.object({
-	status: z.literal("accepted"),
-	label: z.string().max(REASON_MAX_CHARS),
-});
+export const proposeChangesOutputSchema = z.discriminatedUnion("status", [
+	z.object({
+		status: z.literal("accepted"),
+		label: z.string().max(REASON_MAX_CHARS),
+	}),
+	z.object({ status: z.literal("dismissed") }),
+]);
 
 /** The output schema of each client tool, keyed by its name. */
 export const CLIENT_TOOL_OUTPUT_SCHEMAS = {
