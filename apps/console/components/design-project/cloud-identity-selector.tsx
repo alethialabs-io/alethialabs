@@ -19,7 +19,8 @@ import {
 	SelectValue,
 } from "@repo/ui/select";
 import { Button } from "@repo/ui/button";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
+import { MarkLoader } from "@repo/brand/loader";
 import Link from "next/link";
 import { useEffect, useEffectEvent } from "react";
 
@@ -108,9 +109,9 @@ export function CloudIdentitySelector({
 				</SelectContent>
 			</Select>
 			{loading && (
-				<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-					<Loader2 className="h-3 w-3 animate-spin" />
-					Loading resources...
+				<div className="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+					<MarkLoader size="inline" label="Loading resources" />
+					<span aria-hidden="true">Loading resources…</span>
 				</div>
 			)}
 		</div>
