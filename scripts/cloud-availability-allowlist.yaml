@@ -176,10 +176,6 @@ entries:
     rule: cloud-list
     lists: 1
     lifts: "#6872"
-  - file: packages/brand/src/site/primitives.tsx
-    rule: cloud-list
-    lists: 1
-    lifts: "#7816"
   # ── Rule 2 — surfaces that must name a hidden cloud ─────────────────────────────────────────────
   - file: apps/docs/content/docs/concepts/connectors.mdx
     rule: hidden-name
