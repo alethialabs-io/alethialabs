@@ -113,6 +113,8 @@ var docsProseUnscopedPages = map[string]string{
 		"carries a fenced command tree instead of per-command sections",
 	"init.mdx": "a first-run walkthrough of `login` and `config set`, written as a narrative rather " +
 		"than as sections for the commands it drives",
+	"errors.mdx": "the exit-code and error-code tables every command shares, generated from " +
+		"pkg/clierr by tools/gendocs; it documents no one command",
 }
 
 // docsProseForeignFlags records, per page, the BARE flag mentions that belong to a command the page
