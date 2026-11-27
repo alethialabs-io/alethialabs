@@ -64,7 +64,11 @@ services:
   # `import admin*.caddy` line in deploy/prod/Caddyfile.
   admin:
     profiles: ["admin"]
-    image: "ghcr.io/alethialabs-io/admin:${ALETHIA_IMAGE_TAG:-latest}"
+    # Its own tag, not ALETHIA_IMAGE_TAG: the staff app is moving to the private
+    # alethialabs-io/web repo, which deploys it on its own schedule. The console deploy
+    # (scripts/ci/deploy-console-assemble-env.sh) sets this to its own tag unless the box
+    # holds /opt/alethia/admin.image.env, which only the web repo's deploy writes.
+    image: "ghcr.io/alethialabs-io/admin:${ALETHIA_ADMIN_IMAGE_TAG:-latest}"
     pull_policy: always
   # One-shot migrate — the console Dockerfile's `migrate` target (shares all
   # build cache with console; the final stage is the only difference).
