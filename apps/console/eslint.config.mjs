@@ -125,7 +125,7 @@ const eslintConfig = defineConfig([
 		//
 		// The one honest suppression is TanStack Table's `useReactTable`, which has no form the
 		// compiler can memoise: those sites carry a stated `eslint-disable-next-line
-		// react-hooks/incompatible-library`. See docs/plans/console-react-hooks-warnings.md.
+		// react-hooks/incompatible-library`.
 		rules: {
 			"react-hooks/exhaustive-deps": "error",
 		},
