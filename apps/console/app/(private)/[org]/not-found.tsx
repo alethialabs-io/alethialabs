@@ -1,3 +1,4 @@
+"use client";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
@@ -32,25 +33,33 @@
 // over this one.
 //
 // Still non-leaky: absent and forbidden read the same — we never disclose existence.
+//
+// The copy is the polish-wave 404 form (spec §4, #7741): "Nothing here.", the likely reason, and
+// the way back to this org's projects. It is a client component only to read the org from the
+// address — a not-found file receives no params.
 
 import Link from "next/link";
-import { ErrorState } from "@/components/errors/error-state";
+import { usePathname } from "next/navigation";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
+import { orgHref } from "@/lib/routing";
 
 /** The in-shell 404 for anything under a RESOLVED org that has no nearer not-found boundary. */
 export default function OrgNotFound() {
+	// `/{org}/…` — the org resolved (this renders inside its layout), so the way back is its projects.
+	const org = usePathname().split("/").filter(Boolean)[0];
 	return (
 		<ErrorState
 			code="404"
-			title="Not found"
-			description="This page doesn't exist, or you don't have access to it."
+			title="Nothing here."
+			description="The address may be mistyped, or the page has moved. It may also be something you don't have access to."
 			actions={
-				// An `<a href="/">` in the DOM — the only way out of a 404 — announced as a link.
+				// An `<a href>` in the DOM — the only way out of a 404 — announced as a link.
 				// base-ui's Button merges `{role: 'button'}` onto any non-native render
 				// (`use-button/useButton.js`); `@repo/ui/button` overrides that with `role="link"`
 				// for a `render` element carrying an `href` (#5444), so no role is passed here.
-				<Button size="sm" nativeButton={false} render={<Link href="/" />}>
-					Go home
+				<Button size="sm" nativeButton={false} render={<Link href={org ? orgHref(org) : "/"} />}>
+					Back to projects
 				</Button>
 			}
 		/>

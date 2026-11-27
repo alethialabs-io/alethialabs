@@ -20,5 +20,10 @@ sso_admin_permission_set = "AdministratorAccess"
 books_github_repo        = "alethialabs-io/books"
 books_github_environment = "books"
 
+# Its numeric ids, which GitHub's immutable OIDC subject carries (oidc.tf). Read with
+# `gh api repos/alethialabs-io/books --jq '{id, owner: .owner.id}'`.
+books_github_owner_id = "293964056"
+books_github_repo_id  = "1470091729"
+
 # Expected spend is about USD 1.5 a month (README "Cost").
 monthly_budget_usd = 5

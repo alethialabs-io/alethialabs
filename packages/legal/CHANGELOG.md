@@ -1,5 +1,11 @@
 # @repo/legal
 
+## 0.1.2
+
+### Patch Changes
+
+- 0c2b83c: Stop shipping the package's compiled tests: 0.1.1 included `dist/*.test.js` and their type definitions.
+
 ## 0.1.1
 
 ### Patch Changes

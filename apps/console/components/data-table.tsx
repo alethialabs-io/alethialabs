@@ -5,45 +5,25 @@
 
 import {
 	type ColumnDef,
-	type ColumnFiltersState,
-	type PaginationState,
 	type SortingState,
-	type Updater,
 	flexRender,
 	getCoreRowModel,
-	getFilteredRowModel,
-	getPaginationRowModel,
 	getSortedRowModel,
 	useReactTable,
 } from "@tanstack/react-table";
-import {
-	ArrowDown,
-	ArrowUp,
-	ArrowUpDown,
-	ChevronLeft,
-	ChevronRight,
-	CircleAlert,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { type KeyboardEvent, useState } from "react";
 
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	DATA_TABLE_FRAME,
 	DEFAULT_SKELETON_ROWS,
 	DataTableSkeletonRows,
 } from "@/components/skeletons/data-table-skeleton";
 import { ListFooter } from "@/components/list/list-footer";
-import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
+import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
 import type { KeysetList } from "@/lib/query/use-keyset-list";
-import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@repo/ui/select";
 import {
 	Table,
 	TableBody,
@@ -105,6 +85,17 @@ interface DataTableCommonProps<TData extends { id?: string }, TValue> {
 	/** Tailwind height class (e.g. "h-[70vh]"). When set, wraps the table in a ScrollArea and makes the header sticky. */
 	scrollHeight?: string;
 	/**
+	 * Scroll horizontally when the columns are wider than the frame, instead of clipping them.
+	 *
+	 * The table's wrapper clips its x-axis by default (`@repo/ui/table` → `Table`), so a column past
+	 * the frame's right edge is cut off with no way to reach it — and a control in that column still
+	 * reads as visible and enabled while every click lands on the page behind it (#7713: a token row's
+	 * Revoke). A table whose LAST column carries row actions, or whose columns cannot be made to fit
+	 * the narrowest width it renders at, opts in here. Not combined with `scrollHeight`: a wrapper
+	 * that scrolls on x is a scroll container on y too, and it would trap that mode's sticky header.
+	 */
+	scrollX?: boolean;
+	/**
 	 * Message shown in the empty-state row when there are no rows (default "No results."). It is
 	 * NEVER shown while the read is loading or has failed: an empty table and a table still
 	 * loading are different answers, and showing the first for the second is a lie about the
@@ -116,29 +107,22 @@ interface DataTableCommonProps<TData extends { id?: string }, TValue> {
 }
 
 /**
- * CLIENT mode: the caller holds every row. Its page-number and "Show more" footers are the two
- * paging modes the list standard retires (lib/query/README.md → "Paging"); they stay only until
- * their last caller moves to {@link DataTableServerProps} (LST-14, #7496).
+ * CLIENT mode: the caller holds every row, and the table renders every one of them, sortable by
+ * column. It does not page. Its page-number footer (with the rows-per-page picker) and its
+ * "Show more" window were the two paging modes the list standard retired (lib/query/README.md →
+ * "Paging"); they went with their last caller (LST-14, #7496). A list READ from the server is not
+ * this mode's: it is {@link DataTableServerProps}, and `check-filter-standard`'s `client-table`
+ * rule fails a client-mode table that no `bounded` decision names.
  */
 interface DataTableClientProps<TData extends { id?: string }, TValue> extends DataTableCommonProps<TData, TValue> {
 	data: TData[];
 	keyset?: never;
-	pageSize?: number;
-	columnFilters?: ColumnFiltersState;
-	pageIndex?: number;
-	onPageIndexChange?: (index: number) => void;
 	/**
 	 * The read behind `data`. Pass the TanStack query result itself — `query={jobsQuery}` — and
 	 * the table derives its loading, error and stale states from it. See {@link DataTableQuery}.
 	 * Omit it only for rows that are not read from anywhere (a constant list, a computed one).
 	 */
 	query?: DataTableQuery;
-	/**
-	 * Opt into a "Show more" footer (like the Activity log) instead of page-number controls. The
-	 * caller grows the visible window itself — pass `pageSize` as the current visible count and
-	 * `onLoadMore` to extend it. Pagination is pinned to the first page (page 0) in this mode.
-	 */
-	loadMore?: { hasMore: boolean; onLoadMore: () => void };
 }
 
 /**
@@ -146,50 +130,18 @@ interface DataTableClientProps<TData extends { id?: string }, TValue> extends Da
  * `useKeysetList`. The table renders EVERY loaded row — no page numbers, no rows-per-page picker,
  * no "of N" — followed by `ListFooter`, and derives its loading / error / stale bodies from the
  * list's first-page state. Column sorting is off: the server owns the order, and sorting the pages
- * that happen to be loaded would show an order the list does not have. The client-paging props
- * are `never` here, so the two modes cannot be mixed.
+ * that happen to be loaded would show an order the list does not have. The client-mode props are
+ * `never` here, so the two modes cannot be mixed.
  */
 interface DataTableServerProps<TData extends { id?: string }, TValue> extends DataTableCommonProps<TData, TValue> {
 	keyset: KeysetList<TData>;
 	data?: never;
-	pageSize?: never;
-	columnFilters?: never;
-	pageIndex?: never;
-	onPageIndexChange?: never;
 	query?: never;
-	loadMore?: never;
 }
 
 type DataTableProps<TData extends { id?: string }, TValue> =
 	| DataTableClientProps<TData, TValue>
 	| DataTableServerProps<TData, TValue>;
-
-/**
- * The notice a table shows when a refetch failed behind rows it already has: the rows are still
- * the last good answer, so they stay, and this line says they may be out of date. With
- * live-by-default invalidation every update is a refetch, so this is the COMMON failure, and
- * replacing a good table with a full error for it would be worse than the failure.
- *
- * Built from what the table already uses (its border, a ghost `Button`, a named ink tier), so it
- * adds no colour of its own. Polite (`role="status"`): nothing the viewer had has gone away.
- */
-function StaleRefreshNotice({ onRetry }: { onRetry: () => void }) {
-	return (
-		<div
-			data-slot="data-table-stale"
-			role="status"
-			className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-1.5 text-ui-sm text-text-secondary"
-		>
-			<span className="flex items-center gap-2">
-				<CircleAlert className="size-3.5 shrink-0" aria-hidden />
-				{"Couldn't refresh — showing earlier data"}
-			</span>
-			<Button variant="ghost" size="xs" onClick={onRetry}>
-				Try again
-			</Button>
-		</div>
-	);
-}
 
 /**
  * THE console table shell.
@@ -205,8 +157,8 @@ function StaleRefreshNotice({ onRetry }: { onRetry: () => void }) {
  * - **`DataTable` (this file)** is the default. A list read from the server goes through its
  *   SERVER mode — `keyset={useKeysetList(…)}` — which renders every loaded row and `ListFooter`
  *   (lib/query/README.md → "Paging", #7482). Its CLIENT mode (`data=`) is for rows the client
- *   genuinely holds whole (a constant list, a computed one); that mode's page numbers and
- *   "Show more" window are retired by the list standard and go with their last caller (LST-14).
+ *   genuinely holds whole (a constant list, a computed one) and renders them all; it has no page
+ *   numbers and no "Show more" window (both retired by LST-14, #7496).
  * - **The `@repo/ui/table` primitives** are the shell underneath — `DataTable` renders through
  *   them, so a table built on them directly inherits the same padding, borders, hover and
  *   selected states. Compose them directly only for the shapes TanStack's flat row model cannot
@@ -228,6 +180,7 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 		selectedRowId,
 		className,
 		scrollHeight,
+		scrollX = false,
 		emptyMessage = "No results.",
 		skeletonRows = DEFAULT_SKELETON_ROWS,
 	} = props;
@@ -236,11 +189,6 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 	const keyset = props.keyset;
 	const data: TData[] = keyset?.rows ?? props.data ?? [];
 	const query: DataTableQuery | undefined = keyset?.query ?? props.query;
-	const pageSize = props.pageSize ?? 20;
-	const externalFilters = props.columnFilters;
-	const externalPageIndex = props.pageIndex;
-	const onPageIndexChange = props.onPageIndexChange;
-	const loadMore = props.loadMore;
 
 	// One status for the body, decided once (see `DataTableQuery`). A failure with data is NOT
 	// an error body: the rows stay and `staleRefresh` adds a notice above them.
@@ -251,13 +199,6 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 		void query?.refetch();
 	};
 	const [sorting, setSorting] = useState<SortingState>([]);
-	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
-		externalFilters ?? [],
-	);
-
-	// In "Show more" mode the visible window is `pageSize` rows of page 0 (the caller grows
-	// `pageSize`); otherwise honor the external page index.
-	const effectivePageIndex = loadMore ? 0 : externalPageIndex;
 
 	// eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table returns a mutable instance the compiler cannot memoize; the console does not run the React Compiler.
 	const table = useReactTable({
@@ -284,71 +225,23 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 		// this persona".
 		getRowId: (row, index) => row.id ?? String(index),
 		getCoreRowModel: getCoreRowModel(),
-		// Server mode reads the core model only: every loaded row, in the server's order. Sorting,
-		// filtering or paging the loaded pages in the browser would show a list the server does not
-		// have — the sort over 50 of 4,000 rows, the "page 2 of 3" of whatever happened to load.
-		...(keyset === undefined && {
-			getSortedRowModel: getSortedRowModel(),
-			getPaginationRowModel: getPaginationRowModel(),
-			getFilteredRowModel: getFilteredRowModel(),
-		}),
+		// Server mode reads the core model only: every loaded row, in the server's order. Sorting
+		// the loaded pages in the browser would show a list the server does not have — the sort
+		// over 50 of 4,000 rows. Neither mode pages or filters in the browser: client mode renders
+		// every row it was given, and server mode every row it has loaded.
+		...(keyset === undefined && { getSortedRowModel: getSortedRowModel() }),
 		enableSorting: keyset === undefined,
 		onSortingChange: setSorting,
-		onColumnFiltersChange: setColumnFilters,
-		state: {
-			sorting,
-			columnFilters: externalFilters ?? columnFilters,
-			...(keyset === undefined &&
-				effectivePageIndex !== undefined && {
-					pagination: { pageIndex: effectivePageIndex, pageSize },
-				}),
-		},
-		...(onPageIndexChange && {
-			// A CONTROLLED page index is the caller's URL state, and only a person paging may write it.
-			//
-			// TanStack resets the page index to 0 on its own whenever `data` changes
-			// (`autoResetPageIndex`), and it reports that reset through this callback. On a filtered
-			// list the data changes BECAUSE a facet was applied — in the same commit in which
-			// `useFilterUrlSync` has just called `router.replace(?facet=…)`. The caller turned the
-			// reset into a page-URL write built from the search params it rendered with, which do not
-			// carry the new facet yet, so that write landed last and dropped the facet from the URL:
-			// the list narrowed and the link did not (F8 `applied: false` on `~/clusters` and
-			// `~/settings/members`, #7673). Resetting the page on a filter change is already the
-			// filter sync's job (`resetParams`), so the table's own reset is off, and an "update" to
-			// the index the URL already holds is dropped rather than written.
-			autoResetPageIndex: false,
-			onPaginationChange: (updater: Updater<PaginationState>) => {
-				const current = externalPageIndex ?? 0;
-				const next =
-					typeof updater === "function"
-						? updater({ pageIndex: current, pageSize })
-						: updater;
-				if (next.pageIndex === current) return;
-				onPageIndexChange(next.pageIndex);
-			},
-		}),
-		initialState: {
-			pagination: { pageSize },
-		},
+		state: { sorting },
 	});
 	// The header's real width in cells. `columns.length` counts top-level defs, so a grouped def
 	// (one def, several leaf columns) or a hidden column would put a full-width row out of step.
 	const leafColumnCount = table.getVisibleLeafColumns().length;
 
-	// Auto-grow the "Show more" window as the footer scrolls into view (the button stays as an
-	// explicit fallback). Windowing is synchronous, so re-arm the observer on the rendered count.
-	const visibleRowCount = table.getRowModel().rows.length;
-	const loadMoreSentinelRef = useInfiniteScrollSentinel<HTMLDivElement>({
-		hasMore: loadMore?.hasMore ?? false,
-		loading: false,
-		onLoadMore: () => loadMore?.onLoadMore(),
-		resetKey: visibleRowCount,
-	});
-
 	// `--z-raised` IS the 10 the sticky header used to hardcode (packages/brand/src/tokens.css).
 	// Naming the layer is deliberately not the moment to move it.
 	const tableEl = (
-		<Table>
+		<Table scroll={scrollX && !scrollHeight}>
 			<TableHeader
 				className={
 					scrollHeight ? "sticky top-0 z-[var(--z-raised)] bg-background" : undefined
@@ -450,7 +343,9 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 	return (
 		<div className={cn("space-y-3", className)}>
 			<div className={DATA_TABLE_FRAME} data-state={bodyState}>
-				{staleRefresh ? <StaleRefreshNotice onRetry={retry} /> : null}
+				{staleRefresh ? (
+					<StaleRefreshNotice slot="data-table-stale" onRetry={retry} className="border-b px-4 py-1.5" />
+				) : null}
 				{scrollHeight ? (
 					<ScrollArea className={scrollHeight}>{tableEl}</ScrollArea>
 				) : (
@@ -458,87 +353,7 @@ export function DataTable<TData extends { id?: string }, TValue>(props: DataTabl
 				)}
 			</div>
 
-			{bodyState !== "ready"
-				? null
-				: keyset
-				? (data.length > 0 && <ListFooter list={keyset} />)
-				: loadMore
-				? (table.getFilteredRowModel().rows.length > 0 && (
-						<div className="flex flex-col items-center gap-2 px-1">
-							<p className="text-xs text-muted-foreground tabular-nums">
-								Showing {table.getRowModel().rows.length} of{" "}
-								{table.getFilteredRowModel().rows.length}
-							</p>
-							{loadMore.hasMore && (
-								<>
-									{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
-									<div
-										ref={loadMoreSentinelRef}
-										aria-hidden
-										className="h-px w-px"
-									/>
-									<Button
-										variant="outline"
-										size="sm"
-										onClick={loadMore.onLoadMore}
-									>
-										Show more
-									</Button>
-								</>
-							)}
-						</div>
-					))
-				: table.getPageCount() > 1 && (
-						<div className="flex items-center justify-between px-1">
-							<p className="text-xs text-muted-foreground">
-								{table.getFilteredRowModel().rows.length} total
-							</p>
-							<div className="flex items-center gap-4">
-								<div className="flex items-center gap-2">
-									<p className="text-xs text-muted-foreground">Rows</p>
-									<Select
-										value={String(table.getState().pagination.pageSize)}
-										onValueChange={(value) => table.setPageSize(Number(value))}
-									>
-										<SelectTrigger className="h-7 w-16 text-xs">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="10">10</SelectItem>
-											<SelectItem value="20">20</SelectItem>
-											<SelectItem value="50">50</SelectItem>
-										</SelectContent>
-									</Select>
-								</div>
-								<p className="text-xs text-muted-foreground tabular-nums">
-									Page {table.getState().pagination.pageIndex + 1} of{" "}
-									{table.getPageCount()}
-								</p>
-								<div className="flex items-center gap-1">
-									<Button
-										variant="outline"
-										size="icon"
-										className="h-7 w-7"
-										onClick={() => table.previousPage()}
-										disabled={!table.getCanPreviousPage()}
-										aria-label="Previous page"
-									>
-										<ChevronLeft className="h-3.5 w-3.5" />
-									</Button>
-									<Button
-										variant="outline"
-										size="icon"
-										className="h-7 w-7"
-										onClick={() => table.nextPage()}
-										disabled={!table.getCanNextPage()}
-										aria-label="Next page"
-									>
-										<ChevronRight className="h-3.5 w-3.5" />
-									</Button>
-								</div>
-							</div>
-						</div>
-					)}
+			{bodyState === "ready" && keyset && data.length > 0 ? <ListFooter list={keyset} /> : null}
 		</div>
 	);
 }

@@ -13,7 +13,9 @@
 // SEQUENCE would not do: `nextval` is not rolled back, so a failed issue would leave a gap.
 //
 // THE DOCUMENT. One `factura` row per issued фактура or credit note (кредитно известие, Art. 115,
-// one per Stripe refund: lib/billing/factura/credit-note.ts). `snapshot` holds every Art. 114
+// one per Stripe refund: lib/billing/factura/credit-note.ts). A `manual` row (L6b,
+// lib/billing/factura/manual.ts) is one an operator issued for a supply no checkout produced; it
+// names an operator key instead of Stripe ids, and takes its number from the same series. `snapshot` holds every Art. 114
 // field as printed (FacturaSnapshot in types/jsonb.types.ts); the PDF is rendered from it alone, and
 // `pdf_sha256` proves the stored PDF unchanged. A trigger in programmables.sql refuses UPDATE, DELETE
 // and TRUNCATE on an issued row. The one write it admits is attaching the PDF ONCE (pdf_key and
@@ -51,6 +53,17 @@ export const FACTURA_KINDS = ["invoice", "credit_note"] as const;
 /** One of `FACTURA_KINDS`. */
 export type FacturaKind = (typeof FACTURA_KINDS)[number];
 
+/**
+ * Where a document came from (L6b): `stripe`, issued from a paid Stripe invoice or refund by
+ * issue.ts / credit-note.ts; `manual`, issued by an operator through `factura:issue-manual`
+ * (manual.ts) for a supply no checkout produced — the monthly фактура to Paddle, an Enterprise
+ * contract. Both draw from the same series.
+ */
+export const FACTURA_DOCUMENT_SOURCES = ["stripe", "manual"] as const;
+
+/** One of `FACTURA_DOCUMENT_SOURCES`. */
+export type FacturaDocumentSource = (typeof FACTURA_DOCUMENT_SOURCES)[number];
+
 /** The id of the one series the console issues from. */
 export const FACTURA_SERIES_BG = "BG";
 
@@ -83,8 +96,15 @@ export const factura = pgTable(
 	"factura",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		/** The organization billed. Deliberately not a foreign key: see the header. */
-		organizationId: uuid().notNull(),
+		/**
+		 * The organization billed. Deliberately not a foreign key: see the header. Always set on a
+		 * `stripe` document; a `manual` one names it only when the recipient is a console
+		 * organization (an Enterprise contract), so its members can read it — the monthly фактура to
+		 * Paddle names none and is read by the operator alone.
+		 */
+		organizationId: uuid(),
+		/** Where the document came from (`FACTURA_DOCUMENT_SOURCES`). */
+		source: text().$type<FacturaDocumentSource>().notNull().default("stripe"),
 		/** The ten-digit number (Art. 114(1), point 2), zero-padded: "0000000001". */
 		number: text().notNull().unique(),
 		kind: text().$type<FacturaKind>().notNull(),
@@ -92,8 +112,11 @@ export const factura = pgTable(
 		originalFacturaId: uuid().references((): AnyPgColumn => factura.id, {
 			onDelete: "restrict",
 		}),
-		/** The paid Stripe invoice this document is issued for (for a credit note: the one it corrects). */
-		stripeInvoiceId: text().notNull(),
+		/**
+		 * The paid Stripe invoice this document is issued for (for a credit note: the one it corrects).
+		 * Set exactly on a `stripe` document.
+		 */
+		stripeInvoiceId: text(),
 		/**
 		 * For a credit note: the Stripe refund it records (#7369). One refund, one credit note, so a
 		 * partial refund and a later one each get their own. NULL on a фактура.
@@ -104,6 +127,12 @@ export const factura = pgTable(
 		chargeableDate: date({ mode: "string" }).notNull(),
 		/** Every Art. 114 field as printed. */
 		snapshot: jsonb().$type<FacturaSnapshot>().notNull(),
+		/**
+		 * The operator's idempotency key of a `manual` document (e.g. `paddle-market:2026-12`): a
+		 * re-run with the same key finds the issued document instead of taking a second number. Set
+		 * exactly on a `manual` document, and unique across both kinds.
+		 */
+		manualKey: text(),
 		/** The rendered PDF's object-storage key (lib/storage/invoice-pdf.ts). Set once. */
 		pdfKey: text(),
 		/** The SHA-256 of the stored PDF, lower-case hex. Set once, with `pdfKey`. */
@@ -113,15 +142,28 @@ export const factura = pgTable(
 	(t) => [
 		// Idempotency: one фактура per Stripe invoice (its refund id is NULL, and NULLs compare equal
 		// here), and one credit note per Stripe refund (#7369). A replay or a racing issuer conflicts.
+		// `manual_key` is in the key so two manual documents (Stripe columns both NULL) differ by it;
+		// on a `stripe` row it is always NULL, so the key means what it meant before L6b.
 		unique("factura_document_key")
-			.on(t.stripeInvoiceId, t.kind, t.stripeRefundId)
+			.on(t.stripeInvoiceId, t.kind, t.stripeRefundId, t.manualKey)
 			.nullsNotDistinct(),
+		// One manual document per operator key, whatever its kind (NULLs distinct: Stripe rows).
+		unique("factura_manual_key").on(t.manualKey),
 		index("factura_org_idx").on(t.organizationId),
 		index("factura_issue_date_idx").on(t.issueDate),
-		// A credit note names the refund it records; a фактура names none.
+		// A Stripe credit note names the refund it records; a Stripe фактура names none. A manual
+		// document names no Stripe object at all (`factura_source_link`).
 		check(
 			"factura_credit_note_has_refund",
-			sql`(kind = 'credit_note') = (stripe_refund_id IS NOT NULL)`,
+			sql`source <> 'stripe' OR (kind = 'credit_note') = (stripe_refund_id IS NOT NULL)`,
+		),
+		check("factura_source_known", sql.raw(`source IN (${sqlList(FACTURA_DOCUMENT_SOURCES)})`)),
+		// A Stripe document names its invoice and organization and no manual key; a manual one names
+		// its key and no Stripe object.
+		check(
+			"factura_source_link",
+			sql`(source = 'stripe' AND stripe_invoice_id IS NOT NULL AND organization_id IS NOT NULL AND manual_key IS NULL)
+			OR (source = 'manual' AND stripe_invoice_id IS NULL AND stripe_refund_id IS NULL AND manual_key IS NOT NULL)`,
 		),
 		check("factura_number_ten_digits", sql`number ~ '^[0-9]{10}$'`),
 		check("factura_kind_known", sql.raw(`kind IN (${sqlList(FACTURA_KINDS)})`)),

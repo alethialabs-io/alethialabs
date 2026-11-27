@@ -1,13 +1,14 @@
 {
 	"name": "admin",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"private": true,
 	"scripts": {
 		"dev": "next dev --turbopack --port 3011",
 		"build": "next build",
 		"start": "next start --port 3011",
 		"lint": "eslint .",
-		"check-types": "tsc --noEmit"
+		"check-types": "tsc --noEmit",
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.1171.0",
@@ -19,9 +20,9 @@
 		"@repo/platform": "workspace:*",
 		"@repo/support": "workspace:*",
 		"@repo/ui": "workspace:*",
-		"stripe": "^22.6.2",
 		"@tanstack/react-query": "^5.108.0",
 		"drizzle-orm": "^0.45.4",
+		"jose": "^6.2.17",
 		"lucide-react": "^0.577.0",
 		"next": "16.4.6",
 		"next-runtime-env": "^3.3.0",
@@ -30,6 +31,7 @@
 		"react": "19.3.1",
 		"react-dom": "19.3.1",
 		"sonner": "^2.0.8",
+		"stripe": "^22.6.2",
 		"zod": "^4.6.7"
 	},
 	"devDependencies": {
@@ -41,6 +43,7 @@
 		"eslint-config-next": "16.4.6",
 		"tailwindcss": "^4.3.5",
 		"tw-animate-css": "^1.3.6",
-		"typescript": "^5"
+		"typescript": "^5",
+		"vitest": "^4.1.12"
 	}
 }

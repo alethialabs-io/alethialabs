@@ -1,0 +1,23 @@
+ФАКТУРА / Invoice
+№ 0000000001
+Дата на издаване / Date of issue: 02.01.2027
+Дата на данъчното събитие / Chargeable date: 01.01.2027
+Доставчик / Supplier
+АЛЕТИЯ ЛАБС ЕДПК
+ул. Сирак Скитник № 9, вх. А, ет. 4, ап. 7
+гр. София 1111, р-н Слатина
+България / Bulgaria
+ЕИК / Company ID: 208913663
+ДДС № / VAT No.: BG208913663
+Получател / Recipient
+Customer Ltd
+Street 1
+City
+България / Bulgaria
+ДДС № / VAT No.: BG123456789
+№ | Вид на услугата / Service | Кол. / Qty | Ед. цена / Unit price | Стойност / Amount
+1 | Alethia Enterprise, January 2027 | 2 | €500.00 | €1,000.00
+Данъчна основа / Taxable amount: €1,000.00
+ДДС 20% / VAT 20%: €200.00
+Сума за плащане / Amount payable: €1,200.00
+Плащане по банков път / Payment by bank transfer

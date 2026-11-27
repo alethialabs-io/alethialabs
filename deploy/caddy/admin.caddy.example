@@ -3,10 +3,11 @@
 # The dashboard is cross-tenant (staff view/answer every org's cases). Its ONLY gate is
 # Cloudflare Access + the SUPPORT_STAFF_EMAILS allowlist — the same pattern as the Umami
 # analytics dashboard. Put a Cloudflare Access application in front of this hostname (Zero
-# Trust → Access → Applications) restricted to your staff emails; Access then injects the
-# verified identity in the `Cf-Access-Authenticated-User-Email` header, which the app
-# trusts (lib/auth/staff.ts). Without an Access app in front, this hostname is UNGATED —
-# do not expose it publicly.
+# Trust → Access → Applications) restricted to your staff emails; Access then signs an
+# application token for each request, which the app verifies (lib/auth/access-jwt.ts) against
+# CF_ACCESS_TEAM_DOMAIN and that application's AUD tag in CF_ACCESS_AUD before reading the
+# staff email from it. In production the app admits nobody until both are set. Do not expose
+# this hostname without an Access app in front.
 #
 # OPT-IN self-host template:
 #   1. Run an `admin` service (the apps/admin image) in your compose stack

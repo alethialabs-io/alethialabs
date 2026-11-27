@@ -27,9 +27,9 @@ const decisionInput = z.object({
 	reason: z.string().trim().max(DECISION_REASON_MAX).nullish(),
 });
 
-/** The refusal an {@link ApprovalError} is shown as. */
+/** The refusal an {@link ApprovalError} is shown as: its sentence, and its code for the sheet to branch on. */
 function refusalOf(err: ApprovalError): ActionRefusal {
-	return new ActionRefusal(err.code === "not_found" ? "not-found" : "conflict", err.message);
+	return new ActionRefusal(err.code === "not_found" ? "not-found" : "conflict", err.message, undefined, err.code);
 }
 
 /** Records the signed-in person's decision; refuses anyone who is not a person in a console session. */

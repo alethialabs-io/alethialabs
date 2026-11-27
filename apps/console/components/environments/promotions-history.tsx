@@ -21,7 +21,7 @@ import { SectionHeading } from "@repo/ui/section-heading";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { useMemo } from "react";
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import type { PromotionRowView } from "@/lib/rpc/procedures/environments";

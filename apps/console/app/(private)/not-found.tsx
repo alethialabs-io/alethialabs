@@ -25,7 +25,8 @@
 // `scripts/check-route-states.mjs` reports any layout that starts to.
 
 import Link from "next/link";
-import { ErrorState } from "@/components/errors/error-state";
+import { AlethiaMark } from "@repo/brand/lockup";
+import { ErrorState } from "@repo/ui/error-state";
 import { Button } from "@repo/ui/button";
 
 /** The 404 for an org slug that does not resolve — the boundary above `[org]/layout.tsx`. */
@@ -33,9 +34,10 @@ export default function PrivateNotFound() {
 	return (
 		<ErrorState
 			fullPage
+			mark={<AlethiaMark />}
 			code="404"
 			title="Organization not found"
-			description="This organization doesn't exist, or you don't have access to it."
+			description="The address may be mistyped, or this organization isn't one you belong to."
 			actions={
 				// "Go home" is an `<a href>` and is announced as a link: `@repo/ui/button` gives a
 				// `render` element with an `href` `role="link"` (#5444), so it needs no role of its

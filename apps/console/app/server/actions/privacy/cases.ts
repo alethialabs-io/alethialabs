@@ -27,8 +27,9 @@
 // The residual gap is named rather than papered over: a case that belongs to NO ORGANIZATION —
 // the request that arrives by email from a former user, and equally every self-serve request,
 // because a personal org is recorded as none — has no console authority that can decide it. Those
-// reach the controller directly, and the platform-admin surface for them is `apps/admin`, behind
-// Cloudflare Access and `PLATFORM_ADMIN_EMAILS`. It is not built here, so these steps refuse such
+// reach the controller directly, and the platform-admin surface for them is `apps/admin/app/privacy`
+// (#7222), behind Cloudflare Access and `PLATFORM_ADMIN_EMAILS`, which reaches the same steps through
+// `app/api/internal/platform/privacy/**`. It is not reachable from here, so these actions refuse such
 // a case instead of admitting whoever asked — including the subject, who may read their own case
 // and decide nothing on it. See {@link authorizeCase} for why the subject is not the second party.
 //
@@ -37,43 +38,39 @@
 // would either leak those rows to a tenant or hide a person's case from the only path that can
 // answer it.
 
-import { and, desc, eq, getTableColumns, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { getInjectedActor } from "@/lib/authz/actor-context";
 import { authorize, authorizeInOrg, currentActor } from "@/lib/authz/guard";
 import { type Actor, ForbiddenError } from "@/lib/authz/types";
 import { getServiceDb } from "@/lib/db";
-import {
-	privacyCase,
-	privacyCaseEvent,
-	privacyErasureTombstone,
-} from "@/lib/db/schema";
+import { privacyCase, privacyErasureTombstone } from "@/lib/db/schema";
 import type { PrivacyCaseKind } from "@/lib/db/schema/enums";
 import {
-	applyErasurePlan,
-	describeResidency,
-	type ErasureResidency,
-	type ErasureTableResult,
-	findLiveResidency,
-	residencyIsClear,
-} from "@/lib/privacy/erasure-executor";
-import { buildErasurePlan, planToScope } from "@/lib/privacy/erasure-plan";
-import { newReference, recordEvent, subjectHash } from "./ledger";
-import { PRIVACY_RESPONSE_DAYS as RESPONSE_DAYS } from "./response-period";
+	assertExtensionReason,
+	assertHoldReason,
+	assertRefusalReason,
+	caseByReference,
+	caseEvents,
+	type ErasureFulfilment,
+	extendCase,
+	holdCase,
+	insertPrivacyCase,
+	markIdentityVerified,
+	PRIVACY_CASE_KINDS,
+	type PrivacyCaseRow,
+	performErasure,
+	queryOverdueCases,
+	refuseCase,
+} from "@/lib/privacy/case-steps";
 
-/** The single extension available for a complex request, in days (two further months). */
-const EXTENSION_DAYS = 60;
+// The steps themselves — the deadline arithmetic, the single extension, the erasure transaction —
+// live in `lib/privacy/case-steps.ts`, shared with the staff app's controller-level routes
+// (`app/api/internal/platform/privacy/**`, #7222). What stays HERE is the console's decision about
+// the caller: every action below authorizes first, and only then hands the case to the step.
 
 const openSchema = z.object({
-	kind: z.enum([
-		"access",
-		"export",
-		"rectification",
-		"erasure",
-		"restriction",
-		"objection",
-		"portability",
-	]),
+	kind: z.enum(PRIVACY_CASE_KINDS),
 	/** The address the request came from. Hashed on the way in; never stored in the clear. */
 	email: z.string().email(),
 	/** Anything the subject said, kept for context. Never used as an identity check. */
@@ -95,32 +92,15 @@ export async function openPrivacyCase(
 ): Promise<{ reference: string }> {
 	const parsed = openSchema.parse(input);
 	const actor = await currentActor();
-	const reference = newReference();
-
-	const [row] = await getServiceDb()
-		.insert(privacyCase)
-		.values({
-			reference,
-			kind: parsed.kind,
-			subjectUserId: actor.userId,
-			subjectEmailSha256: subjectHash(parsed.email),
-			organizationId:
-				actor.orgId && actor.orgId !== actor.userId ? actor.orgId : null,
-			receivedAt: now,
-			dueAt: new Date(now.getTime() + RESPONSE_DAYS * 86_400_000),
-		})
-		.returning({ id: privacyCase.id });
-	if (!row) throw new Error("Could not open the request.");
-
-	await recordEvent(
-		row.id,
-		"received",
-		{
-			summary: `Request received (${parsed.kind}). Response due within ${RESPONSE_DAYS} days.`,
-		},
-		actor.userId,
-	);
-	return { reference };
+	return insertPrivacyCase({
+		kind: parsed.kind,
+		email: parsed.email,
+		subjectUserId: actor.userId,
+		organizationId: actor.orgId && actor.orgId !== actor.userId ? actor.orgId : null,
+		receivedAt: now,
+		receivedHow: "Request received",
+		actorUserId: actor.userId,
+	});
 }
 
 /**
@@ -138,48 +118,8 @@ export async function verifyPrivacyCaseIdentity(
 	now = new Date(),
 ): Promise<void> {
 	const { actor, c } = await authorizeCase(reference);
-	await getServiceDb()
-		.update(privacyCase)
-		.set({ identityVerifiedAt: now, state: "in_review", updatedAt: now })
-		.where(eq(privacyCase.id, c.id));
-	await recordEvent(
-		c.id,
-		"identity_verified",
-		{ summary: "Identity verified; the request may now be acted on." },
-		actor.userId,
-	);
+	await markIdentityVerified(c, actor.userId, now);
 }
-
-/**
- * The shape of a reference, checked before it reaches a query.
- *
- * `newReference` mints `DSR-` and eight upper-case hex characters, so anything else is not a
- * reference this deployment ever issued and there is nothing to look up. Cheap, and it is the rule:
- * a reference is user input to a server action like any other.
- */
-const referenceSchema = z
-	.string()
-	.trim()
-	.regex(/^DSR-[0-9A-F]{8}$/, "Not a privacy request reference.");
-
-/**
- * Loads a case by reference, or null when nothing matches. Says nothing about who may act on it.
- *
- * Null rather than a throw so {@link authorizeCase} can answer "no such reference" and "not yours"
- * identically; a reference the schema rejects still throws, because that is a malformed argument
- * and not a lookup that missed.
- */
-async function caseByReference(reference: string) {
-	const [c] = await getServiceDb()
-		.select()
-		.from(privacyCase)
-		.where(eq(privacyCase.reference, referenceSchema.parse(reference)))
-		.limit(1);
-	return c ?? null;
-}
-
-/** A case row, as the handling steps receive it. Inferred; there is no generated types file. */
-type PrivacyCaseRow = NonNullable<Awaited<ReturnType<typeof caseByReference>>>;
 
 /**
  * Loads the case a handling step names AND proves the caller has standing over THAT case.
@@ -292,27 +232,9 @@ export async function extendPrivacyCase(
 	reason: string,
 	now = new Date(),
 ): Promise<{ dueAt: Date }> {
-	if (reason.trim().length < 10) {
-		throw new Error(
-			"An extension must state why the request is complex — the subject has to be told.",
-		);
-	}
+	assertExtensionReason(reason);
 	const { actor, c } = await authorizeCase(reference);
-	if (c.extendedAt) {
-		throw new Error("This request has already been extended; only one extension is available.");
-	}
-	const dueAt = new Date(c.dueAt.getTime() + EXTENSION_DAYS * 86_400_000);
-	await getServiceDb()
-		.update(privacyCase)
-		.set({ dueAt, extendedAt: now, extensionReason: reason.trim(), updatedAt: now })
-		.where(eq(privacyCase.id, c.id));
-	await recordEvent(
-		c.id,
-		"note",
-		{ summary: `Response period extended to ${dueAt.toISOString().slice(0, 10)}: ${reason.trim()}` },
-		actor.userId,
-	);
-	return { dueAt };
+	return extendCase(c, actor.userId, reason, now);
 }
 
 /** Applies a legal hold. Pauses the destructive half; never refuses the request. */
@@ -321,46 +243,13 @@ export async function holdPrivacyCase(
 	reason: string,
 	now = new Date(),
 ): Promise<void> {
-	if (reason.trim().length < 10) {
-		throw new Error("A legal hold must state its basis — the subject is entitled to know it.");
-	}
+	assertHoldReason(reason);
 	const { actor, c } = await authorizeCase(reference);
-	await getServiceDb()
-		.update(privacyCase)
-		.set({ legalHoldReason: reason.trim(), updatedAt: now })
-		.where(eq(privacyCase.id, c.id));
-	await recordEvent(
-		c.id,
-		"legal_hold_applied",
-		{ summary: `Legal hold applied: ${reason.trim()}. The request is paused, not refused.` },
-		actor.userId,
-	);
+	await holdCase(c, actor.userId, reason, now);
 }
 
-/**
- * What one call to {@link fulfilErasure} did. Three outcomes, and only one of them erased anything.
- *
- * A discriminated result rather than a thrown error for the two that did not: a refusal because the
- * subject's org is still running infrastructure is a NORMAL, expected answer that the caller has to
- * render to a person, and an exception is the wrong shape for an answer you were asked to give.
- */
-export type ErasureFulfilment =
-	| {
-			outcome: "erased";
-			/** Rows touched per table, in the register's order. */
-			tables: ErasureTableResult[];
-			rowsErased: number;
-			rowsPseudonymized: number;
-			/** Tables the register keeps, with a legal basis. Nothing was done to them. */
-			tablesRetained: number;
-	  }
-	| { outcome: "paused_by_legal_hold"; reason: string }
-	| {
-			outcome: "refused_live_resources";
-			/** The refusal in words, safe to show the subject verbatim. */
-			message: string;
-			residency: ErasureResidency;
-	  };
+/** What one call to {@link fulfilErasure} did; the three outcomes are documented where the step lives. */
+export type { ErasureFulfilment };
 
 /**
  * Performs the erasure, and leaves the tombstone behind.
@@ -395,134 +284,7 @@ export async function fulfilErasure(
 	now = new Date(),
 ): Promise<ErasureFulfilment> {
 	const { actor, c } = await authorizeCase(reference);
-	if (!c.identityVerifiedAt) {
-		throw new Error(
-			"Identity is not verified. Nothing is destroyed until we know who asked — an erasure " +
-				"performed on an unverified request is itself a data breach.",
-		);
-	}
-	if (c.kind !== "erasure") {
-		throw new Error(`Request ${reference} is a ${c.kind} request, not an erasure.`);
-	}
-
-	const plan = buildErasurePlan({ legalHoldReason: c.legalHoldReason });
-	const scope = planToScope(plan, now);
-	const db = getServiceDb();
-
-	if (plan.blocked) {
-		await db.transaction(async (tx) => {
-			await tx.insert(privacyErasureTombstone).values({
-				subjectEmailSha256: c.subjectEmailSha256,
-				erasedUserId: c.subjectUserId,
-				caseReference: c.reference,
-				erasedAt: now,
-				scope,
-			});
-			await tx
-				.update(privacyCase)
-				.set({ scope, state: "in_review", updatedAt: now })
-				.where(eq(privacyCase.id, c.id));
-			await recordEvent(
-				c.id,
-				"legal_hold_applied",
-				{
-					summary: `Erasure paused by a legal hold: ${plan.blockedReason}`,
-					counts: { retained: plan.retain.length },
-					tables: plan.retain.map((r) => r.table),
-				},
-				actor.userId,
-				tx,
-			);
-		});
-		return { outcome: "paused_by_legal_hold", reason: plan.blockedReason ?? "" };
-	}
-
-	// Every rule matches on an identifier. A case opened by someone with no account (the request
-	// that arrives by email from a former user) has none, so there is nothing to match on and the
-	// erasure is a manual one. Running the plan with a missing subject would delete nothing and
-	// report success — the exact failure this issue exists to remove.
-	if (!c.subjectUserId) {
-		throw new Error(
-			`Request ${reference} names no account, so no row can be matched to the subject. It has ` +
-				"to be fulfilled by hand and recorded on the case; this step would erase nothing and " +
-				"report that it had.",
-		);
-	}
-	// A personal organization's id IS the user's id, which is the whole reason erasing an owner
-	// reaches an organization's resources at all.
-	const subject = { userId: c.subjectUserId, personalOrgId: c.subjectUserId };
-
-	return db.transaction(async (tx) => {
-		const residency = await findLiveResidency(tx, subject);
-		if (!residencyIsClear(residency)) {
-			const message = describeResidency(residency);
-			await tx
-				.update(privacyCase)
-				.set({ updatedAt: now })
-				.where(eq(privacyCase.id, c.id));
-			await recordEvent(
-				c.id,
-				"note",
-				{
-					summary: message,
-					counts: {
-						projects: residency.projects,
-						environments_not_destroyed: residency.environments,
-						cloud_connections: residency.cloudConnections,
-						sole_owned_organizations: residency.soleOwnedOrganizations,
-					},
-				},
-				actor.userId,
-				tx,
-			);
-			return { outcome: "refused_live_resources", message, residency };
-		}
-
-		const execution = await applyErasurePlan(tx, plan, subject);
-		await tx.insert(privacyErasureTombstone).values({
-			subjectEmailSha256: c.subjectEmailSha256,
-			erasedUserId: c.subjectUserId,
-			caseReference: c.reference,
-			erasedAt: now,
-			scope,
-		});
-		await tx
-			.update(privacyCase)
-			.set({
-				scope,
-				state: "fulfilled",
-				decidedAt: now,
-				decidedByUserId: actor.userId,
-				updatedAt: now,
-			})
-			.where(eq(privacyCase.id, c.id));
-		await recordEvent(
-			c.id,
-			"erasure_performed",
-			{
-				summary:
-					"Erasure performed. See the scope for what was removed, unlinked and retained, and " +
-					"the counts for how many rows each half actually touched.",
-				counts: {
-					rows_erased: execution.rowsErased,
-					rows_pseudonymized: execution.rowsPseudonymized,
-					tables_erased: plan.erase.length,
-					tables_pseudonymized: plan.pseudonymize.length,
-					tables_retained: plan.retain.length,
-				},
-				tables: execution.tables.map((t) => t.table),
-			},
-			actor.userId,
-			tx,
-		);
-		return {
-			outcome: "erased",
-			tables: execution.tables,
-			rowsErased: execution.rowsErased,
-			rowsPseudonymized: execution.rowsPseudonymized,
-			tablesRetained: plan.retain.length,
-		};
-	});
+	return performErasure(c, actor.userId, now);
 }
 
 /**
@@ -537,24 +299,9 @@ export async function refusePrivacyCase(
 	reason: string,
 	now = new Date(),
 ): Promise<void> {
-	if (reason.trim().length < 20) {
-		throw new Error(
-			"A refusal must state its grounds. The subject has to be told why, and that they may " +
-				"complain to the supervisory authority.",
-		);
-	}
+	assertRefusalReason(reason);
 	const { actor, c } = await authorizeCase(reference);
-	await getServiceDb()
-		.update(privacyCase)
-		.set({
-			state: "refused",
-			refusalReason: reason.trim(),
-			decidedAt: now,
-			decidedByUserId: actor.userId,
-			updatedAt: now,
-		})
-		.where(eq(privacyCase.id, c.id));
-	await recordEvent(c.id, "refused", { summary: `Refused: ${reason.trim()}` }, actor.userId);
+	await refuseCase(c, actor.userId, reason, now);
 }
 
 /**
@@ -571,30 +318,19 @@ export async function refusePrivacyCase(
  * {@link authorizeCase}'s deliberately: `org:view` is held by every viewer in the organization,
  * and "who here has an open privacy request" is not a viewer's business — the bar for a row is the
  * same whether it is read one at a time or in a list. A controller-wide list is not
- * available from the console and is not made available here: that is the platform-admin surface,
+ * available from the console and is not made available here: that is the platform-admin surface
+ * (`apps/admin/app/privacy`, reading `queryOverdueCases` with no scope through the platform route),
  * and alerting that needs the whole deployment reads the database directly.
  */
 export async function overduePrivacyCases(now = new Date()) {
 	const actor = await authorize("edit", { type: "org" });
-	return getServiceDb()
-		.select({
-			reference: privacyCase.reference,
-			kind: privacyCase.kind,
-			state: privacyCase.state,
-			dueAt: privacyCase.dueAt,
-		})
-		.from(privacyCase)
-		.where(
-			and(
-				lt(privacyCase.dueAt, now),
-				isNull(privacyCase.decidedAt),
-				or(
-					eq(privacyCase.organizationId, actor.orgId),
-					eq(privacyCase.subjectUserId, actor.userId),
-				),
-			),
-		)
-		.orderBy(privacyCase.dueAt);
+	return queryOverdueCases(
+		now,
+		or(
+			eq(privacyCase.organizationId, actor.orgId),
+			eq(privacyCase.subjectUserId, actor.userId),
+		),
+	);
 }
 
 /**
@@ -608,11 +344,7 @@ export async function privacyCaseHistory(reference: string) {
 	// The ONE step the subject may take on their own case. It writes nothing and discloses nothing
 	// but their own record, which is the thing a data-subject request exists to give them.
 	const { c } = await authorizeCase(reference, { subjectMayAct: true });
-	return getServiceDb()
-		.select()
-		.from(privacyCaseEvent)
-		.where(eq(privacyCaseEvent.caseId, c.id))
-		.orderBy(privacyCaseEvent.at);
+	return caseEvents(c);
 }
 
 /**

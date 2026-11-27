@@ -6,14 +6,23 @@
 // boundaries fall INSIDE ties on `ts` — including events in the same millisecond but different
 // microseconds, which a JS `Date` cursor cannot tell apart — visits every event of the scope exactly
 // once, newest first, and a filter changes the universe the walk covers without changing that.
+// And that the read's sort is served by idx_authz_activity_org_ts_ms_id, not sorted in memory
+// (#7539). The walk's oracle (`everyId`) orders on the PLAIN `date_trunc(ts)` on purpose: the
+// read uses the indexable UTC form, and the two orders must agree.
 
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { authzActivityLog } from "@/lib/db/schema";
 import { queryActivityPage } from "@/lib/queries/activity";
-import { decodeKeysetCursor } from "@/lib/queries/keyset";
+import {
+	decodeKeysetCursor,
+	keysetFetchLimit,
+	keysetOrderBy,
+	keysetUtcAfter,
+	keysetUtcSortKey,
+} from "@/lib/queries/keyset";
 import type { ActivityQuery } from "@/app/server/actions/activity";
 import { describeIfDb, purgeAuthzActivityLog } from "./db";
 
@@ -103,5 +112,63 @@ describeIfDb("Activity log keyset walk (LST-10)", () => {
 		const cursor = first.nextCursor === null ? undefined : (decodeKeysetCursor(first.nextCursor, "integer") ?? undefined);
 		const later = await queryActivityPage(orgId, {}, { limit: LIMIT, cursor });
 		expect(later.universeEmpty).toBeNull();
+	});
+});
+
+describeIfDb("Activity log keyset index (#7539)", () => {
+	// A LARGE org, which is what the index is for. On the walk's nine rows the planner may price
+	// "filter on the smaller (org_id, id) index, then sort nine rows" as cheaper than the ordered
+	// scan — CI did exactly that — and that choice says nothing about whether the index can serve
+	// the order. With a few thousand events in the org, ANALYZEd, sort-then-limit has to read and
+	// sort all of them, so the only plan without a Sort is the one this index makes possible.
+	const orgId = randomUUID();
+	const EVENTS = 3000;
+	const LIMIT = 50;
+
+	beforeAll(async () => {
+		const db = getServiceDb();
+		await db.execute(sql`
+			insert into authz_activity_log (org_id, actor_id, action, resource_type, decision, reason, ts)
+			select ${orgId}::uuid, gen_random_uuid(), 'org:update:' || g, 'project', true, 'lst-7539-plan',
+			       now() - make_interval(secs => g)
+			from generate_series(1, ${EVENTS}::integer) as g`);
+		await db.execute(sql`analyze authz_activity_log`);
+	});
+
+	afterAll(async () => {
+		await purgeAuthzActivityLog(eq(authzActivityLog.org_id, orgId));
+	});
+
+	/**
+	 * The plan of the Activity rows pass's org + cursor + order shape, built from the same keyset
+	 * helpers `queryActivityPage` uses. Sequential and bitmap scans are off for the one transaction,
+	 * so the planner chooses among index paths only — and an index that did not match the ORDER BY
+	 * would show up as a Sort above it.
+	 */
+	async function planOf(cursor: { at: string; id: string } | undefined): Promise<string> {
+		return getServiceDb().transaction(async (tx) => {
+			await tx.execute(sql`set local enable_seqscan = off`);
+			await tx.execute(sql`set local enable_bitmapscan = off`);
+			const sortKey = keysetUtcSortKey(authzActivityLog.ts);
+			const rowsPass = tx
+				.select({ id: authzActivityLog.id })
+				.from(authzActivityLog)
+				.where(and(eq(authzActivityLog.org_id, orgId), keysetUtcAfter(sortKey, authzActivityLog.id, cursor, "integer")))
+				.orderBy(...keysetOrderBy(sortKey, authzActivityLog.id))
+				.limit(keysetFetchLimit(LIMIT));
+			const plan = await tx.execute<{ "QUERY PLAN": string }>(sql`explain (costs off) ${rowsPass}`);
+			return plan.map((r) => r["QUERY PLAN"]).join("\n");
+		});
+	}
+
+	it("the first page and a cursor page are one index range scan in the contract's order, no sort", async () => {
+		const first = await planOf(undefined);
+		expect(first).toContain("idx_authz_activity_org_ts_ms_id");
+		expect(first).not.toMatch(/Sort/);
+		const later = await planOf({ at: new Date(Date.now() - 1000_000).toISOString(), id: "1" });
+		expect(later).toContain("idx_authz_activity_org_ts_ms_id");
+		expect(later).not.toMatch(/Sort/);
+		// The cursor bound is an index condition, not a filter over every row of the org.
+		expect(later).toMatch(/Index Cond: .*ROW\(date_trunc/);
 	});
 });

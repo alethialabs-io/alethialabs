@@ -34,7 +34,7 @@ import {
 } from "@/app/server/actions/checkout";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { manageReason } from "@/components/errors/manage-gate";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { CreateOrgSheet } from "@/components/org/create-org-sheet";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
 import { ClockText } from "@/components/settings/usage/clock-text";
@@ -354,6 +354,7 @@ function BillingView({ summary }: { summary: BillingSummary }) {
 					planName={meta.name}
 					// A Paddle org's card lives in Paddle's customer portal, not in the in-page card list.
 					portal={summary.provider === "paddle"}
+					graceEndsAt={summary.pastDueGraceEndsAt}
 					canUpdate={
 						summary.canManageBilling && (summary.provider === "paddle" || summary.canManage)
 					}
@@ -422,9 +423,12 @@ function PastDueNotice({
 	planName,
 	canUpdate,
 	portal,
+	graceEndsAt,
 }: {
 	planName: string;
 	canUpdate: boolean;
+	/** Paddle's 7-day grace (O8): the paid features stay on until this ISO instant; null when none. */
+	graceEndsAt: string | null;
 	/** The payment method is managed in the provider's portal (Paddle), not in the card list below. */
 	portal: boolean;
 }) {
@@ -438,10 +442,19 @@ function PastDueNotice({
 			<AlertTriangle />
 			<AlertTitle>Payment failed</AlertTitle>
 			<AlertDescription>
-				<p>
-					The last payment for {planName} didn&apos;t go through, so this organization&apos;s
-					paid features are paused until a payment succeeds.
-				</p>
+				{graceEndsAt ? (
+					<p>
+						The last payment for {planName} didn&apos;t go through. This organization&apos;s
+						paid features stay on until{" "}
+						<ClockText sizer="30 Sept 2026" text={() => formatDate(graceEndsAt)} />, then pause
+						until a payment succeeds.
+					</p>
+				) : (
+					<p>
+						The last payment for {planName} didn&apos;t go through, so this organization&apos;s
+						paid features are paused until a payment succeeds.
+					</p>
+				)}
 				{canUpdate && portal ? (
 					<button
 						type="button"

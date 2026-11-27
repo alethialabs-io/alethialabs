@@ -8,7 +8,7 @@
 //   pnpm creds paddle-sandbox -- pnpm -C apps/console run paddle:setup -- --apply [--webhook-url=<url>]
 //   pnpm creds paddle-live -- pnpm -C apps/console run paddle:setup -- --live --plan
 //   pnpm creds paddle-live -- pnpm -C apps/console run paddle:setup -- --live --apply \
-//     --webhook-url=<the console Paddle webhook URL, lane L3 route>
+//     --webhook-url=https://alethialabs.io/api/webhooks/paddle --client-token
 //
 // `--plan` only reads. It prints the difference between the account and the desired state below.
 // `--apply` makes exactly that difference, then reads the account again and fails unless the second
@@ -17,16 +17,20 @@
 // Desired state:
 //   • Products "Alethia Pro", "Alethia AI Plus", "Alethia AI Max", "Alethia AI credits" and
 //     "Alethia runner minutes", found by `custom_data.alethia`, each `tax_category: saas`. The
-//     runner-minutes product carries no catalog price: overage is charged later with non-catalog
-//     prices against it (lane L5).
-//   • Prices, found by `custom_data.alethia_key`, at the catalog's amounts (@repo/plan-catalog for
-//     the plans, AI_CREDIT_PACKS for the credit packs): a USD `unit_price` with an EUR
-//     `unit_price_overrides` entry for EUROZONE_COUNTRIES, `tax_mode: account_setting`. The plans
-//     recur monthly; the packs are one-time. A price whose amount, override, cycle, quantity, tax
+//     runner-minutes and AI-credits products carry no catalog price: runner overage (lane L5) and
+//     credit packs (lib/billing/paddle/checkout.ts) are charged with non-catalog prices against them.
+//   • Prices for the plans, found by `custom_data.alethia_key`, at @repo/plan-catalog's amounts: a
+//     USD `unit_price` with an EUR `unit_price_overrides` entry for EUROZONE_COUNTRIES,
+//     `tax_mode: account_setting`, monthly. A price whose amount, override, cycle, quantity, tax
 //     mode or product differs is REPLACED: a new price is created with the same key and the old one
-//     is archived. The unit price is never PATCHed, so existing subscriptions keep their price.
+//     is archived. The unit price is never PATCHed, so existing subscriptions keep their price. An
+//     active price carrying an `alethia_key` the catalog no longer has is reported as a note.
 //   • With `--webhook-url`: one `url` notification destination at that URL subscribed to exactly
 //     PADDLE_WEBHOOK_EVENTS.
+//   • With `--client-token`: one active client-side token named CLIENT_TOKEN_NAME, for Paddle.js.
+//
+// The env lines it prints are named by lib/billing/paddle/env-names.ts, the same definition the
+// console's config reads, so a printed name cannot drift from the read one.
 //
 // What this does NOT manage, because Paddle's API has no endpoint for it: domain approval, the
 // default payment link, checkout branding, customer portal settings, tax display, payout details and
@@ -35,7 +39,9 @@
 // Secrets: the key is read from PADDLE_API_KEY (set by `pnpm creds`) and never printed. The
 // environment (sandbox or live) follows the key's prefix and is printed first. A new destination's
 // `endpoint_secret_key` is written to a 0600 file under ~/.alethia/paddle/ and only the path is
-// printed. A live key is refused unless `--live` is given.
+// printed. The client-side token is PUBLIC by design (it ships in the browser bundle as
+// NEXT_PUBLIC_PADDLE_CLIENT_TOKEN), so it is printed among the env lines. A live key is refused
+// unless `--live` is given.
 //
 // The HTTP client below is self-contained on purpose, so this script lands independently of the
 // console's Paddle adapter (lane L1, lib/billing/paddle/). It can switch to that client once it is
@@ -47,7 +53,14 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { aiPlanMeta, aiPlanUnitAmountCents, formatPriceLabel, planUnitAmountCents } from "@repo/plan-catalog";
 import { z } from "zod";
-import { AI_CREDIT_PACKS } from "../lib/billing/ai-credits";
+import {
+	PADDLE_CLIENT_TOKEN_ENV,
+	PADDLE_PRICE_ENV,
+	PADDLE_PRODUCT_ENV,
+	PADDLE_WEBHOOK_SECRET_ENV,
+	type PaddlePriceSlot,
+	type PaddleProductSlot,
+} from "../lib/billing/paddle/env-names";
 
 // ── Desired state ─────────────────────────────────────────────────────────────────────────────
 
@@ -112,6 +125,9 @@ export const PADDLE_WEBHOOK_EVENTS: readonly string[] = [
 	"subscription.paused",
 	"subscription.resumed",
 	"subscription.canceled",
+	"transaction.billed",
+	"transaction.paid",
+	"transaction.past_due",
 	"transaction.completed",
 	"transaction.payment_failed",
 	"adjustment.created",
@@ -129,9 +145,15 @@ export interface DesiredProduct {
 	tag: string;
 	name: string;
 	taxCategory: string;
-	/** The env var that carries this product's id, for products the console references directly. */
-	envVar?: string;
+	/** The console config slot that carries this product's id, for products it references directly. */
+	slot?: PaddleProductSlot;
 }
+
+/**
+ * The name of the client-side token `--client-token` keeps. Paddle does not require names to be
+ * unique; this tool treats the name as the token's identity, like a product's tag.
+ */
+export const CLIENT_TOKEN_NAME = "Alethia console (Paddle.js)";
 
 /** A billing cycle in Paddle's shape. */
 export interface BillingCycle {
@@ -142,7 +164,8 @@ export interface BillingCycle {
 /** A price the catalog needs, found by its `custom_data.alethia_key`. */
 export interface DesiredPrice {
 	key: string;
-	envVar: string;
+	/** The console config slot that reads this price's id; its env var is PADDLE_PRICE_ENV[slot]. */
+	slot: PaddlePriceSlot;
 	productTag: string;
 	/** Shown to the buyer at checkout and on invoices. */
 	name: string;
@@ -161,13 +184,8 @@ export const DESIRED_PRODUCTS: DesiredProduct[] = [
 	{ tag: "pro", name: "Alethia Pro", taxCategory: TAX_CATEGORY },
 	{ tag: "ai_plus", name: "Alethia AI Plus", taxCategory: TAX_CATEGORY },
 	{ tag: "ai_max", name: "Alethia AI Max", taxCategory: TAX_CATEGORY },
-	{ tag: "ai_credits", name: "Alethia AI credits", taxCategory: TAX_CATEGORY },
-	{
-		tag: "runner_minutes",
-		name: "Alethia runner minutes",
-		taxCategory: TAX_CATEGORY,
-		envVar: "PADDLE_PRODUCT_RUNNER_MINUTES",
-	},
+	{ tag: "ai_credits", name: "Alethia AI credits", taxCategory: TAX_CATEGORY, slot: "aiCredits" },
+	{ tag: "runner_minutes", name: "Alethia runner minutes", taxCategory: TAX_CATEGORY, slot: "runnerMinutes" },
 ];
 
 const MONTHLY: BillingCycle = { interval: "month", frequency: 1 };
@@ -175,21 +193,6 @@ const MONTHLY: BillingCycle = { interval: "month", frequency: 1 };
 /** Both amounts of a plan price as one label, e.g. "$20.00 / €18.00". */
 function amountsLabel(usd: number, eur: number | null): string {
 	return eur === null ? formatPriceLabel(usd, "usd") : `${formatPriceLabel(usd, "usd")} / ${formatPriceLabel(eur, "eur")}`;
-}
-
-/** The credit-pack prices, one per AI_CREDIT_PACKS entry. USD only: the packs carry no EUR amount. */
-function creditPackPrices(): DesiredPrice[] {
-	return AI_CREDIT_PACKS.map((pack) => ({
-		key: `alethia_ai_credits_${pack.id}`,
-		envVar: `PADDLE_PRICE_CREDITS_${pack.id.toUpperCase()}`,
-		productTag: "ai_credits",
-		name: `${pack.credits.toLocaleString("en-US")} AI credits`,
-		description: `Alethia AI credit pack "${pack.id}": ${pack.credits} credits, ${formatPriceLabel(pack.amountCents, "usd")} one-time`,
-		usd: pack.amountCents,
-		eur: null,
-		billingCycle: null,
-		quantity: { minimum: 1, maximum: 1 },
-	}));
 }
 
 const PRO_USD = planUnitAmountCents("team");
@@ -202,7 +205,7 @@ const AI_MAX_EUR = aiPlanUnitAmountCents("ai_max", "eur");
 export const DESIRED_PRICES: DesiredPrice[] = [
 	{
 		key: "alethia_pro_monthly",
-		envVar: "PADDLE_PRICE_PRO",
+		slot: "team",
 		productTag: "pro",
 		name: "Alethia Pro (per seat, monthly)",
 		description: `Alethia Pro, ${amountsLabel(PRO_USD, PRO_EUR)} per seat per month`,
@@ -213,7 +216,7 @@ export const DESIRED_PRICES: DesiredPrice[] = [
 	},
 	{
 		key: "alethia_ai_plus_monthly",
-		envVar: "PADDLE_PRICE_AI_PLUS",
+		slot: "aiPlus",
 		productTag: "ai_plus",
 		name: `Alethia ${aiPlanMeta("ai_plus").name} (monthly)`,
 		description: `Alethia AI Plus, ${amountsLabel(AI_PLUS_USD, AI_PLUS_EUR)} per month`,
@@ -224,7 +227,7 @@ export const DESIRED_PRICES: DesiredPrice[] = [
 	},
 	{
 		key: "alethia_ai_max_monthly",
-		envVar: "PADDLE_PRICE_AI_MAX",
+		slot: "aiMax",
 		productTag: "ai_max",
 		name: `Alethia ${aiPlanMeta("ai_max").name} (monthly)`,
 		description: `Alethia AI Max, ${amountsLabel(AI_MAX_USD, AI_MAX_EUR)} per month`,
@@ -233,17 +236,11 @@ export const DESIRED_PRICES: DesiredPrice[] = [
 		billingCycle: MONTHLY,
 		quantity: { minimum: 1, maximum: 1 },
 	},
-	...creditPackPrices(),
 ];
 
-/** Gaps in the catalog this tool can report but not fix (not blocking). */
-export function catalogGaps(): string[] {
-	const usdOnly = DESIRED_PRICES.filter((d) => d.eur === null).map((d) => d.key);
-	return usdOnly.length
-		? [
-				`no EUR amount in the catalog for ${usdOnly.join(", ")} (AI_CREDIT_PACKS in lib/billing/ai-credits.ts is USD only); these prices are USD everywhere, with no EUR override`,
-			]
-		: [];
+/** The env var a desired price's id is printed under: the one the console's config reads. */
+export function priceEnvVar(d: DesiredPrice): string {
+	return PADDLE_PRICE_ENV[d.slot];
 }
 
 // ── The Paddle surface this tool uses ─────────────────────────────────────────────────────────
@@ -291,6 +288,15 @@ export const createdNotificationSettingSchema = notificationSettingSchema.extend
 	endpoint_secret_key: z.string().min(1),
 });
 
+/** The client-side token fields read. The token is public by design (Paddle.js ships it). */
+export const clientTokenSchema = z.object({
+	id: z.string(),
+	token: z.string(),
+	name: z.string(),
+	description: z.string().nullable().optional(),
+	status: z.string(),
+});
+
 /** A Paddle product as this tool sees it. */
 export type PaddleProduct = z.infer<typeof productSchema>;
 /** A Paddle price as this tool sees it. */
@@ -299,6 +305,8 @@ export type PaddlePrice = z.infer<typeof priceSchema>;
 export type PaddleNotificationSetting = z.infer<typeof notificationSettingSchema>;
 /** A newly created destination, carrying its endpoint secret. */
 export type PaddleCreatedNotificationSetting = z.infer<typeof createdNotificationSettingSchema>;
+/** A Paddle client-side token as this tool sees it. */
+export type PaddleClientToken = z.infer<typeof clientTokenSchema>;
 
 /** A money amount in Paddle's request shape. */
 export interface Money {
@@ -350,6 +358,12 @@ export interface NotificationUpdateBody {
 	active: true;
 }
 
+/** The body of POST /client-tokens. */
+export interface ClientTokenCreateBody {
+	name: string;
+	description: string;
+}
+
 /** The Paddle calls this tool and paddle-check.ts make. createPaddleClient implements it over fetch. */
 export interface PaddleClient {
 	/** Every active product, all pages. */
@@ -364,6 +378,10 @@ export interface PaddleClient {
 	listNotificationSettings(): Promise<PaddleNotificationSetting[]>;
 	createNotificationSetting(body: NotificationCreateBody): Promise<PaddleCreatedNotificationSetting>;
 	updateNotificationSetting(id: string, body: NotificationUpdateBody): Promise<PaddleNotificationSetting>;
+	/** Every ACTIVE client-side token, all pages (needs the key's client_token.read). */
+	listClientTokens(): Promise<PaddleClientToken[]>;
+	/** Needs the key's client_token.write. */
+	createClientToken(body: ClientTokenCreateBody): Promise<PaddleClientToken>;
 }
 
 // ── Keys and environments ─────────────────────────────────────────────────────────────────────
@@ -508,6 +526,8 @@ export function createPaddleClient(key: string, environment: PaddleEnvironment, 
 		createNotificationSetting: (body) => one("POST", "/notification-settings", createdNotificationSettingSchema, body),
 		updateNotificationSetting: (id, body) =>
 			one("PATCH", `/notification-settings/${encodeURIComponent(id)}`, notificationSettingSchema, body),
+		listClientTokens: () => all("/client-tokens?status=active&per_page=200", clientTokenSchema),
+		createClientToken: (body) => one("POST", "/client-tokens", clientTokenSchema, body),
 	};
 }
 
@@ -528,10 +548,18 @@ export interface Observed {
 	/** URL destinations at `webhookUrl`, when one was given. */
 	notifications: PaddleNotificationSetting[];
 	webhookUrl: string | undefined;
+	/** Whether the client-side token is managed this run (`--client-token`). */
+	manageClientToken: boolean;
+	/** Active client-side tokens named CLIENT_TOKEN_NAME, when managed. */
+	clientTokens: PaddleClientToken[];
 }
 
 /** Reads the current state of everything in the desired state. Makes no change. */
-export async function readState(client: PaddleClient, webhookUrl: string | undefined): Promise<Observed> {
+export async function readState(
+	client: PaddleClient,
+	webhookUrl: string | undefined,
+	manageClientToken = false,
+): Promise<Observed> {
 	const products = new Map<string, PaddleProduct[]>();
 	for (const p of await client.listProducts()) {
 		const tag = customField(p.custom_data, "alethia");
@@ -547,7 +575,10 @@ export async function readState(client: PaddleClient, webhookUrl: string | undef
 	const notifications = webhookUrl
 		? (await client.listNotificationSettings()).filter((n) => n.type === "url" && n.destination === webhookUrl)
 		: [];
-	return { products, prices, notifications, webhookUrl };
+	const clientTokens = manageClientToken
+		? (await client.listClientTokens()).filter((t) => t.status === "active" && t.name === CLIENT_TOKEN_NAME)
+		: [];
+	return { products, prices, notifications, webhookUrl, manageClientToken, clientTokens };
 }
 
 // ── The plan ──────────────────────────────────────────────────────────────────────────────────
@@ -560,7 +591,8 @@ export type Action =
 	| { kind: "price.update"; key: string; id: string; summary: string }
 	| { kind: "price.archive"; key: string; id: string; summary: string }
 	| { kind: "notification.create"; url: string; summary: string }
-	| { kind: "notification.update"; id: string; summary: string };
+	| { kind: "notification.update"; id: string; summary: string }
+	| { kind: "client_token.create"; summary: string };
 
 /** The full difference: what changes, what already matches, what blocks, and what to know. */
 export interface Plan {
@@ -631,7 +663,7 @@ export function priceDrift(p: PaddlePrice, d: DesiredPrice, productId: string | 
 
 /** The difference between the observed account and the desired state. Pure: reads nothing. */
 export function computePlan(obs: Observed): Plan {
-	const plan: Plan = { actions: [], ok: [], errors: [], notes: catalogGaps() };
+	const plan: Plan = { actions: [], ok: [], errors: [], notes: [] };
 	const productIds = new Map<string, string | null>();
 
 	for (const d of DESIRED_PRODUCTS) {
@@ -708,6 +740,14 @@ export function computePlan(obs: Observed): Plan {
 		}
 	}
 
+	const known = new Set(DESIRED_PRICES.map((d) => d.key));
+	for (const [key, found] of obs.prices) {
+		if (known.has(key)) continue;
+		plan.notes.push(
+			`price key ${key} is active (${found.map((p) => p.id).join(", ")}) but is not in the catalog and nothing reads it; archive it in the dashboard if no subscription uses it`,
+		);
+	}
+
 	if (obs.webhookUrl) {
 		const url = obs.webhookUrl;
 		if (obs.notifications.length > 1) {
@@ -738,6 +778,21 @@ export function computePlan(obs: Observed): Plan {
 			} else {
 				plan.ok.push(`notification destination ${n.id} (${url}, ${PADDLE_WEBHOOK_EVENTS.length} events)`);
 			}
+		}
+	}
+
+	if (obs.manageClientToken) {
+		const tokens = obs.clientTokens;
+		if (tokens.length > 1) {
+			plan.errors.push(
+				`${tokens.length} active client-side tokens are named "${CLIENT_TOKEN_NAME}" (${tokens
+					.map((t) => t.id)
+					.join(", ")}); revoke all but one in the dashboard.`,
+			);
+		} else if (tokens.length === 1) {
+			plan.ok.push(`client-side token ${tokens.map((t) => t.id).join("")} ("${CLIENT_TOKEN_NAME}")`);
+		} else {
+			plan.actions.push({ kind: "client_token.create", summary: `+ client-side token "${CLIENT_TOKEN_NAME}" for Paddle.js` });
 		}
 	}
 	return plan;
@@ -867,6 +922,15 @@ export async function applyPlan(client: PaddleClient, obs: Observed, plan: Plan,
 			ctx.log(`  + notification destination ${n.id} → ${a.url}`);
 		}
 	}
+
+	for (const a of plan.actions) {
+		if (a.kind !== "client_token.create") continue;
+		const t = await client.createClientToken({
+			name: CLIENT_TOKEN_NAME,
+			description: "Initialises Paddle.js in the Alethia console. Public by design; kept by scripts/paddle-setup.ts.",
+		});
+		ctx.log(`  + client-side token ${t.id}`);
+	}
 	return result;
 }
 
@@ -876,10 +940,15 @@ export function catalogEnvLines(obs: Observed): string[] {
 	const lines = DESIRED_PRICES.map((d) => {
 		const pid = productId(d.productTag);
 		const match = (obs.prices.get(d.key) ?? []).find((p) => priceDrift(p, d, pid).length === 0);
-		return `${d.envVar}=${match?.id ?? "(missing)"}`;
+		return `${priceEnvVar(d)}=${match?.id ?? "(missing)"}`;
 	});
 	for (const d of DESIRED_PRODUCTS) {
-		if (d.envVar) lines.push(`${d.envVar}=${productId(d.tag) ?? "(missing)"}`);
+		if (d.slot) lines.push(`${PADDLE_PRODUCT_ENV[d.slot]}=${productId(d.tag) ?? "(missing)"}`);
+	}
+	if (obs.manageClientToken) {
+		// Public by design: Paddle.js is initialised with it in the browser.
+		const [only, ...rest] = obs.clientTokens;
+		lines.push(`${PADDLE_CLIENT_TOKEN_ENV}=${only && rest.length === 0 ? only.token : "(missing)"}`);
 	}
 	return lines;
 }
@@ -892,16 +961,19 @@ export interface SetupArgs {
 	apply: boolean;
 	live: boolean;
 	webhookUrl: string | undefined;
+	/** Keep one active client-side token named CLIENT_TOKEN_NAME. */
+	clientToken: boolean;
 }
 
 /** Parses the flags; throws on an unknown flag, on neither/both of --plan and --apply, or a non-https URL. */
 export function parseSetupArgs(argv: string[]): SetupArgs {
-	const args: SetupArgs = { plan: false, apply: false, live: false, webhookUrl: undefined };
+	const args: SetupArgs = { plan: false, apply: false, live: false, webhookUrl: undefined, clientToken: false };
 	for (const a of argv) {
 		if (a === "--") continue;
 		else if (a === "--plan") args.plan = true;
 		else if (a === "--apply") args.apply = true;
 		else if (a === "--live") args.live = true;
+		else if (a === "--client-token") args.clientToken = true;
 		else if (a.startsWith("--webhook-url=")) args.webhookUrl = a.slice("--webhook-url=".length);
 		else throw new Error(`Unknown argument: ${a}`);
 	}
@@ -939,9 +1011,10 @@ export async function runSetup(
 	}
 	log(`→ ${describeTarget(key.environment)}`);
 	if (!args.webhookUrl) log("  (no --webhook-url: the notification destination is not planned)");
+	if (!args.clientToken) log("  (no --client-token: the Paddle.js client-side token is not planned)");
 	const client = makeClient(key.key, key.environment);
 
-	const obs = await readState(client, args.webhookUrl);
+	const obs = await readState(client, args.webhookUrl, args.clientToken);
 	const plan = computePlan(obs);
 	for (const line of formatPlan(plan)) log(line);
 	if (plan.errors.length) return 1;
@@ -956,7 +1029,7 @@ export async function runSetup(
 	log(`Applying ${plan.actions.length} change(s) to Paddle ${key.environment}…`);
 	const result = await applyPlan(client, obs, plan, { environment: key.environment, secretDir, log });
 
-	const after = await readState(client, args.webhookUrl);
+	const after = await readState(client, args.webhookUrl, args.clientToken);
 	const again = computePlan(after);
 	if (again.actions.length || again.errors.length) {
 		log("✗ The account did not converge; a second plan still has changes:");
@@ -968,7 +1041,7 @@ export async function runSetup(
 	for (const line of catalogEnvLines(after)) log(line);
 	if (result.endpointSecretPath) {
 		log(`Notification endpoint secret written to ${result.endpointSecretPath} (0600). It is not printed.`);
-		log("  Store it as PADDLE_WEBHOOK_SECRET in the target env without printing it, then delete the file.");
+		log(`  Store it as ${PADDLE_WEBHOOK_SECRET_ENV} in the target env without printing it, then delete the file.`);
 	}
 	return 0;
 }

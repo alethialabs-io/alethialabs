@@ -92,7 +92,7 @@ export async function decideApproval(
 		return { ok: false, error: await markVoid(db, approval.id, "expired", "That approval expired before it was decided.") };
 	}
 	const stale = await bindingStaleReason(db, approval);
-	if (stale) return { ok: false, error: await markVoid(db, approval.id, "superseded", staleMessage(stale)) };
+	if (stale) return { ok: false, error: await markVoid(db, approval.id, "superseded", staleMessage(stale, approval.operation)) };
 
 	if (input.decision === "approve") {
 		// The org's policy, read again now (G14): a request that waited while agent access was turned

@@ -22,9 +22,9 @@ export interface FieldErrors {
 export type ActionError =
 	| { kind: "validation"; message: string; fields: FieldErrors }
 	| { kind: "unauthenticated" }
-	| { kind: "forbidden"; message: string }
-	| { kind: "not-found"; message: string }
-	| { kind: "conflict"; message: string }
+	| { kind: "forbidden"; message: string; code?: string }
+	| { kind: "not-found"; message: string; code?: string }
+	| { kind: "conflict"; message: string; code?: string }
 	| { kind: "entitlement"; message: string; feature: string }
 	/**
 	 * The call never produced a server answer. `sent` says whether the request left the browser:
@@ -34,19 +34,33 @@ export type ActionError =
 	| { kind: "network"; sent: boolean }
 	| { kind: "unexpected"; ref: string };
 
+// `code` on a refusal kind is OPTIONAL and DOMAIN-OWNED: a machine-readable reason a domain attaches
+// (e.g. an `ApprovalErrorCode` from lib/approvals/refusal.ts) so the one screen that knows the domain
+// can branch on it — say which refusal happened — without parsing `message` or re-reading state to
+// infer it (#7643). It is never shown and the toast policy never reads it; `kind` still decides the
+// treatment. A client narrows it with the domain's own type guard, because the contract types it as
+// a plain string so any action can carry one.
+
 /** The one shape every server action returns. */
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: ActionError };
 
 /** The kinds an action's own code may raise on purpose (the rest are mapped by `defineAction`). */
 export type DomainErrorKind = "not-found" | "conflict" | "entitlement";
 
-/** A domain refusal the action raises on purpose; `defineAction` maps it to its `kind`. */
+/**
+ * A domain refusal the action raises on purpose; `defineAction` maps it to its `kind`, and carries
+ * `code` (when given) onto a `not-found` or `conflict` result for the client to branch on.
+ */
 export class ActionRefusal extends Error {
-	/** Builds a refusal of `kind` whose `message` is safe to show the user verbatim. */
+	/**
+	 * Builds a refusal of `kind` whose `message` is safe to show the user verbatim. `feature` is the
+	 * entitlement's feature; `code` is a domain's machine-readable reason (see `ActionError`).
+	 */
 	constructor(
 		readonly kind: DomainErrorKind,
 		message: string,
 		readonly feature?: string,
+		readonly code?: string,
 	) {
 		super(message);
 		this.name = "ActionRefusal";

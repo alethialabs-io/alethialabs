@@ -15,14 +15,15 @@ import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { z } from "zod";
 import { parseCostBreakdown } from "@/lib/plan/parse-cost";
-import { parsePlanJSON } from "@/lib/plan/parse-plan";
+import { parsePlanJSON, resolveAction } from "@/lib/plan/parse-plan";
 import type { ApprovalDetail } from "@/lib/queries/approvals";
 import { orpc } from "@/lib/rpc/client";
 import { retryUnlessRefused } from "@/lib/rpc/refusal";
 import type { ExecutionMetadata, VerifyStatus } from "@/types/jsonb.types";
 import { ApprovalCountdown } from "./approval-countdown";
-import { CredentialGlyph, OperationTag, ProductionPill } from "./approval-marks";
+import { OperationTag, ProductionPill, RequesterMark } from "./approval-marks";
 import { requestedThrough, requesterName } from "./approval-vocabulary";
 
 /** A verify verdict as a status: its tier and its words. */
@@ -66,7 +67,7 @@ export function RequestSection({ approval }: { approval: ApprovalDetail }) {
 				<Fact term="Requested for">{approval.requester_name ?? "Unknown person"}</Fact>
 				<Fact term="Requested through">
 					<span className="flex items-center gap-1.5">
-						<CredentialGlyph credential={approval.requester_credential} />
+						<RequesterMark approval={approval} size={16} />
 						{through.name}
 					</span>
 					{through.kind ? <span className="mt-0.5 block text-ui-sm text-text-secondary">{through.kind}</span> : null}
@@ -94,6 +95,41 @@ interface PlanFacts {
 	counts: { create: number; update: number; replace: number; delete: number } | null;
 	monthly: number | null;
 	verdict: VerifyStatus | null;
+	/**
+	 * The addresses a destroy-mode plan removes, in plan order, or null when the job is not a destroy
+	 * plan (`execution_metadata.destroy_plan`, #7455) or reported no readable changes.
+	 */
+	teardown: string[] | null;
+}
+
+// A destroy plan's posted `resource_changes` carry each resource's identity and actions only — the
+// runner drops `before`/`after` (apps/runner/internal/agent/runner.go, destroyPlanChanges). Lenient
+// like parsePlanJSON: an entry it cannot read is skipped, a malformed list reads as nothing.
+const teardownSchema = z
+	.object({
+		resource_changes: z
+			.array(
+				z
+					.object({
+						address: z.string().catch(""),
+						mode: z.string().catch("managed"),
+						change: z.object({ actions: z.array(z.string()).catch([]) }).catch({ actions: [] }),
+					})
+					.catch({ address: "", mode: "managed", change: { actions: [] } }),
+			)
+			.catch([]),
+	})
+	.catch({ resource_changes: [] });
+
+/**
+ * The managed resources a destroy plan removes, by address. A data source is read, not owned, so a
+ * teardown never removes one; an entry the plan does not delete is not part of the teardown.
+ */
+function teardownOf(planResult: Record<string, unknown>): string[] {
+	return teardownSchema
+		.parse(planResult)
+		.resource_changes.filter((rc) => rc.address !== "" && rc.mode !== "data" && resolveAction(rc.change.actions) === "delete")
+		.map((rc) => rc.address);
 }
 
 /** The facts of a plan job's execution metadata; nulls where the runner reported nothing readable. */
@@ -103,7 +139,45 @@ function planFactsOf(meta: ExecutionMetadata | null | undefined): PlanFacts {
 		counts: meta?.plan_result ? parsePlanJSON(meta.plan_result).counts : null,
 		monthly: meta?.cost_breakdown ? parseCostBreakdown(meta.cost_breakdown).totalMonthlyCost : null,
 		verdict: meta?.verify_result?.verdict ?? null,
+		teardown: meta?.destroy_plan && meta.plan_result ? teardownOf(meta.plan_result) : null,
 	};
+}
+
+/**
+ * What a destroy removes: from a destroy-mode plan, every resource it lists, each marked removed and
+ * nothing counted as added or changed. A destroy bound to anything else (an approval from before
+ * destroy plans existed) keeps the general statement and points at the plan.
+ */
+function Teardown({ pending, failed, teardown }: { pending: boolean; failed: boolean; teardown: string[] | null }) {
+	if (pending) return <Skeleton className="h-4 w-48" />;
+	if (teardown === null) {
+		return (
+			<>
+				Everything this environment runs
+				<span className="mt-0.5 block text-ui-sm text-text-secondary">
+					{failed ? "Couldn't read the destroy plan. Open the plan to see what it removes." : "As listed in the destroy plan."}
+				</span>
+			</>
+		);
+	}
+	if (teardown.length === 0) {
+		return <span className="text-text-secondary">The destroy plan removes nothing: this environment has no resources.</span>;
+	}
+	return (
+		<>
+			<span className="font-medium text-text-primary">
+				{teardown.length} resource{teardown.length > 1 ? "s" : ""}, all removed
+			</span>
+			<ul aria-label="Resources the destroy plan removes" className="mt-2 max-h-80 divide-y divide-border overflow-y-auto rounded-md border">
+				{teardown.map((address) => (
+					<li key={address} className="flex items-baseline justify-between gap-3 px-2 py-1.5">
+						<span className="min-w-0 break-all font-mono text-ui-sm text-text-primary">{address}</span>
+						<span className="shrink-0 text-ui-sm text-text-secondary">removed</span>
+					</li>
+				))}
+			</ul>
+		</>
+	);
 }
 
 /** `+14 to add`, dimmed at zero. */
@@ -146,10 +220,7 @@ export function PlanSection({ approval, orgSlug }: { approval: ApprovalDetail; o
 			<dl className="mt-2 divide-y divide-border">
 				{isDestroy ? (
 					<Fact term="Removes">
-						Everything this environment runs
-						<span className="mt-0.5 block text-ui-sm text-text-secondary">
-							{facts?.counts ? `${facts.counts.delete} resources in the destroy plan.` : "As listed in the destroy plan."}
-						</span>
+						<Teardown pending={plan.isPending} failed={plan.isError} teardown={facts?.teardown ?? null} />
 					</Fact>
 				) : (
 					<Fact term="Changes">

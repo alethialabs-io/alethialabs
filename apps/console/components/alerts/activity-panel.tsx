@@ -43,7 +43,7 @@ import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { formatDate } from "@repo/format";
 import { ClockSlot } from "@/components/overview/clock-slot";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { AlertsPanelSkeleton } from "@/components/alerts/alerts-skeleton";
 import type { AssignedValue } from "@/lib/queries/classification";
 import { StatusBadge } from "@repo/ui/status-badge";

@@ -101,6 +101,7 @@ type projectJobRequest struct {
 	AssignedRunnerID string `json:"assigned_runner_id,omitempty"`
 	PlanJobID        string `json:"plan_job_id,omitempty"`
 	Cascade          bool   `json:"cascade,omitempty"`
+	DestroyPlan      bool   `json:"destroy_plan,omitempty"`
 }
 
 // projectJobEntry is one job a command queued.
@@ -180,6 +181,7 @@ func runProjectJob(ctx context.Context, p *Printer, c projectJobClient, run proj
 			AssignedRunnerID: run.Params.AssignedRunnerID,
 			PlanJobID:        run.Params.PlanJobID,
 			Cascade:          run.Params.Cascade,
+			DestroyPlan:      run.Params.DestroyPlan,
 		}
 		result.Object = obj
 		return result, nil

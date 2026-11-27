@@ -11,6 +11,7 @@
 // Every reconciler is idempotent + reconvergent (safe under concurrent app instances) and isolated:
 // `runTask` catches a throw per task, so one failing reconciler never aborts its siblings in the tick.
 
+import { paddleTransactionBackfillEnabled, runPaddleTransactionBackfill } from "@/lib/billing/events/backfill";
 import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
 import { paddleOverageSweepEnabled, runPaddleOverageSweep } from "@/lib/billing/paddle/overage-sweeper";
 import { stripeSecretKey } from "@/lib/billing/stripe-key";
@@ -78,6 +79,9 @@ const INTERVALS = {
 	// 15m gap gives each subscription ~24 chances, and an unconfirmed claim (STALE_CLAIM_MS, 15m) is
 	// reconciled on the next run (lib/billing/paddle/overage-sweeper.ts).
 	"paddle-overage-sweep": 15 * 60_000,
+	// 24h — the `paddle_transaction` mirror backfill (#7672) lists the whole Paddle account, so it runs
+	// rarely; the webhooks keep the mirror current in between (lib/billing/events/backfill.ts).
+	"paddle-transaction-backfill": 24 * 60 * 60_000,
 	// 1m — a cancelled job whose runner died holds its state lock until this releases it, and the
 	// next job on that state object waits behind it: the wait is the drain window plus at most one
 	// gap between runs here (lib/reconcile/state-locks.ts).
@@ -187,6 +191,14 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		// and Paddle is configured.
 		if (paddleOverageSweepEnabled() && isDue("paddle-overage-sweep", INTERVALS["paddle-overage-sweep"], now)) {
 			await runTask("paddle-overage-sweep", () => runPaddleOverageSweep(now));
+		}
+		// The Paddle transaction mirror backfill (#7672): mirror what the webhooks missed. Off unless
+		// ALETHIA_PADDLE_TRANSACTION_BACKFILL=1 and Paddle is configured.
+		if (
+			paddleTransactionBackfillEnabled() &&
+			isDue("paddle-transaction-backfill", INTERVALS["paddle-transaction-backfill"], now)
+		) {
+			await runTask("paddle-transaction-backfill", () => runPaddleTransactionBackfill());
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already

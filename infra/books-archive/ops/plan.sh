@@ -139,6 +139,6 @@ Read the full plan above. Before applying, confirm:
   · the bucket alethia-books-archive-${ACCOUNT_ID} with object_lock_enabled = true
   · Object Lock COMPLIANCE / 4018 days — IRREVERSIBLE for every object written afterwards
   · console-books-writer grants only s3:PutObject on inbound/console/* (+ KMS through S3)
-  · books-monthly trusts only repo:alethialabs-io/books:environment:books
+  · books-monthly trusts only repo:alethialabs-io@293964056/books@1470091729:environment:books
 Then: infra/books-archive/ops/apply-saved-plan.sh
 EOF

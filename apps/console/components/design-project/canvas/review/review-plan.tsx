@@ -9,7 +9,7 @@ import { DisabledReason } from "@repo/ui/disabled-reason";
 import { Skeleton } from "@repo/ui/skeleton";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { useState, type ReactNode } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import type { PlanResource } from "@/lib/plan/parse-plan";
 import { countOf, planCountsSentence } from "./changeset-status";

@@ -272,7 +272,7 @@ product is two products.**
 | A status pill | `@repo/ui/status-badge` | a `<Badge>` plus a local colour map |
 | A table | `DataTable`, or `@repo/ui/table` for shapes it cannot express | a `<div className="grid">` |
 | A layer above the page | a `--z-*` token from `packages/brand/src/tokens.css` | a bare `z-50` or `z-[95]` |
-| A list-page filter | the console filter standard, **both halves** | a per-page filter language |
+| A list page: filters and paging | the console list standard, **both halves** — server-side filters and facets, and keyset paging (`useKeysetList` + `ListFooter`, or `DataTable keyset=`) | a per-page filter language; page numbers, `?page=`, "Show more" windows, a count pill |
 
 Four of those deserve their reason stated, because the reason is what makes them stick:
 
@@ -304,6 +304,13 @@ half; `apps/console/lib/queries/` holds the `query*Page` builders and `facets.ts
 counts come from the **unfiltered** universe — every builder issues a filtered rows pass and a
 separate facet pass that sees only the scope predicates. Filter in memory and the option you
 just picked disappears, which makes the filter bar un-un-selectable.
+
+**The paging half is a keyset cursor, and lists carry no counts.** A list pages by the cursor its
+`query*Page` builder returns (`apps/console/lib/queries/keyset.ts`), never by page number: there is
+no `?page=`, `DataTable` has no page numbers or rows-per-page picker, and `PageToolbar` and
+`SectionHeading` have no `count` (epic #7481, closed by #7496). A list's size is its rows, each
+marked `data-list-item`. `pnpm check:filter-standard` enforces both halves; an unpaged list is
+allowed only as a `bounded` decision in `apps/console/list-standard/` naming its server-side cap.
 
 No stat-card strips.
 

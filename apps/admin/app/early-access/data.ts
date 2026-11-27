@@ -12,7 +12,7 @@
 import { desc, eq } from "drizzle-orm";
 import { boolean, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { getServiceDb } from "@/lib/db";
-import { organization } from "@/lib/db-schema";
+import { organization } from "@repo/platform/console-refs";
 
 /** The plans a grant can be asked for (console: EARLY_ACCESS_PLANS). */
 export const EARLY_ACCESS_PLANS = ["team", "ai_plus", "ai_max"] as const;

@@ -4,6 +4,7 @@
 
 import { Button } from "@repo/ui/button";
 import { Loader2 } from "lucide-react";
+import { useSyncExternalStore } from "react";
 import type { KeysetList } from "@/lib/query/use-keyset-list";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 
@@ -14,27 +15,69 @@ export type ListFooterState = Pick<
 >;
 
 /**
+ * How far below the viewport the sentinel starts the next page (polish-wave spec §3, #7737): about
+ * a screen of rows ahead, so a reader scrolling at reading speed does not meet the spinner.
+ */
+const AUTO_LOAD_MARGIN = "0px 0px 400px 0px";
+
+/** The media query for a reader who asked the browser to save data. */
+const REDUCED_DATA = "(prefers-reduced-data: reduce)";
+
+/** Subscribes to changes of the `prefers-reduced-data` setting; a no-op where it is unsupported. */
+function subscribeReducedData(onChange: () => void): () => void {
+	if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+	const query = window.matchMedia(REDUCED_DATA);
+	query.addEventListener("change", onChange);
+	return () => query.removeEventListener("change", onChange);
+}
+
+/** The current `prefers-reduced-data` answer: false where the browser does not support the query. */
+function readReducedData(): boolean {
+	if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
+	return window.matchMedia(REDUCED_DATA).matches;
+}
+
+/** On the server nothing is known about the reader, so the sentinel is armed as usual. */
+function readReducedDataOnServer(): boolean {
+	return false;
+}
+
+/**
+ * Whether the reader asked to save data (`prefers-reduced-data`). False where the browser does not
+ * support the query, and on the server; follows the setting if it changes while the page is open.
+ */
+function usePrefersReducedData(): boolean {
+	return useSyncExternalStore(subscribeReducedData, readReducedData, readReducedDataOnServer);
+}
+
+/**
  * The foot of every keyset list (lib/query/README.md → "Paging"; #7482), lifted from the support
- * cases list (#7395). Four states, and the fourth is deliberately nothing:
+ * cases list (#7395). Four states:
  *
- * - **more to load**: an invisible scroll sentinel that pulls the next page as the reader nears the
- *   end, PLUS an always-visible "Load more" button. The button is not a fallback for old browsers
- *   only — it is how a keyboard or screen-reader user, or anyone the observer never fires for,
- *   reaches the next page at all;
+ * - **more to load**: an invisible scroll sentinel that pulls the next page once it is within
+ *   ~400px of the viewport, PLUS an always-visible "Load more" button. The button is not a
+ *   fallback for old browsers only — it is how a keyboard or screen-reader user, or anyone the
+ *   observer never fires for, reaches the next page at all. Under `prefers-reduced-data` the
+ *   sentinel stands down and the button is the only way on;
  * - **loading**: the button stays where it was, disabled and `aria-busy`, with a spinner — the
  *   row the reader is looking at does not jump;
  * - **failed**: one line under the rows, "Couldn't load more · Try again". The loaded rows STAY: a
  *   failed later page is not a failed list (the Activity log's E-26 rule);
- * - **the end**: nothing. No "That's all N" — a count of what loaded reads as a total, and the
- *   console carries no list counts (README → "Counts").
+ * - **the end**: `END OF LIST`, in mono, once there are rows (an empty list is its empty state's
+ *   job). Never a count — no "That's all N": a count of what loaded reads as a total, and the
+ *   console carries no list counts (README → "Counts"). It is its own `data-slot="list-end"`, so
+ *   "the footer has nothing left to do" still reads as no `list-footer`.
  */
 export function ListFooter({ list }: { list: ListFooterState }) {
 	const { rows, hasMore, loadingMore, loadMoreFailed, loadMore } = list;
+	const reducedData = usePrefersReducedData();
 	const sentinelRef = useInfiniteScrollSentinel({
-		// After a failure the sentinel stands down: re-firing on its own would retry in a loop.
-		hasMore: hasMore && !loadMoreFailed,
+		// After a failure the sentinel stands down: re-firing on its own would retry in a loop. The
+		// hook itself never observes while a page is in flight (`loading`).
+		hasMore: hasMore && !loadMoreFailed && !reducedData,
 		loading: loadingMore,
 		onLoadMore: loadMore,
+		rootMargin: AUTO_LOAD_MARGIN,
 		resetKey: rows.length,
 	});
 
@@ -56,7 +99,17 @@ export function ListFooter({ list }: { list: ListFooterState }) {
 		);
 	}
 
-	if (!hasMore) return null;
+	if (!hasMore) {
+		if (rows.length === 0) return null;
+		return (
+			<p
+				data-slot="list-end"
+				className="pt-2 pb-1 text-center font-mono text-ui-2xs uppercase tracking-[0.14em] text-text-tertiary"
+			>
+				End of list
+			</p>
+		);
+	}
 
 	return (
 		<div data-slot="list-footer" data-state={loadingMore ? "loading" : "more"} className="flex justify-center pt-1">

@@ -5,6 +5,7 @@ import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { settledReadOf } from "@/components/settings/members/people-reads";
 import { SsoManager } from "@/components/settings/sso/sso-manager";
 import { SsoNoAccess } from "@/components/settings/sso/sso-no-access";
+import { SsoReadFailed } from "@/components/settings/sso/sso-read-failed";
 import { ssoQueryFromUrl } from "@/components/settings/sso/sso-filters";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { getQueryClient } from "@/lib/query/client";
@@ -45,8 +46,9 @@ export default async function SsoPage({
 	const state = queryClient.getQueryState(boot.queryKey);
 	if (readRefusalOf(state?.error) === "forbidden") return <SsoNoAccess />;
 	const bootstrap = queryClient.getQueryData(boot.queryKey);
-	// A real failure (not a refusal) is the route's error boundary, never an empty page.
-	if (!bootstrap) throw state?.error ?? new Error("The SSO settings could not be read.");
+	// A real failure (not a refusal) is the page's own region error with a retry — never an empty
+	// page, and no longer the route's error boundary, which only SSO used to reach (R6 E-21).
+	if (!bootstrap) return <SsoReadFailed />;
 
 	if (!bootstrap.sso) return <FeatureUpsell feature="sso" />;
 

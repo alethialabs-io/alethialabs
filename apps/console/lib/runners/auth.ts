@@ -118,9 +118,11 @@ const IN_FLIGHT_APPLY = ["CLAIMED", "PROCESSING"] as const;
  * Confirms the authenticated runner may READ the given job, and says on what ground:
  *
  * - `owner`: the runner owns the job, as {@link verifyRunnerOwnsJob} checks;
- * - `applies_plan`: the job is a PLAN, and this runner holds an in-flight DEPLOY of the same org that
- *   names it as `plan_job_id`. The runner applying a reviewed plan downloads that plan and reads its
- *   status, whichever runner made it. Only that plan, only while the apply is claimed or running.
+ * - `applies_plan`: the job is a PLAN, and this runner holds an in-flight DEPLOY or DESTROY of the
+ *   same org that names it as `plan_job_id`. The runner applying a reviewed plan (or tearing down a
+ *   reviewed destroy plan, #7455) downloads that plan and reads its status, whichever runner made it.
+ *   Only that plan, only while the apply or destroy is claimed or running. Which KIND of plan each may
+ *   apply is the runner's check (plan_binding.go), and the console's at insert.
  *
  * Returns the 404/403 to answer with, or the access ground. Writes keep {@link verifyRunnerOwnsJob}.
  */
@@ -148,7 +150,7 @@ export async function verifyRunnerMayReadJob(
 					eq(jobs.plan_job_id, jobId),
 					eq(jobs.runner_id, runnerId),
 					eq(jobs.org_id, job.org_id),
-					eq(jobs.job_type, "DEPLOY"),
+					inArray(jobs.job_type, ["DEPLOY", "DESTROY"]),
 					inArray(jobs.status, [...IN_FLIGHT_APPLY]),
 				),
 			)

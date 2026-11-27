@@ -59,21 +59,42 @@ export function AccessRouteSkeleton() {
 
 /**
  * SSO: with the `sso` entitlement, the manager — the toolbar (count, one line, Connect provider),
- * the filter bar (search, Protocol, Status) and the provider panel; without it the page's whole
- * body is the upsell, so the skeleton is the upsell's box alone (#6132, F021).
+ * the filter bar (search, Protocol, Status), the provider rail beside the detail pane, and the SCIM
+ * card under them (R6 E-22: it used to be one plain panel, so the page jumped into a split and grew a
+ * card when it arrived); without it the page's whole body is the upsell, so the skeleton is the
+ * upsell's box alone (#6132, F021).
+ *
+ * The rail and pane split at `lg`, as `SsoManager` does — a two-pane layout, stacked on a phone.
  */
 export function SsoRouteSkeleton() {
 	const sso = useEntitlement("sso");
 	if (sso === false) return <PeopleUpsellSkeleton toolbar={false} />;
 	return (
 		<SkeletonRoot>
-			<PageToolbarSkeleton className="mb-4" count actions={1} />
+			<PageToolbarSkeleton className="mb-4" actions={1} />
 			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
 				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
 				<Skeleton className="h-8 w-28 rounded-md" />
 				<Skeleton className="h-8 w-28 rounded-md" />
 			</div>
-			<PanelSkeleton lines={5} />
+			<div aria-hidden className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
+				<div className="space-y-1 rounded-lg border border-border bg-surface p-2 shadow-sm">
+					{[0, 1].map((i) => (
+						<div key={i} className="flex items-center gap-2.5 px-2.5 py-2">
+							<div className="min-w-0 flex-1 space-y-1.5">
+								<Skeleton className="h-3.5 w-28" />
+								<Skeleton className="h-2.5 w-36" />
+							</div>
+							<Skeleton className="h-4 w-16 rounded-full" />
+						</div>
+					))}
+				</div>
+				<PanelSkeleton lines={5} />
+			</div>
+			<div aria-hidden data-slot="sso-scim-skeleton" className="space-y-2 rounded-lg border border-border bg-surface px-5 py-4 shadow-sm">
+				<Skeleton className="h-4 w-36" />
+				<Skeleton className="h-3 w-full max-w-[560px]" />
+			</div>
 		</SkeletonRoot>
 	);
 }

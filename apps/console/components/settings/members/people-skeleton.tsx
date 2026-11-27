@@ -36,7 +36,7 @@ export function PeopleListSkeleton({
 	return (
 		<div aria-busy>
 			{lead && <AccessNoteSkeleton />}
-			<PageToolbarSkeleton className="mb-4" count actions={actions} />
+			<PageToolbarSkeleton className="mb-4" actions={actions} />
 			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
 				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
 				{Array.from({ length: facets }, (_, i) => (
@@ -118,7 +118,7 @@ export function PeopleUpsellSkeleton({
 	return (
 		<div aria-busy>
 			{lead && <AccessNoteSkeleton />}
-			{toolbar && <PageToolbarSkeleton className="mb-4" count actions={1} />}
+			{toolbar && <PageToolbarSkeleton className="mb-4" actions={1} />}
 			<FeatureUpsellSkeleton />
 		</div>
 	);

@@ -13,8 +13,13 @@
 // The rules, each enforced here and each with a test:
 //
 //   Org        The org is the one whose row already names the subscription. An org id from
-//              custom_data is used ONLY when no row names it yet (first checkout), and only if that
-//              org exists. custom_data naming a different org than the row is refused and alerted.
+//              custom_data is used ONLY when no row names it yet (first checkout), only if that org
+//              exists, and only when something WE recorded ties that org to the event: the org's
+//              stored Paddle customer, a `commerce_order` our checkout placed for the transaction, or
+//              a transaction already mirrored for it. Without one the event is not applied: a
+//              subscription event or a subscription's transaction is redelivered (the checkout's
+//              transaction may simply not be mirrored yet), anything else is refused. custom_data
+//              naming a different org than the row is refused and alerted.
 //   Watermark  Each subscription slot keeps the provider's `occurred_at` of the newest event applied.
 //              An older event is refused, so redelivery or out-of-order arrival never regresses the
 //              row; a same-instant tie goes to the later lifecycle stage (none < live < canceled).
@@ -86,6 +91,13 @@ export interface TransactionMirrorWrite {
 	snapshot: TransactionSnapshot;
 }
 
+/** The provider object ids an event names, for {@link BillingEventStore.orgHasRecordOf}. */
+export interface ProviderRefs {
+	transactionId: string | null;
+	subscriptionId: string | null;
+	customerId: string | null;
+}
+
 /** The persistence `applyBillingEvent` writes through. Every method is the service role's. */
 export interface BillingEventStore {
 	/** Whether an organization with this id exists. */
@@ -94,6 +106,12 @@ export interface BillingEventStore {
 	orgForSubscription(subscriptionId: string): Promise<string | null>;
 	/** The org whose row holds this provider business id, or null. */
 	businessOwner(businessId: string): Promise<string | null>;
+	/**
+	 * Whether a record of ours ties `orgId` to any of `refs`: the org's billing row holds that
+	 * customer, a Paddle `commerce_order` of the org names that transaction or subscription, or the
+	 * org's transaction mirror holds that transaction or a transaction of that subscription.
+	 */
+	orgHasRecordOf(orgId: string, refs: ProviderRefs): Promise<boolean>;
 	/**
 	 * Runs `fn` with the org's billing row locked (`FOR UPDATE`; null when the org has none) and a
 	 * `write` that inserts or updates that row — one transaction, so no write lands in between.
@@ -293,23 +311,28 @@ export function decideSubscriptionCanceled(
 	};
 }
 
+/** Why an event's org could not be resolved. */
+type UnresolvedReason = "mismatch" | "unknown_org" | "no_org" | "unrecorded_org";
+
 /**
  * The org an event belongs to: the row already naming its subscription wins; otherwise the
- * custom_data org, if it exists. `mismatch` when custom_data names a different org than that row.
+ * custom_data org, if it exists and {@link BillingEventStore.orgHasRecordOf} ties it to `refs`.
+ * `mismatch` when custom_data names a different org than that row; `unrecorded_org` when the
+ * custom_data org exists but nothing of ours ties it to the event.
  */
 async function resolveOrg(
 	store: BillingEventStore,
-	subscriptionId: string | null,
+	refs: ProviderRefs,
 	claimedOrgId: string | null,
-	allowClaim: boolean,
-): Promise<{ orgId: string } | { orgId: null; reason: "mismatch" | "unknown_org" | "no_org" }> {
-	const owner = subscriptionId ? await store.orgForSubscription(subscriptionId) : null;
+): Promise<{ orgId: string } | { orgId: null; reason: UnresolvedReason }> {
+	const owner = refs.subscriptionId ? await store.orgForSubscription(refs.subscriptionId) : null;
 	if (owner) {
 		if (claimedOrgId && claimedOrgId !== owner) return { orgId: null, reason: "mismatch" };
 		return { orgId: owner };
 	}
-	if (!claimedOrgId || !allowClaim) return { orgId: null, reason: "no_org" };
+	if (!claimedOrgId) return { orgId: null, reason: "no_org" };
 	if (!(await store.orgExists(claimedOrgId))) return { orgId: null, reason: "unknown_org" };
+	if (!(await store.orgHasRecordOf(claimedOrgId, refs))) return { orgId: null, reason: "unrecorded_org" };
 	return { orgId: claimedOrgId };
 }
 
@@ -320,8 +343,19 @@ function describe(event: NormalizedBillingEvent): string {
 
 /** Applies a subscription create/update. */
 async function applyUpsert(event: SubscriptionUpsertedEvent, deps: ApplyDeps): Promise<ApplyResult> {
-	const resolved = await resolveOrg(deps.store, event.subscriptionId, event.organizationId, true);
+	const resolved = await resolveOrg(
+		deps.store,
+		{ transactionId: event.transactionId ?? null, subscriptionId: event.subscriptionId, customerId: event.customerId },
+		event.organizationId,
+	);
 	if (resolved.orgId === null) {
+		if (resolved.reason === "unrecorded_org" && LIVE.has(event.status)) {
+			// A checkout's subscription events can arrive before its transaction is mirrored; once
+			// that lands, the redelivery finds the record. Paddle gives up after its retry schedule.
+			throw new RetryableBillingEventError(
+				`subscription ${event.subscriptionId}: no record ties the custom_data organization to it yet`,
+			);
+		}
 		if (resolved.reason === "mismatch" || (resolved.reason === "unknown_org" && LIVE.has(event.status))) {
 			await deps.alert({
 				title: "Paddle subscription for an unknown or different organization",
@@ -382,13 +416,30 @@ async function applyTransaction(
 	event: TransactionCompletedEvent | TransactionPaymentFailedEvent | TransactionUpdatedEvent,
 	deps: ApplyDeps,
 ): Promise<ApplyResult> {
-	const resolved = await resolveOrg(deps.store, event.subscriptionId, event.organizationId, true);
+	const resolved = await resolveOrg(
+		deps.store,
+		{ transactionId: event.transactionId, subscriptionId: event.subscriptionId, customerId: event.customerId },
+		event.organizationId,
+	);
 	if (resolved.orgId === null) {
-		if (event.kind === "transaction_completed" || resolved.reason === "mismatch") {
+		if (resolved.reason === "unrecorded_org" && event.subscriptionId) {
+			// The subscription's own event may not have been applied yet; redelivery lets it land.
+			throw new RetryableBillingEventError(
+				`transaction ${event.transactionId}: subscription ${event.subscriptionId} is not on any row yet`,
+			);
+		}
+		const worthAlerting =
+			event.kind === "transaction_completed" ||
+			resolved.reason === "mismatch" ||
+			(resolved.reason === "unrecorded_org" && event.transaction.status === "billed");
+		if (worthAlerting) {
 			await deps.alert({
 				title: "Paddle transaction for an unknown or different organization",
 				subject: { type: "paddle_transaction", id: event.transactionId },
-				summary: `${describe(event)}: transaction ${event.transactionId} was not recorded (${resolved.reason}).`,
+				summary:
+					resolved.reason === "unrecorded_org"
+						? `${describe(event)}: transaction ${event.transactionId} names an organization with no checkout order or Paddle customer of ours for it, so it was not recorded. If it is genuine, store the org's Paddle customer on its billing row; the transaction backfill then mirrors it.`
+						: `${describe(event)}: transaction ${event.transactionId} was not recorded (${resolved.reason}).`,
 			});
 		}
 		return { outcome: "refused", reason: resolved.reason };

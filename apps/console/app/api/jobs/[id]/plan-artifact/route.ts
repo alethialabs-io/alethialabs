@@ -82,7 +82,7 @@ export async function GET(
 
 	const { id: jobId } = await params;
 
-	// The runner that made the plan, or the runner whose in-flight DEPLOY applies it, may download it.
+	// The runner that made the plan, or the runner whose in-flight DEPLOY or DESTROY applies it, may download it.
 	const read = await verifyRunnerMayReadJob(runnerId, jobId);
 	if (read.error) return read.error;
 

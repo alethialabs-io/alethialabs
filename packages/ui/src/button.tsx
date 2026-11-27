@@ -29,9 +29,10 @@
 
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
-import { isValidElement } from "react"
+import { Children, Fragment, isValidElement, useCallback, useLayoutEffect, useRef } from "react"
 import type * as React from "react"
 
+import { INLINE_STROKE, MarkGlyph } from "./spinner"
 import { cn } from "./utils"
 
 const buttonVariants = cva(
@@ -83,7 +84,15 @@ const buttonVariants = cva(
  * `onClick`. Consumers keep the standard React surface; base-ui's extras stay available. */
 type ButtonProps = React.ComponentProps<"button"> &
   Pick<ButtonPrimitive.Props, "render" | "nativeButton"> &
-  VariantProps<typeof buttonVariants>
+  VariantProps<typeof buttonVariants> & {
+    /**
+     * The action this button started is running (polish-wave spec §2). The button is disabled,
+     * says `aria-busy`, shows `cursor: progress`, keeps the width it had at rest, and its leading
+     * icon becomes the inline `[·]` loader (prepended when there is no icon). The label is the
+     * caller's: make it the progressive verb ("Applying…").
+     */
+    pending?: boolean
+  }
 
 /**
  * Whether `render` is an element that NAVIGATES — an `<a href>`, a Next `<Link href>`, or anything
@@ -95,6 +104,74 @@ type ButtonProps = React.ComponentProps<"button"> &
  */
 function rendersLink(render: ButtonProps["render"]): boolean {
   return isValidElement<{ href?: unknown }>(render) && render.props.href != null
+}
+
+/**
+ * Whether a child is the button's leading ICON: an `<svg>`, or a component element (lucide icons
+ * are components). A string, a number or a host element such as `<span>` is label, not icon.
+ */
+function isIcon(child: React.ReactNode): boolean {
+  if (!isValidElement(child) || child.type === Fragment) return false
+  return child.type === "svg" || typeof child.type !== "string"
+}
+
+/** The children with the leading icon swapped for the inline loader, or the loader prepended. */
+function withPendingMark(children: React.ReactNode): React.ReactNode[] {
+  const items = Children.toArray(children)
+  const mark = (
+    <MarkGlyph
+      key="button-pending-mark"
+      data-slot="button-pending-mark"
+      aria-hidden="true"
+      width={16}
+      height={16}
+      bracketStroke={INLINE_STROKE}
+    />
+  )
+  const [first, ...rest] = items
+  return first !== undefined && isIcon(first) ? [mark, ...rest] : [mark, ...items]
+}
+
+/**
+ * One callback ref that writes the node into both refs — this file's own and the caller's (an
+ * object ref or a callback). Typed by the element base-ui actually renders, which a caller's
+ * `Ref<HTMLButtonElement>` is assignable to.
+ */
+function useMergedRef<T>(own: React.Ref<T>, caller: React.Ref<T> | undefined): React.RefCallback<T> {
+  return useCallback(
+    (node: T | null) => {
+      for (const ref of [own, caller]) {
+        if (typeof ref === "function") ref(node)
+        else if (ref) ref.current = node
+      }
+    },
+    [own, caller]
+  )
+}
+
+/**
+ * Holds a button at its resting width while it is pending, so swapping the label for a shorter
+ * progressive verb does not make it shrink under the pointer. Measures only for a caller that
+ * passes `pending` at all — the rest of the app's buttons pay no layout read.
+ */
+function usePendingWidth(pending: boolean | undefined): React.RefObject<HTMLElement | null> {
+  const node = useRef<HTMLElement | null>(null)
+  const restWidth = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    const el = node.current
+    if (pending === undefined || el === null) return
+    if (!pending) {
+      restWidth.current = el.offsetWidth
+      return
+    }
+    if (restWidth.current === null) return
+    const previous = el.style.minWidth
+    el.style.minWidth = `${restWidth.current}px`
+    return () => {
+      el.style.minWidth = previous
+    }
+  }, [pending])
+  return node
 }
 
 /** Grayscale/squared button. Migrated off Radix `Slot` to the base-ui `Button` primitive: pass a
@@ -124,8 +201,14 @@ function Button({
   render,
   nativeButton,
   role,
+  pending,
+  disabled,
+  children,
+  ref,
   ...props
 }: ButtonProps) {
+  const widthRef = usePendingWidth(pending)
+  const mergedRef = useMergedRef<HTMLElement>(widthRef, ref)
   const link = rendersLink(render)
   // Omitted, never `role={undefined}`: base-ui's mergeProps copies an own key whatever its value,
   // so an explicit undefined would ERASE the `role="button"` a non-native, non-link render needs.
@@ -135,12 +218,22 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size, className }),
+        // A disabled button drops pointer events, which would also drop the cursor; a pending one
+        // keeps them so `cursor: progress` shows (a disabled native button still fires no click).
+        pending && "disabled:pointer-events-auto disabled:cursor-progress"
+      )}
       render={render}
       nativeButton={nativeButton ?? !link}
       {...(resolvedRole === undefined ? {} : { role: resolvedRole })}
       {...props}
-    />
+      ref={mergedRef}
+      {...(pending || disabled ? { disabled: true } : {})}
+      {...(pending ? { "aria-busy": true, "data-pending": "" } : {})}
+    >
+      {pending ? withPendingMark(children) : children}
+    </ButtonPrimitive>
   )
 }
 

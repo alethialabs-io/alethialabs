@@ -19,7 +19,7 @@ import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import type { ResourceKind } from "@/lib/db/schema/enums";
 import type { AssignedValue } from "@/lib/queries/classification";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	useAssignmentsQuery,
 	useCanEditClassification,

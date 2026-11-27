@@ -9,8 +9,8 @@
 import type React from "react";
 import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
+import { MarkLoader } from "@repo/brand/loader";
 import { Sheet, SheetContent, SheetTitle } from "@repo/ui/sheet";
-import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 import { useSidebarCollapse } from "@/lib/stores/use-sidebar-store";
 import { useElenchStore } from "@/lib/stores/use-elench-store";
@@ -19,13 +19,13 @@ import { ElenchDraftsRoot } from "@/components/agent/elench/elench-drafts-root";
 import { ElenchSurfaceLoader } from "@/components/agent/elench/elench-surface-loader";
 import { AnalyticsIdentity } from "@/components/analytics/analytics-identity";
 import { SetupGuideCard } from "@/components/onboarding/setup-guide";
-import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { AppSidebar } from "./app-sidebar";
 import { CommandPalette } from "./command-palette";
 import { CONTENT_FRAME } from "./content-frame";
 import { CRUMB_STRIP_VARS, MAIN_COLUMN_VARS, MAIN_UNDER_CRUMB_STRIP } from "./crumb-strip";
 import { JobToaster } from "./job-toaster";
 import { RealtimeMount } from "./realtime-mount";
+import { RouteProgress } from "./route-progress";
 import type { ShellEdition } from "./shell-edition";
 import { ShellEditionProvider } from "./shell-edition-provider";
 import { SidebarRail } from "./sidebar-rail";
@@ -33,25 +33,14 @@ import { SupportToaster } from "./support-toaster";
 import { Topbar } from "./topbar";
 
 /**
- * What the main column shows while a page below it suspends with no `loading.tsx` of its own: a
- * toolbar line and a block of rows, in the page gutter. A page's own skeleton is its own shape;
- * this one only has to hold the column still and say, to anything not looking at the pixels, that
- * the region is pending. It used to be a spinner in the middle of an empty column.
+ * What the main column shows while a page below it suspends with no `loading.tsx` of its own: the
+ * page-size `[·]` loader (polish-wave spec §2). It used to be a generic toolbar-and-rows skeleton,
+ * but a skeleton promises a layout, and this boundary is reached precisely when nobody knows the
+ * page's layout — a page that does know it has its own `loading.tsx`, which wins. Skeletons stay
+ * there; the mark never replaces one.
  */
 function MainPending() {
-	return (
-		<SkeletonRoot className="p-4 sm:p-6 lg:p-8 xl:p-10">
-			<div className={CONTENT_FRAME}>
-				<Skeleton className="h-8 w-56" />
-				<div className="mt-6 space-y-3">
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-					<Skeleton className="h-10 w-full" />
-				</div>
-				<span className="sr-only">Loading</span>
-			</div>
-		</SkeletonRoot>
-	);
+	return <MarkLoader size="page" />;
 }
 
 /** What the `[org]` layout hands the shell. */
@@ -151,6 +140,14 @@ function ShellFrame({
 			{/* Main column */}
 			<div className={cn("flex min-w-0 flex-1 flex-col", MAIN_COLUMN_VARS)}>
 				<Topbar onOpenSidebar={() => setMobileOpen(true)} />
+				{/* The route hairline, pinned to the top edge of the content area: under the topbar, and
+				    under the breadcrumb strip below `md`. A zero-height box, so it takes no room; the
+				    Suspense is for its `useSearchParams`. */}
+				<div className="relative h-0 max-md:top-(--shell-crumb-h)">
+					<Suspense fallback={null}>
+						<RouteProgress />
+					</Suspense>
+				</div>
 				{/* Below `md` the breadcrumb is a strip under the topbar, and `<main>` starts under it
 				    (`./crumb-strip.ts`). */}
 				<main className={cn("flex-1 overflow-y-auto", MAIN_UNDER_CRUMB_STRIP)}>

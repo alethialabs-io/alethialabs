@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Loader2, MinusCircle, PencilLine, PlusCircle } from "lucide-react";
 import { useId, useState } from "react";
 import { promoteEnvironment } from "@/app/server/actions/promotions";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import type { ComponentChange } from "@/types/jsonb.types";

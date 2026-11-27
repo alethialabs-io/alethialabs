@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import type { CreatedServiceToken } from "@/app/server/actions/agents/service-tokens";
 import { DataTable } from "@/components/data-table";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { ListFooter } from "@/components/list/list-footer";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -130,7 +130,8 @@ export function ServiceTokensPage({ canManageAgents }: { canManageAgents: boolea
 					) : (
 						<div className={cn("transition-opacity", list.isPlaceholderData && "opacity-60")}>
 							<div className="hidden md:block">
-								<DataTable columns={columns} keyset={list} skeletonRows={3} />
+								{/* The last column is the row's Edit and Revoke: it scrolls into reach rather than being clipped (#7713). */}
+								<DataTable columns={columns} keyset={list} skeletonRows={3} scrollX />
 							</div>
 							<div className="md:hidden">
 								{list.isPending ? null : (

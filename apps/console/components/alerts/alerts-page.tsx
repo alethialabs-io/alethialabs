@@ -35,7 +35,7 @@ import type { AlertsHub } from "@/components/alerts/alerts-hub";
 import { AlertsSkeleton } from "@/components/alerts/alerts-skeleton";
 import { ChannelsPanel } from "@/components/alerts/channels-panel";
 import { PoliciesPanel } from "@/components/alerts/policies-panel";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";

@@ -117,6 +117,18 @@ describe("[project]/environments — every card's Classification control is in t
 		});
 	});
 
+	it("does not hand down the layouts' reads a second time (#7736)", async () => {
+		// The request's one QueryClient already holds what the `[org]` and `[project]` layouts
+		// prefetched and dehydrate through their OWN boundaries: the shell's reads and the switcher's.
+		const client = h.client;
+		if (!(client instanceof QueryClient)) throw new Error("no request client");
+		client.setQueryData([["workspace", "environments"], { input: { project: "payments" }, type: "query" }], []);
+		client.setQueryData([["workspace", "context"], { input: undefined, type: "query" }], {});
+		const keys = handedDown(stateOf(await EnvironmentsRoute({ params, searchParams: Promise.resolve({}) })));
+		expect(Object.keys(keys).filter((k) => k.startsWith("workspace."))).toEqual([]);
+		expect(keys).toHaveProperty("environments.overview");
+	});
+
 	it("a link that carries filters asks the table's BOTH first pages: the pristine one and the link's (#6819, LST-3 #7485)", async () => {
 		const searchParams = Promise.resolve({ stages: "production,staging", search: " qa " });
 		await EnvironmentsRoute({ params, searchParams });

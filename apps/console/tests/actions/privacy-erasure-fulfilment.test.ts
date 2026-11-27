@@ -86,6 +86,8 @@ let memberRows: {
 	role: string;
 	status: string;
 }[] = [];
+/** Whether the fake database already holds the case DECIDED — set by the first decision written. */
+let decidedInDb = false;
 /** How many rows every erase/pseudonymize statement reports back. */
 let rowsPerStatement = 4;
 
@@ -116,7 +118,9 @@ interface FakeClient {
 		};
 	};
 	update: (table: unknown) => {
-		set: (set: unknown) => { where: (where: SQL) => Promise<void> };
+		set: (set: unknown) => {
+			where: (where: SQL) => Promise<void> & { returning: () => Promise<{ id: string }[]> };
+		};
 	};
 	execute: (query: SQL) => Promise<unknown[]>;
 	transaction: <T>(cb: (tx: FakeClient) => Promise<T>) => Promise<T>;
@@ -149,8 +153,25 @@ function client(bare: boolean): FakeClient {
 		}),
 		update: (table: unknown) => ({
 			set: (set: unknown) => ({
-				where: async (_where: SQL) => {
+				where: (where: SQL) => {
 					calls.push({ op: "update", bare, table, set });
+					// The CONDITIONAL decision (`... AND decided_at IS NULL RETURNING id`) changes the
+					// row only while the fake database holds it undecided — which is what a second,
+					// concurrent fulfil finds once the first has committed.
+					const conditional = /"(decided_at|decidedAt)" is null/.test(dialect.sqlToQuery(where).sql);
+					const changed = !(conditional && decidedInDb);
+					if (
+						table === privacyCase &&
+						changed &&
+						typeof set === "object" &&
+						set !== null &&
+						"decidedAt" in set
+					) {
+						decidedInDb = true;
+					}
+					return Object.assign(Promise.resolve(), {
+						returning: async () => (changed ? [{ id: "case-1" }] : []),
+					});
 				},
 			}),
 		}),
@@ -260,6 +281,7 @@ beforeEach(() => {
 	memberRows = [];
 	rowsPerStatement = 4;
 	caseFound = true;
+	decidedInDb = false;
 	injected = undefined;
 	authorize.mockReset();
 	authorizeInOrg.mockReset();
@@ -461,6 +483,32 @@ describe("erasing, once the org is clear", () => {
 			rows_erased: PLAN.erase.length * rowsPerStatement,
 			rows_pseudonymized: PLAN.pseudonymize.length * rowsPerStatement,
 		});
+	});
+
+	// Two fulfils of one case — two operators, a double click, a retried request — both load the
+	// case UNDECIDED (the fixture row never changes, exactly as a stale read would not). The second
+	// must find the decision already taken, and run nothing: no statement, no tombstone, no ledger.
+	it("refuses a second fulfil of the same case, running the erasure only once", async () => {
+		await fulfilErasure("DSR-ABCD1234", NOW);
+		const executed = of("execute").length;
+		const tombstones = of("insert", privacyErasureTombstone).length;
+		const logged = events().length;
+
+		await expect(fulfilErasure("DSR-ABCD1234", NOW)).rejects.toThrow(/already been decided/);
+		expect(of("execute")).toHaveLength(executed);
+		expect(executed).toBe(TOUCHING_RULES);
+		expect(of("insert", privacyErasureTombstone)).toHaveLength(tombstones);
+		expect(events()).toHaveLength(logged);
+	});
+
+	it("takes the decision conditionally, before the first erasing statement", async () => {
+		await fulfilErasure("DSR-ABCD1234", NOW);
+		const decision = calls.findIndex(
+			(c) => c.op === "update" && c.table === privacyCase && !c.bare,
+		);
+		const firstStatement = calls.findIndex((c) => c.op === "execute");
+		expect(decision).toBeGreaterThanOrEqual(0);
+		expect(decision).toBeLessThan(firstStatement);
 	});
 
 	// The honest zero. A subject with nothing stored must be recorded as nothing erased — not as

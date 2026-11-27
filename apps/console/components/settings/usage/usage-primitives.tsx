@@ -13,10 +13,11 @@
 
 import type { ReactNode } from "react";
 import { formatMinutes } from "@repo/format";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { EmptyState } from "@repo/ui/empty";
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
+import type { UsageMetric } from "@/components/settings/usage/usage-reads";
 
 /**
  * The usage surface's ONE count rendering — a whole number with thousands separators.
@@ -277,8 +278,9 @@ function Bars<T extends { date: string }>({
 	);
 }
 
-/** The three over-time metrics. One list, so the org and project tabs cannot drift apart. */
-export type Metric = "runnerMinutes" | "jobs" | "aiCredits";
+/** The three over-time metrics. One list (`USAGE_METRICS`), so the org and project tabs and the
+ * `?metric=` decoder cannot drift apart. */
+type Metric = UsageMetric;
 
 /** Tab order, labels and TOTAL RENDERING for {@link OverTimeCard}. Module-private: the panels pass
  * a `metric`, they do not render the tabs themselves, so exporting this would be an export nothing

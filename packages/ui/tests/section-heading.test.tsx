@@ -3,7 +3,7 @@
 
 // SectionHeading (src/section-heading.tsx): the heading inside a page. `level` sets the outline
 // rung and nothing else, a plain-string title is recoverable when it truncates, and the
-// description, count and actions each render only when given.
+// description and actions each render only when given, and it renders no count (LST-14).
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -31,7 +31,7 @@ describe("SectionHeading", () => {
 		expect(screen.getByRole("heading", { name: "Members" })).not.toHaveAttribute("title");
 	});
 
-	it("renders the description, the count and the actions only when given", () => {
+	it("renders the description and the actions only when given", () => {
 		const { container, rerender } = render(<SectionHeading title="Members" />);
 		expect(container.querySelector('[data-slot="section-heading-description"]')).toBeNull();
 		expect(container.querySelector('[data-slot="section-heading-actions"]')).toBeNull();
@@ -40,13 +40,16 @@ describe("SectionHeading", () => {
 			<SectionHeading
 				title="Members"
 				description="People with access"
-				count={12}
 				actions={<button type="button">Invite</button>}
 			/>,
 		);
 		expect(screen.getByText("People with access")).toBeInTheDocument();
-		expect(screen.getByText("12")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
+	});
+
+	it("renders no count pill (the console carries no list counts, epic #7481)", () => {
+		const { container } = render(<SectionHeading title="Members" description="People with access" />);
+		expect(container.querySelector('[data-slot="count-pill"]')).toBeNull();
 	});
 
 	it("passes its other props to the root, and merges the class", () => {
@@ -58,9 +61,10 @@ describe("SectionHeading", () => {
 });
 
 describe("Spinner", () => {
+	// The [·] mark loader since #7740: its motion is the `.ah-loader__*` keyframes, not a spin.
 	it("is a status named Loading, and merges the class", () => {
 		render(<Spinner className="size-6" />);
 		const spinner = screen.getByRole("status", { name: "Loading" });
-		expect(spinner).toHaveClass("animate-spin", "size-6");
+		expect(spinner).toHaveClass("ah-loader__glyph", "size-6");
 	});
 });

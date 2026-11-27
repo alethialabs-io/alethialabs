@@ -29,21 +29,19 @@ import { formatMinutes, formatMonthlyRate } from "@repo/format";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Info } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import {
 	RegionRefusal,
 	refusalOf,
 	retryUnlessRefused,
 } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
-import { useUsageRange } from "@/components/settings/usage/use-usage-range";
+import { useUsageMetric, useUsageRange } from "@/components/settings/usage/use-usage-range";
 import {
 	count,
 	Fact,
 	FactList,
 	FactRead,
-	type Metric,
 	OverTimeCard,
 } from "@/components/settings/usage/usage-primitives";
 import { UsageSkeleton } from "@/components/settings/usage/usage-skeleton";
@@ -67,7 +65,7 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 	const orgSlug = useActiveOrgSlug();
 
 	const picker = useUsageRange();
-	const [metric, setMetric] = useState<Metric>("runnerMinutes");
+	const [metric, setMetric] = useUsageMetric();
 	const input = { projectId };
 
 	// Period-fixed reads (server-prefetched + hydrated): runner job-minutes, resource counts, AI.

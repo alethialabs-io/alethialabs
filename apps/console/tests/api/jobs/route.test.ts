@@ -408,6 +408,52 @@ describe("POST /api/jobs (CLI queue)", () => {
 		expect(jobVals.configuration_hash).toBe(configurationHashOf(jobVals.config_snapshot));
 	});
 
+	it("PLAN with destroy_plan true queues a destroy-mode plan, and says so on the CLI wire (#7455, #7795)", async () => {
+		const { valuesSpy } = setupTx({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		mockServiceDb({ selectRows: [wireJob({ job_type: "PLAN", destroy_plan: true })] });
+
+		const res = await post({ job_type: "PLAN", configuration_id: "p1", destroy_plan: true });
+
+		expect(res.status).toBe(201);
+		// Planning a teardown changes nothing, so it is the plan verb, like any plan.
+		expect(authorize).toHaveBeenCalledWith("plan", { type: "project", id: "p1" });
+		const jobVals = valuesFor(valuesSpy, jobs);
+		expect(jobVals).toMatchObject({ job_type: "PLAN", destroy_plan: true });
+		expect(jobVals.configuration_hash).toBe(configurationHashOf(jobVals.config_snapshot));
+		// The CLI reads it: `project deploy --latest-plan` skips a destroy plan, `project destroy
+		// --latest-plan` takes only one.
+		expect(await res.json()).toHaveProperty("job.destroy_plan", true);
+	});
+
+	it("PLAN without destroy_plan true queues an apply plan: only the JSON value true opts in", async () => {
+		const { valuesSpy } = setupTx({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		mockServiceDb({ selectRows: [wireJob({ job_type: "PLAN" })] });
+
+		const res = await post({ job_type: "PLAN", configuration_id: "p1", destroy_plan: "true" });
+
+		expect(res.status).toBe(201);
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN", destroy_plan: false });
+	});
+
+	it.each(["DEPLOY", "DESTROY"])("400s destroy_plan on a %s and queues nothing", async (jobType) => {
+		const { valuesSpy } = setupTx({
+			select: snapshotSelect(),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		mockServiceDb({ selectRows: [wireJob()] });
+
+		const res = await post({ job_type: jobType, configuration_id: "p1", destroy_plan: true });
+
+		expect(res.status).toBe(400);
+		expect(() => valuesFor(valuesSpy, jobs)).toThrow();
+	});
+
 	it("DEPLOY delegates to provisionProject (plan chaining + PROVISIONED audit)", async () => {
 		const { valuesSpy } = setupTx({
 			select: snapshotSelect(),

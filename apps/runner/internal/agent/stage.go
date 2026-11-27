@@ -63,7 +63,8 @@ type stageDeployPayload struct {
 	GitProviders map[string]string `json:"git_providers,omitempty"`
 }
 
-// stageDestroyPayload reconstructs provisioner.DestroyParams.
+// stageDestroyPayload reconstructs provisioner.DestroyParams for a teardown (DryRun=false) or a
+// destroy-mode plan (DryRun=true), the same split stageDeployPayload makes for deploy and plan.
 type stageDestroyPayload struct {
 	ProjectConfig        *types.ProjectConfig        `json:"project_config"`
 	CloudAccountID       string                      `json:"cloud_account_id"`
@@ -73,6 +74,13 @@ type stageDestroyPayload struct {
 	CategoriesDir        string                      `json:"categories_dir"`
 	StateConsoleURL      string                      `json:"state_console_url"`
 	JobID                string                      `json:"job_id"`
+	// DryRun plans the teardown (RunDestroyPlan), saving the plan file at PlanOutFile under the
+	// workdir; the stage hands its bytes back in result.json. Nothing is destroyed.
+	DryRun      bool   `json:"dry_run,omitempty"`
+	PlanOutFile string `json:"plan_out_file,omitempty"`
+	// PlanFile is the reviewed destroy plan, already checked against the job's digest by the parent;
+	// the teardown applies exactly it (RunDestroy with PlanFile).
+	PlanFile string `json:"plan_file,omitempty"`
 }
 
 // stageChartScanPayload reconstructs a chart-safety scan. The chart is already cloned by
@@ -271,6 +279,9 @@ func spendPolicyFromEnv() provisioner.SpendPolicy {
 	return p
 }
 
+// buildDestroyPayload projects DestroyParams inputs into a serializable payload, blanking the git
+// token (it crosses via env) and carrying the json:"-" fields explicitly. The plan fields are set by
+// the caller: DryRun/PlanOutFile for a destroy plan, PlanFile for a teardown bound to one.
 func buildDestroyPayload(vc *types.ProjectConfig, provider, templatesDir, categoriesDir,
 	stateConsoleURL, jobID string) stageDestroyPayload {
 	cfg := *vc
@@ -344,13 +355,19 @@ func runDeployStage(ctx context.Context, p stageDeployPayload, sec stageSecrets,
 	return writeStageResult(workDir, res, err)
 }
 
-// runDestroyStage reconstructs DestroyParams and runs RunDestroy.
+// runDestroyStage reconstructs DestroyParams and runs RunDestroy, or RunDestroyPlan when the payload
+// is a destroy-mode plan (DryRun), writing the plan JSON into result.json for the parent.
 func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecrets, workDir string, stdout, stderr io.Writer) error {
 	vc := p.ProjectConfig
 	vc.CloudAccountID = p.CloudAccountID
 	vc.ConnectorCredentials = p.ConnectorCredentials
 
+	if p.DryRun {
+		return runDestroyPlanStage(ctx, p, sec, workDir, stdout, stderr)
+	}
+
 	err := provisioner.RunDestroy(ctx, provisioner.DestroyParams{
+		PlanFile:      p.PlanFile,
 		ProjectConfig: vc,
 		Provider:      p.Provider,
 		TemplatesDir:  p.TemplatesDir,
@@ -373,6 +390,45 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 		TalosMint: mintFromTalosconfig,
 	})
 	return writeStageResult(workDir, stageResult{}, err)
+}
+
+// runDestroyPlanStage runs RunDestroyPlan for a destroy-mode PLAN job. The saved plan file lands at
+// p.PlanOutFile and the plan JSON in result.json's PlanResult, the shape the apply plan's stage
+// writes, so the parent reads both the same way. A plan JSON that cannot be re-encoded fails the
+// stage: a destroy plan with no readable changes is not one anyone can review.
+func runDestroyPlanStage(ctx context.Context, p stageDestroyPayload, sec stageSecrets, workDir string, stdout, stderr io.Writer) error {
+	plan, err := provisioner.RunDestroyPlan(ctx, provisioner.DestroyParams{
+		DryRun:        true,
+		PlanOutFile:   p.PlanOutFile,
+		ProjectConfig: p.ProjectConfig,
+		Provider:      p.Provider,
+		TemplatesDir:  p.TemplatesDir,
+		CategoriesDir: p.CategoriesDir,
+		StateBackend:  &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
+		Stdout:        stdout,
+		Stderr:        stderr,
+	})
+	if err != nil {
+		return writeStageResult(workDir, stageResult{}, err)
+	}
+	var planJSON map[string]interface{}
+	raw, err := json.Marshal(plan)
+	if err == nil {
+		err = json.Unmarshal(raw, &planJSON)
+	}
+	if err != nil {
+		return writeStageResult(workDir, stageResult{}, fmt.Errorf("encode the destroy plan: %w", err))
+	}
+	// The saved plan crosses back inside result.json, as the apply plan's PlanFileBytes do, so the
+	// parent never opens a path the (for BYO IaC, untrusted) stage could have pointed elsewhere.
+	planBytes, err := os.ReadFile(p.PlanOutFile)
+	if err != nil {
+		return writeStageResult(workDir, stageResult{}, fmt.Errorf("read the saved destroy plan: %w", err))
+	}
+	_ = os.Remove(p.PlanOutFile)
+	res := stageResult{}
+	res.PlanResult, _ = json.Marshal(provisioner.PlanResult{PlanJSON: planJSON, PlanFileBytes: planBytes})
+	return writeStageResult(workDir, res, nil)
 }
 
 // buildDriftPayload projects a BYO drift run into a serializable payload (the git/state
@@ -559,10 +615,39 @@ func writeStageResult(workDir string, res stageResult, stageErr error) error {
 	return stageErr
 }
 
+// readStageResultFile returns the bytes of workDir/result.json, the file the stage writes for the
+// parent. The stage may run in a container that shares workDir, so the parent reads the file only
+// when it is a regular file at that name: a symbolic link (or anything else) there is refused rather
+// than followed. The name is checked with Lstat before opening and the opened file is checked to be
+// that same file afterwards, so a link swapped in between the two is refused too.
+func readStageResultFile(workDir string) ([]byte, error) {
+	path := filepath.Join(workDir, "result.json")
+	before, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("stage result %s is not a regular file (mode %s); refusing to read it", path, before.Mode().Type())
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(before, opened) {
+		return nil, fmt.Errorf("stage result %s changed while it was being opened; refusing to read it", path)
+	}
+	return io.ReadAll(f)
+}
+
 // readPlanResult decodes result.json's PlanResult (nil if absent). The parent calls it
 // after the sandbox runs, regardless of backend.
 func readPlanResult(workDir string) (*provisioner.PlanResult, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +667,7 @@ func readPlanResult(workDir string) (*provisioner.PlanResult, error) {
 
 // readVerifyReport decodes result.json's VerifyReport (chart_scan).
 func readVerifyReport(workDir string) (*verify.Report, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +688,7 @@ func readVerifyReport(workDir string) (*verify.Report, error) {
 // readChartWorkloads decodes result.json's ChartWorkloads (chart_scan describe output). Returns a
 // nil slice when the stage emitted none (an older runner, or a chart with no described workloads).
 func readChartWorkloads(workDir string) ([]types.ChartWorkload, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -623,7 +708,7 @@ func readChartWorkloads(workDir string) ([]types.ChartWorkload, error) {
 
 // readIacScanReport decodes result.json's IacReport (BYO IaC scan).
 func readIacScanReport(workDir string) (*types.IacScanReport, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +728,7 @@ func readIacScanReport(workDir string) (*types.IacScanReport, error) {
 
 // readDriftPosture decodes result.json's DriftPosture (BYO drift).
 func readDriftPosture(workDir string) (*drift.Posture, error) {
-	b, err := os.ReadFile(filepath.Join(workDir, "result.json"))
+	b, err := readStageResultFile(workDir)
 	if err != nil {
 		return nil, err
 	}

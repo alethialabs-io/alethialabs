@@ -13,7 +13,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ErrorState } from "@/components/errors/error-state";
+import { ErrorState } from "@repo/ui/error-state";
 import { CASE_NOT_FOUND_COPY, casesListHref } from "@/components/support/cases/case-not-found";
 import { Button } from "@repo/ui/button";
 

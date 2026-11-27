@@ -11,14 +11,14 @@
 // question in advance (`approveBlock`), so Approve is disabled with its reason before anyone presses
 // it; a stale sheet that is approved anyway is refused by the server and re-read.
 //
-// HOW A REFUSAL IS SHOWN. The action answers a refusal as a `conflict` with the server's sentence and
-// no code (lib/actions/result.ts carries none), so this footer shows that sentence verbatim and then
-// lets the re-read say which state the request is in now: decided by someone else, expired or
-// replaced → the outcome; the policy changed → the Blocked alert. A refusal that leaves the request
-// waiting, decidable and unblocked after the re-read has only one cause the server can raise for a
-// person allowed to decide — a sign-in older than a day (`reauthentication_required`) — so that case
-// offers "Sign in again". The sentence on screen is always the server's own, so even that inference
-// never puts words in the server's mouth.
+// HOW A REFUSAL IS SHOWN. The action answers a refusal with the server's sentence AND its
+// `ApprovalErrorCode` (lib/approvals/refusal.ts, carried on the result's `code` — #7643), so this
+// footer names the refusal from the code ({@link REFUSAL_COPY}) and shows the server's sentence under
+// it verbatim. An old sign-in (`reauthentication_required`) offers "Sign in again" at once. The
+// refusal invalidates the sheet's read, and the re-read then shows the state the request is in now:
+// decided by someone else, expired or replaced → the outcome; the policy changed → the Blocked alert,
+// which takes the refusal's place. Nothing is inferred from the re-read any more: before #7643 the
+// result carried no code, and the sign-in case was deduced by elimination.
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { formatDate } from "@repo/format";
@@ -36,6 +36,7 @@ import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { useSecondsClock } from "@/components/jobs/columns";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import type { ApproveBlock } from "@/lib/approvals/decidable";
+import { type ApprovalErrorCode, isApprovalErrorCode } from "@/lib/approvals/refusal";
 import { authClient } from "@/lib/auth/client";
 import { signInHref } from "@/lib/auth/sign-in-href";
 import { orpc } from "@/lib/rpc/client";
@@ -48,6 +49,26 @@ const REASON_MAX = 500;
 
 /** The deny form: an optional reason. */
 const denySchema = z.object({ reason: z.string().max(REASON_MAX, `Keep the reason under ${REASON_MAX} characters.`) });
+
+/**
+ * The title each refusal the server can raise is shown under, keyed by its code. A `Record` over every
+ * code, so a new `ApprovalErrorCode` does not compile until it has its title. The body is always the
+ * server's own sentence.
+ */
+const REFUSAL_COPY: Record<ApprovalErrorCode, { title: string; icon: typeof Lock }> = {
+	not_found: { icon: Info, title: "This request isn't available" },
+	plan_not_approvable: { icon: Info, title: "This plan can't be approved as it stands" },
+	not_permitted: { icon: Lock, title: "This organization's agent policy doesn't allow it" },
+	not_a_person: { icon: Lock, title: "Only a person signed in to the console can decide" },
+	reauthentication_required: { icon: LogIn, title: "Sign in again to decide" },
+	self_approval: { icon: Info, title: "Someone else needs to approve this" },
+	policy_refused: { icon: Lock, title: "This organization's agent policy changed" },
+	not_pending: { icon: Info, title: "This request isn't waiting any more" },
+	confirmation_mismatch: { icon: Info, title: "The environment name didn't match" },
+};
+
+/** The title for a refusal that carried no approval code (an older server, or not the engine's own). */
+const UNCODED_REFUSAL_TITLE = "That didn't go through";
 
 /** The title and body of an Approve block, in the sheet's words (spec §1.4, the Blocked states). */
 function blockCopy(block: ApproveBlock, via: string, verb: string): { title: string; body: string; icon: typeof Lock } {
@@ -106,8 +127,6 @@ export interface ApprovalDecisionProps {
 	orgSlug: string;
 	/** The signed-in person's id, to say "You approved this". */
 	viewerId: string | null;
-	/** When the sheet's read last answered (epoch ms): a refusal is read against the answer after it. */
-	readAt: number;
 	/** Copies the sheet's link (the header's button, offered again for a teammate). */
 	onCopyLink: () => void;
 }
@@ -121,7 +140,7 @@ export function ApprovalDecision(props: ApprovalDecisionProps) {
 }
 
 /** The footer of a request that is still waiting. */
-function PendingDecision({ sheet, orgSlug, readAt, onCopyLink }: ApprovalDecisionProps) {
+function PendingDecision({ sheet, orgSlug, onCopyLink }: ApprovalDecisionProps) {
 	const { approval, canDecide, approveBlock } = sheet;
 	const via = requesterName(approval);
 	const verb = approval.operation;
@@ -132,13 +151,13 @@ function PendingDecision({ sheet, orgSlug, readAt, onCopyLink }: ApprovalDecisio
 
 	const [denying, setDenying] = useState(false);
 	const [confirming, setConfirming] = useState(false);
-	// The server's sentence for the last refusal, and when the sheet had last been read at that moment.
-	const [refusal, setRefusal] = useState<{ message: string; readBefore: number } | null>(null);
+	// The last refusal: the server's sentence, and its code when it carried an approval code.
+	const [refusal, setRefusal] = useState<{ message: string; code: ApprovalErrorCode | null } | null>(null);
 
 	const decide = useActionMutation(decideApplyApproval, {
 		invalidates: [orpc.approvals.key()],
 		onRefusal: (error) => {
-			setRefusal({ message: error.message, readBefore: readAt });
+			setRefusal({ message: error.message, code: isApprovalErrorCode(error.code) ? error.code : null });
 			setConfirming(false);
 			setDenying(false);
 		},
@@ -160,15 +179,11 @@ function PendingDecision({ sheet, orgSlug, readAt, onCopyLink }: ApprovalDecisio
 		);
 	}
 
-	// Once the read AFTER the refusal is in, a request still waiting, unblocked and decidable can only
-	// have been refused for an old sign-in (see the header).
-	const reread = refusal !== null && readAt > refusal.readBefore;
-	const needsSignIn = reread && approveBlock === null;
-
-	if (needsSignIn && refusal) {
+	if (refusal?.code === "reauthentication_required") {
+		const copy = REFUSAL_COPY.reauthentication_required;
 		return (
 			<div className="space-y-3">
-				<Notice icon={LogIn} title="Sign in again to decide">
+				<Notice icon={copy.icon} title={copy.title}>
 					{refusal.message} Approvals need a sign-in from the last 24 hours. You&apos;ll come straight back to this
 					request.
 				</Notice>
@@ -240,7 +255,10 @@ function PendingDecision({ sheet, orgSlug, readAt, onCopyLink }: ApprovalDecisio
 	return (
 		<div className="space-y-3">
 			{refusal && !block ? (
-				<Notice icon={Info} title="That didn't go through">
+				<Notice
+					icon={refusal.code ? REFUSAL_COPY[refusal.code].icon : Info}
+					title={refusal.code ? REFUSAL_COPY[refusal.code].title : UNCODED_REFUSAL_TITLE}
+				>
 					{refusal.message}
 				</Notice>
 			) : null}

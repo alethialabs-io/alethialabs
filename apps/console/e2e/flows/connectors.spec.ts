@@ -213,7 +213,10 @@ test.describe("Connectors — the board and its filter bar", () => {
 		await gotoConnectors(owner.page, owner.orgSlug, "?groups=clouds");
 		await expect(groupHeading(owner.page, "Clouds")).toBeVisible();
 		await expect(groupHeading(owner.page, "Registries")).toHaveCount(0);
-		await expect(owner.page.getByRole("button", { name: /^Group\b/ })).toContainText("1");
+		// The facet trigger names its selection once the URL is decoded into the store (#7737), and
+		// grows the sibling that clears it.
+		await expect(owner.page.getByRole("button", { name: /^Group\b/ })).toHaveAccessibleName("Group: Clouds");
+		await expect(owner.page.getByRole("button", { name: "Clear Group", exact: true })).toBeVisible();
 	});
 
 	test("the Group facet narrows the board and writes itself into the URL", async ({ owner }) => {

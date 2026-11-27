@@ -21,7 +21,7 @@
 import { lookup } from "@/lib/typed-object";
 import { EmptyState } from "@repo/ui/empty";
 import { AddRunnerButton } from "@/components/runners/add-runner-button";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { isForbidden } from "@/components/overview/overview-reads";
 import { PoolsSection } from "@/components/runners/pools-section";
@@ -44,12 +44,13 @@ import { PROVIDER_LABELS } from "@repo/ui/provider-icon";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { cn } from "@repo/ui/utils";
 import { ListFooter } from "@/components/list/list-footer";
+import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
 import { ANY_CLOUD } from "@/lib/queries/runners";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import { Button } from "@repo/ui/button";
-import { CircleAlert, Server } from "lucide-react";
+import { Server } from "lucide-react";
 import { useMemo } from "react";
 
 /**
@@ -185,7 +186,9 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 					   query's answer, kept so the grid does not blank on a filter change and
 					   marked so they are not read as the current one. */
 					<div className={cn("space-y-4", list.isPlaceholderData && "opacity-60 transition-opacity")}>
-						{staleRefresh ? <StaleRunnersNotice onRetry={() => void list.query.refetch()} /> : null}
+						{staleRefresh ? (
+							<StaleRefreshNotice slot="runners-stale" onRetry={() => void list.query.refetch()} />
+						) : null}
 						<div className={RUNNERS_GRID}>
 							{rows.map((runner) => (
 								<RunnerCard
@@ -199,30 +202,6 @@ export function RunnersClient({ hosted }: { hosted: boolean }) {
 					</div>
 				)}
 			</div>
-		</div>
-	);
-}
-
-/**
- * A failed REFRESH behind cards already on screen: the cards stay, under one polite line with a
- * retry. Live updates make every change a refetch, so this is the common failure, and replacing a
- * good grid with a full error for it would be worse than the failure. Worded as DataTable's
- * stale notice is, so the grid and the tables tell it the same way.
- */
-function StaleRunnersNotice({ onRetry }: { onRetry: () => void }) {
-	return (
-		<div
-			data-slot="runners-stale"
-			role="status"
-			className="flex flex-wrap items-center justify-between gap-2 text-ui-sm text-text-secondary"
-		>
-			<span className="flex items-center gap-2">
-				<CircleAlert className="size-3.5 shrink-0" aria-hidden />
-				{"Couldn't refresh — showing earlier data"}
-			</span>
-			<Button variant="ghost" size="xs" onClick={onRetry}>
-				Try again
-			</Button>
 		</div>
 	);
 }

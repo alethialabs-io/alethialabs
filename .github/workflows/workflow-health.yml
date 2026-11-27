@@ -285,7 +285,14 @@ jobs:
   required-checks-drift:
     name: Required checks vs the live rulesets
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # 20, not 5. `--live` walks every active workflow's last 8 runs and reads each run's jobs, one
+    # sequential `gh api` call at a time (readObservedJobs), then deepens never-green contexts up to
+    # 100 runs back. That walk grows with the number of workflows and of jobs per run. Measured on
+    # this job's history: the green runs of 2026-11-13..22 took 3m59s–4m52s against a 5-minute
+    # limit, and the runs of 2026-11-23, -24 and -25 (e.g. 45664689647) were killed at 5m02s–5m16s
+    # inside "Compare the HCL against the live rulesets". A timeout reports as `cancelled`, the
+    # issue steps below never run, and drift goes unreported — which reads as nothing being wrong.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 

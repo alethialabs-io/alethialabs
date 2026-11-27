@@ -36,7 +36,7 @@ export interface ActionDefinition<S extends z.ZodType, T> {
  * - Next's own control flow (`redirect()`, `notFound()`) is rethrown untouched by
  *   `unstable_rethrow`, so an action can still navigate.
  * - `ForbiddenError` (PDP deny) → `forbidden`; `UnauthorizedError` → `unauthenticated`.
- * - `ActionRefusal` → its declared kind, with its message shown verbatim.
+ * - `ActionRefusal` → its declared kind, with its message shown verbatim and its `code`, if any.
  * - `FieldRefusal` → `validation`, with its per-field messages (a refusal only the server can
  *   decide, such as a slug another organization holds).
  * - Anything else → `unexpected` with a reference id that is logged server-side; the original
@@ -81,7 +81,10 @@ function mapThrown(error: unknown): ActionError {
 		if (error.kind === "entitlement") {
 			return { kind: "entitlement", message: error.message, feature: error.feature ?? "" };
 		}
-		return { kind: error.kind, message: error.message };
+		// The key is present only when a code was given, so an uncoded refusal's shape is unchanged.
+		return error.code === undefined
+			? { kind: error.kind, message: error.message }
+			: { kind: error.kind, message: error.message, code: error.code };
 	}
 	if (error instanceof FieldRefusal) {
 		return { kind: "validation", message: error.message, fields: error.fields };

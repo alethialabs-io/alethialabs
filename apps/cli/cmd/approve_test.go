@@ -34,7 +34,7 @@ type projApproval struct {
 	polls    int
 	// requests is every POST /api/approvals body.
 	requests []map[string]any
-	// deploys is what GET /api/jobs lists, for a destroy looking for the plan it is approved against.
+	// deploys is what GET /api/jobs lists, for a `--latest-plan` looking for the plan it names.
 	deploys []map[string]any
 }
 
@@ -386,62 +386,6 @@ func TestProjDeploy_NoWaitExitsNineWithThePage(t *testing.T) {
 	}
 }
 
-func TestProjDestroy_IsApprovedAgainstThePlanItsStateWasDeployedFrom(t *testing.T) {
-	fastApprovalPolls(t)
-	deploy := func(env, plan string) map[string]any {
-		return map[string]any{
-			"id": "d-" + plan, "job_type": "DEPLOY", "status": "SUCCESS", "project_id": "p1", "plan_job_id": plan,
-			"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
-			"config_snapshot": map[string]any{"environment_id": env},
-		}
-	}
-	s := &projServer{envs: projSampleEnvs(), approval: &projApproval{
-		deploys: []map[string]any{deploy("e2", "plan-other-env"), deploy("e1", "plan-e1")},
-	}}
-	h := projEnv(t, s)
-
-	code, _, stderr := projExitCode(t, h, "project", "destroy", "--project", "web", "--env", "production", "--yes", "--no-input")
-	if code != 0 {
-		t.Fatalf("exit %d:\n%s", code, stderr)
-	}
-	if len(s.approval.requests) != 1 || s.approval.requests[0]["plan_job_id"] != "plan-e1" || s.approval.requests[0]["operation"] != "destroy" {
-		t.Errorf("the destroy must be approved against plan-e1: %+v", s.approval.requests)
-	}
-	jobs := s.jobPosts()
-	if len(jobs) != 2 || jobs[1]["job_type"] != "DESTROY" || jobs[1]["approval_id"] != testApprovalID {
-		t.Errorf("want the destroy sent again with the approval: %+v", jobs)
-	}
-}
-
-func TestProjDestroy_WithNoDeployToApproveAgainst(t *testing.T) {
-	s := &projServer{envs: projSampleEnvs(), approval: &projApproval{}}
-	h := projEnv(t, s)
-	code, _, stderr := projExitCode(t, h, "project", "destroy", "--project", "web", "--yes", "--no-input", "--output", "json")
-	if code != clierr.ExitInputRequired {
-		t.Fatalf("exit %d, want 9:\n%s", code, stderr)
-	}
-	if env := lastErrorEnvelope(t, stderr); !strings.Contains(env.Error.Message, "no successful deploy") ||
-		!strings.Contains(env.Error.Hint, "console") {
-		t.Errorf("error = %+v", env.Error)
-	}
-	if len(s.approval.requests) != 0 {
-		t.Errorf("no approval can be asked for without a plan: %+v", s.approval.requests)
-	}
-}
-
-func TestAppliedPlanJobID_TheDefaultEnvironment(t *testing.T) {
-	s := &projServer{envs: projSampleEnvs(), approval: &projApproval{deploys: []map[string]any{{
-		"id": "d1", "job_type": "DEPLOY", "status": "SUCCESS", "project_id": "p1", "plan_job_id": "plan-default",
-		"created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
-		"config_snapshot": map[string]any{"environment_id": projDefaultEnvID(t)},
-	}}}}
-	projEnv(t, s)
-	plan, err := appliedPlanJobID(api.NewClient("t"), "p1", "")
-	if err != nil || plan != "plan-default" {
-		t.Errorf("got %q, %v; want the default environment's plan", plan, err)
-	}
-}
-
 // projDefaultEnvID is the id of the default environment among projSampleEnvs.
 func projDefaultEnvID(t *testing.T) string {
 	t.Helper()
@@ -624,51 +568,5 @@ func TestApply_ARejectedApprovalExitsFiveAndPrintsThePlan(t *testing.T) {
 	}
 	if len(s.jobPostsOfType("DEPLOY")) != 1 {
 		t.Errorf("a rejected approval must queue nothing more: %+v", s.jobPosts())
-	}
-}
-
-// appliedPlanSource fails one of the two reads appliedPlanJobID makes.
-type appliedPlanSource struct {
-	envErr, jobsErr error
-}
-
-func (a appliedPlanSource) ListEnvironments(string) ([]api.Environment, error) {
-	return []api.Environment{{ID: "e1", IsDefault: true}}, a.envErr
-}
-
-func (a appliedPlanSource) GetJobs(string, int, int) (*api.JobsPage, error) {
-	return &api.JobsPage{}, a.jobsErr
-}
-
-// appliedPlanJobs lists fixed jobs for appliedPlanJobID.
-type appliedPlanJobs struct{ jobs []api.ProvisionJob }
-
-func (a appliedPlanJobs) ListEnvironments(string) ([]api.Environment, error) { return nil, nil }
-
-func (a appliedPlanJobs) GetJobs(string, int, int) (*api.JobsPage, error) {
-	return &api.JobsPage{Jobs: a.jobs}, nil
-}
-
-func TestAppliedPlanJobID_OnlyTheNewestDeployCounts(t *testing.T) {
-	deploy := func(plan string) api.ProvisionJob {
-		return api.ProvisionJob{JobType: "DEPLOY", Status: "SUCCESS", ProjectID: "p1", PlanJobID: plan,
-			ConfigSnapshot: map[string]interface{}{"environment_id": "e1"}}
-	}
-	// The newest deploy was a system re-apply with no plan: an older plan is not what the state
-	// came from, so nothing is named.
-	if _, err := appliedPlanJobID(appliedPlanJobs{jobs: []api.ProvisionJob{deploy(""), deploy("old")}}, "p1", "e1"); clierr.From(err).Code != clierr.CodeApprovalRequired {
-		t.Errorf("got %v", err)
-	}
-	if plan, err := appliedPlanJobID(appliedPlanJobs{jobs: []api.ProvisionJob{deploy("new"), deploy("old")}}, "p1", "e1"); plan != "new" || err != nil {
-		t.Errorf("got %q, %v", plan, err)
-	}
-}
-
-func TestAppliedPlanJobID_AReadThatFails(t *testing.T) {
-	if _, err := appliedPlanJobID(appliedPlanSource{envErr: errBoom}, "p1", ""); !errors.Is(err, errBoom) {
-		t.Errorf("the environments read: %v", err)
-	}
-	if _, err := appliedPlanJobID(appliedPlanSource{jobsErr: errBoom}, "p1", "e1"); !errors.Is(err, errBoom) {
-		t.Errorf("the jobs read: %v", err)
 	}
 }

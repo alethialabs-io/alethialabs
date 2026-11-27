@@ -163,8 +163,8 @@ const applyRequestInput = z.object({
 
 /**
  * What `request_destroy` takes: the environment to tear down, and an optional note. A destroy is
- * approved against the plan the environment's current state was deployed from
- * (lib/approvals/binding.ts), which the server looks up; the caller does not name a plan.
+ * approved against the environment's current destroy plan (lib/approvals/binding.ts, #7455), which
+ * the server looks up; the caller does not name a plan.
  */
 const destroyRequestInput = z.object({
 	project_id: z.string().min(1),
@@ -730,7 +730,7 @@ export const EXTERNAL_TOOLS = {
 	plan: {
 		title: "Plan",
 		description:
-			"Queue a plan of what the design would create or change in one environment of a project. Changes nothing in the cloud. Follow with wait_for_job, then get_plan_result, then request_apply. A destroy needs no plan: call request_destroy.",
+			"Queue a plan of what the design would create or change in one environment of a project. Changes nothing in the cloud. Follow with wait_for_job, then get_plan_result, then request_apply. With destroy true it plans tearing the environment down instead; a destroy is approved against that plan, so follow it with wait_for_job, then get_plan_result, then request_destroy.",
 		kind: "write",
 		scope: "plan",
 		group: "operations",
@@ -738,6 +738,10 @@ export const EXTERNAL_TOOLS = {
 		inputSchema: z.object({
 			project_id: z.string().min(1),
 			environment_id: z.string().min(1),
+			destroy: z
+				.boolean()
+				.optional()
+				.describe("Plan a teardown of the environment instead of an apply. Nothing is destroyed. Default false."),
 			idempotency_key: idempotencyKey,
 		}),
 		outputSchema: z.object({ job_id: z.string() }),
@@ -760,7 +764,7 @@ export const EXTERNAL_TOOLS = {
 	request_destroy: {
 		title: "Request approval to destroy",
 		description:
-			"Destroy a deployed environment, which needs a person's approval. The first call queues nothing: it returns status pending, a link the user must open (they type the environment name there) and an 8-character digest to compare. Show both, then call wait_for_job with the approval_id. Once it reports approved, call request_destroy again with the same environment: that call starts the destroy and returns status consumed with the job_id. No tool approves.",
+			"Destroy a deployed environment, which needs a person's approval, against its latest destroy plan (call plan with destroy true first, and plan again after any change to the environment). The first call queues nothing: it returns status pending, a link the user must open (they type the environment name there) and an 8-character digest to compare. Show both, then call wait_for_job with the approval_id. Once it reports approved, call request_destroy again with the same environment: that call starts the destroy and returns status consumed with the job_id. No tool approves.",
 		kind: "write",
 		scope: "destroy",
 		group: "operations",

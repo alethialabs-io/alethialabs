@@ -60,7 +60,7 @@ function store(rows: PendingInvoice[], notes: Factura[] = []): SweepStore & {
 			claims.push(id);
 			return true;
 		},
-		async creditNotesWithoutPdf() {
+		async documentsWithoutPdf() {
 			return notes;
 		},
 	};
@@ -83,6 +83,8 @@ function pdfLessNote(): Factura {
 	return {
 		id: "f9",
 		organizationId: "org_1",
+		source: "stripe",
+		manualKey: null,
 		number: "0000000009",
 		kind: "credit_note",
 		originalFacturaId: "f1",

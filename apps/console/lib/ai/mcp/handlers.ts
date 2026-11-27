@@ -30,13 +30,13 @@ import { destroyProject, planProject, provisionProject } from "@/app/server/acti
 import { cancelJob } from "@/app/server/actions/jobs";
 import { scanRepo } from "@/app/server/actions/scanner";
 import type { ActionResult } from "@/lib/actions/result";
-import { approvePath } from "@/lib/approvals/http";
+import { approvePathForOrg } from "@/lib/approvals/http";
 import type { ApprovalView } from "@/lib/approvals/read";
 import type { ApplyOperation } from "@/lib/approvals/types";
 import type { Actor } from "@/lib/authz/types";
 import { isEnumMember } from "@/lib/coerce";
 import { readJobStatus } from "@/lib/rpc/procedures/jobs";
-import { appliedPlanFor, findOwnApproval, readOwnOrgApproval, requestOwnApproval } from "./approval-store";
+import { destroyPlanFor, findOwnApproval, readOwnOrgApproval, requestOwnApproval } from "./approval-store";
 import { readJobLogPage, type JobLogPage } from "./job-logs";
 import { DESIGN_TOOL_NAMES } from "./design";
 import { type FeedbackSubmission, sendAgentFeedback } from "./feedback";
@@ -46,7 +46,7 @@ import { EXTERNAL_TOOLS, type ExternalToolName } from "./surface";
 
 /** Everything the handlers reach outside themselves, so tests can stand each one in. */
 export interface HandlerDeps {
-	queuePlan(input: { projectId: string; environmentId: string; key: string }): Promise<{ jobId: string }>;
+	queuePlan(input: { projectId: string; environmentId: string; key: string; destroy: boolean }): Promise<{ jobId: string }>;
 	queueDeploy(input: {
 		projectId: string;
 		environmentId: string;
@@ -60,7 +60,13 @@ export interface HandlerDeps {
 		input: { planJobId: string; operation: ApplyOperation; reason?: string | null },
 	): Promise<ApprovalView>;
 	readApproval(actor: Actor, approvalId: string): Promise<ApprovalView>;
-	appliedPlanFor(actor: Actor, projectId: string, environmentId: string): Promise<string>;
+	/**
+	 * The console path a person opens to decide approval `approvalId` in org `orgId`: the org's
+	 * approvals list with its decision sheet open, or the legacy `/approvals/<id>` (which redirects)
+	 * when the org has no slug. The same path the approvals API answers as `approve_path`.
+	 */
+	approvePath(orgId: string, approvalId: string): Promise<string>;
+	destroyPlanFor(actor: Actor, projectId: string, environmentId: string): Promise<string>;
 	jobStatus(jobId: string): Promise<{ status: string; error_message: string | null }>;
 	jobLogPage(jobId: string, afterId: number, limit: number): Promise<JobLogPage>;
 	cancelJob(jobId: string): Promise<ActionResult<null>>;
@@ -92,7 +98,8 @@ const MCP_KEY_PREFIX = "mcp:";
 
 /** The default dependencies: the server actions and reads every other surface uses. */
 export const defaultHandlerDeps: HandlerDeps = {
-	queuePlan: ({ projectId, environmentId, key }) => planProject(projectId, null, environmentId, key),
+	queuePlan: ({ projectId, environmentId, key, destroy }) =>
+		planProject(projectId, null, environmentId, key, { destroy }),
 	queueDeploy: async ({ projectId, environmentId, planJobId, approvalId }) => {
 		const { jobId } = await provisionProject(projectId, planJobId, null, environmentId, null, approvalId);
 		return { jobId };
@@ -104,7 +111,8 @@ export const defaultHandlerDeps: HandlerDeps = {
 	findOwnApproval,
 	requestApproval: requestOwnApproval,
 	readApproval: readOwnOrgApproval,
-	appliedPlanFor,
+	approvePath: approvePathForOrg,
+	destroyPlanFor,
 	jobStatus: readJobStatus,
 	jobLogPage: readJobLogPage,
 	cancelJob: (jobId) => cancelJob({ jobId }),
@@ -117,12 +125,22 @@ export const defaultHandlerDeps: HandlerDeps = {
 /** The output `request_apply` / `request_destroy` answer for `view`. */
 type ApprovalRequestResult = z.input<(typeof EXTERNAL_TOOLS)["request_apply"]["outputSchema"]>;
 
-/** `view` as the approval tools answer it, with the job it started when there is one. */
-function approvalResult(view: ApprovalView, ctx: HandlerContext, jobId: string | null): ApprovalRequestResult {
+/**
+ * `view` as the approval tools answer it, with the job it started when there is one. `approve_url` is
+ * absolute — the MCP client shows it outside the console — and is built on the caller's org, which is
+ * the org the approval belongs to (every approval read here is the caller's own).
+ */
+async function approvalResult(
+	deps: HandlerDeps,
+	view: ApprovalView,
+	ctx: HandlerContext,
+	jobId: string | null,
+): Promise<ApprovalRequestResult> {
+	const path = await deps.approvePath(ctx.actor.orgId, view.id);
 	return {
 		approval_id: view.id,
 		status: jobId ? "consumed" : view.status,
-		approve_url: new URL(approvePath(view.id), ctx.appOrigin).toString(),
+		approve_url: new URL(path, ctx.appOrigin).toString(),
 		digest_prefix: view.digest_prefix,
 		expires_at: view.expires_at,
 		job_id: jobId,
@@ -144,15 +162,15 @@ async function requestOrComplete(
 ): Promise<ApprovalRequestResult> {
 	const own = await deps.findOwnApproval(ctx.actor, planJobId, operation);
 	if (own?.status === "consumed" && own.consumed_job_id) {
-		return approvalResult(own, ctx, own.consumed_job_id);
+		return approvalResult(deps, own, ctx, own.consumed_job_id);
 	}
 	const view =
 		own?.status === "approved"
 			? own
 			: await deps.requestApproval(ctx.actor, { planJobId, operation, reason: reason ?? null });
-	if (view.status !== "approved") return approvalResult(view, ctx, null);
+	if (view.status !== "approved") return approvalResult(deps, view, ctx, null);
 	const { jobId } = await queue(view);
-	return approvalResult(view, ctx, jobId);
+	return approvalResult(deps, view, ctx, jobId);
 }
 
 /** The declared tools this module serves: the operations, the job tools, the scan and feedback. */
@@ -208,10 +226,14 @@ export function createHandlers(deps: HandlerDeps = defaultHandlerDeps): Record<O
 		})),
 
 		plan: served(EXTERNAL_TOOLS.plan, async (input) => {
+			// A destroy plan's key is kept apart from an apply plan's, so a reused key never answers one
+			// kind of plan with the other's job.
+			const destroy = input.destroy === true;
 			const { jobId } = await deps.queuePlan({
 				projectId: input.project_id,
 				environmentId: input.environment_id,
-				key: `${MCP_KEY_PREFIX}${input.idempotency_key}`,
+				key: `${MCP_KEY_PREFIX}${destroy ? "destroy:" : ""}${input.idempotency_key}`,
+				destroy,
 			});
 			return { job_id: jobId };
 		}),
@@ -228,7 +250,7 @@ export function createHandlers(deps: HandlerDeps = defaultHandlerDeps): Record<O
 		),
 
 		request_destroy: served(EXTERNAL_TOOLS.request_destroy, async (input, ctx) => {
-			const planJobId = await deps.appliedPlanFor(ctx.actor, input.project_id, input.environment_id);
+			const planJobId = await deps.destroyPlanFor(ctx.actor, input.project_id, input.environment_id);
 			return requestOrComplete(deps, ctx, "destroy", planJobId, input.reason, (approval) =>
 				deps.queueDestroy({
 					projectId: approval.project_id,

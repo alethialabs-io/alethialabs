@@ -115,6 +115,10 @@ export const queueJobBody = z.object({
 		.boolean()
 		.optional()
 		.describe("DESTROY only: also destroy the environments placed on the target's Fabric, tenants first. Only the JSON value true opts in."),
+	destroy_plan: z
+		.boolean()
+		.optional()
+		.describe("PLAN only: plan a teardown of the environment instead of an apply. Nothing is destroyed; a destroy is then approved against this plan and tears down exactly it. Only the JSON value true opts in; on any other job type it is a 400."),
 	config_snapshot: z
 		.object({ runner_id: z.uuid().optional() })
 		.optional()
@@ -199,7 +203,7 @@ const JOB_AND_PROJECT_OPERATIONS: readonly OpenApiOperation[] = [
 		tag: "Jobs",
 		summary: "Request an approval to deploy or destroy a reviewed plan",
 		description:
-			"A CLI login or a service token asks a person to approve a deploy or destroy of one reviewed plan. Nothing is queued: the answer is the pending approval and `approve_path`, the console path where a person decides it (join it to your API origin). Present the approval's `id` as `approval_id` to `POST /api/jobs` once it is approved. One approval queues one job, for that plan only, and only for the credential that requested it. Repeating a request returns the live one. The caller needs `deploy` or `destroy` on the plan's project. A destroy names the plan that the environment's current state was deployed from.",
+			"A CLI login or a service token asks a person to approve a deploy or destroy of one reviewed plan. Nothing is queued: the answer is the pending approval and `approve_path`, the console path where a person decides it (join it to your API origin). Present the approval's `id` as `approval_id` to `POST /api/jobs` once it is approved. One approval queues one job, for that plan only, and only for the credential that requested it. Repeating a request returns the live one. The caller needs `deploy` or `destroy` on the plan's project. A deploy names an apply plan; a destroy names a destroy plan (`POST /api/jobs` with `job_type` PLAN and `destroy_plan` true), and the destroy it approves tears down exactly that plan.",
 		permission: { action: "view", resource: "project" },
 		body: requestApprovalBody,
 		responses: [
@@ -211,7 +215,7 @@ const JOB_AND_PROJECT_OPERATIONS: readonly OpenApiOperation[] = [
 			{
 				status: 409,
 				description:
-					"The plan cannot be approved as it stands (`code` `plan_not_approvable`): it has not succeeded, has no plan digest, failed verification, or is no longer the environment's current plan.",
+					"The plan cannot be approved as it stands (`code` `plan_not_approvable`): it is not the kind of plan the operation runs, has not succeeded, has no plan digest, failed verification, or is no longer the environment's current plan.",
 			},
 			serverError,
 		],

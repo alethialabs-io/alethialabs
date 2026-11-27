@@ -64,7 +64,16 @@ REQ_STORAGE_ACCESS_KEY_ID="$(val ALETHIA_STORAGE_ACCESS_KEY_ID)"
 [ -n "$REQ_STORAGE_ACCESS_KEY_ID" ] || { echo "::error::ALETHIA_STORAGE_ACCESS_KEY_ID is required: docker-compose.yml refuses to render without it."; exit 1; }
 REQ_STORAGE_SECRET_ACCESS_KEY="$(val ALETHIA_STORAGE_SECRET_ACCESS_KEY)"
 [ -n "$REQ_STORAGE_SECRET_ACCESS_KEY" ] || { echo "::error::ALETHIA_STORAGE_SECRET_ACCESS_KEY is required: docker-compose.yml refuses to render without it."; exit 1; }
-unset REQ_DB_PASSWORD REQ_APP_DB_PASSWORD REQ_CRED_ENCRYPTION_KEY REQ_OPENFGA_DB_PASSWORD REQ_STORAGE_ACCESS_KEY_ID REQ_STORAGE_SECRET_ACCESS_KEY
+# The Cloudflare Access verification apps/admin performs (apps/admin/lib/auth/access-jwt.ts, #7765).
+# With either value empty the admin app admits NOBODY in production, so an absent key is not a
+# degraded admin but a locked-out one, and the staff support surface goes with it. Refused here and
+# in the preflight, through deploy/prod/required-vault-keys.txt, before any image is built — the
+# previous admin keeps serving until the vault holds both. Presence only; no value is printed.
+REQ_CF_ACCESS_TEAM_DOMAIN="$(val CF_ACCESS_TEAM_DOMAIN)"
+[ -n "$REQ_CF_ACCESS_TEAM_DOMAIN" ] || { echo "::error::CF_ACCESS_TEAM_DOMAIN is required: apps/admin refuses every request in production without it."; exit 1; }
+REQ_CF_ACCESS_AUD="$(val CF_ACCESS_AUD)"
+[ -n "$REQ_CF_ACCESS_AUD" ] || { echo "::error::CF_ACCESS_AUD is required: apps/admin refuses every request in production without it."; exit 1; }
+unset REQ_DB_PASSWORD REQ_APP_DB_PASSWORD REQ_CRED_ENCRYPTION_KEY REQ_OPENFGA_DB_PASSWORD REQ_STORAGE_ACCESS_KEY_ID REQ_STORAGE_SECRET_ACCESS_KEY REQ_CF_ACCESS_TEAM_DOMAIN REQ_CF_ACCESS_AUD
 # The transport, chosen in the VAULT so switching between SES and an SMTP relay is a vault edit and
 # a redeploy, not a PR (infra/email-ses-account/README.md, "Rollback"). Unset means ses: hosted
 # production sends from the alethia-email account. Hosted production accepts only ses and smtp;
@@ -311,6 +320,8 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   emit PADDLE_PRODUCT_AI_CREDITS
   # 1 turns on the Paddle overage sweeper (lib/billing/paddle/overage-sweeper.ts); empty = off.
   emit ALETHIA_PADDLE_OVERAGE_SWEEP
+  # 1 turns on the daily Paddle transaction-mirror backfill (lib/billing/events/backfill.ts); empty = off.
+  emit ALETHIA_PADDLE_TRANSACTION_BACKFILL
   # Transactional email: the vault-selected transport (ses unless the vault says smtp; validated
   # above). Both transports' keys are emitted so the two stay one vault edit apart. The SES ones
   # are the alethia-email account's (infra/email-ses-account); the SMTP ones are empty unless the
@@ -329,10 +340,15 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   echo "ALETHIA_SES_EVENTS_TOPIC_ARNS=$SES_TOPIC_ARNS"
   # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
   emit SUPPORT_SLACK_WEBHOOK_URL
-  # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the Cloudflare-Access allowlist
-  # (apps/admin/lib/auth/staff.ts) + the console URL its case deep-links target. COMPOSE_PROFILES
-  # activates the profiled `admin` service on the box (docker compose reads it from this .env).
+  # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the staff allowlist
+  # (apps/admin/lib/auth/staff.ts), the Cloudflare Access team domain + application AUD the app
+  # verifies the Access token against (apps/admin/lib/auth/access-jwt.ts — both empty ⇒ admin
+  # admits nobody in production), and the console URL its case deep-links target.
+  # COMPOSE_PROFILES activates the profiled `admin` service on the box (docker compose reads it
+  # from this .env).
   emit SUPPORT_STAFF_EMAILS
+  emit CF_ACCESS_TEAM_DOMAIN
+  emit CF_ACCESS_AUD
   echo "NEXT_PUBLIC_CONSOLE_URL=$APP_URL"
   echo "COMPOSE_PROFILES=admin"
   # Platform-operator plane (Enterprise onboarding, apps/admin /orgs → console internal

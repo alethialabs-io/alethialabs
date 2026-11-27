@@ -7,9 +7,11 @@
 //
 // `useUnsavedGuard` answers "is there anything to lose" from a react-hook-form form or from a
 // boolean the caller already computes, and holds the thing the person was trying to do until they
-// have answered. `DiscardPrompt` is the question itself.
+// have answered. `DiscardPrompt` is the question itself. `useLeavePageGuard` is the page-level
+// half: a settings form that is a whole page, not a sheet, has no close to wrap, so the leaving it
+// guards is a reload or a closed tab.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 
 /** The part of a react-hook-form form the guard reads. Every `useForm` result satisfies it. */
@@ -100,4 +102,18 @@ export function DiscardPrompt({
 			}}
 		/>
 	);
+}
+
+/**
+ * The page-level form of the guard (R6 E-17, F-16): while `dirty`, a reload or a closed tab asks the
+ * browser's own "leave site?" question first. For a settings form that IS the page, where there is
+ * no sheet close to wrap in `guard(...)`. A save resets the form, which clears `dirty` and the guard.
+ */
+export function useLeavePageGuard(dirty: boolean): void {
+	useEffect(() => {
+		if (!dirty) return undefined;
+		const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+		window.addEventListener("beforeunload", warn);
+		return () => window.removeEventListener("beforeunload", warn);
+	}, [dirty]);
 }

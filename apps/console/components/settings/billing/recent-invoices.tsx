@@ -15,7 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal, refusalOf, retryUnlessRefused } from "@/components/settings/billing/read-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { DataTableSkeleton } from "@/components/skeletons/data-table-skeleton";

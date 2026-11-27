@@ -872,11 +872,22 @@ alethia project destroy --project boutique --env prod --cascade --wait   # prod 
 The flags, the confirmation and the result are on the
 [project page](/reference/cli/project).
 
-A destroy from the CLI needs a person's approval too, given against the plan the environment's
-current state was deployed from. It is asked for, shown and waited for the same way as a deploy's
-(see [When a deploy needs a person's approval](#when-a-deploy-needs-a-persons-approval)). With
-`--no-wait` the command exits `9` with the page; run the same destroy again once it is approved. A
-`--cascade` destroy cannot be approved this way: start it from the console.
+A destroy from the CLI needs a person's approval too, given against a **destroy plan**: a plan of
+the teardown that deletes nothing itself. The destroy then tears down exactly that plan. To read the
+teardown before you destroy, make the destroy plan first and destroy that plan:
+
+```bash
+alethia project preview --project boutique --env dev-1 --destroy --wait
+alethia project destroy --project boutique --env dev-1 --latest-plan
+```
+
+Without `--latest-plan` or `--plan-job-id`, the destroy makes the destroy plan itself when the
+approval is needed, waits for it and prints what it would delete. The approval is asked for, shown
+and waited for the same way as a deploy's (see
+[When a deploy needs a person's approval](#when-a-deploy-needs-a-persons-approval)). With
+`--no-wait` the command exits `9` with the page, and the error names the command that destroys
+exactly that plan once it is approved. A `--cascade` destroy cannot be approved this way: start it
+from the console.
 
 ### Destroying an environment that other environments run on
 
@@ -925,6 +936,7 @@ alethia project preview --project boutique --env prod --runner eu-box --wait
 alethia jobs get --latest --project boutique --type PLAN
 alethia project deploy --project boutique --env prod --latest-plan --wait --yes
 
-# Destroy with wait
-alethia project destroy --project boutique --env prod --wait
+# Read the teardown, then destroy exactly that plan
+alethia project preview --project boutique --env prod --destroy --wait
+alethia project destroy --project boutique --env prod --latest-plan --wait
 ```

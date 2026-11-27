@@ -6,10 +6,19 @@
 # owns (oidc.tf there) — this stack reads it and never creates a second one (an IAM OIDC provider is
 # one per URL per account, so a second create would fail anyway).
 #
-# It trusts exactly one subject, repo:<books_github_repo>:environment:<books_github_environment>,
-# with StringEquals. GitHub puts that subject on the token of any job that declares the environment;
-# the environment's protection rule (main only — books-automation.md "One-time maintainer steps" 6)
-# is what keeps a pull request or another branch from reaching it.
+# It trusts exactly one subject, with StringEquals, in GitHub's IMMUTABLE form:
+#   repo:<owner>@<owner_id>/<name>@<repo_id>:environment:<books_github_environment>
+# GitHub puts that subject on the token of any job that declares the environment; the environment's
+# protection rule (main only — books-automation.md "One-time maintainer steps" 6) is what keeps a
+# pull request or another branch from reaching it.
+#
+# Why the ids: a repository created after 2026-07-15 gets the immutable subject by default, and a
+# rename or transfer moves any repository to it (GitHub docs, "OpenID Connect reference"). The books
+# repository was created 2026-11-24, so its customization reads use_immutable_subject = true and its
+# tokens never carried the name-only form — the role trusted a subject no token could present, and
+# the daily run failed with "Not authorized to perform sts:AssumeRoleWithWebIdentity" (books#2). The
+# ids are also the stronger binding: a repository deleted and re-created under the same name gets a
+# new repo_id and no longer matches.
 #
 # What it can do: file the monthly package (PutObject under records/), read back what is in the
 # archive (records/ and inbound/), use the bucket's key only through S3, and read the one connectors
@@ -17,8 +26,10 @@
 # or touch the bucket's configuration — the bucket policy denies all of it even if this grant widens.
 
 locals {
-  github_oidc_host = "token.actions.githubusercontent.com"
-  github_subject   = "repo:${var.books_github_repo}:environment:${var.books_github_environment}"
+  github_oidc_host  = "token.actions.githubusercontent.com"
+  github_repo_owner = split("/", var.books_github_repo)[0]
+  github_repo_name  = split("/", var.books_github_repo)[1]
+  github_subject    = "repo:${local.github_repo_owner}@${var.books_github_owner_id}/${local.github_repo_name}@${var.books_github_repo_id}:environment:${var.books_github_environment}"
 }
 
 data "aws_iam_openid_connect_provider" "github" {

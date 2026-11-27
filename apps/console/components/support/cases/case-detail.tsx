@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { markCaseRead } from "@/app/server/actions/support";
 import { ClassificationControl } from "@/components/classification/classification-control";
-import { RegionError } from "@/components/errors/region-error";
+import { RegionError } from "@repo/ui/region-error";
 import { RegionRefusal } from "@/components/errors/region-refusal";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf } from "@/lib/rpc/refusal";

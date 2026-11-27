@@ -44,7 +44,6 @@ export function EnvironmentSources() {
 					<SectionHeading
 						level={3}
 						title="Scanned repositories"
-						count={repos.length}
 						description="The repositories this design was inferred from, and the services found in each."
 					/>
 					<SourceReposCard repos={repos} />
@@ -62,7 +61,7 @@ export function EnvironmentSources() {
 				</InspectorEmbed>
 			</section>
 			<section className="space-y-3">
-				<SectionHeading level={3} title="Charts" count={charts.length} />
+				<SectionHeading level={3} title="Charts" />
 				{charts.length === 0 ? (
 					<EmptyState
 						className="px-0 py-4 md:px-0 md:py-4"
