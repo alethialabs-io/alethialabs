@@ -36,15 +36,6 @@
     "components/billing/plan-picker.tsx": [
       "files"
     ],
-    "components/plan/plan-summary-bar.tsx": [
-      "files"
-    ],
-    "components/plan/plan-tab.tsx": [
-      "files"
-    ],
-    "components/plan/resource-card.tsx": [
-      "files"
-    ],
     "components/settings/upgrade/use-current-plan.ts": [
       "files"
     ]

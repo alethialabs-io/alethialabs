@@ -2164,6 +2164,14 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-single-keydown.mjs --self-test
+      # The product has one loader, the [·] mark (#7869): a lucide `Loader2` or an `animate-spin`
+      # anywhere in apps/ or packages/ outside the two loader homes fails here, with no allowlist.
+      - name: The product has one loader (no hand-rolled spinner)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:no-adhoc-spinner
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-no-adhoc-spinner.mjs --self-test
       # `availability` in packages/core/catalog/catalog.json decides which clouds are offered, and
       # every offer list derives from it. This fails on a NEW hand-written list of three or more
       # cloud slugs, and on a hidden cloud named in marketing, docs, blog, README or console page
