@@ -53,11 +53,11 @@ const INTERVALS = {
 	// 1h — support cases 3 years after the matter closes (lib/retention/registry.ts). Hourly keeps a
 	// case inside "up to 3 years" by a margin, and the sweep is paged and stops when drained.
 	"gc-support-cases": 60 * 60_000,
-	// 15m — two kinds of hold reach this sweep. A hold the two Elench chat routes reserved is CLAIMED
+	// 15m — two kinds of hold reach this sweep. A hold one of the four chat routes on the turn claim reserved is CLAIMED
 	// (ADR 0003): it is released when its claim's 90 s lease goes silent or the attempt passes its
 	// 15-minute bound (pass 1, C8), so it waits at most 90 s plus one gap between runs here (about
 	// 17.5 minutes on this 60 s tick), and the next accept on its thread releases it sooner. Every
-	// other hold (support, agent identity, colony, verify) is unclaimed and only becomes sweepable at
+	// other hold (a support request with no thread, verify) is unclaimed and only becomes sweepable at
 	// STRANDED_HOLD_AGE_MINUTES (60m, pass 2). The tick rate sets how long past those points a
 	// stranded reservation keeps counting against the org, not whether it is found. Matched to the
 	// GCs rather than tightened: it reclaims ~$0.10 at a time.

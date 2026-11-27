@@ -136,12 +136,12 @@ export ALETHIA_VERIFY_ACCESS_ANALYZER=1
 | 3 | Agent runtime — CRUD actions (`createAgent`/`listAgents`/`getAgent`) + **agent-scoped chat route** (`/api/agent/[agentId]`, reuses the tested executor core + memory namespace) | **Done** (integration code at codebase parity; cores unit-tested) |
 | 3 | LLM `Remediator` impl (the re-plan call) + live Access Analyzer exercise / customer-TF sandbox audit | Pending — needs LLM/AWS/sandbox runtime |
 | 3 | Agent identity/memory **data layer** — `agent_identities` + `agent_memory` tables (migration 0045) + tenant-isolation path guard (`lib/agent/memory-path.ts`) | **Done, tested** (the stateless executor on top needs an LLM) |
-| 4 | Supervisor / colony — `lib/agent/supervisor` (Magentic ledger + delegation + stall→re-plan) **+ LLM sub-agent runner** (`lib/agent/llm-subagent`) **+ live `runColonyTasks` action** | **Done, tested** (11 tests; live model call is the AI SDK's, logic tested via injected fakes) |
+| 4 | Supervisor / colony — `lib/agent/supervisor` (Magentic ledger + delegation + stall→re-plan) **+ LLM sub-agent runner** (`lib/agent/llm-subagent`) | **Library only, tested** (logic tested via injected fakes). The `runColonyTasks` server action that wired it to a live model had no caller and was deleted (#7839); a caller comes back with the metered parallel-read case below |
 
 **Live integrations exercised against real services ✅** (all gated, skipped in normal CI):
 - **LLM / agent / colony** — `tests/lib/agent/llm-live.test.ts` (`ELENCH_LIVE=1`): supervisor → LLM
   sub-agent runner → **real Claude model** → parse → completion. Passed (Claude returned valid JSON,
-  task marked done). Same path as `runColonyTasks` / agent chat route / explanation action.
+  task marked done). The same direct-provider call the agent chat route and the explanation action make.
 - **AWS IAM Access Analyzer** — `packages/core/accessanalyzer/analyzer_live_test.go` (`ELENCH_LIVE_AWS=1`):
   **real `CheckAccessNotGranted` API** via the adapter. Passed (admin policy → grants
   `[iam:CreateAccessKey kms:Decrypt]`; scoped policy → grants none).

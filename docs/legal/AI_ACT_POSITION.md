@@ -77,8 +77,6 @@ the project assistant (`app/api/projects/[projectId]/assistant/route.ts`) and su
 - results of the tools the model calls. Each tool that reads account data runs as the user, through
   the same permission checks as the console (`apps/console/lib/ai/TOOLS.md`).
 
-The colony action (`app/server/actions/colony.ts`) checks `isAiConfigured()` too.
-
 ### 3.2 Repository scans
 
 When a user imports a repository, a runner clones it and builds a digest without executing any code
@@ -132,8 +130,7 @@ these files (§7).
 The assistant cannot apply a change on its own. `propose_operation` has no `execute`: the model's
 turn stops at the proposal, and the user's approval in the dashboard calls `planProject` or
 `provisionProject` (`apps/console/lib/ai/tools/operations.ts`). No model call site calls
-`provisionProject`, `planProject` or `destroyProject`. I searched `lib/agent`, `lib/ai` and
-`app/server/actions/colony.ts`. The scan and audit tools queue runner jobs that provision nothing.
+`provisionProject`, `planProject` or `destroyProject`. I searched `lib/agent` and `lib/ai`. The scan and audit tools queue runner jobs that provision nothing.
 
 This is what the "not high-risk" reading rests on (§6).
 
