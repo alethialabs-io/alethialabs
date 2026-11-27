@@ -10,7 +10,8 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useState } from "react";
-import { GitBranch, Loader2, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, X } from "lucide-react";
+import { GitBranch, RefreshCw, X } from "lucide-react";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { useBoard } from "@/lib/canvas/store/canvas-store-provider";
@@ -29,28 +30,30 @@ import { CardDescription, useBoardMarks } from "./card-marks";
  */
 const HANDLE_CLASS = "!h-2 !w-2 !border-0 !bg-transparent !opacity-0 !pointer-events-none";
 
-/** The chart's scan-status chip: label + tone + icon, derived from the persisted scan lifecycle +
- * the verify verdict (fail draws destructive ink; a clean chart stays calm). */
+/**
+ * The chart's scan-status chip — a label plus a StatusBadge tier, derived from the persisted scan
+ * lifecycle and the verify verdict. State is read through the dot's shape and the mono label, never
+ * hue: a scan in flight is `pending` (the haloed dot), a failing control or a failed run is
+ * `failed`, a chart with no failing control is `active` (its label still counts any warnings), and
+ * a chart with no scan yet is `idle`.
+ */
 function scanChip(
 	scanStatus?: string,
 	report?: VerifyReport | null,
-): { label: string; cls: string; Icon: typeof ShieldCheck; spin?: boolean } {
+): { label: string; tier: StatusTier } {
 	// Both chart sources scan: the runner resolves a git chart by cloning and an OCI chart by pulling
 	// it from the registry (#1300), so the chip is driven purely by the scan lifecycle.
-	if (scanStatus === "scanning")
-		return { label: "Scanning…", cls: "text-muted-foreground", Icon: Loader2, spin: true };
-	if (scanStatus === "failed")
-		return { label: "Scan failed", cls: "text-destructive", Icon: ShieldAlert };
+	if (scanStatus === "scanning") return { label: "Scanning…", tier: "pending" };
+	if (scanStatus === "failed") return { label: "Scan failed", tier: "failed" };
 	if (scanStatus === "done" && report) {
 		const issues = report.summary.fail + report.summary.warn;
-		if (issues === 0) return { label: "Clean", cls: "text-foreground", Icon: ShieldCheck };
+		if (issues === 0) return { label: "Clean", tier: "active" };
 		return {
 			label: `${issues} issue${issues > 1 ? "s" : ""}`,
-			cls: report.summary.fail > 0 ? "text-destructive" : "text-muted-foreground",
-			Icon: ShieldAlert,
+			tier: report.summary.fail > 0 ? "failed" : "active",
 		};
 	}
-	return { label: "Not scanned", cls: "text-text-tertiary", Icon: ShieldQuestion };
+	return { label: "Not scanned", tier: "idle" };
 }
 
 type ChartStatus = "synced" | "progressing" | "degraded" | "pending";
@@ -89,7 +92,6 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 	const c = node.data.config;
 	const st = STATUS_META[chartStatus(c.health, c.status)];
 	const chip = scanChip(c.scanStatus, c.scanReport);
-	const ChipIcon = chip.Icon;
 	// Same contract as every other card (`nodes/node-name.ts`): the board's cards are named, so the
 	// audit can score them and a journey can reach THIS chart rather than "the first
 	// `.react-flow__node-chart`". A chart's own name is its release id; the name sits on the element
@@ -161,10 +163,9 @@ export function ChartNode({ id, selected }: NodeProps<CanvasNode<"chart">>) {
 					type="button"
 					onClick={() => board.view.getState().openCard({ kind: "chart-scan", chartId: c.id })}
 					title="Chart safety scan"
-					className="flex items-center gap-1.5 self-start rounded-none border border-border px-2 py-1 font-mono text-ui-2xs transition-colors hover:bg-muted"
+					className="flex items-center self-start rounded-none border border-border px-2 py-1 transition-colors hover:bg-muted"
 				>
-					<ChipIcon className={cn("h-3 w-3", chip.cls, chip.spin && "animate-spin")} />
-					<span className={chip.cls}>{chip.label}</span>
+					<StatusBadge status={c.scanStatus ?? "unscanned"} tier={chip.tier} label={chip.label} />
 				</button>
 				<div className="flex items-center gap-2 border-t border-border/60 pt-2">
 					<span className="flex items-center gap-1.5 font-mono text-ui-2xs text-muted-foreground">

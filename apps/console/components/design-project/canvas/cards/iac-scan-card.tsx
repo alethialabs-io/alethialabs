@@ -7,12 +7,13 @@
 // discovered, and the ok / not-ok verdict (a not-ok scan clears the deploy pin, keeping provisioning
 // locked). Mirrors the chart-scan card's grayscale tone language (verdict header + severity groups +
 // finding cards) so the product speaks one security-report dialect. Reads the persisted report off
-// the project_iac_sources row; a `scanning` status shows a spinner, `failed` shows the error state.
+// the project_iac_sources row; a `scanning` status shows the `[·]` mark loader, `failed` shows the error state.
 //
 // A docked card on the workspace rail (opened from the IaC source card's scan chip), not a modal
 // Sheet: the findings read beside the external cards they are about.
 
-import { Boxes, Layers, Loader2, Package, RotateCw, ShieldCheck } from "lucide-react";
+import { Boxes, Layers, Package, RotateCw, ShieldCheck } from "lucide-react";
+import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
@@ -232,18 +233,19 @@ export function IacScanBody({
 		>
 			<div>
 					{scanning || scanStatus === "scanning" ? (
-						<EmptyState
-							className="px-0 py-16 md:px-0 md:py-16"
-							icon={<Loader2 className="animate-spin" />}
-							title="Scanning the module…"
-							description={
-								<>
-									Cloning the repo, pinning the commit, inventorying providers + modules, and
-									running
-									<code className="mx-1">tofu validate</code> plus the iacsafety static checks.
-								</>
-							}
-						/>
+						<div className="flex flex-col items-center gap-1 pb-6">
+							{/* A wait of unknown length: the mark, with a status line of the facts the card
+							    already holds (the module's path and ref) — never a percentage. */}
+							<MarkLoader
+								size="region"
+								label="Scanning the module"
+								status={`Scanning · /${path.replace(/^\/+/, "") || "(root)"} · ${scanRef}`}
+							/>
+							<p className="max-w-sm text-center text-ui-xs leading-relaxed text-text-tertiary">
+								Cloning the repo, pinning the commit, inventorying providers + modules, and running
+								<code className="mx-1">tofu validate</code> plus the iacsafety static checks.
+							</p>
+						</div>
 					) : report ? (
 						<div className="flex flex-col gap-4">
 							{/* Verdict */}
