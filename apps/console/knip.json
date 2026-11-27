@@ -24,9 +24,6 @@
     "helm"
   ],
   "ignoreIssues": {
-    "app/server/actions/colony.ts": [
-      "files"
-    ],
     "app/server/actions/privacy/cases.ts": [
       "files"
     ],
