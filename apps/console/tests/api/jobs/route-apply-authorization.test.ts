@@ -144,6 +144,30 @@ describe("POST /api/jobs — the credential kind bound on the actor", () => {
 	});
 });
 
+describe("POST /api/jobs — a request made on behalf of an agent (alethia mcp)", () => {
+	it.each(["DEPLOY", "DESTROY", "PLAN"] as const)(
+		"marks the actor of a %s that carries the agent headers, on top of its credential",
+		async (job_type) => {
+			const res = await POST(
+				new Request("https://console.local/api/jobs", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"X-Alethia-Agent": "alethia-mcp",
+						"X-Alethia-Agent-Tool": "deploy",
+					},
+					body: JSON.stringify({ job_type, configuration_id: PROJECT_ID }),
+				}),
+			);
+			expect(res.status).toBe(201);
+			expect(runWithActor).toHaveBeenCalledWith(
+				{ userId: "user-1", orgId: "org-1", credential: "cli_session", onBehalfOfAgent: true },
+				expect.any(Function),
+			);
+		},
+	);
+});
+
 describe("POST /api/jobs — the approval a request presents", () => {
 	it("hands approval_id to provisionProject as its sixth argument (DEPLOY)", async () => {
 		const res = await post({

@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"slices"
@@ -19,6 +21,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/internal/mcp"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
 // mcpToolNamePattern is what the MCP specification says a tool name SHOULD be.
@@ -234,5 +237,43 @@ func TestMCP_HeadlessRunServesStandardStreams(t *testing.T) {
 	os.Stdin = r
 	if err := runMCP(mcpCmd); err != nil {
 		t.Fatalf("a closed stdin should end the session cleanly: %v", err)
+	}
+}
+
+// agentHeadersSent returns the agent headers the control plane sees on one request this process
+// sends after markMCPToolRequests read env.
+func agentHeadersSent(t *testing.T, env map[string]string) (string, string) {
+	t.Helper()
+	isolatedHome(t)
+	var agent, tool string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agent, tool = r.Header.Get(api.AgentHeader), r.Header.Get(api.AgentToolHeader)
+		_, _ = io.WriteString(w, `{"runners":[]}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ALETHIA_WEB_ORIGIN", srv.URL)
+	t.Cleanup(func() { api.SetAgentTool("") })
+	markMCPToolRequests(func(k string) string { return env[k] })
+	if _, err := api.NewClient("tok").GetRunners(); err != nil {
+		t.Fatalf("GetRunners: %v", err)
+	}
+	return agent, tool
+}
+
+// TestMCP_AChildStartedForAToolMarksItsRequests: the child `alethia mcp` runs for a tool call sends
+// the agent headers, naming the tool, so the console can hold it to the org's agent policy.
+func TestMCP_AChildStartedForAToolMarksItsRequests(t *testing.T) {
+	agent, tool := agentHeadersSent(t, map[string]string{mcp.ToolEnv: "project_list"})
+	if agent != api.AgentClientMCP || tool != "project_list" {
+		t.Errorf("headers = %q, %q; want %q, project_list", agent, tool, api.AgentClientMCP)
+	}
+}
+
+// TestMCP_AnOrdinaryRunSendsNoAgentHeaders: without the server's mark a command's requests are
+// unchanged, including one run in agent mode by hand.
+func TestMCP_AnOrdinaryRunSendsNoAgentHeaders(t *testing.T) {
+	agent, tool := agentHeadersSent(t, map[string]string{"ALETHIA_AGENT": "yes", mcp.ToolEnv: "  "})
+	if agent != "" || tool != "" {
+		t.Errorf("headers = %q, %q; want neither", agent, tool)
 	}
 }

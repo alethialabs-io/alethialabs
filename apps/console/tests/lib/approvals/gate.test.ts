@@ -313,6 +313,47 @@ describe("the org's agent policy", () => {
 	});
 });
 
+describe("a CLI request made on behalf of an agent (onBehalfOfAgent, alethia mcp)", () => {
+	const prodOff = { agent_access_enabled: true, agents_may_not_apply_to_production: true, require_different_approver: false, approval_ttl_minutes: 60 };
+	const accessOff = { agent_access_enabled: false, agents_may_not_apply_to_production: false, require_different_approver: false, approval_ttl_minutes: 60 };
+
+	it.each(["cli_session", "service_token"] as const)(
+		"refuses a marked %s production deploy when agents may not apply to production, approval or not",
+		async (credential) => {
+			const f = setup({ stage: "production", policy: [prodOff], approval: [approvalRow({ requester_credential: credential })] });
+			const marked = { kind: "actor" as const, actor: actorOf(credential, { onBehalfOfAgent: true }) };
+			const err = await refusal(requireApplyAuthorization(f.db, marked, "deploy", DEPLOY_TARGET, APPROVAL));
+			expect(err.code).toBe("not_permitted");
+			expect(f.writes).toEqual([]);
+		},
+	);
+
+	it("refuses a marked service token's listed deploy while agent access is off", async () => {
+		const f = setup({ policy: [accessOff], token: [{ auto_approve_environment_ids: [ENV] }] });
+		const marked = { kind: "actor" as const, actor: actorOf("service_token", { onBehalfOfAgent: true }) };
+		const err = await refusal(requireApplyAuthorization(f.db, marked, "deploy", DEPLOY_TARGET));
+		expect(err.code).toBe("not_permitted");
+		expect(err.message).toContain("Agent access is turned off");
+	});
+
+	it("does not take a session's click shortcut when marked", async () => {
+		const f = setup({ stage: "production", policy: [prodOff] });
+		const marked = { kind: "actor" as const, actor: actorOf("session", { onBehalfOfAgent: true }) };
+		expect((await refusal(requireApplyAuthorization(f.db, marked, "deploy", DEPLOY_TARGET))).code).toBe("not_permitted");
+	});
+
+	it("leaves the same unmarked requests as they were", async () => {
+		const cli = setup({ stage: "production", policy: [prodOff] });
+		await expect(
+			requireApplyAuthorization(cli.db, { kind: "actor", actor: actorOf("cli_session") }, "deploy", DEPLOY_TARGET, APPROVAL),
+		).resolves.toEqual({ approvalId: APPROVAL });
+		const token = setup({ policy: [accessOff], token: [{ auto_approve_environment_ids: [ENV] }] });
+		await expect(
+			requireApplyAuthorization(token.db, { kind: "actor", actor: actorOf("service_token") }, "deploy", DEPLOY_TARGET),
+		).resolves.toEqual({ approvalId: null });
+	});
+});
+
 describe("a service token's automatic deploys (decision D2)", () => {
 	const token = { kind: "actor" as const, actor: actorOf("service_token") };
 

@@ -11,7 +11,12 @@
 // access token, wrong token type, and a signature/claim that fails verification.
 
 import * as jose from "jose";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// The agent gate (lib/agents/cli-agent.ts) has its own tests; here it is a stand-in, so what is
+// checked is that every verified bearer is handed to it and its refusal is the answer.
+const agentGate = vi.hoisted(() => ({ refusal: vi.fn(async (): Promise<Response | null> => null) }));
+vi.mock("@/lib/agents/cli-agent", () => ({ cliAgentRefusal: agentGate.refusal }));
 
 import { verifyCliToken } from "@/lib/cli/auth";
 
@@ -46,6 +51,26 @@ beforeEach(() => {
 
 afterEach(() => {
 	delete process.env.CLI_JWT_SECRET;
+});
+
+describe("verifyCliToken and the agent gate", () => {
+	it("answers a verified bearer with the gate's refusal when it refuses", async () => {
+		const token = await signToken({ type: "access", sub: "user-42" });
+		const req = reqWith(`Bearer ${token}`);
+		const refused = new Response("{}", { status: 403 });
+		agentGate.refusal.mockResolvedValueOnce(refused);
+		const { error, payload } = await verifyCliToken(req);
+		expect(payload).toBeNull();
+		expect(error).toBe(refused);
+		expect(agentGate.refusal).toHaveBeenCalledWith(req, expect.objectContaining({ sub: "user-42" }));
+	});
+
+	it("does not ask the gate about a bearer that failed verification", async () => {
+		agentGate.refusal.mockClear();
+		const { error } = await verifyCliToken(reqWith("Bearer not-a-jwt"));
+		expect(error?.status).toBe(401);
+		expect(agentGate.refusal).not.toHaveBeenCalled();
+	});
 });
 
 describe("verifyCliToken", () => {
