@@ -1,5 +1,12 @@
 # docs
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [08d1b28]
+  - @repo/brand@0.2.2
+
 ## 0.0.4
 
 ### Patch Changes
