@@ -18,7 +18,11 @@ vi.mock("@/app/server/actions/artifact-shares", () => ({
 }));
 vi.mock("@/lib/analytics/track", () => ({ track: vi.fn() }));
 
-import { getArtifactShareAccess, listArtifactShares } from "@/app/server/actions/artifact-shares";
+import {
+	getArtifactShareAccess,
+	listArtifactShares,
+	shareArtifact,
+} from "@/app/server/actions/artifact-shares";
 import { ArtifactSharePopover } from "@/components/agent/artifact-share-popover";
 
 type Shares = Awaited<ReturnType<typeof listArtifactShares>>;
@@ -56,14 +60,14 @@ describe("ArtifactSharePopover — loading per open", () => {
 		const trigger = await renderPopover();
 
 		await user.click(trigger);
-		expect(await screen.findByText("Loading…")).toBeInTheDocument();
+		expect(await screen.findByText("Loading who has access")).toBeInTheDocument();
 		first.resolve(ORG_SHARED);
 		expect(await screen.findByRole("button", { name: "Stop sharing with Everyone in org" })).toBeInTheDocument();
 
 		await user.keyboard("{Escape}");
 		await waitFor(() => expect(screen.queryByText("Share artifact")).not.toBeInTheDocument());
 		await user.click(trigger);
-		expect(await screen.findByText("Loading…")).toBeInTheDocument();
+		expect(await screen.findByText("Loading who has access")).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Stop sharing with Everyone in org" })).not.toBeInTheDocument();
 
 		second.resolve([]);
@@ -80,11 +84,11 @@ describe("ArtifactSharePopover — loading per open", () => {
 		const trigger = await renderPopover();
 
 		await user.click(trigger);
-		expect(await screen.findByText("Loading…")).toBeInTheDocument();
+		expect(await screen.findByText("Loading who has access")).toBeInTheDocument();
 		await user.keyboard("{Escape}");
 		await waitFor(() => expect(screen.queryByText("Share artifact")).not.toBeInTheDocument());
 		await user.click(trigger);
-		expect(await screen.findByText("Loading…")).toBeInTheDocument();
+		expect(await screen.findByText("Loading who has access")).toBeInTheDocument();
 
 		// The second open's own answer lands first; the first open's answer arrives after it.
 		second.resolve([]);
@@ -97,5 +101,37 @@ describe("ArtifactSharePopover — loading per open", () => {
 		await act(async () => {});
 		expect(screen.getByRole("button", { name: "Share with Everyone in org" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Stop sharing with Everyone in org" })).not.toBeInTheDocument();
+	});
+});
+
+describe("ArtifactSharePopover — a share in flight (#7871)", () => {
+	// Fails if the in-flight row falls back to a spinning Loader2 with no word for what it is doing.
+	it("names the share on its row and swaps the check box for the inline [·] mark", async () => {
+		vi.mocked(listArtifactShares).mockResolvedValue([]);
+		let settle: () => void = () => {};
+		vi.mocked(shareArtifact).mockReturnValue(
+			new Promise<void>((r) => {
+				settle = r;
+			}),
+		);
+		const user = userEvent.setup();
+		const trigger = await renderPopover();
+		await user.click(trigger);
+		await user.click(await screen.findByRole("button", { name: "Share with Everyone in org" }));
+
+		// The row has flipped optimistically, so its name already reads as the shared state.
+		const row = screen.getByRole("button", { name: "Stop sharing with Everyone in org" });
+		expect(row).toHaveAttribute("aria-busy", "true");
+		expect(row).toHaveTextContent("Sharing…");
+		expect(screen.getByText("Sharing with Everyone in org")).toBeInTheDocument();
+		expect(row.querySelector('[data-slot="mark-loader"]')).not.toBeNull();
+		expect(row.querySelector(".animate-spin")).toBeNull();
+
+		await act(async () => {
+			settle();
+		});
+		expect(screen.getByRole("button", { name: "Stop sharing with Everyone in org" })).not.toHaveAttribute(
+			"aria-busy",
+		);
 	});
 });
