@@ -183,6 +183,55 @@ jobs:
   # FAIL-SAFE DIRECTION. Every consumer treats an EMPTY output as "run in full", and the consumers
   # carry `!cancelled()`, so a failed detect job runs everything rather than skipping it. The
   # `CI required` aggregator separately fails when this job did not succeed.
+  #
+  # ── TWO LANES (2026-11-27) ─────────────────────────────────────────────────────────────────
+  #
+  # `lane` is `fast` exactly when `skip_unaffected` is true — an ordinary PR into dev with
+  # AFFECTED_ONLY_ARMED on — and `full` on everything else: the Mergify queue's batch
+  # (`mergify/merge-queue/*`), a promotion (`release/<sha>` → main), a push, a cron, a dispatch.
+  # So the one kill switch above also turns the fast lane off: set AFFECTED_ONLY_ARMED to "false"
+  # and every PR runs the full lane, as before this change.
+  #
+  # Measured 2026-11-26 (139 CI runs/day, median 45 min wall, ~105 runner-min/run): every PR ran
+  # the whole suite TWICE — once on its own head, once again in the queue's batch, and only the
+  # second run decides what lands. The fast lane drops, from the PR's own run, the jobs below. They
+  # still run, unchanged and path-conditional exactly as before, on every full-lane run, and the
+  # queue's batch run is a full-lane run whose `CI required` must be green before Mergify merges.
+  #
+  # THE RULE THAT DECIDES WHAT MAY MOVE: a job the fast lane drops must be a `needs:` of
+  # `CI required`. Then "it did not run on the PR" can only mean "it runs, and gates, in the queue's
+  # batch" — nothing reaches dev without it passing there. A non-required (observe-only) job cannot
+  # meet that rule without changing what gates the merge, which is a separate decision with its own
+  # process (scripts/merge-signal-health.sh's PROMOTE verdict), so those stay where their author
+  # sees them, on the PR.
+  #
+  #   FULL LANE ONLY (each a `needs:` of `CI required`):
+  #     · `build-console` — Build console images (no push). 14.3 min median, seven Docker builds; a
+  #       PR author's first answer comes from `ts-build`'s `next build` smoke, which stays.
+  #     · `integration` — Integration (real Postgres + RLS). 13.0 min median. The query builders'
+  #       unit tests and types stay in the fast lane; the real-database pass runs in the batch.
+  #     · `byo-users-postgres` (the matrix legs) — real Postgres 17/14. Its always-reporting wrapper
+  #       `byo-users-postgres-required` still runs on the fast lane and passes "skipped by design".
+  #     · `e2e-qa-leg` — the release gate's qa leg (~10 runner-min, a console build + Playwright).
+  #       Before this change it ran on the PR and NOT in the queue; now it runs in the queue, which
+  #       also closes the gap that comment recorded (two UI PRs that each pass alone and break each
+  #       other now meet in the batch, not at the promotion).
+  #
+  #   KEPT IN THE FAST LANE, and why:
+  #     · lint · types, the unit suites + coverage ratchets, the build smoke (`ts-*`/`typescript`),
+  #       `go` (affected modules), `guards` (its 8–12 min self-test already path-gated), `secrets`,
+  #       `docs-prose`, `capabilities-security`, `gate-ledger`, `addon-charts-render` — the PR
+  #       author's first answer, and each cheap or already narrowed by the plan above.
+  #     · `e2e-browser`, `e2e-elench-ai`, `byo-users-mysql`, `db-tls-verify`, `runner-image-arch`,
+  #       `t1-kind-images` — heavy, but OBSERVE-ONLY (no `CI required` need). Moving them would hide
+  #       their red from the author without making it block anywhere, so they keep their own
+  #       path conditions (console / agent / runner / t1 paths) and run on the PR as before.
+  #     · `provision-e2e` — unchanged: it already runs only on the queue's batch.
+  #
+  # HOW A FULL RUN IS KEPT FROM SKIPPING THE SUITE: `CI required` (a) recomputes from the event
+  # itself whether this run is an ordinary dev PR and refuses `lane=fast` on anything else — so a
+  # planner bug cannot turn the queue's batch into a fast run — and (b) on `lane=full` fails when a
+  # full-lane-only job reports `skipped` although its own (non-lane) condition says it runs.
   detect-changes:
     name: Detect PR surface changes
     runs-on: ubuntu-latest
@@ -217,6 +266,7 @@ jobs:
       t1_images: ${{ steps.plan.outputs.t1_images }}
       selective: ${{ steps.plan.outputs.selective }}
       skip_unaffected: ${{ steps.plan.outputs.skip_unaffected }}
+      lane: ${{ steps.plan.outputs.lane }}
       ts_filter: ${{ steps.plan.outputs.ts_filter }}
       ts_skip: ${{ steps.plan.outputs.ts_skip }}
       go_matrix: ${{ steps.plan.outputs.go_matrix }}
@@ -581,6 +631,12 @@ jobs:
           if [ "$selective" = true ] && [ "$AFFECTED_ONLY_ARMED" = true ]; then skip=true; fi
           out skip_unaffected "$skip"
 
+          # TWO LANES (see the job comment): `fast` only where the affected-only skips are armed for
+          # an ordinary dev PR; everything else — the queue's batch above all — is `full`.
+          lane=full
+          if [ "$skip" = true ]; then lane=fast; fi
+          out lane "$lane"
+
           # The guards' self-tests (8–12 minutes) run unless this is an affected-only PR that touched
           # none of their inputs. The merge queue, pushes, promotions and the schedule are never
           # selective, so a guard change is always self-tested before it lands on dev.
@@ -598,11 +654,15 @@ jobs:
           if [ "$skip" = true ] && [ "$(b "${O_NOT_PROSE:-true}")" = false ]; then ts_skip=true; fi
           out ts_skip "$ts_skip"
 
-          # The qa release-gate leg on a PR (#7647): a selective (dev, non-queue) PR whose diff hits
-          # `qa_leg` and is not prose-only. A fork PR is excluded: it gets no repo secrets, so the
-          # leg's `stripe` capability guard would fail on a variable its author cannot supply.
+          # The qa release-gate leg (#7647): a dev PR — an ordinary one OR the Mergify queue's batch
+          # PR (two lanes, 2026-11-27) — whose diff hits `qa_leg` and is not prose-only. A promotion
+          # into main runs all seven legs in release-gate.yml's own run, so it is excluded here. A
+          # fork PR is excluded: it gets no repo secrets, so the leg's `stripe` capability guard would
+          # fail on a variable its author cannot supply. This output is the leg's PATH condition only;
+          # `e2e-qa-leg` adds `lane != 'fast'`, so on an ordinary PR it runs in the batch instead.
           qa_leg=false
-          if [ "$selective" = true ] && [ "$(b "${F_QA_LEG:-}")" = true ] \
+          if [ "$EVENT_NAME" = pull_request ] && [ "$BASE_REF" != main ] && [ "$BASE_REF" != staging ] \
+            && [ "$(b "${F_QA_LEG:-}")" = true ] \
             && [ "$(b "${O_NOT_PROSE:-true}")" = true ] && [ "${HEAD_FORK:-false}" != true ]; then
             qa_leg=true
           fi
@@ -1255,8 +1315,11 @@ jobs:
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
     # AFFECTED-ONLY: skipped only when armed and the whole diff is `.md`/`.mdx` (see `detect-changes`).
+    # FULL LANE ONLY (two lanes, see `detect-changes`): skipped on an ordinary PR's fast lane, run on
+    # the queue's batch, where `CI required` fails if it skipped. `CI required` restates the
+    # non-lane half of this condition (not the 03:00 cron); change one and you must change the other.
     needs: [detect-changes]
-    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' && needs.detect-changes.outputs.lane != 'fast' }}
     # A throwaway Postgres mirroring the dev stack (compose uses postgres:17-alpine with the
     # same superuser/db). db:migrate then creates the least-priv `alethia_app` role + RLS, so
     # the suite exercises the real SQL query builders and the multi-tenant isolation boundary.
@@ -3879,7 +3942,9 @@ jobs:
     # have changed — detect-changes' `runner` filter covers apps/runner, packages/core, go.work and
     # this file. `byo-users-postgres-required` below restates this condition to know whether a
     # `skipped` result is by design; change one and you must change the other.
-    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true')
+    # FULL LANE ONLY (two lanes, see `detect-changes`): never on an ordinary PR's fast lane — the
+    # queue's batch runs it. The wrapper below restates the lane too.
+    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true') && needs.detect-changes.outputs.lane != 'fast'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -3980,21 +4045,25 @@ jobs:
           LEGS_RESULT: ${{ needs.byo-users-postgres.result }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
+          LANE: ${{ needs.detect-changes.outputs.lane }}
         run: |
           if [ "$DETECT_RESULT" != success ]; then
             echo "::error::detect-changes concluded '$DETECT_RESULT', so whether the runner changed is unknown"
             exit 1
           fi
-          # The legs' own condition: not the 03:00 UI-audit nightly, and on a PR only when `runner` changed.
+          # The legs' own condition: not the 03:00 UI-audit nightly, on a PR only when `runner` changed,
+          # and never on the fast lane (two lanes — the queue's batch runs them; `CI required` refuses
+          # `lane=fast` on any run that is not an ordinary dev PR, so this cannot excuse a queue skip).
           expected=false
-          if [ "$EVENT_SCHEDULE" != "0 3 * * *" ] && { [ "$EVENT_NAME" != pull_request ] || [ "$RUNNER_CHANGED" = true ]; }; then
+          if [ "$EVENT_SCHEDULE" != "0 3 * * *" ] && { [ "$EVENT_NAME" != pull_request ] || [ "$RUNNER_CHANGED" = true ]; } \
+            && [ "$LANE" != fast ]; then
             expected=true
           fi
-          echo "legs expected to run: $expected; matrix result: $LEGS_RESULT"
+          echo "lane: ${LANE:-?}; legs expected to run: $expected; matrix result: $LEGS_RESULT"
           if [ "$expected" = true ] && [ "$LEGS_RESULT" = success ]; then
             echo "every BYO users leg passed"
           elif [ "$expected" = false ] && [ "$LEGS_RESULT" = skipped ]; then
-            echo "the runner did not change, so the legs were skipped by design"
+            echo "the runner did not change, or this is the fast lane, so the legs were skipped by design"
           else
             echo "::error::BYO users SQL legs concluded '$LEGS_RESULT' (expected to run: $expected)"
             exit 1
@@ -5204,10 +5273,14 @@ jobs:
   #
   # On a PR and a dispatch only, as before — not on a push to main (deploy-console.yml builds there)
   # and not on a cron.
+  #
+  # FULL LANE ONLY (two lanes, see `detect-changes`): skipped on an ordinary PR's fast lane and run on
+  # the queue's batch. `CI required` restates the non-lane half (a PR or a dispatch) to fail a full
+  # run that skipped it; change one and you must change the other.
   build-console:
     name: Build console images (no push)
     needs: [detect-changes]
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && needs.detect-changes.outputs.lane != 'fast' }}
     runs-on: ubuntu-latest
     steps:
       - name: Nothing to build
@@ -5257,7 +5330,8 @@ jobs:
   # ── CI required — THE ONE CI CONTEXT THE RULESETS AND THE QUEUE REQUIRE (2026-11-22) ──
   #
   # Every required job of THIS workflow, in one verdict: green when each need concluded `success` or
-  # `skipped`, red on `failure` or `cancelled`. Requiring this one name instead of eleven is what lets
+  # `skipped`, red on `failure` or `cancelled` — and, since the two lanes (2026-11-27), red when a
+  # `skipped` is not by design on a full-lane run, or the lane is wrong for the event (its first step). Requiring this one name instead of eleven is what lets
   # a required job be SKIPPED on a PR that cannot affect it (see `detect-changes`, AFFECTED-ONLY): a
   # skipped job here reads as "not needed", where a per-job `check-success=` in `.mergify.yml` reads
   # it as "not green" and a missing matrix leg as "still pending".
@@ -5297,21 +5371,25 @@ jobs:
   # build, `next build`, Playwright, `--workers=3 --retries=1`), the same scripts/e2e-ratchet.mjs
   # against the same apps/console/e2e/gate-baseline.json. ci.yml decides only WHEN it runs.
   #
-  # WHEN: `detect-changes.outputs.qa_leg` — a dev PR (not a promotion, which runs all seven legs in
-  # release-gate.yml's own run; not a Mergify `mergify/merge-queue/*` build, see below; not a fork,
-  # which gets no secrets) whose diff touches the `qa_leg` paths and is not prose-only. Everything
-  # else skips it, which `CI required` counts as success.
+  # WHEN: `detect-changes.outputs.qa_leg` AND the full lane — a dev PR's full-lane run (the Mergify
+  # queue's `mergify/merge-queue/*` batch; an ordinary PR only while the fast lane is switched off)
+  # that is not a promotion (which runs all seven legs in release-gate.yml's own run) and not a fork
+  # (which gets no secrets), whose diff touches the `qa_leg` paths and is not prose-only. Everything
+  # else skips it, which `CI required` counts as success — except a full-lane run where `qa_leg` is
+  # true, which `CI required` fails if this job skipped.
   #
   # REQUIRED WHEN IT RUNS: it is a `needs:` of `CI required`. A regression the ratchet reds fails the
   # aggregator; a skip passes it. The fix for a red is the one release-gate.yml's ratchet prints —
   # repair the spec (or the product) in the same PR, or re-record the baseline entry the change
   # legitimately moved. TESTING.md has the procedure.
   #
-  # NOT IN THE MERGE QUEUE. Mergify validates a batch as a `pull_request` run on a
-  # `mergify/merge-queue/*` draft PR; `selective` is false there, so `qa_leg` is false and this job
-  # skips. Each PR already ran the leg on its own head, and a second ~10-minute run per batch is the
-  # cost this skip refuses. What that gives up, stated: two UI PRs that each pass alone and break
-  # each other merge together, and the promotion's own qa leg is where that shows.
+  # IN THE MERGE QUEUE, NOT ON THE PR (two lanes, 2026-11-27 — inverted from #7647's first form).
+  # It used to run on each PR's own head and skip the batch, which cost ~10 runner-minutes per PR
+  # push and let two UI PRs that each pass alone, and break each other, merge together. Now an
+  # ordinary PR's fast lane skips it and the batch runs it once for up to eight PRs, so the pair
+  # meets before dev, not at the promotion. What that gives up, stated: the author sees a qa-leg
+  # red when the batch fails (Mergify reports it on the PR and drops it from the queue), not on the
+  # first push. Add the `release-gate:run` label for an early answer on a PR that wants one.
   #
   # COST: one shard set (the leg's one matrix entry), ~10 runner-minutes measured on release-gate
   # runs of 2026-11-25, plus a few seconds for `legs`. ci.yml's own `concurrency`
@@ -5324,7 +5402,7 @@ jobs:
   e2e-qa-leg:
     name: E2E qa leg (release gate · affected PRs)
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.qa_leg == 'true'
+    if: needs.detect-changes.outputs.qa_leg == 'true' && needs.detect-changes.outputs.lane != 'fast'
     permissions:
       contents: read
       pull-requests: read
@@ -5351,7 +5429,75 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # TWO LANES (2026-11-27; the lane table is in `detect-changes`' comment). A fast-lane run may
+      # skip the full-lane-only jobs; a full-lane run may not — and the queue's batch, the run that
+      # decides what lands on dev, must be a full-lane run. Two checks, the first independent of the
+      # planner:
+      #
+      #   (a) THE LANE ITSELF. Recomputed here from the event, not read from the planner: only an
+      #       ordinary dev PR (a `pull_request` whose head is not `mergify/merge-queue/*` and whose base
+      #       is not main/staging) may be `fast`. A planner bug that called the batch `fast` would
+      #       otherwise skip the suite there AND excuse the skip below — so it is red, here.
+      #   (b) NO SILENT SKIP ON `full`. Each full-lane-only job's NON-lane condition is restated, and a
+      #       `skipped` result where it holds is red. `byo-users-postgres-required` always runs (its
+      #       own step judges the legs, lane included), so its `skipped` is never by design.
+      #
+      # Change a full-lane-only job's `if:` and you must change its line in `full_expected` below.
+      - name: The lane is right, and a full-lane run skipped none of the full-lane-only jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          LANE: ${{ needs.detect-changes.outputs.lane }}
+          QA_LEG: ${{ needs.detect-changes.outputs.qa_leg }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          bad=0
+          ordinary=false
+          if [ "$EVENT_NAME" = pull_request ] && [ "${HEAD_REF#mergify/merge-queue/}" = "$HEAD_REF" ] \
+            && [ "$BASE_REF" != main ] && [ "$BASE_REF" != staging ]; then
+            ordinary=true
+          fi
+          echo "lane: '${LANE}'; ordinary dev PR: $ordinary; event: $EVENT_NAME; head: ${HEAD_REF:-—}; base: ${BASE_REF:-—}"
+          case "$LANE" in
+            full) ;;
+            fast)
+              if [ "$ordinary" != true ]; then
+                echo "::error::lane=fast on a run that is not an ordinary dev PR (event $EVENT_NAME, head '${HEAD_REF}', base '${BASE_REF}') — the queue's batch, a promotion, a push, a cron and a dispatch must run the full lane"
+                bad=1
+              fi ;;
+            *) echo "::error::detect-changes reported lane '${LANE}' — expected 'fast' or 'full'"; bad=1 ;;
+          esac
+
+          # The non-lane half of each full-lane-only job's `if:`.
+          full_expected() {
+            case "$1" in
+              integration) [ "$EVENT_SCHEDULE" != "0 3 * * *" ] ;;
+              build-console) [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = workflow_dispatch ] ;;
+              byo-users-postgres-required) true ;;
+              e2e-qa-leg) [ "$QA_LEG" = true ] ;;
+              *) echo "::error::full_expected has no rule for '$1'"; bad=1; return 1 ;;
+            esac
+          }
+          if [ "$LANE" = full ]; then
+            for job in integration build-console byo-users-postgres-required e2e-qa-leg; do
+              result=$(jq -r --arg j "$job" '.[$j].result // "absent"' <<<"$NEEDS")
+              if [ "$result" = absent ]; then
+                echo "::error::$job is not a need of this job — the full-lane list and the needs list disagree"; bad=1
+              elif [ "$result" = skipped ] && full_expected "$job"; then
+                echo "::error::$job was SKIPPED on a full-lane run although its own condition says it runs — a full run that silently skipped the suite"; bad=1
+              else
+                echo "ok: $job on the full lane ($result)"
+              fi
+            done
+          fi
+          exit "$bad"
+
+      # Runs even when the lane step above is red, so one run reports both verdicts.
       - name: Every required job succeeded or was skipped by design
+        if: ${{ !cancelled() }}
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
