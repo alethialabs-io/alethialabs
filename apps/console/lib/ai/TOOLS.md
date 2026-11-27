@@ -69,7 +69,7 @@ graph and fails if any file reaches a denied module.
 | `both` | `get_project`, `list_projects`, `list_jobs`, `get_job`, `get_plan_result`, `get_drift_posture`, `list_runners`, `list_clusters`, `list_connectors`, `list_cloud_identities`, `get_cached_resources`, `get_org_usage`, `get_ai_usage`, `get_billing_summary` | `read.ts` |
 | `both` | `search_docs` | `docs.ts` |
 | `both` | `get_scan_result`, `compare_providers` | `scanner.ts` |
-| `in-app` | `estimate_cost`, `propose_changes` — need the live canvas; changes are applied client-side after the user accepts | `compose.ts` |
+| `in-app` | `estimate_cost`, `propose_changes` — need the live canvas; changes are applied client-side after the user accepts (Dismiss leaves the canvas as it was) | `compose.ts` |
 | `in-app` | `propose_operation` — a plan or deploy proposal with no `execute`; the user's approval in the dashboard calls `planProject` / `provisionProject` | `operations.ts` |
 | `in-app` | `scan_repo`, `audit_infrastructure` — each queues a runner job | `scanner.ts` |
 | `in-app` | `connect_cloud`, `build_dashboard`, `pin_widget`, `list_artifacts`, `get_artifact`, `update_artifact` — open or change dashboard UI | `connect.ts`, `visualize.ts`, `widgets.ts`, `artifacts.ts` |
