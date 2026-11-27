@@ -45,6 +45,7 @@ func commandRegistry() *cmdmeta.Registry {
 		metaAgent,
 		metaOps,
 		metaBuiltin,
+		metaMCP,
 	)
 }
 
