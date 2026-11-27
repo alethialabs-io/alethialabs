@@ -40,9 +40,14 @@ variable "github_environment" {
 }
 
 variable "web_deploy_repo" {
-  description = "The private repo that deploys the staff app (apps/admin) to the production box. Its deploy job reads the box's ssh key from the prod secret through alethia-deploy-reader ONLY (never the state/ECR/ECS roles). See infra/aws-oidc/README.md."
+  description = "The private repo that deploys the staff app (apps/admin) to the production box, in the form its OIDC `sub` claim uses. Its deploy job reads the box's ssh key from the prod secret through alethia-deploy-reader ONLY (never the state/ECR/ECS roles). See infra/aws-oidc/README.md."
   type        = string
-  default     = "alethialabs-io/web"
+  # GitHub gives repos created after its immutable-subject change a sub keyed by owner and repo
+  # IDs: repo:<owner>@<owner_id>/<repo>@<repo_id>:... (gh api repos/alethialabs-io/web/actions/oidc/customization/sub
+  # -> use_immutable_subject: true). The first deploy from alethialabs-io/web was refused against the
+  # name-only form. The ID form is kept, not opted out of: a renamed, or deleted and recreated,
+  # repo of the same name can no longer present this subject.
+  default = "alethialabs-io@293964056/web@1474247330"
 }
 
 variable "web_deploy_environment" {
