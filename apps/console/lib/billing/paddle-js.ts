@@ -7,9 +7,11 @@
 // checkout for a transaction the SERVER created (`startCheckout`). The browser never names a price or
 // an org: it only knows the transaction id.
 //
-// No Content-Security-Policy is set by the console today. If one is added, Paddle.js needs
-// script-src/style-src/img-src https://cdn.paddle.com, frame-src https://buy.paddle.com and
-// https://sandbox-buy.paddle.com, and connect-src for Paddle's checkout service.
+// The console's Content-Security-Policy carries only `frame-ancestors` today (next.config.ts), which
+// governs who may frame the console, not what the console loads. If fetch directives are added,
+// Paddle.js needs script-src/style-src/img-src https://cdn.paddle.com, frame-src
+// https://buy.paddle.com and https://sandbox-buy.paddle.com, and connect-src for Paddle's checkout
+// service.
 
 /** The CDN script Paddle.js v2 is served from. */
 const PADDLE_JS_URL = "https://cdn.paddle.com/paddle/v2/paddle.js";
