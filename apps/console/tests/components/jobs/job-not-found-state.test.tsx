@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// One "Job not found." (R6 D-25). The route's `not-found.tsx` drew an `ErrorState` with "Go home";
-// the detail page drew an `EmptyState` with "Back to jobs" — one condition, two exits. Both render
-// `JobNotFoundState` now; this pins the route file to it and the component to its one exit.
+// One exit for a job that is not there (R6 D-25). The route's `not-found.tsx` drew an `ErrorState`
+// with "Go home"; the detail page drew an `EmptyState` with "Back to jobs" — one condition, two
+// exits. Both lead back to this organization's jobs now. Since #7875 the route file draws that exit
+// in the signed-off 404 form (`[ 404 ]`, "Nothing here.", a job-specific reason line), while the
+// detail page keeps `JobNotFoundState`; this pins each to its copy and both to the one exit.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -27,10 +29,14 @@ describe("the job not-found state", () => {
 		expect(screen.queryByRole("link", { name: /go home/i })).toBeNull();
 	});
 
-	it("the route's not-found.tsx is the same state, for the organization in the address", () => {
+	it("the route's not-found.tsx is the 404 form with the same exit, for the organization in the address", () => {
 		render(<JobNotFound />);
-		expect(screen.getByRole("heading", { name: JOB_NOT_FOUND_TITLE })).toBeInTheDocument();
+		expect(screen.getByRole("heading", { name: "Nothing here." })).toBeInTheDocument();
+		expect(
+			screen.getByText("This job doesn't exist, or it belongs to another organization.", { exact: true }),
+		).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "Back to jobs" })).toHaveAttribute("href", "/acme/~/jobs");
+		expect(screen.queryByRole("link", { name: /go home/i })).toBeNull();
 	});
 
 	it("the detail page renders the shared state rather than its own copy of it", () => {
