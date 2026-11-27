@@ -1,5 +1,12 @@
 # @repo/ui
 
+## 0.4.0
+
+### Minor Changes
+
+- 9ff6629: `ErrorState` takes `codeVariant="bracketed"`, which sets `code` between the `[·]` mark's two brackets — `[ 404 ]` — in Space Grotesk 600 at a display rung (`text-display-sm` full page, `text-display-xs` in a panel). The code stays its own text node; the brackets are hidden from assistive technology. The default, `"mono"`, is the existing small mono line.
+- d1ba621: `ListToolbarSkeleton` draws the row's `extra` controls: `extra` takes one named size per control (`"control"` for a `size="sm"` button, `"icon"` for `FunnelFilter`'s 40px square trigger), or a single size. `dateRange` now also takes a count, so a row with a quick range and a date range draws two placeholders. Existing props and defaults are unchanged.
+
 ## 0.3.0
 
 ### Minor Changes
