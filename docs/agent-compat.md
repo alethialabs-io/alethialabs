@@ -126,14 +126,24 @@ use CIMD. Only the §1 runs can answer it, so the rule cannot be applied until t
 
 These are open findings, not results:
 
-- **It does not check the envelope's revision.** On 2026-11-27, a one-off probe sent a `tools/list`
-  whose envelope named `2099-01-01`, and the server answered it. The SDK's modern path answers the
-  same request with `-32022`. No test locks this behaviour in either direction.
-- **It sends the modern result metadata only on `server/discover`.** The SDK's modern path adds
-  `resultType` and the `_meta` server info to every result. The stdio server sends `_meta` only on
-  `server/discover`, and never sends `resultType`. No test shows whether a 2026-07-28 client
-  needs them.
 - **No real client has driven it.** The same is true of the remote endpoint.
+
+Two earlier findings are now fixed (#7941). Each fix has a test in S, and a one-line change to the
+code makes that test fail:
+
+- **It checks the envelope's revision.** A request whose envelope names a revision other than
+  `2026-07-28` gets `-32022` before its method runs. The message is
+  `Unsupported protocol version: <requested>`, and the data is
+  `{"supported": ["2026-07-28"], "requested": "<requested>"}`. This is the same answer as the SDK's
+  stdio entry and the remote endpoint. An envelope that names a 2025 revision is refused too.
+  Proven by S, `TestConformance_AnEnvelopeNamingAnUnsupportedRevisionIsRefusedWithTheSupportedList`.
+  An envelope with no client capabilities, or a version that is not a string, gets `-32602` with
+  the key at fault. Proven by S, `TestConformance_AMalformedEnvelopeIsRefusedNamingTheKey`.
+- **It sends the modern result metadata on every 2026-07-28 result.** That is `resultType:
+  "complete"` and the server info under `_meta`. `tools/list` and `server/discover` also get
+  `ttlMs: 0` and `cacheScope: "private"`. These are the values that the SDK's encode contract
+  adds. A 2025-era result gets none of them. Proven by S,
+  `TestConformance_EveryModernResultCarriesTheRevisionsResultMetadata`.
 
 ## Running the checks
 
