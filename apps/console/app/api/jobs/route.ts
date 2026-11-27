@@ -32,6 +32,7 @@ import {
 	personalRunnerArm,
 } from "@/lib/authz/runner-org";
 import { type Actor, type CredentialKind, ForbiddenError } from "@/lib/authz/types";
+import { readCliAgentMark } from "@/lib/agents/cli-agent";
 import { type CliTokenPayload, verifyCliToken } from "@/lib/cli/auth";
 import {
 	type CursorScope,
@@ -332,7 +333,7 @@ export async function POST(req: Request) {
 		// can tell a device login from a person at the console (`actorCredentialOf`).
 		// A service token's scopes and project list ride on the actor (`ceiledActor`), so the PDP
 		// answers every verb below for the token, not for the full grants of the person who minted it.
-		const actor = ceiledActor(
+		const ceiled = ceiledActor(
 			actorWithCredential(
 				await getActiveScope(userId, scopedOrg),
 				actorCredentialOf(caller),
@@ -340,6 +341,11 @@ export async function POST(req: Request) {
 			caller,
 			payload,
 		);
+		// A request `alethia mcp` made for an agent tool call is held to the agent rows of the approvals
+		// table (lib/approvals/policy.ts) on top of its credential's own. The mark only narrows; see
+		// lib/agents/cli-agent.ts for why the request's own statement is enough for that.
+		const actor =
+			ceiled && readCliAgentMark(req.headers) ? { ...ceiled, onBehalfOfAgent: true } : ceiled;
 		if (!actor) {
 			return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 		}

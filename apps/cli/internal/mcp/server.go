@@ -328,7 +328,7 @@ func (s *Server) startCall(ctx context.Context, req request, calls *sync.WaitGro
 			s.reply(req.ID, errorResult("the call was cancelled before it started"), nil)
 			return
 		}
-		res, err := s.opts.Runner.Run(callCtx, argv)
+		res, err := s.opts.Runner.Run(WithTool(callCtx, tool.Name), argv)
 		s.reply(req.ID, s.callResult(callCtx, tool, res, err), nil)
 	}()
 }

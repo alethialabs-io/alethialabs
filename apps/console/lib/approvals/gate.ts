@@ -64,7 +64,9 @@ export async function authorizeApply(
 		throw new ApplyAuthorizationError("not_permitted", "This environment belongs to another organization.");
 	}
 	const enterprise = await enterpriseAgentPolicy();
-	if (actor.credential === "session") {
+	// A request marked as made on behalf of an agent never takes the person's shortcut below: it is
+	// answered by the table, which adds the agent refusals to its credential's row.
+	if (actor.credential === "session" && !actor.onBehalfOfAgent) {
 		// A person at the console. The environments placed on a Fabric are destroyed in the same
 		// transaction as the Fabric's own environment, which is gated last and consumes (or does not
 		// need) the person's approval; an approval names one environment, so a cascaded one is covered
@@ -105,6 +107,7 @@ export async function authorizeApply(
 		policy,
 		tokenAutoApprovesEnvironment:
 			operation === "deploy" && (await tokenAutoApproves(db, actor, target.environmentId)),
+		onBehalfOfAgent: actor.onBehalfOfAgent === true,
 	});
 
 	switch (requirement.kind) {

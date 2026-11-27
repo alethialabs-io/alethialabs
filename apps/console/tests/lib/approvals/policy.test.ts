@@ -145,3 +145,42 @@ describe("the kill switch's own answer (agentAccessRefusal), which the tool guar
 		}
 	});
 });
+
+describe("a request made on behalf of an agent (onBehalfOfAgent: a CLI request from alethia mcp)", () => {
+	/** The cell as the table answers it with the agent mark set. */
+	const marked = (cell: Cell) =>
+		applyRequirement({
+			credential: cell.credential,
+			operation: cell.operation,
+			stage: cell.stage,
+			policy: {
+				agentAccessEnabled: cell.agentAccessEnabled,
+				agentsMayNotApplyToProduction: cell.agentsMayNotApplyToProduction,
+			},
+			tokenAutoApprovesEnvironment: cell.tokenAutoApprovesEnvironment,
+			onBehalfOfAgent: true,
+		});
+
+	/** The agent rows' refusals for `cell`, written out from the spec independently of policy.ts. */
+	const agentRefusal = (cell: Cell): Requirement | null => {
+		if (!cell.agentAccessEnabled) return { kind: "refused", reason: "agent_access_disabled" };
+		if (cell.operation !== "plan" && cell.stage === "production" && cell.agentsMayNotApplyToProduction) {
+			return { kind: "refused", reason: "agents_not_on_production" };
+		}
+		return null;
+	};
+
+	it.each(CELLS)(
+		"$credential $operation on $stage (agents on: $agentAccessEnabled, no agents on production: $agentsMayNotApplyToProduction, token lists env: $tokenAutoApprovesEnvironment): the agent refusals, else the credential's own cell",
+		(cell) => {
+			expect(marked(cell)).toEqual(agentRefusal(cell) ?? expected(cell));
+		},
+	);
+
+	it("never answers a cell more loosely than the same cell without the mark", () => {
+		const looseness: Record<Requirement["kind"], number> = { refused: 0, approval: 1, automatic: 2, none: 3 };
+		for (const cell of CELLS) {
+			expect(looseness[marked(cell).kind]).toBeLessThanOrEqual(looseness[expected(cell).kind]);
+		}
+	});
+});
