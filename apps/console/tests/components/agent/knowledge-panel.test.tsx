@@ -98,7 +98,7 @@ describe("AgentKnowledgePanel — switching scope (#6459)", () => {
 	it("reads as loading the moment the scope changes, then shows the new scope's knowledge", async () => {
 		vi.mocked(canEditAgentContext).mockResolvedValue(true);
 		const { rerender } = render(<AgentKnowledgePanel projectId={null} onClose={() => {}} />);
-		expect(screen.getByText("Loading…")).toBeInTheDocument();
+		expect(screen.getByText("Loading organization knowledge")).toBeInTheDocument();
 		expect(await screen.findByText("Runbook")).toBeInTheDocument();
 
 		let answer: (v: { instructions: string; documents: (typeof DOC)[] }) => void = () => {};
@@ -108,11 +108,11 @@ describe("AgentKnowledgePanel — switching scope (#6459)", () => {
 			}) as never,
 		);
 		rerender(<AgentKnowledgePanel projectId="p1" onClose={() => {}} />);
-		expect(screen.getByText("Loading…")).toBeInTheDocument();
+		expect(screen.getByText("Loading project knowledge")).toBeInTheDocument();
 		expect(screen.queryByText("Runbook")).not.toBeInTheDocument();
 
 		answer({ instructions: "", documents: [{ ...DOC, id: "d2", title: "Project notes" }] });
 		expect(await screen.findByText("Project notes")).toBeInTheDocument();
-		expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+		expect(screen.queryByText("Loading project knowledge")).not.toBeInTheDocument();
 	});
 });

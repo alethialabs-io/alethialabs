@@ -10,13 +10,13 @@
 import {
   Check,
   ChevronDown,
-  Loader2,
   Plus,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "./avatar";
 import { CountFigure, rowAccessibleName } from "./count-pill";
+import { INLINE_PX, INLINE_STROKE, MarkGlyph } from "./spinner";
 import { cn } from "./utils";
 
 export interface ComboboxOption {
@@ -142,9 +142,17 @@ export function MultiCombobox({
           <div className="max-h-64 overflow-y-auto">
             {filtered.length === 0 ? (
               loading ? (
-                <div className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" />
-                  Loading…
+                <div
+                  role="status"
+                  className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-muted-foreground"
+                >
+                  <MarkGlyph
+                    aria-hidden="true"
+                    width={INLINE_PX}
+                    height={INLINE_PX}
+                    bracketStroke={INLINE_STROKE}
+                  />
+                  Loading options…
                 </div>
               ) : emptyAction ? (
                 <button
