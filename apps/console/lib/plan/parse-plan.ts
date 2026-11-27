@@ -316,15 +316,3 @@ export function parsePlanJSON(
 
 	return { resources, counts };
 }
-
-export function groupByCategory(
-	resources: PlanResource[],
-): Map<string, PlanResource[]> {
-	const groups = new Map<string, PlanResource[]>();
-	for (const r of resources) {
-		const list = groups.get(r.category) || [];
-		list.push(r);
-		groups.set(r.category, list);
-	}
-	return groups;
-}

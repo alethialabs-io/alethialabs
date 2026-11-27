@@ -317,7 +317,9 @@ allowed only as a `bounded` decision in `apps/console/list-standard/` naming its
 
 No stat-card strips.
 
-`pnpm check:shared-surface` mechanises **seven of the nine rows above, plus the stat-card ban**. It
+`pnpm check:shared-surface` mechanises **seven of the first nine rows above, plus the stat-card ban**.
+The tenth row, a loading state, is enforced separately by `pnpm check:no-adhoc-spinner`, which has no
+allowlist. `check:shared-surface`
 fails on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
 interpolation (including one built from a variable or taken as a `prefix` prop), and a byte division
 by 1024; on a raw `<h1>`, which is now a defect to DELETE rather than one to convert, and on a
@@ -327,7 +329,7 @@ more); on a `<Stat` cell and the `Stat` primitive behind it; on a raw stacking l
 variant prefix or not; and on a `grid-cols-[…]` used as a table.
 
 It also fails on **an alpha applied to a text colour** — `text-muted-foreground/60`, `text-red-500/70`,
-`text-foreground/[0.7]`, variant prefix or not — which is not one of the nine rows: the design system
+`text-foreground/[0.7]`, variant prefix or not — which is not one of the table's rows: the design system
 has four named ink tiers and an alpha is a fifth that nobody chose, and at α=0.5 over the page
 background the darkest reachable composite is 3.94:1, so the node cannot pass 4.5:1 from any
 foreground (#4197). Use a named tier at full strength. An alpha on a **background** or a **border** is
