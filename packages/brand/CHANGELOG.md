@@ -1,5 +1,11 @@
 # @repo/brand
 
+## 0.2.2
+
+### Patch Changes
+
+- 08d1b28: `ProviderId` (the `Prov` logo's id) now accepts every provider `ProviderIcon` draws, including Hetzner, instead of only AWS, GCP and Azure.
+
 ## 0.2.1
 
 ### Patch Changes
