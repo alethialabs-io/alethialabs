@@ -10,7 +10,7 @@ import path from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const V: {
 	recipient_sk_hex: string;
@@ -79,6 +79,10 @@ describe("KubeconfigDownload", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
 	});
 
 	it("renders nothing for someone without cluster:access_readonly", () => {
@@ -152,16 +156,47 @@ describe("KubeconfigDownload", () => {
 		expect(pollKubeconfigDownload).not.toHaveBeenCalled();
 	});
 
-	it("while the runner mints: says so, says when the request expires, and offers Cancel", async () => {
+	// The status line paints in two steps: "A runner is minting it." the moment the click starts the
+	// wait, and the expiry sentence only once the request has been queued (after the X25519 probe,
+	// key generation and the request round trip). Asserting the sentence synchronously on the first
+	// paint raced those steps and lost on a loaded CI shard (#7865) — the failure at 00:01 UTC was
+	// the load, not the date. The clock is pinned on both sides of midnight UTC anyway, so the
+	// sentence is shown to be produced the same way at either instant.
+	it.each([
+		["just after midnight UTC", "2026-11-27T00:01:00.000Z"],
+		["just before midnight UTC", "2026-11-26T23:59:00.000Z"],
+	])("while the runner mints (%s): says so, says when the request expires, and offers Cancel", async (_label, now) => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date(now));
 		vi.mocked(requestKubeconfigDownload).mockResolvedValue(QUEUED);
 		vi.mocked(pollKubeconfigDownload).mockResolvedValue(PENDING);
 		render();
 		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
 
 		const status = await screen.findByText(/A runner is minting it\./);
-		expect(status).toHaveTextContent(/The request expires/);
+		await waitFor(() => expect(status).toHaveTextContent(/A runner is minting it\. The request expires .+\d.*\./));
 		expect(screen.getByRole("button", { name: BUTTON })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+	});
+
+	it("says when the request expires only once it is queued, not before", async () => {
+		let queue: () => void = () => {};
+		vi.mocked(requestKubeconfigDownload).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					queue = () => resolve(QUEUED);
+				}),
+		);
+		vi.mocked(pollKubeconfigDownload).mockResolvedValue(PENDING);
+		render();
+		await userEvent.click(await screen.findByRole("button", { name: BUTTON }));
+		await waitFor(() => expect(requestKubeconfigDownload).toHaveBeenCalledTimes(1));
+
+		const status = screen.getByText(/A runner is minting it\./);
+		expect(status).not.toHaveTextContent(/expires/);
+
+		await act(async () => queue());
+		await waitFor(() => expect(status).toHaveTextContent(/The request expires/));
 	});
 
 	it("waits on the jobs topic, not on a timer: it reads the mint again only when a job has moved", async () => {
