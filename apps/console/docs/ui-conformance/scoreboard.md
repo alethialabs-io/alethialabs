@@ -82,7 +82,7 @@ as its code.
 
 ## What this scored
 
-**44 private routes** · 4 redirect-only · 40 real pages.
+**45 private routes** · 4 redirect-only · 41 real pages.
 
 RUBRIC.md defines **44 predicates**. This report scores **43** of them —
 24 from the tree and 19 from the committed live audit records.
@@ -96,7 +96,7 @@ RUBRIC.md defines **44 predicates**. This report scores **43** of them —
 | `scripts/check-shared-surface.mjs` | every H-family occurrence, per file |
 | `scripts/check-filter-standard.mjs` | F1–F6 per filter SURFACE, joined to the routes whose closure reaches it |
 | `apps/console/tests/lib/queries/filter-standard-facets.test.ts` | F7 — the behaviour RUBRIC.md says a matcher cannot answer |
-| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 15`) and which are measured drift (`debt: 0`) |
+| `apps/console/shared-surface-allowlist.yaml` | which occurrences are a recorded decision (`baseline: 14`) and which are measured drift (`debt: 0`) |
 | `apps/console/ui-conformance-live.json` | T5–T7, R1–R8, F8–F10 and B1–B5 as MEASURED, imported from a CI run of the Playwright `audit` and `audit-interaction` projects |
 | `apps/console/docs/ui-conformance/RUBRIC.md` | the predicate set itself, read out of its own tables |
 
@@ -147,33 +147,33 @@ leaves the denominator and a predicate withheld everywhere scores `—`, never `
 | withheld | routes | why the instrument did not answer |
 |---|---:|---|
 | **B1** | 9 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
-| **B1** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B1** | 5 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B2** | 6 | hosted-only — the hosted product renders this page differently (an upsell on a plan without the feature, or the billing and usage panels the self-managed notice replaces), and the release gate's self-managed console never shows it; the skeleton question needs a leg booted as the hosted edition |
-| **B2** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B2** | 5 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B3** | 3 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
 | **B3** | 28 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
-| **B3** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B3** | 5 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B4** | 6 | answered-empty — the route's answered render is its empty state, and a server-backed empty answer and a client read that has not answered render the same |
 | **B4** | 8 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
 | **B4** | 1 | no-reads-failed — the route made no data read, so forcing reads to fail reached nothing |
-| **B4** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **B4** | 5 | the `behaviour` run did not reach this route — it covers every route the manifest names |
 | **B5** | 9 | no-page-reads — every read this route made is its shell's (or it made none), so no failure or wait of its own can be injected from the browser |
 | **B5** | 19 | not-intercepted — none of the route's reads was made again on the failure loads, so nothing was failed |
-| **B5** | 4 | the `behaviour` run did not reach this route — it covers every route the manifest names |
-| **F10** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **F8** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **F9** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **R1** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R2** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R3** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R4** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R5** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R6** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R7** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **R8** | 4 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
-| **T5** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **T6** | 4 | the `routes` run did not reach this route — it covers every route the manifest names |
-| **T7** | 17 | the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given |
+| **B5** | 5 | the `behaviour` run did not reach this route — it covers every route the manifest names |
+| **F10** | 5 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **F8** | 5 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **F9** | 5 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **R1** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R2** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R3** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R4** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R5** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R6** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R7** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **R8** | 5 | the `interaction` run did not reach this route — it covers every route the manifest names, plus the shell chrome once under `/[org]`; only what the empty org RENDERS |
+| **T5** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **T6** | 5 | the `routes` run did not reach this route — it covers every route the manifest names |
+| **T7** | 18 | the `permissions` run did not reach this route — it covers only the org-only routes; the parameterised ones need a project the persona cannot be given |
 
 **Nothing is suppressed.** R5, R6 and R7 declare no N/A reason at all, so an N/A on one of them
 is a parse error rather than a verdict. What still fails is recorded debt with an owner, and the
@@ -201,49 +201,49 @@ has a column of its own for the same reason — it is a fact about the instrumen
 
 | id | family | instrument | PASS | FAIL | N/A | NOT MEASURED | score | N/A reasons |
 |---|---|---|---:|---:|---:|---:|---:|---|
-| **S1** | S | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **S2** | S | `check-route-states` | 39 | 1 | 4 | 0 | 0.97 | `redirect-only` 4 |
-| **S3** | S | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **S4** | S | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **T1** | T | `check-route-states` | 40 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
-| **T2** | T | `check-route-states` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **T3** | T | `check-route-states` | 11 | 0 | 33 | 0 | 1.00 | `does-not-call-not-found` 33 |
-| **T4** | T | `check-route-states` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **T5** | T | live — `routes` | 18 | 0 | 22 | 4 | 1.00 | `no-empty-state` 22 |
-| **T6** | T | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
-| **T7** | T | live — `permissions` | 2 | 0 | 25 | 17 | 1.00 | `no-restricted-surface` 25 |
-| **H1** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H2** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H3** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H4** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H5** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H6** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H7** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H8** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **H9** | H | `check-shared-surface` | 44 | 0 | 0 | 0 | 1.00 | — |
-| **F1** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F2** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F3** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F4** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F5** | F | `check-filter-standard` | 20 | 1 | 23 | 0 | 0.95 | `not-a-list-page` 23 |
-| **F6** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F7** | F | `check-filter-standard` | 21 | 0 | 23 | 0 | 1.00 | `not-a-list-page` 23 |
-| **F8** | F | live — `interaction` | 16 | 0 | 24 | 4 | 1.00 | `not-a-list-page` 24 |
-| **F9** | F | live — `interaction` | 16 | 0 | 24 | 4 | 1.00 | `not-a-list-page` 24 |
-| **F10** | F | live — `interaction` | 15 | 0 | 25 | 4 | 1.00 | `no-search-field` 1, `not-a-list-page` 24 |
-| **R1** | R | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
-| **R2** | R | live — `routes` | 39 | 0 | 1 | 4 | 1.00 | `opens-no-overlay` 1 |
-| **R3** | R | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
-| **R4** | R | live — `routes` | 36 | 0 | 4 | 4 | 1.00 | `redirect-only` 4 |
-| **R5** | R | live — `routes` | 40 | 0 | 0 | 4 | 1.00 | — |
-| **R6** | R | live — `routes` | 40 | 0 | 0 | 4 | 1.00 | — |
-| **R7** | R | live — `routes` | 40 | 0 | 0 | 4 | 1.00 | — |
-| **R8** | R | live — `interaction` | 35 | 0 | 5 | 4 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
-| **B1** | B | live — `behaviour` | 27 | 0 | 4 | 13 | 1.00 | `redirect-only` 4 |
-| **B2** | B | live — `behaviour` | 30 | 0 | 4 | 10 | 1.00 | `redirect-only` 4 |
-| **B3** | B | live — `behaviour` | 5 | 0 | 4 | 35 | 1.00 | `redirect-only` 4 |
-| **B4** | B | live — `behaviour` | 21 | 0 | 4 | 19 | 1.00 | `redirect-only` 4 |
-| **B5** | B | live — `behaviour` | 8 | 0 | 4 | 32 | 1.00 | `redirect-only` 4 |
+| **S1** | S | `check-route-states` | 41 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **S2** | S | `check-route-states` | 40 | 1 | 4 | 0 | 0.98 | `redirect-only` 4 |
+| **S3** | S | `check-route-states` | 41 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **S4** | S | `check-route-states` | 41 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **T1** | T | `check-route-states` | 41 | 0 | 4 | 0 | 1.00 | `redirect-only` 4 |
+| **T2** | T | `check-route-states` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **T3** | T | `check-route-states` | 11 | 0 | 34 | 0 | 1.00 | `does-not-call-not-found` 34 |
+| **T4** | T | `check-route-states` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **T5** | T | live — `routes` | 18 | 0 | 22 | 5 | 1.00 | `no-empty-state` 22 |
+| **T6** | T | live — `routes` | 36 | 0 | 4 | 5 | 1.00 | `redirect-only` 4 |
+| **T7** | T | live — `permissions` | 2 | 0 | 25 | 18 | 1.00 | `no-restricted-surface` 25 |
+| **H1** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H2** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H3** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H4** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H5** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H6** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H7** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H8** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **H9** | H | `check-shared-surface` | 45 | 0 | 0 | 0 | 1.00 | — |
+| **F1** | F | `check-filter-standard` | 21 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F2** | F | `check-filter-standard` | 21 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F3** | F | `check-filter-standard` | 21 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F4** | F | `check-filter-standard` | 21 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F5** | F | `check-filter-standard` | 20 | 1 | 24 | 0 | 0.95 | `not-a-list-page` 24 |
+| **F6** | F | `check-filter-standard` | 21 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F7** | F | `check-filter-standard` | 21 | 0 | 24 | 0 | 1.00 | `not-a-list-page` 24 |
+| **F8** | F | live — `interaction` | 16 | 0 | 24 | 5 | 1.00 | `not-a-list-page` 24 |
+| **F9** | F | live — `interaction` | 16 | 0 | 24 | 5 | 1.00 | `not-a-list-page` 24 |
+| **F10** | F | live — `interaction` | 15 | 0 | 25 | 5 | 1.00 | `no-search-field` 1, `not-a-list-page` 24 |
+| **R1** | R | live — `routes` | 36 | 0 | 4 | 5 | 1.00 | `redirect-only` 4 |
+| **R2** | R | live — `routes` | 39 | 0 | 1 | 5 | 1.00 | `opens-no-overlay` 1 |
+| **R3** | R | live — `routes` | 36 | 0 | 4 | 5 | 1.00 | `redirect-only` 4 |
+| **R4** | R | live — `routes` | 36 | 0 | 4 | 5 | 1.00 | `redirect-only` 4 |
+| **R5** | R | live — `routes` | 40 | 0 | 0 | 5 | 1.00 | — |
+| **R6** | R | live — `routes` | 40 | 0 | 0 | 5 | 1.00 | — |
+| **R7** | R | live — `routes` | 40 | 0 | 0 | 5 | 1.00 | — |
+| **R8** | R | live — `interaction` | 35 | 0 | 5 | 5 | 1.00 | `no-enabled-controls` 1, `redirect-only` 4 |
+| **B1** | B | live — `behaviour` | 27 | 0 | 4 | 14 | 1.00 | `redirect-only` 4 |
+| **B2** | B | live — `behaviour` | 30 | 0 | 4 | 11 | 1.00 | `redirect-only` 4 |
+| **B3** | B | live — `behaviour` | 5 | 0 | 4 | 36 | 1.00 | `redirect-only` 4 |
+| **B4** | B | live — `behaviour` | 21 | 0 | 4 | 20 | 1.00 | `redirect-only` 4 |
+| **B5** | B | live — `behaviour` | 8 | 0 | 4 | 33 | 1.00 | `redirect-only` 4 |
 | **B6** | B | **none** — #6115 | — | — | — | — | — | — |
 
 The static H half emits **no N/A at all**, which is why those rows are empty rather than
@@ -299,6 +299,7 @@ implied by a missing suffix, because a suffix that is usually absent is read as 
 | `/[org]/~/settings` · | all N/A | 2/2 · 1.00 | 9/9 · 1.00 | all N/A | 4/4 · 1.00 | all N/A | **1.00** · 0 withheld of 44 |
 | `/[org]/~/settings/access` | 4/4 · 1.00 | 5/5 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 1/1 · 1.00 · 4 withheld | **1.00** · 4 withheld of 44 |
 | `/[org]/~/settings/activity` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 10/10 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
+| `/[org]/~/settings/agents` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | all N/A or withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/settings/billing` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | all N/A | 8/8 · 1.00 | 2/2 · 1.00 · 3 withheld | **1.00** · 3 withheld of 44 |
 | `/[org]/~/settings/billing/early-access` | 4/4 · 1.00 | 3/3 · 1.00 · 3 withheld | 9/9 · 1.00 | all N/A or withheld | all withheld (8) | all withheld (5) | **1.00** · 19 withheld of 44 |
 | `/[org]/~/settings/billing/invoices` | 4/4 · 1.00 | 4/4 · 1.00 | 9/9 · 1.00 | 9/9 · 1.00 | 8/8 · 1.00 | 3/3 · 1.00 · 2 withheld | **1.00** · 2 withheld of 44 |
@@ -326,7 +327,7 @@ the console errors it produces and the time it takes to land are real and are me
 
 ## Where every shared-surface occurrence landed
 
-`check-shared-surface` found **21 occurrences across 14 files**. This section
+`check-shared-surface` found **20 occurrences across 13 files**. This section
 accounts for all of them twice — once by ledger, once by reach — so a rule or a file falling out
 of the scoreboard cannot be quiet.
 
@@ -337,12 +338,12 @@ of the scoreboard cannot be quiet.
 | `format` | H5 | 4 | 4 | 0 | 0 | 1 | 3 | 0 | 0 |
 | `ink_alpha` | **none** — #4309 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `layer_token` | H7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `page_title` | H1 | 16 | 16 | 0 | 0 | 6 | 1 | 0 | 9 |
+| `page_title` | H1 | 15 | 15 | 0 | 0 | 6 | 1 | 0 | 8 |
 | `section_header` | H2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `stat_strip` | H6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `status_badge` | H3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | `type_scale` | H8 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| **total** | | 21 | 21 | 0 | 0 | 7 | 4 | 0 | 10 |
+| **total** | | 20 | 20 | 0 | 0 | 7 | 4 | 0 | 9 |
 
 **`unlisted` is the column to read first.** A non-zero value means the guard is red — an
 occurrence neither a `reason:` nor a `lifts:` entry accounts for. It is not a defect of this
@@ -371,7 +372,7 @@ file. Fixing one of these is worth more than its occurrence count suggests, not 
 
 _None — every occurrence in this bucket has been lifted._
 
-**Outside every private route's module graph** — 5 files, all under `apps/console`.
+**Outside every private route's module graph** — 4 files, all under `apps/console`.
 Public routes (sign-in, onboarding, OAuth consent, accepting terms) and console modules no private
 page imports. The route manifest is scoped to `app/(private)`, so these are outside the rubric's
 stated subject and are listed here rather than scored. A file reached only through `@repo/*` is
@@ -382,7 +383,6 @@ stated subject and are listed here rather than scored. A file reached only throu
 | `apps/console/components/auth/auth-form.tsx` | 5 |
 | `apps/console/components/forms/oauth-consent-form.tsx` | 2 |
 | `apps/console/components/auth/onboarding-form.tsx` | 1 |
-| `apps/console/components/errors/error-state.tsx` | 1 |
 | `apps/console/components/legal/accept-terms-form.tsx` | 1 |
 
 _Generated by `apps/console/scripts/audit-report.mjs`. Do not edit below the marker — run `pnpm -C apps/console run audit:report --write`._
