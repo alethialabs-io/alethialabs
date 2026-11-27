@@ -9,13 +9,14 @@
 // (`Spinner`, and `<Button pending>` through it), `@repo/brand/loader` draws it at region and page
 // size (`MarkLoader`), and `@repo/brand/thinking-indicator` draws it beside a rotating verb for an
 // agent that is thinking. A spinning lucide glyph next to any of them tells the user the product is
-// two products. The conversion lanes under #7869 replace the remaining sites; this is their census
-// now and their ratchet later.
+// two products. The conversion lanes under #7869 replaced every site this matches.
 //
-// REPORT MODE. Until the conversion lanes land, a plain run prints the census and EXITS 0 whatever
-// it finds. `--enforce` makes any finding exit 1; the epic's last unit flips the package.json
-// script to pass it. There is NO allowlist and there will not be one: a site is converted, never
-// excused. A surface that genuinely needs a different wait gets the mark at a different size.
+// ENFORCING (#7874). Any finding exits 1; CI runs it in the "Authz / open-core guards" job. There
+// is NO allowlist and there will not be one: a site is converted, never excused. A surface that
+// genuinely needs a different wait gets the mark at a different size. Which primitive a site
+// becomes follows its meaning (#7869): an action is `<Button pending>` with its own progressive
+// verb, an unknown wait is `<MarkLoader>`, a control fetching is the inline `<Spinner>`, an agent
+// thinking is `<ThinkingIndicator>`, and a known layout is a skeleton.
 //
 // WHAT IS MATCHED, after comments are stripped (strings are kept — a class list is a string):
 //   · Loader2       — the identifier `Loader2` or `Loader2Icon` as a whole word: an import, a JSX
@@ -41,7 +42,7 @@
 //   · the comment stripper is the tokenizer from check-single-keydown.mjs, not a parser: an
 //     apostrophe in JSX text can be misread as a quote, which can only KEEP text (add a finding).
 //
-// Usage:  node scripts/check-no-adhoc-spinner.mjs [--enforce] [--self-test]
+// Usage:  node scripts/check-no-adhoc-spinner.mjs [--self-test]
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -122,9 +123,9 @@ export function census(findings) {
 		.sort((a, b) => b.findings.length - a.findings.length || a.path.localeCompare(b.path));
 }
 
-/** The exit code for a set of findings: 1 only when enforcing and something was found. */
-export function exitCode(findings, enforce) {
-	return enforce && findings.length > 0 ? 1 : 0;
+/** The exit code for a set of findings: 1 when anything was found. */
+export function exitCode(findings) {
+	return findings.length > 0 ? 1 : 0;
 }
 
 /** The tracked files this guard reads, with their contents. */
@@ -139,32 +140,30 @@ function trackedSources(root) {
 	return listed.map((p) => [p, readFileSync(join(root, p), "utf8")]);
 }
 
-/** Prints the census and returns the exit code. */
-function report(findings, scanned, enforce) {
+/**
+ * Prints the census through `out` / `err` and returns the exit code. Both the CLI and the
+ * self-test go through here, so the self-test's seeded run is the same path CI's run takes.
+ */
+export function report(findings, scanned, out = console.log, err = console.error) {
 	const groups = census(findings);
-	const mark = enforce ? "✗" : "·";
-	const print = enforce ? console.error : console.log;
 	for (const { path, findings: list } of groups) {
 		const counts = RULES.map(({ id }) => [id, list.filter((f) => f.rule === id).length])
 			.filter(([, n]) => n > 0)
 			.map(([id, n]) => `${id}×${n}`)
 			.join(" ");
-		print(`${mark} ${path}  (${list.length}: ${counts})`);
-		for (const f of list) print(`    ${f.line}  [${f.rule}]  ${f.text}`);
+		err(`✗ ${path}  (${list.length}: ${counts})`);
+		for (const f of list) err(`    ${f.line}  [${f.rule}]  ${f.text}`);
+	}
+	if (findings.length === 0) {
+		out(`✓ check-no-adhoc-spinner: ${scanned} files, no ad-hoc spinner — the [·] mark is the only loader`);
+		return exitCode(findings);
 	}
 	const totals = RULES.map(({ id }) => `${id} ${findings.filter((f) => f.rule === id).length}`).join(", ");
-	if (findings.length === 0) {
-		console.log(`✓ check-no-adhoc-spinner: ${scanned} files, no ad-hoc spinner — the [·] mark is the only loader`);
-		return 0;
-	}
-	print(`\n    fix: ${FIX}`);
-	const summary = `check-no-adhoc-spinner: ${findings.length} ad-hoc spinner site(s) in ${groups.length} file(s) of ${scanned} read (${totals}).`;
-	if (enforce) {
-		console.error(`\n✗ ${summary}`);
-	} else {
-		console.log(`\n· ${summary}\n  REPORT MODE: exiting 0. Pass --enforce to fail on these (#7869's last unit flips it).`);
-	}
-	return exitCode(findings, enforce);
+	err(`\n    fix: ${FIX}`);
+	err(
+		`\n✗ check-no-adhoc-spinner: ${findings.length} ad-hoc spinner site(s) in ${groups.length} file(s) of ${scanned} read (${totals}). There is no allowlist: convert the site.`,
+	);
+	return exitCode(findings);
 }
 
 /** Each case is [description, path, source, expected rules]. The exit code is the test. */
@@ -224,23 +223,33 @@ function selfTest() {
 		failed++;
 		console.error(`✗ self-test: census grouped wrongly: ${JSON.stringify(grouped.map((g) => [g.path, g.findings.length]))}`);
 	}
-	// Report mode passes with findings; --enforce fails with them and passes without.
-	const some = scan([[C, "<Loader2 />"]]);
-	if (exitCode(some, false) !== 0 || exitCode(some, true) !== 1 || exitCode([], true) !== 0) {
+	// Enforcement: a seeded site, run through the same report() the CLI exits with, exits 1; a
+	// tree with no site exits 0. Output is swallowed so the seeded census does not read as real.
+	const quiet = () => {};
+	const seeded = scan([
+		["apps/console/components/seeded.tsx", '<Loader2 className="animate-spin" />'],
+		["apps/console/components/clean.tsx", "<Button pending>Saving…</Button>"],
+	]);
+	const seededExit = report(seeded, 2, quiet, quiet);
+	if (seeded.length !== 2 || seededExit !== 1) {
 		failed++;
-		console.error("✗ self-test: exitCode does not tell report mode from --enforce");
+		console.error(`✗ self-test: a seeded site exited ${seededExit} with ${seeded.length} finding(s), want exit 1 with 2`);
+	}
+	const cleanExit = report(scan([["apps/console/components/clean.tsx", "<Spinner />"]]), 1, quiet, quiet);
+	if (cleanExit !== 0) {
+		failed++;
+		console.error(`✗ self-test: a tree with no site exited ${cleanExit}, want 0`);
 	}
 	if (failed) {
 		console.error(`check-no-adhoc-spinner --self-test: ${failed} failure(s)`);
 		return 1;
 	}
-	console.log(`✓ check-no-adhoc-spinner --self-test: ${cases.length} cases behave, both directions`);
+	console.log(`✓ check-no-adhoc-spinner --self-test: ${cases.length} cases behave, both directions; a seeded site exits 1`);
 	return 0;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	if (process.argv.includes("--self-test")) process.exit(selfTest());
-	const enforce = process.argv.includes("--enforce");
 	const files = trackedSources(ROOT);
-	process.exit(report(scan(files), files.length, enforce));
+	process.exit(report(scan(files), files.length));
 }

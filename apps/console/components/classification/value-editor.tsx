@@ -42,7 +42,7 @@ import {
 	valueInputSchema,
 } from "@/lib/validations/classification";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
-import { InfoHint, Spinner } from "./classification-ui";
+import { InfoHint } from "./classification-ui";
 
 /** The minimum-approvals message: the one thing the number field can be wrong about. */
 const MIN_APPROVALS_MESSAGE = "Enter a whole number from 1 to 10.";
@@ -335,9 +335,15 @@ export function ValueEditor({
 								Cancel
 							</Button>
 							{/* An edit with nothing changed has nothing to save; a new value always does. */}
-							<Button type="submit" disabled={save.isPending || !label || (isEdit && !dirty)}>
-								{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
-								Save value
+							{/* The verb names the write in flight: an edit updates the value, a create adds it —
+							    the same two words its success toast uses. */}
+							<Button
+								type="submit"
+								pending={save.isPending}
+								disabled={!label || (isEdit && !dirty)}
+							>
+								<Check className="size-3.5" />
+								{save.isPending ? (isEdit ? "Updating value…" : "Adding value…") : "Save value"}
 							</Button>
 						</DialogFooter>
 					</form>

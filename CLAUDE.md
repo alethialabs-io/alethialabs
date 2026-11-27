@@ -271,6 +271,7 @@ product is two products.**
 | A **section** heading inside a page | `@repo/ui/section-heading` — `SectionHeading`, with `level` for the outline | a bespoke `<h2>` at whatever size that file chose |
 | A font size | a `--text-ui-*` rung from `packages/brand/src/tokens.css` | `text-[13px]`, or the same number in any other unit |
 | An empty list, tab or panel | `@repo/ui/empty` — `EmptyState` | a one-off centred div |
+| A loading state | skeleton (known layout) · `MarkLoader` (unknown wait) · `Button pending` (an action, with its own verb) · `ThinkingIndicator` (agent) | a hand-rolled spinner (`Loader2`, `animate-spin`) |
 | A status pill | `@repo/ui/status-badge` | a `<Badge>` plus a local colour map |
 | A table | `DataTable`, or `@repo/ui/table` for shapes it cannot express | a `<div className="grid">` |
 | A layer above the page | a `--z-*` token from `packages/brand/src/tokens.css` | a bare `z-50` or `z-[95]` |
