@@ -7,6 +7,7 @@
 // accent, usage bar + a drill into the resources carrying each value, edit / delete), an inline
 // add-value input, and the "coverage by resource kind" panel (loaded lazily for the dimension).
 
+import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { Skeleton } from "@repo/ui/skeleton";
@@ -18,7 +19,7 @@ import { MoveButtons, movedBy } from "./move-buttons";
 import { useRef, useState } from "react";
 import type { DimensionDTO, ValueDTO } from "@/app/server/actions/classification/dimensions";
 import { orpc } from "@/lib/rpc/client";
-import { InfoHint, Spinner } from "./classification-ui";
+import { InfoHint } from "./classification-ui";
 import { kindLabel } from "./resource-kind-labels";
 
 /** Reorders `ids` by moving `dragId` to `targetId`'s slot. */
@@ -240,15 +241,18 @@ function AddValue({ onAdd }: { onAdd: (label: string) => Promise<boolean> }) {
 				placeholder="Add a value — type a label, press Enter"
 				className="h-8 flex-1 border-border-strong bg-surface-sunken text-ui-sm"
 			/>
-			<button
+			<Button
 				type="button"
+				variant="outline"
+				size="sm"
 				onClick={submit}
-				disabled={pending || !label.trim()}
-				className="inline-flex h-8 items-center gap-1.5 rounded-[2px] border border-border-strong bg-surface px-[11px] text-ui-sm font-medium text-text-primary transition-colors hover:bg-surface-muted disabled:opacity-50"
+				pending={pending}
+				disabled={!label.trim()}
+				className="text-ui-sm"
 			>
-				{pending ? <Spinner size={13} /> : <Plus className="size-3" />}
-				Add
-			</button>
+				<Plus className="size-3" />
+				{pending ? "Adding value…" : "Add"}
+			</Button>
 		</div>
 	);
 }

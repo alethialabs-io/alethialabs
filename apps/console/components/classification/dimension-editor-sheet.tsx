@@ -51,7 +51,7 @@ import {
 	type ClassificationTemplate,
 } from "./classification-templates";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
-import { InfoHint, Spinner } from "./classification-ui";
+import { InfoHint } from "./classification-ui";
 import { RESOURCE_KIND_LABELS } from "./resource-kind-labels";
 
 /** The blank dimension a create starts from. */
@@ -107,6 +107,17 @@ function withFormFieldKeys<T>(
 /** Whether two staged value lists hold the same values in the same order. */
 function sameStaged(a: readonly SeedValue[], b: readonly SeedValue[]): boolean {
 	return a.length === b.length && a.every((v, i) => v.value === b[i]?.value && v.label === b[i]?.label);
+}
+
+/**
+ * The submit button's label. At rest it names the action; in flight it names the write that
+ * `saveDimension` is actually making — an update, a create with its staged values, or a bare
+ * create — so the button never says "Saving…" for something that is not one.
+ */
+function submittingLabel(isEdit: boolean, stagedCount: number, submitting: boolean): string {
+	if (!submitting) return isEdit ? "Save changes" : "Create dimension";
+	if (isEdit) return "Updating dimension…";
+	return stagedCount > 0 ? "Creating dimension and values…" : "Creating dimension…";
 }
 
 /** Create / edit a dimension. Controlled via `open` / `onOpenChange`. */
@@ -535,9 +546,12 @@ export function DimensionEditorSheet({
 							Cancel
 						</Button>
 						{/* An edit with nothing changed has nothing to save; a create always does. */}
-						<Button type="submit" disabled={submitting || !watchedLabel || (isEdit && !dirty)}>
-							{submitting && <Spinner />}
-							{isEdit ? "Save changes" : "Create dimension"}
+						<Button
+							type="submit"
+							pending={submitting}
+							disabled={!watchedLabel || (isEdit && !dirty)}
+						>
+							{submittingLabel(isEdit, staged.length, submitting)}
 						</Button>
 					</SheetFooter>
 				</form>
