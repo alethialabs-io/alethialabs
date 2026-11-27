@@ -1,23 +1,51 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Suspense } from "react";
+import { redirect } from "next/navigation";
 import { AuthShell } from "@/components/auth/auth-shell";
-import { OAuthConsentForm } from "@/components/forms/oauth-consent-form";
+import type { ConsentView } from "@/components/auth/consent/consent-model";
+import { signedOAuthQuery } from "@/components/auth/consent/consent-model";
+import { ConsentScreen } from "@/components/auth/consent/consent-screen";
+import { readConsentContext } from "@/lib/agents/consent-context";
+import { getViewer } from "@/lib/auth/owner";
+import { roleDisplayName } from "@/lib/authz/registry";
+
+/** The consent screen reads the session and the signed request on every request. */
+export const dynamic = "force-dynamic";
+
+interface OAuthConsentPageProps {
+	searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
 
 /**
- * OAuth consent screen (configured as the mcp() plugin's consentPage). It used to
- * MIRROR the sign-in chrome by hand — its own logo at `top-10 left-10` against the
- * shell's `px-8 py-6`, and no footer at all. It wears the real shell now; the
- * interactive decision lives in OAuthConsentForm (it reads the consent_code/scope
- * from the query, so it stays wrapped in Suspense).
+ * The OAuth consent screen (AGT-L2, SPEC §5b), configured as the `mcp()` provider's `consentPage`.
+ * Better Auth sends the person here with a signed copy of the authorization request; this page reads
+ * what the screen shows for the signed-in person (`readConsentContext` — it grants nothing) and hands
+ * it to the screen, whose Allow and Deny call `answerAgentConsent`.
+ *
+ * Nobody signed in (a session that lapsed between the authorize step and this page): sign in first and
+ * come straight back to the same request.
  */
-export default function OAuthConsentPage() {
+export default async function OAuthConsentPage({ searchParams }: OAuthConsentPageProps) {
+	const oauthQuery = signedOAuthQuery(await searchParams);
+	const viewer = await getViewer();
+	if (!viewer) {
+		const back = oauthQuery ? `/auth/oauth/consent?${oauthQuery}` : "/auth/oauth/consent";
+		redirect(`/login?next=${encodeURIComponent(back)}`);
+	}
+	const context = await readConsentContext(viewer.id, oauthQuery);
+	const view: ConsentView =
+		context.state === "ready"
+			? { ...context, orgs: context.orgs.map((o) => ({ ...o, roleLabel: roleDisplayName(o.role) })) }
+			: context;
 	return (
-		<AuthShell>
-			<Suspense>
-				<OAuthConsentForm />
-			</Suspense>
+		<AuthShell cardWidth="wide">
+			<ConsentScreen
+				view={view}
+				account={{ name: viewer.name, email: viewer.email, image: viewer.image }}
+				oauthQuery={oauthQuery}
+				manageHref="/dashboard/settings/connected"
+			/>
 		</AuthShell>
 	);
 }
