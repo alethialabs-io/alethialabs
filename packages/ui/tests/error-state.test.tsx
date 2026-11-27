@@ -53,6 +53,34 @@ describe("ErrorState", () => {
 		expect(screen.queryByTestId("mark")).toBeNull();
 	});
 
+	it("sets a bracketed code between the mark's two brackets, with the code as its own text", () => {
+		const { container } = render(<ErrorState fullPage code="404" codeVariant="bracketed" title="Nothing here." />);
+		const slot = container.querySelector('[data-slot="error-state-code"]');
+		expect(slot).not.toBeNull();
+		// The code is a text node of its own — the e2e specs find every 404 by this exact text.
+		expect(screen.getByText("404", { exact: true }).closest('[data-slot="error-state-code"]')).toBe(slot);
+		// Space Grotesk 600, at a display rung: the larger one full page, the shell one in a panel.
+		expect(slot).toHaveClass("font-grotesk", "font-semibold", "text-display-sm");
+		// The brackets are the mark's two paths, drawn and hidden from assistive technology.
+		const brackets = slot?.querySelectorAll("svg") ?? [];
+		expect(brackets).toHaveLength(2);
+		for (const svg of brackets) expect(svg.getAttribute("aria-hidden")).toBe("true");
+		expect(brackets[0]?.querySelector("path")?.getAttribute("d")).toBe("M11 6 H6.5 V26 H11");
+		expect(brackets[1]?.querySelector("path")?.getAttribute("d")).toBe("M21 6 H25.5 V26 H21");
+	});
+
+	it("sets the bracketed code at the shell's display rung in the in-content panel", () => {
+		const { container } = render(<ErrorState code="404" codeVariant="bracketed" title="Nothing here." />);
+		expect(container.querySelector('[data-slot="error-state-code"]')).toHaveClass("text-display-xs");
+	});
+
+	it("keeps the mono code line, without brackets, when no variant is asked for", () => {
+		const { container } = render(<ErrorState code="500" title="A" />);
+		expect(container.querySelector('[data-slot="error-state-code"]')).toBeNull();
+		expect(screen.getByText("500")).toHaveClass("font-mono");
+		expect(container.querySelector("svg")).toBeNull();
+	});
+
 	it("keeps the layout literals the e2e T6 detector derives its signature from", () => {
 		// apps/console/e2e/audit/error-state.ts reads this file's class literals carrying
 		// `min-h-[320px]` / `min-h-screen` to recognise a rendered ErrorState.

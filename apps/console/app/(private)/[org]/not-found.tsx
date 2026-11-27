@@ -34,9 +34,9 @@
 //
 // Still non-leaky: absent and forbidden read the same — we never disclose existence.
 //
-// The copy is the polish-wave 404 form (spec §4, #7741): "Nothing here.", the likely reason, and
-// the way back to this org's projects. It is a client component only to read the org from the
-// address — a not-found file receives no params.
+// The copy is the signed-off 404 form (spec §4, #7875): `[ 404 ]`, "Nothing here.", a reason line
+// naming the org the address is in, and the way back to this org's projects. It is a client
+// component only to read the org from the address — a not-found file receives no params.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -51,8 +51,13 @@ export default function OrgNotFound() {
 	return (
 		<ErrorState
 			code="404"
+			codeVariant="bracketed"
 			title="Nothing here."
-			description="The address may be mistyped, or the page has moved. It may also be something you don't have access to."
+			description={
+				org
+					? `There's no page at this address in ${org}, or you don't have access to it.`
+					: "There's no page at this address, or you don't have access to it."
+			}
 			actions={
 				// An `<a href>` in the DOM — the only way out of a 404 — announced as a link.
 				// base-ui's Button merges `{role: 'button'}` onto any non-native render

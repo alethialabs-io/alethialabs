@@ -8,14 +8,20 @@
 //
 // THREE DIFFERENT 404s, AND THE DIFFERENCES ARE LOAD-BEARING. Each test below states which one it
 // is driving, because a positive assertion on any of them passes on another the moment somebody
-// edits a heading:
+// edits its copy.
+//
+// SINCE #7875 THEY ALL SAY THE SAME HEADING. Every 404 is the signed-off form — `[ 404 ]`,
+// "Nothing here.", then a SPECIFIC reason line — so the heading tells them apart no longer and the
+// REASON LINE is what each test below asserts, exactly. A regex on the heading would now pass on
+// every one of the three; that is the trap this paragraph exists to keep anyone out of.
 //
 //   · an unknown ORG slug is thrown by `[org]/layout.tsx`, which is OUTSIDE the boundary
 //     `[org]/not-found.tsx` provides (Next hands a segment's not-found.tsx to the LayoutRouter for
 //     that segment's CHILDREN slot), so it is answered FULL PAGE by `(private)/not-found.tsx` —
-//     "Organization not found", with no shell behind it;
+//     "This organization doesn't exist, or you don't have access to it.", with no shell behind it;
 //   · an unknown PROJECT slug is answered IN-SHELL by `[org]/[project]/not-found.tsx` (#3880) —
-//     "Project not found", whose way out is the org's project list rather than the app root;
+//     "This project doesn't exist in <org>, or you don't have access to it.", whose way out is the
+//     org's project list rather than the app root;
 //   · `[org]/not-found.tsx` is the org-level FALLBACK for anything below `[org]` with no nearer
 //     boundary. THIS FILE DRIVES NOTHING THAT REACHES IT, and saying so is the point: the only
 //     `notFound()` calls below `[org]` today are in `[project]/**` and `~/support/cases/[id]`, and
@@ -26,7 +32,8 @@
 // asserted a "Go home" action on the unknown-project 404 — because `[org]/not-found.tsx`'s own
 // header names "a project slug that does not resolve" as one of the throws that arrive at it. That
 // sentence has been false since #3880 added the project boundary. The tree was read, the comment
-// was believed, and the run said "Project not found … All projects".
+// was believed, and the run said "Project not found … All projects" (the project 404's heading
+// before #7875).
 //
 // WHAT #4267 CHANGED HERE. The way out of a 404 is reachable as a LINK on every boundary this file
 // drives. Each always rendered an `<a href>`, but base-ui's Button stamps `role="button"` on any
@@ -39,21 +46,36 @@
 // before the release gate the `qa` project ran nowhere in CI, so this file sat green-by-absence
 // while a bad org slug rendered the root "Page not found" for months (#3891).
 //
+// The reason lines are written out here rather than imported: this file asserts what a USER reads,
+// and importing the copy from the page would make a reworded page pass by construction.
+//
 // Run (self-check):
 //   REUSE_AUTH=1 E2E_BASE_URL=http://localhost:3100 DEV_CONSOLE_LOG=/tmp/alethia-qa-console.log \
 //     E2E_WORKERS=1 E2E_RETRIES=1 npx playwright test e2e/flows/navigation-shell.negative.spec.ts
 
 import { test, expect } from "../fixtures/qa";
 
+/** `(private)/not-found.tsx`'s reason line — the ORG 404. */
+const ORG_REASON = "This organization doesn't exist, or you don't have access to it.";
+
+/** `app/not-found.tsx`'s reason line — the ROOT 404, which a bad org slug rendered before #3891. */
+const ROOT_REASON = "There's no page at this address. The link may be out of date, or the page has moved.";
+
+/** `[org]/[project]/not-found.tsx`'s reason line for an org — the PROJECT 404, naming the org it looked in. */
+function projectReason(orgSlug: string): string {
+	return `This project doesn't exist in ${orgSlug}, or you don't have access to it.`;
+}
+
 test.describe("Navigation shell — unknown routes (404)", () => {
 	test("an unknown project slug renders the PROJECT 404, which names the project", async ({ owner }) => {
 		await owner.page.goto(`/${owner.orgSlug}/does-not-exist-${Date.now()}`);
 		await expect(owner.page.getByText("404", { exact: true })).toBeVisible({ timeout: 20_000 });
 		// `[org]/[project]/not-found.tsx` (#3880), NOT the org-level fallback. The distinction is
-		// the whole finding of this file's first run: the copy here names the resource that is
-		// actually missing, and asserting the fallback's generic "Not found" would pass on a
-		// regression that deleted this boundary.
-		await expect(owner.page.getByRole("heading", { name: /^project not found$/i })).toBeVisible();
+		// the whole finding of this file's first run: the reason line here names the resource that
+		// is actually missing, and asserting the shared "Nothing here." heading alone would pass on
+		// a regression that deleted this boundary. Exact text, so the fallback's line cannot match.
+		await expect(owner.page.getByText(projectReason(owner.orgSlug), { exact: true })).toBeVisible();
+		await expect(owner.page.getByRole("heading", { name: "Nothing here.", exact: true })).toBeVisible();
 		await expect(owner.page).not.toHaveURL(/\/login/);
 	});
 
@@ -80,15 +102,16 @@ test.describe("Navigation shell — unknown routes (404)", () => {
 
 	test("an unknown org slug renders the non-leaky ORG 404, not the root one", async ({ owner }) => {
 		await owner.page.goto(`/e2e-no-such-org-${Date.now()}`);
-		await expect(owner.page.getByRole("heading", { name: /organization not found/i })).toBeVisible({
+		await expect(owner.page.getByText(ORG_REASON, { exact: true })).toBeVisible({
 			timeout: 20_000,
 		});
+		await expect(owner.page.getByRole("heading", { name: "Nothing here.", exact: true })).toBeVisible();
 		await expect(owner.page.getByRole("link", { name: /go home/i })).toBeVisible();
 		// AND NOT the root app/not-found.tsx, which is what actually rendered before #3891. Its
-		// heading is "Page not found" and it is the only 404 in the console carrying a "Sign in"
+		// reason line is its own and it is the only 404 in the console carrying a "Sign in"
 		// action — so a positive assertion on the org copy alone passes on the wrong page the
-		// moment somebody renames a heading. Both halves are asserted for that reason.
-		await expect(owner.page.getByRole("heading", { name: /^page not found$/i })).toHaveCount(0);
+		// moment somebody rewords a line. Both halves are asserted for that reason.
+		await expect(owner.page.getByText(ROOT_REASON, { exact: true })).toHaveCount(0);
 		await expect(owner.page.getByRole("link", { name: /sign in/i })).toHaveCount(0);
 		await expect(owner.page).not.toHaveURL(/\/login/);
 	});
@@ -98,7 +121,7 @@ test.describe("Navigation shell — unknown routes (404)", () => {
 		// merged: with no resolved org there is no id to render the dashboard chrome with, so the
 		// sidebar landmark must be absent here and present there.
 		await owner.page.goto(`/e2e-no-such-org-${Date.now()}`);
-		await expect(owner.page.getByRole("heading", { name: /organization not found/i })).toBeVisible({
+		await expect(owner.page.getByText(ORG_REASON, { exact: true })).toBeVisible({
 			timeout: 20_000,
 		});
 		await expect(owner.page.getByRole("complementary")).toHaveCount(0);
