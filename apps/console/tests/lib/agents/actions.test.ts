@@ -32,6 +32,8 @@ const h = vi.hoisted(() => ({
 	writeGrant: vi.fn(),
 	viewable: vi.fn(),
 	grantableProjects: vi.fn(),
+	snapshot: vi.fn(),
+	restore: vi.fn(),
 }));
 
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ cookie: "session=abc", origin: "https://console.test" }) }));
@@ -68,6 +70,8 @@ vi.mock("@/lib/agents/consent", async (importOriginal) => ({
 	scopesRoleAllows: h.roleAllows,
 	writeGrantForConsent: h.writeGrant,
 	grantableProjectIds: h.grantableProjects,
+	readConsentSnapshot: h.snapshot,
+	restoreConsent: h.restore,
 }));
 
 import { disconnectAgent } from "@/app/server/actions/agents/connections";
@@ -223,6 +227,7 @@ describe("disconnectAgent", () => {
 
 describe("answerAgentConsent", () => {
 	const future = String(Math.floor(Date.now() / 1000) + 300);
+	const SNAPSHOT = { clientId: "https://cursor.com/c.json", userId: USER, rows: [] };
 	const query = (exp = future) =>
 		new URLSearchParams({ client_id: "https://cursor.com/c.json", scope: "openid read plan apply", exp, sig: "s" }).toString();
 
@@ -234,6 +239,8 @@ describe("answerAgentConsent", () => {
 		h.writeGrant.mockResolvedValue("grant-1");
 		h.viewable.mockResolvedValue([PROJECT]);
 		h.handler.mockResolvedValue(new Response(JSON.stringify({ redirect: true, url: "https://cursor.com/cb?code=1" }), { status: 200 }));
+		h.snapshot.mockResolvedValue(SNAPSHOT);
+		h.restore.mockResolvedValue(undefined);
 	});
 
 	it("says expired for a request past its signed expiry, and calls nothing", async () => {
@@ -289,13 +296,44 @@ describe("answerAgentConsent", () => {
 		expect(await request.json()).toMatchObject({ accept: true, scope: "openid plan read" });
 		expect(h.writeGrant).toHaveBeenCalledWith({}, { orgId: ORG, userId: USER, clientId: "https://cursor.com/c.json", scopes: ["plan", "read"], projectIds: null });
 		expect(h.markAnswered).toHaveBeenCalledWith(expect.any(String), "allowed", expect.any(Date));
+		// The person's consent rows are read before Better Auth's call, and left alone once the grant is written.
+		expect(h.snapshot).toHaveBeenCalledWith("https://cursor.com/c.json", USER);
+		expect(h.snapshot.mock.invocationCallOrder[0]).toBeLessThan(h.handler.mock.invocationCallOrder[0] ?? 0);
+		expect(h.restore).not.toHaveBeenCalled();
 	});
 
-	it("says invalid, and writes no grant, when Better Auth refuses the request", async () => {
+	it("says invalid, writes no grant, and puts the consent back when Better Auth refuses the request", async () => {
 		h.handler.mockResolvedValue(new Response(JSON.stringify({ error: "invalid_signature" }), { status: 400 }));
 		const result = await answerAgentConsent({ oauthQuery: query(), accept: true, orgId: ORG, scopes: ["read"] });
 		expect(result.ok && result.data).toEqual({ outcome: "invalid" });
 		expect(h.writeGrant).not.toHaveBeenCalled();
+		expect(h.markAnswered).not.toHaveBeenCalled();
+		expect(h.restore).toHaveBeenCalledWith(SNAPSHOT);
+	});
+
+	it("puts the consent back, and returns no redirect, when the grant write fails", async () => {
+		h.writeGrant.mockRejectedValue(new Error("connection lost"));
+		const result = await answerAgentConsent({ oauthQuery: query(), accept: true, orgId: ORG, scopes: ["read"] });
+		expect(result.ok).toBe(false);
+		expect(h.restore).toHaveBeenCalledWith(SNAPSHOT);
+		expect(h.markAnswered).not.toHaveBeenCalled();
+		expect(h.recordActivity).not.toHaveBeenCalled();
+	});
+
+	it("puts the consent back when there was no consent row to bind the grant to", async () => {
+		h.writeGrant.mockResolvedValue(null);
+		const result = await answerAgentConsent({ oauthQuery: query(), accept: true, orgId: ORG, scopes: ["read"] });
+		expect(result.ok).toBe(false);
+		expect(h.restore).toHaveBeenCalledWith(SNAPSHOT);
+		expect(h.markAnswered).not.toHaveBeenCalled();
+	});
+
+	it("still answers with the failure when putting the consent back fails too", async () => {
+		h.writeGrant.mockRejectedValue(new Error("connection lost"));
+		h.restore.mockRejectedValue(new Error("still lost"));
+		const result = await answerAgentConsent({ oauthQuery: query(), accept: true, orgId: ORG, scopes: ["read"] });
+		expect(result.ok).toBe(false);
+		expect(h.restore).toHaveBeenCalledWith(SNAPSHOT);
 		expect(h.markAnswered).not.toHaveBeenCalled();
 	});
 

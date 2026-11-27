@@ -27,12 +27,12 @@ vi.mock("@/lib/authz/actor-context", () => ({
 vi.mock("@/lib/billing/ai-guard", () => ({ isAiSurfaceEnabled: vi.fn(async () => true) }));
 
 // The reads behind the real resolveMcpActor.
-vi.mock("@/lib/agents/grant-binding", () => ({ readGrantBinding: vi.fn() }));
+vi.mock("@/lib/agents/grant-binding", () => ({ readGrantBinding: vi.fn(), releaseUngrantedConsent: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withScope: vi.fn() }));
 vi.mock("@/lib/approvals/context", () => ({ readAgentPolicy: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
 
-import { readGrantBinding } from "@/lib/agents/grant-binding";
+import { readGrantBinding, releaseUngrantedConsent } from "@/lib/agents/grant-binding";
 import { readAgentPolicy } from "@/lib/approvals/context";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -129,6 +129,22 @@ describe("an MCP request after its consent grant was revoked", () => {
 		expect(runWithActor).not.toHaveBeenCalled();
 		// Not answered from the no-grant path: no org was resolved for the revoked request.
 		expect(getActiveScope).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("an MCP token whose consent has no grant", () => {
+	it("answers 401 with an invalid_token challenge, releases the consent, and binds no actor", async () => {
+		vi.mocked(releaseUngrantedConsent).mockResolvedValue(undefined);
+		grantReads({ kind: "ungranted" });
+		const res = await post();
+		expect(res.status).toBe(401);
+		expect(res.headers.get("www-authenticate")).toBe(
+			'Bearer error="invalid_token", resource_metadata="https://alethialabs.io/.well-known/oauth-protected-resource/api/mcp"',
+		);
+		expect(await res.json()).toEqual({ error: expect.stringContaining("no permissions recorded") });
+		expect(releaseUngrantedConsent).toHaveBeenCalledWith("user-1", "client-1");
+		expect(getActiveScope).not.toHaveBeenCalled();
+		expect(runWithActor).not.toHaveBeenCalled();
 	});
 });
 
