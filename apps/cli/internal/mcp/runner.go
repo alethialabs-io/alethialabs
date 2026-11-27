@@ -34,9 +34,35 @@ const (
 	maxStderr = 256 << 10
 )
 
+// ToolEnv names the environment variable a child starts with: the tool call it runs for. The child
+// marks every request it sends to the control plane with it (cmd/mcp.go, which hands it to the API
+// client's agent headers), so the console holds those requests to the org's agent policy and records
+// them with the other agent tool calls. The mark can only narrow what the credential may do.
+const ToolEnv = "ALETHIA_MCP_TOOL"
+
+// unnamedTool is the ToolEnv value of a run made without a tool name: still marked, never unmarked.
+const unnamedTool = "unnamed"
+
 // childEnvDrop are the environment variables the child does not inherit. The debug switch would add
-// request diagnostics to what the agent reads; the server decides the agent switch itself.
-var childEnvDrop = []string{"ALETHIA_DEBUG", "ALETHIA_AGENT"}
+// request diagnostics to what the agent reads; the server decides the agent switch and the tool mark
+// itself.
+var childEnvDrop = []string{"ALETHIA_DEBUG", "ALETHIA_AGENT", ToolEnv}
+
+// toolKey is the context key of the tool a run is made for.
+type toolKey struct{}
+
+// WithTool returns ctx naming tool as the tool call a run under it is made for.
+func WithTool(ctx context.Context, tool string) context.Context {
+	return context.WithValue(ctx, toolKey{}, tool)
+}
+
+// toolFrom returns the tool ctx names, or unnamedTool.
+func toolFrom(ctx context.Context) string {
+	if tool, ok := ctx.Value(toolKey{}).(string); ok && tool != "" {
+		return tool
+	}
+	return unnamedTool
+}
 
 // ExecRunner runs commands as child processes of an executable: in production, this same binary.
 type ExecRunner struct {
@@ -49,7 +75,8 @@ type ExecRunner struct {
 	Environ []string
 }
 
-// Run runs argv in agent mode, with no standard input, and waits for it or for ctx.
+// Run runs argv in agent mode, marked with the tool ctx names (WithTool), with no standard input,
+// and waits for it or for ctx.
 //
 // The child inherits the server's environment, so it reads the credential the CLI already holds
 // (the system keychain, the credential file, or ALETHIA_TOKEN set in the client's server
@@ -57,7 +84,7 @@ type ExecRunner struct {
 func (r ExecRunner) Run(ctx context.Context, argv []string) (Result, error) {
 	cmd := exec.CommandContext(ctx, r.Path, argv...)
 	cmd.Dir = r.Dir
-	cmd.Env = childEnv(r.Environ)
+	cmd.Env = childEnv(r.Environ, toolFrom(ctx))
 	// Nil stdin is the null device: nothing can prompt, and nothing the agent sends on the server's
 	// stdin reaches the child.
 	cmd.Stdin = nil
@@ -85,12 +112,12 @@ func (r ExecRunner) Run(ctx context.Context, argv []string) (Result, error) {
 }
 
 // childEnv returns the child's environment: base (or the server's own) without childEnvDrop, in
-// agent mode.
-func childEnv(base []string) []string {
+// agent mode and marked as running tool.
+func childEnv(base []string, tool string) []string {
 	if base == nil {
 		base = os.Environ()
 	}
-	out := make([]string, 0, len(base)+1)
+	out := make([]string, 0, len(base)+2)
 	for _, kv := range base {
 		name, _, _ := strings.Cut(kv, "=")
 		drop := false
@@ -104,7 +131,7 @@ func childEnv(base []string) []string {
 			out = append(out, kv)
 		}
 	}
-	return append(out, "ALETHIA_AGENT=yes")
+	return append(out, "ALETHIA_AGENT=yes", ToolEnv+"="+tool)
 }
 
 // limitedBuffer keeps the first max bytes written to it and discards the rest, without failing the

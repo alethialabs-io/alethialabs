@@ -39,9 +39,11 @@ const DebugEnv = "ALETHIA_DEBUG"
 type transportSettings struct {
 	mu         sync.RWMutex
 	cliVersion string
-	debugSet   bool
-	debug      io.Writer
-	refresh    func() (string, error)
+	// agentTool is the agent tool a request is made for; empty for a request made for a person.
+	agentTool string
+	debugSet  bool
+	debug     io.Writer
+	refresh   func() (string, error)
 }
 
 var settings transportSettings
@@ -53,6 +55,28 @@ func SetCLIVersion(version string) {
 	settings.mu.Lock()
 	defer settings.mu.Unlock()
 	settings.cliVersion = strings.TrimSpace(version)
+}
+
+// AgentHeader and AgentToolHeader mark a request made on behalf of a coding agent: `alethia mcp`
+// runs each tool call as a child CLI process, and the child sends both on every request.
+//
+// They are a statement the client makes about itself, not a credential. The control plane uses
+// them only to hold the request to the org's agent policy (its agent access switch, its production
+// rule) and to record it with the other agent tool calls; it never grants anything because of them,
+// so a client that leaves them out is treated exactly as before.
+const (
+	AgentHeader     = "X-Alethia-Agent"
+	AgentToolHeader = "X-Alethia-Agent-Tool"
+	// AgentClientMCP is the AgentHeader value for a request `alethia mcp` makes.
+	AgentClientMCP = "alethia-mcp"
+)
+
+// SetAgentTool marks every request this process sends as made for the agent tool named tool (see
+// AgentHeader). An empty name removes the mark.
+func SetAgentTool(tool string) {
+	settings.mu.Lock()
+	defer settings.mu.Unlock()
+	settings.agentTool = strings.TrimSpace(tool)
 }
 
 // SetDebugOutput decides where the request log goes, overriding DebugEnv: a writer turns the log on
@@ -104,11 +128,16 @@ func debugOutput() io.Writer {
 
 // --- Identity headers ---
 
-// setClientHeaders writes the two headers that tell the control plane which CLI build is asking.
+// setClientHeaders writes the headers that tell the control plane which CLI build is asking and,
+// for a request made for an agent tool, that it is one.
 func setClientHeaders(req *http.Request) {
 	settings.mu.RLock()
-	version := settings.cliVersion
+	version, tool := settings.cliVersion, settings.agentTool
 	settings.mu.RUnlock()
+	if tool != "" {
+		req.Header.Set(AgentHeader, AgentClientMCP)
+		req.Header.Set(AgentToolHeader, tool)
+	}
 	if version == "" {
 		return
 	}
@@ -330,6 +359,8 @@ var loggedHeaders = map[string]bool{
 	"Content-Type":          true,
 	"If-Match":              true,
 	"User-Agent":            true,
+	"X-Alethia-Agent":       true,
+	"X-Alethia-Agent-Tool":  true,
 	"X-Alethia-Cli-Version": true,
 	"X-Alethia-Org":         true,
 }

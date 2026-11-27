@@ -20,7 +20,10 @@
 // agent's tool guard (lib/agent/kill-switch.ts) asks before every tool call, reads and design tools
 // included. A connected agent is refused one step earlier: the MCP route's actor check
 // (lib/ai/mcp/actor.ts) reads the same toggle and refuses the whole request, so no MCP tool runs.
-// `session`, `cli_session` and `service_token` are never refused by it.
+// `session`, `cli_session` and `service_token` are never refused by it — unless the request said it
+// was made on behalf of an agent (`onBehalfOfAgent`, a CLI request from `alethia mcp`): then the
+// switch and "no agents on production" refuse it as they refuse an agent. That mark only adds
+// refusals; no cell is ever answered more loosely because of it.
 // A second person for a `session` click when "require a different approver" is on, and the OAuth
 // client allow-list, are the enterprise toggles (AGT-L14): the queue gate asks them through
 // enterprise-policy.ts after this table, never here. In core a session's click is its approval.
@@ -57,6 +60,11 @@ export interface RequirementInput {
 	policy: AgentPolicyToggles;
 	/** A service token lists this environment in `auto_approve_environment_ids`. False for every other kind. */
 	tokenAutoApprovesEnvironment: boolean;
+	/**
+	 * The request said it was made on behalf of an agent (`Actor.onBehalfOfAgent`): the agent
+	 * refusals apply to it whatever its credential. It only ever adds a refusal.
+	 */
+	onBehalfOfAgent?: boolean;
 }
 
 /** Why the policy refuses outright: no approval can change the answer. */
@@ -93,6 +101,14 @@ export function applyRequirement(input: RequirementInput): Requirement {
 	const { credential, operation, stage, policy } = input;
 	const killed = agentAccessRefusal(credential, policy);
 	if (killed) return { kind: "refused", reason: killed };
+	// A request made on behalf of an agent under a CLI credential: the agent rows' refusals first, then
+	// the credential's own row. Only refusals are added here, so the mark can never loosen a cell.
+	if (input.onBehalfOfAgent) {
+		if (!policy.agentAccessEnabled) return { kind: "refused", reason: "agent_access_disabled" };
+		if (operation !== "plan" && stage === "production" && policy.agentsMayNotApplyToProduction) {
+			return { kind: "refused", reason: "agents_not_on_production" };
+		}
+	}
 	if (operation === "plan") return { kind: "none" };
 	const production = stage === "production";
 	switch (credential) {

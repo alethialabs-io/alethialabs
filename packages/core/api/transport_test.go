@@ -32,6 +32,7 @@ func resetTransportSettings(t *testing.T) {
 		settings.mu.Lock()
 		defer settings.mu.Unlock()
 		settings.cliVersion = ""
+		settings.agentTool = ""
 		settings.debugSet = false
 		settings.debug = nil
 		settings.refresh = nil
@@ -576,6 +577,49 @@ func TestSend_NoVersionHeadersUntilTheCLINamesItself(t *testing.T) {
 		}
 		if got := r.Header.Get("User-Agent"); strings.Contains(got, "alethia-cli") {
 			t.Errorf("User-Agent = %q, want no CLI claim", got)
+		}
+		_, _ = io.WriteString(w, `{"runners":[]}`)
+	}))
+	if _, err := c.GetRunners(); err != nil {
+		t.Fatalf("GetRunners: %v", err)
+	}
+}
+
+// TestSend_AgentHeadersOnEveryRequestOnceMarked: a process `alethia mcp` started for a tool call
+// marks every request it sends, wherever it leaves the client, and names the tool.
+func TestSend_AgentHeadersOnEveryRequestOnceMarked(t *testing.T) {
+	for _, verb := range everyVerb {
+		t.Run(verb.name, func(t *testing.T) {
+			isolateConfigDir(t)
+			resetTransportSettings(t)
+			SetAgentTool(" projects_list ")
+			c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get("X-Alethia-Agent"); got != "alethia-mcp" {
+					t.Errorf("X-Alethia-Agent = %q, want alethia-mcp", got)
+				}
+				if got := r.Header.Get("X-Alethia-Agent-Tool"); got != "projects_list" {
+					t.Errorf("X-Alethia-Agent-Tool = %q, want projects_list", got)
+				}
+				w.WriteHeader(http.StatusTeapot)
+			}))
+			_ = verb.call(c)
+		})
+	}
+}
+
+// TestSend_NoAgentHeadersUnlessMarked: a request made for a person carries neither header, so the
+// control plane treats it as it always has.
+func TestSend_NoAgentHeadersUnlessMarked(t *testing.T) {
+	isolateConfigDir(t)
+	resetTransportSettings(t)
+	SetCLIVersion("1.4.2")
+	SetAgentTool("projects_list")
+	SetAgentTool("")
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, h := range []string{"X-Alethia-Agent", "X-Alethia-Agent-Tool"} {
+			if got := r.Header.Get(h); got != "" {
+				t.Errorf("%s = %q, want it absent", h, got)
+			}
 		}
 		_, _ = io.WriteString(w, `{"runners":[]}`)
 	}))

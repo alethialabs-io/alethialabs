@@ -110,6 +110,14 @@ export interface Actor {
 	 * approval to it and reads the token's automatic-deploy environments by it.
 	 */
 	credentialRef?: string;
+	/**
+	 * True when the request said it was made on behalf of a coding agent (a CLI request `alethia mcp`
+	 * made, lib/agents/cli-agent.ts), whatever {@link credential} it carries. It ONLY NARROWS: the
+	 * approvals table (lib/approvals/policy.ts) adds the agent refusals to the credential's own
+	 * answer, and nothing reads it to allow anything. The request states it about itself, so it is not
+	 * a security boundary; an actor without it is answered as before.
+	 */
+	onBehalfOfAgent?: boolean;
 }
 
 /**
