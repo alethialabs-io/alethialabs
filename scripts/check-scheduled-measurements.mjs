@@ -147,8 +147,14 @@ export const SCHEDULED_MEASUREMENTS = {
 	"e2e-nightly.yml": {
 		publishes: "e2e-proof-",
 		consumedBy: ["scripts/e2e/commit-proof.sh", "scripts/e2e/nightly-rollup.sh"],
-		producedBy: ["scripts/e2e/nightly-rollup.sh", "scripts/e2e/resolve-dimension.sh"],
-		markers: [{ file: "scripts/e2e/nightly-rollup.sh", contains: "teardown_outcome" }],
+		producedBy: ["scripts/e2e/nightly-rollup.sh", "scripts/e2e/resolve-dimension.sh", "scripts/e2e/lib/offered-clouds.sh"],
+		markers: [
+			{ file: "scripts/e2e/nightly-rollup.sh", contains: "teardown_outcome" },
+			// #6959: the scored clouds are read from the catalog, not typed. Until a promotion carries
+			// this to the default branch, the scheduled run still scores the old literal five — D2
+			// says so rather than leaving the reader to assume the dev tree is the one running.
+			{ file: "scripts/e2e/nightly-rollup.sh", contains: 'offered_clouds "$CATALOG"' },
+		],
 		runsTree: "default",
 		why:
 			"PROGRAMME.md D1: the cron keeps its main-only OIDC ref subject so that scheduled spend does " +
