@@ -27,12 +27,12 @@ vi.mock("@/lib/authz/actor-context", () => ({
 vi.mock("@/lib/billing/ai-guard", () => ({ isAiSurfaceEnabled: vi.fn(async () => true) }));
 
 // The reads behind the real resolveMcpActor.
-vi.mock("@/lib/agents/grant-binding", () => ({ readGrantBinding: vi.fn() }));
+vi.mock("@/lib/agents/grant-binding", () => ({ readGrantBinding: vi.fn(), releaseUngrantedConsent: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn(), withScope: vi.fn() }));
 vi.mock("@/lib/approvals/context", () => ({ readAgentPolicy: vi.fn() }));
 vi.mock("@/lib/auth/scope", () => ({ getActiveScope: vi.fn() }));
 
-import { readGrantBinding } from "@/lib/agents/grant-binding";
+import { readGrantBinding, releaseUngrantedConsent } from "@/lib/agents/grant-binding";
 import { readAgentPolicy } from "@/lib/approvals/context";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
@@ -132,8 +132,38 @@ describe("an MCP request after its consent grant was revoked", () => {
 	});
 });
 
+describe("an MCP token whose consent has no grant", () => {
+	it("answers 401 with an invalid_token challenge, releases the consent, and binds no actor", async () => {
+		vi.mocked(releaseUngrantedConsent).mockResolvedValue(undefined);
+		grantReads({ kind: "ungranted" });
+		const res = await post();
+		expect(res.status).toBe(401);
+		expect(res.headers.get("www-authenticate")).toBe(
+			'Bearer error="invalid_token", resource_metadata="https://alethialabs.io/.well-known/oauth-protected-resource/api/mcp"',
+		);
+		expect(await res.json()).toEqual({ error: expect.stringContaining("no permissions recorded") });
+		expect(releaseUngrantedConsent).toHaveBeenCalledWith("user-1", "client-1");
+		expect(getActiveScope).not.toHaveBeenCalled();
+		expect(runWithActor).not.toHaveBeenCalled();
+	});
+});
+
+describe("an MCP token with neither a consent nor a grant", () => {
+	it("answers 401 with an invalid_token challenge and binds no actor when the client shows the consent screen", async () => {
+		grantReads({ kind: "unconsented" });
+		const res = await post();
+		expect(res.status).toBe(401);
+		expect(res.headers.get("www-authenticate")).toBe(
+			'Bearer error="invalid_token", resource_metadata="https://alethialabs.io/.well-known/oauth-protected-resource/api/mcp"',
+		);
+		expect(await res.json()).toEqual({ error: expect.stringContaining("Connect this MCP server again") });
+		expect(getActiveScope).not.toHaveBeenCalled();
+		expect(runWithActor).not.toHaveBeenCalled();
+	});
+});
+
 describe("an MCP token with no grant row", () => {
-	it("keeps the token's own scopes over every project in the person's org", async () => {
+	it("keeps a skip-consent client's token on its own scopes over every project in the person's org", async () => {
 		grantReads({ kind: "none" });
 		expect((await post()).status).toBe(200);
 		expect(boundActor()).toMatchObject({ orgId: "org-home", ceiling: { scopes: ["read", "plan"], projectIds: null } });

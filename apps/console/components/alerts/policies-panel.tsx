@@ -24,7 +24,7 @@
 // empty row list alone: "No policies yet" is an answer, and a read in flight has not given one.
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Bell, Plus, SearchX, Trash2 } from "lucide-react";
+import { Bell, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { type UseFormReturn, useForm, useFormState, useWatch } from "react-hook-form";
 import {
@@ -42,7 +42,8 @@ import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { alertsKeys } from "@/lib/query/use-alerts-query";
 import { ChannelRouting } from "@/components/alerts/channel-routing";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
-import { PoliciesFilterBar } from "@/components/alerts/alerts-filter-bar";
+import { policyToolbarFacets } from "@/components/alerts/alerts-facets";
+import { DEFAULT_POLICY_FILTERS } from "@/components/alerts/alerts-query";
 import type { PoliciesView } from "@/components/alerts/alerts-filters";
 import { policyBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
@@ -69,11 +70,15 @@ import {
 } from "@/components/alerts/policy-form";
 import { toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useAlertPolicyFilters } from "@/lib/stores/use-alerts-filters";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
 import { StatusBadge } from "@repo/ui/status-badge";
@@ -149,7 +154,12 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 	}
 	const editingShown = editingId !== null && shown !== null && editingId === shown.id;
 	const { rows, facets, stale } = view;
+	const filters = useAlertPolicyFilters((s) => s.filters);
+	const setFilter = useAlertPolicyFilters((s) => s.set);
 	const resetFilters = useAlertPolicyFilters((s) => s.reset);
+	// Three sections share the page, so `/` answers only the section in view (the scroll-spy's).
+	const inView = useAlertsSection((s) => s.active === "policies");
+	const { inputRef, shortcut } = useListSearchShortcut({ enabled: inView });
 	// One batched query hydrates every rail row's classification chips.
 	const { data: classMap = {} } = useAssignmentsForKind(
 		"alert_rule",
@@ -218,7 +228,18 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 				/>
 			) : (
 				<>
-					<PoliciesFilterBar facets={facets} action={newPolicyBtn} />
+					<ListToolbar
+						search={{
+							value: filters.search,
+							onChange: (value) => setFilter("search", value),
+							placeholder: "Filter policies by name or description…",
+							inputRef,
+							shortcut,
+						}}
+						facets={policyToolbarFacets(filters, setFilter, facets)}
+						reset={{ count: countActiveFilters(filters, DEFAULT_POLICY_FILTERS), onReset: resetFilters }}
+						actions={newPolicyBtn}
+					/>
 
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
@@ -236,16 +257,7 @@ export function PoliciesPanel({ hub, view, onOpenChannel }: PoliciesPanelProps) 
 							</div>
 							{rows.length === 0 ? (
 								// The shared empty state — see the twin in channels-panel.tsx (#4939).
-								<EmptyState
-									icon={<SearchX />}
-									title="No policies match"
-									description="No policy matches these filters."
-									action={
-										<Button variant="outline" size="sm" onClick={resetFilters}>
-											Reset filters
-										</Button>
-									}
-								/>
+								<FilterEmpty noun="policies" onClear={resetFilters} />
 							) : (
 								/*
 								 * A single-select rail: a listbox of options, not a stack of buttons.

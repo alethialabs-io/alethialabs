@@ -9,6 +9,13 @@
 // consent. Only then is the redirect back to the app returned, so an app never receives a code for a
 // consent whose grant was not written.
 //
+// The consent and its grant are recorded together or not at all. Better Auth writes its consent row
+// through its own adapter, outside any transaction of ours, so the two cannot share one; instead the
+// person's consent rows for the client are read first and put back as they were (lib/agents/consent.ts,
+// `restoreConsent`) whenever the grant is not written. A consent left without a grant would let the
+// next authorization skip the consent screen; the MCP route refuses such a token as well
+// (lib/agents/grant-binding.ts), so this is the first of two independent checks.
+//
 // An expired request and one already answered come back as their own outcomes (not refusals), so the
 // page can say which happened.
 
@@ -18,6 +25,7 @@ import { defineAction } from "@/lib/actions/define-action";
 import { ActionRefusal, type ActionResult } from "@/lib/actions/result";
 import { agentAppIdentity } from "@/lib/agents/catalog";
 import {
+	type ConsentSnapshot,
 	consentAlreadyAnswered,
 	consentRedirectUrl,
 	grantableProjectIds,
@@ -26,6 +34,8 @@ import {
 	orgConsentRefusal,
 	parseConsentRequest,
 	partitionRequestedScopes,
+	readConsentSnapshot,
+	restoreConsent,
 	scopesRoleAllows,
 	writeGrantForConsent,
 } from "@/lib/agents/consent";
@@ -36,6 +46,7 @@ import { recordActivity } from "@/lib/authz/activity";
 import { authorizeInOrg } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { viewableProjectIds } from "@/lib/jobs/visibility";
+import { log } from "@/lib/observability/log";
 
 const answerInput = z.object({
 	/** The consent page's query string, as Better Auth signed it. */
@@ -91,6 +102,19 @@ async function callConsentEndpoint(body: { accept: boolean; scope?: string; oaut
 	return consentRedirectUrl(await response.json().catch(() => null));
 }
 
+/**
+ * Puts the person's consent rows back as `before` recorded them, after an answer whose grant was not
+ * written. A failure here is reported and swallowed so the caller's own outcome still reaches the
+ * page; the MCP route refuses a token whose consent has no grant, so a leftover row grants nothing.
+ */
+async function putConsentBack(before: ConsentSnapshot): Promise<void> {
+	try {
+		await restoreConsent(before);
+	} catch (error) {
+		log.error("[agents] could not put an agent consent back after its grant was not written", { err: error });
+	}
+}
+
 /** Answers the consent request for the signed-in person. */
 export async function answerAgentConsent(raw: z.input<typeof answerInput>): Promise<ActionResult<ConsentAnswer>> {
 	return defineAction({
@@ -134,13 +158,27 @@ export async function answerAgentConsent(raw: z.input<typeof answerInput>): Prom
 			// Only scopes the client asked for reach Better Auth (it refuses any other), and unknown ones
 			// are dropped: the sign-in scopes it requested, plus the agent scopes the person ticked.
 			const scope = [...requested.oidc, ...chosen].join(" ");
+			const before = await readConsentSnapshot(request.clientId, userId);
 			const url = await callConsentEndpoint({ accept: true, scope, oauth_query: input.oauthQuery });
-			if (!url) return { outcome: "invalid" };
+			if (!url) {
+				// Better Auth may have recorded the consent and then answered in a shape with no URL in it.
+				await putConsentBack(before);
+				return { outcome: "invalid" };
+			}
 
-			const grantId = await withActorScope(actor, (tx) =>
-				writeGrantForConsent(tx, { orgId: actor.orgId, userId, clientId: request.clientId, scopes: chosen, projectIds }),
-			);
-			if (!grantId) throw new Error("the consent was recorded without a consent row to bind the grant to");
+			let grantId: string | null;
+			try {
+				grantId = await withActorScope(actor, (tx) =>
+					writeGrantForConsent(tx, { orgId: actor.orgId, userId, clientId: request.clientId, scopes: chosen, projectIds }),
+				);
+			} catch (error) {
+				await putConsentBack(before);
+				throw error;
+			}
+			if (!grantId) {
+				await putConsentBack(before);
+				throw new Error("the consent was recorded without a consent row to bind the grant to");
+			}
 			await markConsentAnswered(request.key, "allowed", request.expiresAt);
 
 			const identity = agentAppIdentity({ clientId: request.clientId, name: null, icon: null });

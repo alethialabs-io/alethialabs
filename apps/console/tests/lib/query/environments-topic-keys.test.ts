@@ -6,6 +6,11 @@
 // slot or a protection rule changing is an `environments` hint (lib/db/programmables.sql); a job
 // ending moves a promotion and the reconcile badges, so a `jobs` hint reaches the page too — but not
 // the two dialog reads, which no job changes.
+//
+// #7877: the page's environment list is the CANONICAL entry it shares with the topbar switcher
+// (`workspace.environments`, seeded by the `[project]` layout). An `environments` hint must reach it
+// — an environment added, renamed or removed fires that topic — and a `jobs` hint deliberately does
+// not: what a job moves on the page is the overview's (lib/query/topics.ts says why).
 
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
@@ -31,7 +36,8 @@ function pageKeys(): Record<string, unknown[]> {
 				input: { projectId: PROJECT, sourceId: ENV_A, targetId: ENV_B, includeRemovals: false },
 			}),
 		],
-		switcher: [...orpc.workspace.environments.queryKey({ input: { project: "payments" } })],
+		// The canonical environments entry: the switcher's and the page's panels', one key.
+		canonical: [...orpc.workspace.environments.queryKey({ input: { project: "payments" } })],
 	};
 }
 
@@ -48,17 +54,24 @@ async function invalidatedBy(topic: Topic): Promise<string[]> {
 }
 
 describe("TOPIC_KEYS — the Environments page's reads (#6120)", () => {
-	it("an environment, promotion, approval or protection-rule change reaches every read on the page and the switcher", async () => {
+	it("an environment, promotion, approval or protection-rule change reaches every read on the page, the canonical list among them", async () => {
 		expect(await invalidatedBy("environments")).toEqual([
+			"canonical",
 			"overview",
 			"promotionPreview",
 			"protectionRules",
-			"switcher",
 		]);
 	});
 
-	it("a job change reaches the page's read (promotion progress, reconcile badges) and nothing else of it", async () => {
+	it("a job change reaches the page's read (promotion progress, reconcile badges) and nothing else of it — not the canonical list", async () => {
 		expect(await invalidatedBy("jobs")).toEqual(["overview"]);
+	});
+
+	it("the key the page's panels read IS the key the switcher reads — one cache entry, one invalidation", () => {
+		// The exact options each component passes (environments-view.tsx, env-switcher.tsx).
+		const panels = orpc.workspace.environments.queryOptions({ input: { project: "payments" } }).queryKey;
+		const switcher = orpc.workspace.environments.queryOptions({ input: { project: "payments" } }).queryKey;
+		expect(panels).toEqual(switcher);
 	});
 
 	it.each(["projects", "clusters", "runners", "fleet", "addons", "alerts", "support", "usage", "billing", "organization"] as const)(

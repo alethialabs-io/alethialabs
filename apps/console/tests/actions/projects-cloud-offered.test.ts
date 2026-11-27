@@ -74,6 +74,8 @@ vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
 import {
 	createProject,
 	duplicateProjectForProvider,
+	tryCreateProject,
+	tryDuplicateProjectForProvider,
 } from "@/app/server/actions/projects";
 import { requireOwner } from "@/lib/auth/owner";
 import { recordAllowed } from "@/lib/authz/activity";
@@ -437,5 +439,30 @@ describe("duplicateProjectForProvider — the cloud of the target account", () =
 		);
 		expect(clone).toMatchObject({ newProjectId: "new-proj" });
 		expect(valuesFor(valuesSpy, projects)).toMatchObject({ project_name: "My App (alibaba)" });
+	});
+});
+
+// #6964: the two console wrappers return the refusal as a value. A thrown one reaches a client
+// component as a digest in a production build, so the person would never read which cloud.
+describe("the refusal as the console reads it (#6964)", () => {
+	it("tryCreateProject returns the sentence naming the cloud, and writes nothing", async () => {
+		const { insertSpy } = createFixture("alibaba");
+		await expect(tryCreateProject(newProject as never)).resolves.toEqual({
+			ok: false,
+			error: "Alibaba Cloud is not available in this release.",
+		});
+		expect(insertSpy).not.toHaveBeenCalled();
+	});
+
+	it("tryDuplicateProjectForProvider places it on the form, not beside the name field", async () => {
+		const { insertSpy } = duplicateFixture("civo");
+		await expect(
+			tryDuplicateProjectForProvider("p1", "ci-target", "fra1"),
+		).resolves.toEqual({
+			ok: false,
+			error: "Civo is not available in this release.",
+			field: "form",
+		});
+		expect(insertSpy).not.toHaveBeenCalled();
 	});
 });

@@ -64,6 +64,14 @@ on:
         description: "TS coverage determinism probe: how many runs to compare (default 5)"
         required: false
         default: "5"
+      # ONLY `ts-shard-equivalence` reads this. Off by default, because that job re-runs the console suite
+      # unsharded (~16 minutes of runner) — it is the proof the shard split needed once and needs again
+      # after any change to vitest, its coverage provider or the merge, not a cost to pay on every dispatch.
+      ts_shard_equivalence:
+        description: "Run the console suite unsharded AND sharded+merged, and fail on any coverage difference"
+        required: false
+        type: boolean
+        default: false
 
 # CANCELLATION IS FOR SUPERSEDED PR RUNS ONLY (2026-11-22).
 #
@@ -84,6 +92,13 @@ concurrency:
 
 permissions:
   contents: read
+
+# How many runners the console's unit suite is split across — read by `ts-test-console` (whose matrix
+# must list exactly 1..N, and fails its first step when it does not), by `ts-test`'s merge (which
+# refuses any other number of shards) and by `ts-shard-equivalence`. One value, three readers, every
+# disagreement red. Why 4: see `ts-test-console`.
+env:
+  TS_CONSOLE_SHARDS: "4"
 
 jobs:
   # Which surfaces does this PR touch? Two jobs' worth of answers, from one job:
@@ -168,6 +183,55 @@ jobs:
   # FAIL-SAFE DIRECTION. Every consumer treats an EMPTY output as "run in full", and the consumers
   # carry `!cancelled()`, so a failed detect job runs everything rather than skipping it. The
   # `CI required` aggregator separately fails when this job did not succeed.
+  #
+  # ── TWO LANES (2026-11-27) ─────────────────────────────────────────────────────────────────
+  #
+  # `lane` is `fast` exactly when `skip_unaffected` is true — an ordinary PR into dev with
+  # AFFECTED_ONLY_ARMED on — and `full` on everything else: the Mergify queue's batch
+  # (`mergify/merge-queue/*`), a promotion (`release/<sha>` → main), a push, a cron, a dispatch.
+  # So the one kill switch above also turns the fast lane off: set AFFECTED_ONLY_ARMED to "false"
+  # and every PR runs the full lane, as before this change.
+  #
+  # Measured 2026-11-26 (139 CI runs/day, median 45 min wall, ~105 runner-min/run): every PR ran
+  # the whole suite TWICE — once on its own head, once again in the queue's batch, and only the
+  # second run decides what lands. The fast lane drops, from the PR's own run, the jobs below. They
+  # still run, unchanged and path-conditional exactly as before, on every full-lane run, and the
+  # queue's batch run is a full-lane run whose `CI required` must be green before Mergify merges.
+  #
+  # THE RULE THAT DECIDES WHAT MAY MOVE: a job the fast lane drops must be a `needs:` of
+  # `CI required`. Then "it did not run on the PR" can only mean "it runs, and gates, in the queue's
+  # batch" — nothing reaches dev without it passing there. A non-required (observe-only) job cannot
+  # meet that rule without changing what gates the merge, which is a separate decision with its own
+  # process (scripts/merge-signal-health.sh's PROMOTE verdict), so those stay where their author
+  # sees them, on the PR.
+  #
+  #   FULL LANE ONLY (each a `needs:` of `CI required`):
+  #     · `build-console` — Build console images (no push). 14.3 min median, seven Docker builds; a
+  #       PR author's first answer comes from `ts-build`'s `next build` smoke, which stays.
+  #     · `integration` — Integration (real Postgres + RLS). 13.0 min median. The query builders'
+  #       unit tests and types stay in the fast lane; the real-database pass runs in the batch.
+  #     · `byo-users-postgres` (the matrix legs) — real Postgres 17/14. Its always-reporting wrapper
+  #       `byo-users-postgres-required` still runs on the fast lane and passes "skipped by design".
+  #     · `e2e-qa-leg` — the release gate's qa leg (~10 runner-min, a console build + Playwright).
+  #       Before this change it ran on the PR and NOT in the queue; now it runs in the queue, which
+  #       also closes the gap that comment recorded (two UI PRs that each pass alone and break each
+  #       other now meet in the batch, not at the promotion).
+  #
+  #   KEPT IN THE FAST LANE, and why:
+  #     · lint · types, the unit suites + coverage ratchets, the build smoke (`ts-*`/`typescript`),
+  #       `go` (affected modules), `guards` (its 8–12 min self-test already path-gated), `secrets`,
+  #       `docs-prose`, `capabilities-security`, `gate-ledger`, `addon-charts-render` — the PR
+  #       author's first answer, and each cheap or already narrowed by the plan above.
+  #     · `e2e-browser`, `e2e-elench-ai`, `byo-users-mysql`, `db-tls-verify`, `runner-image-arch`,
+  #       `t1-kind-images` — heavy, but OBSERVE-ONLY (no `CI required` need). Moving them would hide
+  #       their red from the author without making it block anywhere, so they keep their own
+  #       path conditions (console / agent / runner / t1 paths) and run on the PR as before.
+  #     · `provision-e2e` — unchanged: it already runs only on the queue's batch.
+  #
+  # HOW A FULL RUN IS KEPT FROM SKIPPING THE SUITE: `CI required` (a) recomputes from the event
+  # itself whether this run is an ordinary dev PR and refuses `lane=fast` on anything else — so a
+  # planner bug cannot turn the queue's batch into a fast run — and (b) on `lane=full` fails when a
+  # full-lane-only job reports `skipped` although its own (non-lane) condition says it runs.
   detect-changes:
     name: Detect PR surface changes
     runs-on: ubuntu-latest
@@ -196,11 +260,13 @@ jobs:
       go_core: ${{ steps.plan.outputs.go_core }}
       infra: ${{ steps.plan.outputs.infra }}
       harness: ${{ steps.plan.outputs.harness }}
+      guards_selftest: ${{ steps.plan.outputs.guards_selftest }}
       console_images: ${{ steps.plan.outputs.console_images }}
       qa_leg: ${{ steps.plan.outputs.qa_leg }}
       t1_images: ${{ steps.plan.outputs.t1_images }}
       selective: ${{ steps.plan.outputs.selective }}
       skip_unaffected: ${{ steps.plan.outputs.skip_unaffected }}
+      lane: ${{ steps.plan.outputs.lane }}
       ts_filter: ${{ steps.plan.outputs.ts_filter }}
       ts_skip: ${{ steps.plan.outputs.ts_skip }}
       go_matrix: ${{ steps.plan.outputs.go_matrix }}
@@ -366,6 +432,23 @@ jobs:
               - '.githooks/**'
               - 'CLAUDE.md'
               - 'AGENTS.md'
+            # What the `guards` job's "Guards self-test" step reads: the hooks and their libraries,
+            # every workflow (guard-spend prices each one and fails on one it cannot classify), the
+            # scripts the hooks call or source (env.sh, wt-lease, creds), deploy/ (runner-version,
+            # prod secrets example) and release-please's config (guard-merge). Deliberately broad —
+            # all of scripts/ and deploy/ — because a missed input lets a broken guard reach dev,
+            # while an extra one only costs a run. That step is 8–12 minutes of the job.
+            guards_selftest:
+              - '.claude/**'
+              - '.codex/**'
+              - '.agents/**'
+              - '.githooks/**'
+              - '.github/workflows/**'
+              - 'scripts/**'
+              - 'deploy/**'
+              - 'release-please-config.json'
+              - 'CLAUDE.md'
+              - 'AGENTS.md'
             # Root config that every TypeScript package inherits — a change here runs turbo
             # unfiltered, because turbo attributes no package to it.
             ts_root:
@@ -500,6 +583,7 @@ jobs:
           F_GO_CORE: ${{ steps.filter.outputs.go_core }}
           F_INFRA: ${{ steps.filter.outputs.infra }}
           F_HARNESS: ${{ steps.filter.outputs.harness }}
+          F_GUARDS_SELFTEST: ${{ steps.filter.outputs.guards_selftest }}
           F_TS_ROOT: ${{ steps.filter.outputs.ts_root }}
           F_CONSOLE_IMAGES: ${{ steps.filter.outputs.console_images }}
           F_QA_LEG: ${{ steps.filter.outputs.qa_leg }}
@@ -547,6 +631,19 @@ jobs:
           if [ "$selective" = true ] && [ "$AFFECTED_ONLY_ARMED" = true ]; then skip=true; fi
           out skip_unaffected "$skip"
 
+          # TWO LANES (see the job comment): `fast` only where the affected-only skips are armed for
+          # an ordinary dev PR; everything else — the queue's batch above all — is `full`.
+          lane=full
+          if [ "$skip" = true ]; then lane=fast; fi
+          out lane "$lane"
+
+          # The guards' self-tests (8–12 minutes) run unless this is an affected-only PR that touched
+          # none of their inputs. The merge queue, pushes, promotions and the schedule are never
+          # selective, so a guard change is always self-tested before it lands on dev.
+          guards_selftest=true
+          if [ "$skip" = true ] && [ "$(b "${F_GUARDS_SELFTEST:-}")" = false ]; then guards_selftest=false; fi
+          out guards_selftest "$guards_selftest"
+
           ts_filter=full
           if [ "$selective" = true ] && [ "$(b "${F_TS_ROOT:-}")" = false ] && [ "$(b "${O_NOT_TS_SCOPED:-true}")" = false ]; then
             ts_filter=affected
@@ -557,11 +654,15 @@ jobs:
           if [ "$skip" = true ] && [ "$(b "${O_NOT_PROSE:-true}")" = false ]; then ts_skip=true; fi
           out ts_skip "$ts_skip"
 
-          # The qa release-gate leg on a PR (#7647): a selective (dev, non-queue) PR whose diff hits
-          # `qa_leg` and is not prose-only. A fork PR is excluded: it gets no repo secrets, so the
-          # leg's `stripe` capability guard would fail on a variable its author cannot supply.
+          # The qa release-gate leg (#7647): a dev PR — an ordinary one OR the Mergify queue's batch
+          # PR (two lanes, 2026-11-27) — whose diff hits `qa_leg` and is not prose-only. A promotion
+          # into main runs all seven legs in release-gate.yml's own run, so it is excluded here. A
+          # fork PR is excluded: it gets no repo secrets, so the leg's `stripe` capability guard would
+          # fail on a variable its author cannot supply. This output is the leg's PATH condition only;
+          # `e2e-qa-leg` adds `lane != 'fast'`, so on an ordinary PR it runs in the batch instead.
           qa_leg=false
-          if [ "$selective" = true ] && [ "$(b "${F_QA_LEG:-}")" = true ] \
+          if [ "$EVENT_NAME" = pull_request ] && [ "$BASE_REF" != main ] && [ "$BASE_REF" != staging ] \
+            && [ "$(b "${F_QA_LEG:-}")" = true ] \
             && [ "$(b "${O_NOT_PROSE:-true}")" = true ] && [ "${HEAD_FORK:-false}" != true ]; then
             qa_leg=true
           fi
@@ -659,9 +760,122 @@ jobs:
             pnpm exec turbo run check-types lint --concurrency=2
           fi
 
+  # ── THE CONSOLE'S UNIT SUITE, SHARDED ACROSS RUNNERS ───────────────────────────────────────────────
+  #
+  # Before this split `ts-test` ran every workspace's unit suite in one `turbo run test`, and the
+  # console's (~1400 test files) was 15–16 of its 17–27 minutes (measured: `console:test` reported
+  # `Duration 940.38s` in run 45869149577, with every other workspace done inside its first minute).
+  # So the console now runs as TS_CONSOLE_SHARDS shards (`vitest run --coverage --shard=i/N`), each on
+  # its own runner, and `ts-test` below merges their coverage and runs the ratchets as before.
+  #
+  # N = 4, measured rather than guessed: a shard pays ~2 minutes of fixed cost (checkout, install,
+  # the ee build) before its first test, so 940 s of suite becomes ~4 min of tests + ~2 min of setup
+  # per shard at N=4, ~5 + 2 at N=3, and ~2.6 + 2 at N=6 — past four the fixed cost dominates while
+  # every extra shard is one more runner competing for the org's queue on every PR. Vitest assigns
+  # files to shards by a sha1 of each file's root-relative path, so the partition is deterministic,
+  # disjoint and complete by construction; the balance is by file COUNT, not duration.
+  #
+  # HOW THE SHARDS STAY ONE MEASUREMENT (see scripts/lib/ts-coverage-merge.mjs for the argument):
+  #
+  #   · each shard uploads its coverage-final.json with a fingerprint (the ratchet's own `currentEnv`
+  #     plus which shard it is) as the artifact `console-coverage-shard-<i>-of-<N>`;
+  #   · `ts-test` FAILS — it does not skip, and it does not demote — when this job did not succeed, and
+  #     its merge step fails when any shard is missing, duplicated, mislabelled, corrupt or measured in
+  #     an environment other than its own. N is never inferred from what arrived;
+  #   · the console ratchet runs with `--merged-from-shards`, which refuses to measure anything but
+  #     the verified merge (manifest + sha256), so a partial file can never be read as the whole.
+  #
+  # `fail-fast: false`: one shard's red would otherwise cancel the other three, and the author would
+  # learn about a quarter of the failures per push — the same reason the TypeScript check was split.
+  #
+  # UNFILTERED, for the reasons recorded on `ts-test` below: the shards run on every PR that runs
+  # `ts-test`, under the same affected-only skip (`ts_skip`: a prose-only diff), and `ts_filter` does
+  # not narrow them.
+  ts-test-console:
+    name: TypeScript — console unit tests (shard ${{ matrix.shard }} of ${{ strategy.job-total }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # NOT ON THE UI-AUDIT NIGHTLY, and AFFECTED-ONLY — the identical conjuncts to `ts-test`, which
+    # needs this job: a mismatch would either run shards nobody merges or skip shards `ts-test` waits on.
+    needs: [detect-changes]
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Must list 1..TS_CONSOLE_SHARDS exactly. The first step below fails the shard when it does
+        # not, so the matrix and the merge cannot drift apart silently.
+        shard: [1, 2, 3, 4]
+    env:
+      SHARD: ${{ matrix.shard }}
+      MATRIX_SIZE: ${{ strategy.job-total }}
+    steps:
+      - name: The matrix and TS_CONSOLE_SHARDS agree
+        run: |
+          set -euo pipefail
+          if [ "$MATRIX_SIZE" != "$TS_CONSOLE_SHARDS" ] || [ "$SHARD" -lt 1 ] || [ "$SHARD" -gt "$TS_CONSOLE_SHARDS" ]; then
+            echo "::error::shard ${SHARD} of a ${MATRIX_SIZE}-leg matrix, but TS_CONSOLE_SHARDS=${TS_CONSOLE_SHARDS} — the matrix must list exactly 1..TS_CONSOLE_SHARDS, or the merge in ts-test expects shards that never ran"
+            exit 1
+          fi
+          echo "shard ${SHARD}/${TS_CONSOLE_SHARDS}"
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # ONE KEY PER SHARD, for the reason the three TypeScript parts each have one: jobs saving one key
+      # race, and only the first save survives. turbo hashes the pass-through `--shard=i/N` into
+      # `console#test`, so a shard's cache entry replays only that shard's coverage/, never another's.
+      - name: Cache Turbo
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-test-console-${{ matrix.shard }}-of-${{ strategy.job-total }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-test-console-${{ matrix.shard }}-of-${{ strategy.job-total }}-
+            turbo-${{ runner.os }}-test-
+            turbo-${{ runner.os }}-
+      - run: pnpm install --frozen-lockfile
+      # EXPLICIT, though `console#test` reaches `@alethia/ee#build` through `^build` anyway: turbo
+      # restores a cache hit's declared `outputs`, and the root `build.outputs` names `.next/**` only —
+      # so on an `@alethia/ee#build` cache HIT, nothing would put ee/dist back. The floors record
+      # `ee_dist: true`, and this shard's fingerprint must say the same thing as the merging job's
+      # (which builds it the same way), or the merge refuses the shard. esbuild; well under a second.
+      - name: Build @alethia/ee
+        run: pnpm -F @alethia/ee build
+      # The same `turbo run test` the console has always run — same task, same `^build` graph, same
+      # strict env, same cache semantics — with `--shard` passed through to vitest. turbo passes
+      # pass-through arguments to the ENTRY-POINT task only (`console#test`), not to its `^build`
+      # dependencies; checked against turbo 2 directly, since a `--shard` reaching esbuild would fail.
+      - name: Console unit tests — this shard
+        run: pnpm exec turbo run test --filter=console -- "--shard=${SHARD}/${TS_CONSOLE_SHARDS}"
+      # One directory, one upload, `if-no-files-found: error` — see scripts/ci/check-upload-aggregate.mjs
+      # for why a second path under one upload would weaken that `error`. The fingerprint is written
+      # AFTER the suite, so it describes the tree the suite actually ran in (ee/dist and all).
+      - name: Stage this shard's coverage and fingerprint
+        run: |
+          set -euo pipefail
+          mkdir -p console-coverage-shard
+          cp apps/console/coverage/coverage-final.json console-coverage-shard/coverage-final.json
+          node scripts/ts-coverage-shards.mjs fingerprint --project apps/console \
+            --shard "${SHARD}/${TS_CONSOLE_SHARDS}" > console-coverage-shard/fingerprint.json
+          cat console-coverage-shard/fingerprint.json
+      # `overwrite: true` so "Re-run failed jobs" can re-upload a re-run shard under the same name in the
+      # same run; the merge still checks every shard's fingerprint and coverage, so nothing stale passes.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: console-coverage-shard-${{ matrix.shard }}-of-${{ strategy.job-total }}
+          path: console-coverage-shard/
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
   ts-test:
     name: TypeScript — unit tests · coverage ratchets
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
@@ -669,7 +883,14 @@ jobs:
     # AFFECTED-ONLY (see `detect-changes`): skipped only when the job-level skips are ARMED and the
     # whole diff is `.md`/`.mdx` — turbo.json's own declared non-inputs for this task. `!cancelled()`
     # so a failed detect job runs this in full rather than skipping it.
-    needs: [detect-changes]
+    #
+    # `!cancelled()` ALSO KEEPS THIS JOB RUNNING WHEN A CONSOLE SHARD FAILED — deliberately. With the
+    # implicit `success()` a red shard would SKIP this job, and a skipped `ts-test` reads to the
+    # `typescript` aggregator as "planned away" only when `ts_skip` says so; otherwise it is red there
+    # too, but with the failure one hop further from where the author looks. Running, this job fails
+    # its own `Every console shard succeeded` step with the shard named, and still reports the other
+    # projects' tests and ratchets.
+    needs: [detect-changes, ts-test-console]
     if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
     steps:
       - uses: actions/checkout@v7
@@ -697,27 +918,74 @@ jobs:
             turbo-${{ runner.os }}-test-
             turbo-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
+      # EXPLICIT, and load-bearing for every ratchet below. The floors record `ee_dist: true`, and the
+      # ratchet reads it from THIS job's tree. It used to arrive implicitly: `turbo run test` reached
+      # `@alethia/ee#build` through apps/console's optionalDependency on @alethia/ee. With the console
+      # excluded from this job's turbo run (its shards run in `ts-test-console`), nothing here depends
+      # on @alethia/ee any more — so without this step ee/dist would be absent, F7 would DEMOTE every
+      # project's regressions to warnings, and the merge would refuse every shard (their fingerprints
+      # say `ee_dist: true`). scripts/check-floors-reproducible.mjs reads this step by its name.
+      - name: Build @alethia/ee
+        run: pnpm -F @alethia/ee build
       # UNFILTERED EVEN ON AN ORDINARY PR, unlike `ts-lint-types` and `ts-build` (2026-11-22). Two
       # reasons, either sufficient: (1) the console's unit tests READ files outside every package
       # graph edge turbo can see — Go sources in packages/core, fixtures in apps/cli, scripts/ — so
       # `...[HEAD^1]` would not re-run a test whose fixture changed in a package it does not depend
-      # on; and (2) the ratchets below compare against floors recorded with ee/dist present, which
-      # only a run that reaches an @alethia/ee dependent produces (scripts/check-floors-reproducible.mjs
-      # reads this line for exactly that). The turbo cache still skips the packages whose inputs are
-      # unchanged.
+      # on; and (2) the ratchets below compare against floors recorded with ee/dist present (the
+      # step above). The turbo cache still skips the packages whose inputs are unchanged.
       #
-      # UNFILTERED, and that is load-bearing for the ratchets below: `test.dependsOn: ["^build"]`
-      # reaches @alethia/ee through apps/console's optionalDependencies, so this builds ee/dist and
-      # the suites run in enterprise scope — the `ee_dist: true` the floors record.
-      # scripts/check-floors-reproducible.mjs reads THIS job (the one that carries the ratchet steps)
-      # to prove it.
-      - name: Unit tests
+      # `--filter='!console'` is the ONE exclusion, and it drops nothing: the console's suite runs in
+      # full across the `ts-test-console` shards. Every other workspace's `test` (and its `^build`
+      # graph) runs here exactly as before.
+      - name: Unit tests (every workspace except the console, whose shards ran in ts-test-console)
         id: unit
-        run: pnpm exec turbo run test
+        run: pnpm exec turbo run test --filter='!console'
+      # FAIL, NEVER SKIP OR DEMOTE. `needs.ts-test-console.result` is the matrix's aggregate: `success`
+      # only when every shard succeeded. A red, cancelled or skipped shard means some console test
+      # files did not pass (or did not run), and there is no artefact here that could be measured as
+      # the console's coverage.
+      - name: Every console shard succeeded
+        id: shards
+        if: ${{ !cancelled() }}
+        env:
+          SHARDS_RESULT: ${{ needs.ts-test-console.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != success ]; then
+            echo "::error::ts-test-console concluded '${SHARDS_RESULT}' — at least one of the ${TS_CONSOLE_SHARDS} console unit-test shards failed or did not run. Open that shard for the failure; the console's coverage is not measured from an incomplete suite."
+            exit 1
+          fi
+          echo "all ${TS_CONSOLE_SHARDS} console shards succeeded"
+      # Each artifact extracts into `console-shards/<artifact name>/` (a `pattern`, not a `name`). Not
+      # trusted to have found them all: the merge below counts them against TS_CONSOLE_SHARDS itself,
+      # and runs even when this step fails, so a missing shard is reported by NAME rather than as a
+      # download error.
+      - name: Download the console shards' coverage
+        if: ${{ !cancelled() && steps.shards.outcome == 'success' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: console-coverage-shard-*
+          path: console-shards
+          merge-multiple: false
+      # The istanbul merge semantics, proven on the installed tree before they are trusted with the
+      # real artefacts. Hermetic (fixtures only); the refusal paths are also driven by
+      # `ts-coverage.mjs --self-test` in the `guards` job, which has no installed tree.
+      - name: Shard-merge self-test (istanbul semantics, end to end through the CLI)
+        id: merge-selftest
+        if: ${{ !cancelled() && steps.shards.outcome == 'success' }}
+        run: node scripts/ts-coverage-shards.mjs --self-test
+      - name: Merge the console shards' coverage (fails on a missing, extra, corrupt or foreign shard)
+        id: merge
+        if: ${{ !cancelled() && steps.merge-selftest.outcome == 'success' }}
+        # Headroom, not a measured need: the merge streams shard by shard, but one console artefact
+        # parsed is several times its file size, and an OOM here would read as a broken pipeline.
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/ts-coverage-shards.mjs merge --project apps/console --from console-shards --shards "$TS_CONSOLE_SHARDS"
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
       #
-      # THE RATCHETS LIVE IN THIS JOB BECAUSE THEY READ ITS ARTEFACT. They used to sit after the
+      # THE RATCHETS LIVE IN THIS JOB BECAUSE THEY READ ITS ARTEFACTS — the console's as merged above,
+      # every other project's as written by `Unit tests`. They used to sit after the
       # build smoke in a single job, so that a true ratchet failure could not skip the build — the
       # only check that catches a module imported from both a server and a client component, which
       # type-checks, lints and unit-tests clean and then 500s the page at runtime. The split gives
@@ -741,29 +1009,23 @@ jobs:
       #
       # Every false-failure path is fail-open and enumerated F1..F10 in the script header. The
       # floors carry a fingerprint of the environment that recorded them — including whether
-      # ee/dist existed, which is TRUE here.
+      # ee/dist existed, which is TRUE here (the `Build @alethia/ee` step above).
       #
-      # CORRECTION. This comment previously claimed the opposite: that apps/console depends on
-      # @alethia/enterprise-api and NOT on @alethia/ee, so `test.dependsOn: ["^build"]` never
-      # reaches it. That is wrong. `apps/console/package.json:201` declares `@alethia/ee` under
-      # **optionalDependencies** — turbo's `^build` traverses it like any other workspace
-      # dependency, so `turbo run test` BUILDS ee/dist and the console suite runs in ENTERPRISE
-      # scope, here and on a laptop alike. Measured, not reasoned: the determinism probe checked
-      # ee/dist ABSENT at job start, then recorded `"ee_dist": true` in the floors it wrote after
-      # the suites — the build happened in between.
-      #
-      # The floors are still reachable BECAUSE of that, not despite it: this job and the probe run
-      # the same `turbo run test`, so they build the same dist and measure the same scope. What was
-      # wrong was the stated reason, and a fingerprint key whose rationale is inverted is one a
-      # future reader will "fix" in the wrong direction.
+      # A HISTORY WORTH KEEPING. This comment once claimed that apps/console did NOT reach @alethia/ee,
+      # so `test.dependsOn: ["^build"]` never built ee/dist. That was wrong — `@alethia/ee` is an
+      # **optionalDependency** of apps/console, and turbo's `^build` traverses it — and the measured
+      # proof was the determinism probe finding ee/dist ABSENT at job start and recording
+      # `"ee_dist": true` after its `turbo run test`. Since the shard split this job no longer runs the
+      # console's turbo task at all, which is exactly why the dist is now built by name above rather
+      # than left to a dependency edge: an implicit producer of a fingerprinted axis is how a ratchet
+      # gets disarmed by a refactor that never mentions it.
       - name: Coverage ratchet — apps/console
-        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
-        # rather than inheriting the implicit success() that would let one project's ratchet hide
-        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
-        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
-        # cause. `!cancelled()` keeps it off a cancelled run.
-        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
-        run: node scripts/ts-coverage.mjs --project apps/console
+        # Runs only on the VERIFIED MERGE of every shard. `--merged-from-shards` re-checks the merge's
+        # manifest (project, N, sha256 of the bytes) before measuring and EXITS 1 — never fails open —
+        # on anything else, so a partial artefact cannot be read as the whole. See ts-coverage.mjs's
+        # SHARDED INPUT header.
+        if: ${{ !cancelled() && steps.merge.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project apps/console --merged-from-shards "$TS_CONSOLE_SHARDS"
       - name: Coverage ratchet — packages/ui
         # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
         # rather than inheriting the implicit success() that would let one project's ratchet hide
@@ -1053,8 +1315,11 @@ jobs:
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
     # AFFECTED-ONLY: skipped only when armed and the whole diff is `.md`/`.mdx` (see `detect-changes`).
+    # FULL LANE ONLY (two lanes, see `detect-changes`): skipped on an ordinary PR's fast lane, run on
+    # the queue's batch, where `CI required` fails if it skipped. `CI required` restates the
+    # non-lane half of this condition (not the 03:00 cron); change one and you must change the other.
     needs: [detect-changes]
-    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' }}
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' && needs.detect-changes.outputs.ts_skip != 'true' && needs.detect-changes.outputs.lane != 'fast' }}
     # A throwaway Postgres mirroring the dev stack (compose uses postgres:17-alpine with the
     # same superuser/db). db:migrate then creates the least-priv `alethia_app` role + RLS, so
     # the suite exercises the real SQL query builders and the multi-tenant isolation boundary.
@@ -1703,11 +1968,14 @@ jobs:
   guards:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
+    # For `guards_selftest` only (the "Guards self-test" step). `!cancelled()` keeps this job
+    # running if detect-changes fails, and that step runs unless the output is exactly 'false'.
+    needs: [detect-changes]
     # NOT ON THE UI-AUDIT NIGHTLY. `schedule` fires every job with no `if:` at all, so the
     # 03:00 cron added for the console UI audit would have signed this one up for a nightly
     # run it never asked for — the same trap the cron block records for `mutation`, which
     # only covers jobs that gate on `schedule` in the first place. See ci.yml's `on.schedule`.
-    if: github.event.schedule != '0 3 * * *'
+    if: ${{ !cancelled() && github.event.schedule != '0 3 * * *' }}
     # `issues: read` for check-exclusion-issues.mjs, the one network step in an otherwise hermetic
     # job. The workflow-level `permissions: contents: read` makes every unlisted scope NONE, so
     # without this `gh issue view` fails, the check reports "could not read the state" and — being
@@ -1864,6 +2132,14 @@ jobs:
       - name: The promotion picker's rules (green-by-tree, older-PR handling) hold
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/promote.mjs --self-test
+      # The paid AI runs read their verdicts from these two (e2e-ai-nightly.yml, on a PR and nightly):
+      # which journeys a PR's AI change selects — every path the workflow filters on must map to a
+      # rule — and when an eval comparison fails the PR or files the regression issue.
+      - name: The AI PR run's journey selection and eval verdicts hold
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/ci/ai-pr-select.mjs --self-test
+          node scripts/ci/ai-eval-report.mjs --self-test
       - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:shared-surface
@@ -1888,6 +2164,16 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-single-keydown.mjs --self-test
+      # `availability` in packages/core/catalog/catalog.json decides which clouds are offered, and
+      # every offer list derives from it. This fails on a NEW hand-written list of three or more
+      # cloud slugs, and on a hidden cloud named in marketing, docs, blog, README or console page
+      # metadata. The ledger is scripts/cloud-availability-allowlist.yaml (#6950).
+      - name: No hand-written cloud list, no hidden cloud on a user-visible surface
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:cloud-availability
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-cloud-availability.mjs --self-test
       # The allowlist's `baseline:` and `debt:` are entry counts over its own rows, and the file is
       # shared by every conformance lane of #3613. Typed by hand they had two failure shapes: two
       # lanes writing DIFFERENT values conflict and the resolution is arithmetic (recount, then
@@ -3330,7 +3616,9 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/release-cursor.sh --self-test
       - name: Guards self-test (runtime · compose · merge · secrets · worktree · spend · destroy)
-        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        # Skipped only on an affected-only PR that touched none of the guards' inputs (detect-changes
+        # `guards_selftest` filter). Runs on anything but an explicit 'false', so a failed detection runs it.
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && needs.detect-changes.outputs.guards_selftest != 'false' }}
         run: |
           bash .claude/hooks/guard-runtime.sh --self-test
           bash .claude/hooks/guard-compose.sh --self-test
@@ -3662,7 +3950,9 @@ jobs:
     # have changed — detect-changes' `runner` filter covers apps/runner, packages/core, go.work and
     # this file. `byo-users-postgres-required` below restates this condition to know whether a
     # `skipped` result is by design; change one and you must change the other.
-    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true')
+    # FULL LANE ONLY (two lanes, see `detect-changes`): never on an ordinary PR's fast lane — the
+    # queue's batch runs it. The wrapper below restates the lane too.
+    if: github.event.schedule != '0 3 * * *' && (github.event_name != 'pull_request' || needs.detect-changes.outputs.runner == 'true') && needs.detect-changes.outputs.lane != 'fast'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -3763,21 +4053,25 @@ jobs:
           LEGS_RESULT: ${{ needs.byo-users-postgres.result }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
+          LANE: ${{ needs.detect-changes.outputs.lane }}
         run: |
           if [ "$DETECT_RESULT" != success ]; then
             echo "::error::detect-changes concluded '$DETECT_RESULT', so whether the runner changed is unknown"
             exit 1
           fi
-          # The legs' own condition: not the 03:00 UI-audit nightly, and on a PR only when `runner` changed.
+          # The legs' own condition: not the 03:00 UI-audit nightly, on a PR only when `runner` changed,
+          # and never on the fast lane (two lanes — the queue's batch runs them; `CI required` refuses
+          # `lane=fast` on any run that is not an ordinary dev PR, so this cannot excuse a queue skip).
           expected=false
-          if [ "$EVENT_SCHEDULE" != "0 3 * * *" ] && { [ "$EVENT_NAME" != pull_request ] || [ "$RUNNER_CHANGED" = true ]; }; then
+          if [ "$EVENT_SCHEDULE" != "0 3 * * *" ] && { [ "$EVENT_NAME" != pull_request ] || [ "$RUNNER_CHANGED" = true ]; } \
+            && [ "$LANE" != fast ]; then
             expected=true
           fi
-          echo "legs expected to run: $expected; matrix result: $LEGS_RESULT"
+          echo "lane: ${LANE:-?}; legs expected to run: $expected; matrix result: $LEGS_RESULT"
           if [ "$expected" = true ] && [ "$LEGS_RESULT" = success ]; then
             echo "every BYO users leg passed"
           elif [ "$expected" = false ] && [ "$LEGS_RESULT" = skipped ]; then
-            echo "the runner did not change, so the legs were skipped by design"
+            echo "the runner did not change, or this is the fast lane, so the legs were skipped by design"
           else
             echo "::error::BYO users SQL legs concluded '$LEGS_RESULT' (expected to run: $expected)"
             exit 1
@@ -4167,9 +4461,16 @@ jobs:
     #
     # They are NOT a laptop's, and that is the point of running it here. What makes the floors it
     # records reachable by the job that ENFORCES them is that this job and the required
-    # `typescript` job run the IDENTICAL `pnpm exec turbo run test` — same build, same ee/dist,
-    # same measured scope. Floors recorded from a laptop would bake in numbers CI can never
-    # reproduce and would red — or worse, silently DEMOTE — every PR in the repository.
+    # `typescript` job run the same turbo `test` tasks — same build, same ee/dist, same measured
+    # scope. Floors recorded from a laptop would bake in numbers CI can never reproduce and would
+    # red — or worse, silently DEMOTE — every PR in the repository.
+    #
+    # ONE DIFFERENCE SINCE THE SHARD SPLIT, and it is licensed by a measurement rather than argued
+    # away: this probe runs the console's suite UNSHARDED, while `ts-test` measures the merge of
+    # TS_CONSOLE_SHARDS shards. `ts-shard-equivalence` (dispatch with `ts_shard_equivalence=true`)
+    # runs both on one commit and fails on any per-file covered/total difference — dispatch it
+    # alongside this probe whenever floors are recorded after a change to vitest, its coverage
+    # provider or the merge.
     #
     # (This comment used to claim the opposite: that the probe "deliberately does NOT build
     # @alethia/ee" and therefore measures COMMUNITY scope. That was already corrected twice
@@ -4256,6 +4557,79 @@ jobs:
           name: ts-coverage-plan-catalog-fixture
           path: packages/plan-catalog/coverage/coverage-final.json
           if-no-files-found: error
+
+  ts-shard-equivalence:
+    name: TS shard equivalence — unsharded vs merged console coverage (manual)
+    # MANUAL ONLY, and only when asked (`-f ts_shard_equivalence=true`): the proof that licenses the
+    # shard split. The console's floors are RECORDED from an unsharded run (the determinism probe
+    # above) and ENFORCED against the merge of TS_CONSOLE_SHARDS shards (`ts-test`). That is only
+    # sound if the two produce the same numbers, and the argument for it (istanbul's merge is the
+    # operation vitest itself applies across test files and environments, and across shards in
+    # `--merge-reports`) is an argument, not a measurement. This is the measurement: on ONE commit,
+    # the suite unsharded here, against the real shards' artefacts from `ts-test-console` in the same
+    # run, merged by the same command `ts-test` uses — compared per FILE on statements, functions and
+    # branch arms, and per DIRECTORY on what the ratchet gates. Any covered/total difference is red.
+    #
+    # If it is ever red, do not loosen the comparison: the step log names every differing file. A
+    # one-statement wobble in a directory the determinism probe has already seen flap (#3342,
+    # apps/console/lib/billing) is the probe's question, answered by re-running; a difference that
+    # REPEATS is a real divergence between the two paths and blocks trusting the merge for that file.
+    #
+    # `needs: [ts-test-console]` so the shards it compares against are this run's own; a failed shard
+    # skips this job (there is nothing whole to compare). ~25 minutes: the unsharded suite is the
+    # cost the shards exist to avoid.
+    needs: [ts-test-console]
+    if: github.event_name == 'workflow_dispatch' && inputs.ts_shard_equivalence == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The same explicit build the shards and `ts-test` do, so this job's fingerprint matches theirs —
+      # the merge below refuses the shards otherwise.
+      - name: Build @alethia/ee
+        run: pnpm -F @alethia/ee build
+      # The SAME turbo task the shards run, minus `--shard`. No turbo cache is restored in this job,
+      # and `--force` makes that explicit: a replayed coverage/ would compare the shards against an
+      # older run instead of this commit's.
+      - name: The console suite, UNSHARDED
+        run: |
+          set -euo pipefail
+          pnpm exec turbo run test --filter=console --force
+          mkdir -p shard-equivalence
+          mv apps/console/coverage/coverage-final.json shard-equivalence/unsharded.json
+      - name: Download the console shards' coverage
+        uses: actions/download-artifact@v8
+        with:
+          pattern: console-coverage-shard-*
+          path: console-shards
+          merge-multiple: false
+      - name: Merge them with the command ts-test uses
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/ts-coverage-shards.mjs merge --project apps/console --from console-shards --shards "$TS_CONSOLE_SHARDS" --out shard-equivalence/merged/coverage-final.json
+      - name: Compare — any per-file covered/total difference fails
+        id: compare
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/ts-coverage-shards.mjs compare --project apps/console --first shard-equivalence/unsharded.json --second shard-equivalence/merged/coverage-final.json
+      # Both maps, so a red comparison can be re-read file by file without re-running ~25 minutes.
+      # Gated on the comparison having RUN: before that the directory is incomplete, and an upload
+      # error on top of the real failure would name the wrong cause.
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (steps.compare.outcome == 'success' || steps.compare.outcome == 'failure') }}
+        with:
+          name: ts-shard-equivalence
+          path: shard-equivalence/
+          if-no-files-found: error
+          retention-days: 7
 
   runner-image-arch:
     name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
@@ -4907,10 +5281,14 @@ jobs:
   #
   # On a PR and a dispatch only, as before — not on a push to main (deploy-console.yml builds there)
   # and not on a cron.
+  #
+  # FULL LANE ONLY (two lanes, see `detect-changes`): skipped on an ordinary PR's fast lane and run on
+  # the queue's batch. `CI required` restates the non-lane half (a PR or a dispatch) to fail a full
+  # run that skipped it; change one and you must change the other.
   build-console:
     name: Build console images (no push)
     needs: [detect-changes]
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && needs.detect-changes.outputs.lane != 'fast' }}
     runs-on: ubuntu-latest
     steps:
       - name: Nothing to build
@@ -4960,7 +5338,8 @@ jobs:
   # ── CI required — THE ONE CI CONTEXT THE RULESETS AND THE QUEUE REQUIRE (2026-11-22) ──
   #
   # Every required job of THIS workflow, in one verdict: green when each need concluded `success` or
-  # `skipped`, red on `failure` or `cancelled`. Requiring this one name instead of eleven is what lets
+  # `skipped`, red on `failure` or `cancelled` — and, since the two lanes (2026-11-27), red when a
+  # `skipped` is not by design on a full-lane run, or the lane is wrong for the event (its first step). Requiring this one name instead of eleven is what lets
   # a required job be SKIPPED on a PR that cannot affect it (see `detect-changes`, AFFECTED-ONLY): a
   # skipped job here reads as "not needed", where a per-job `check-success=` in `.mergify.yml` reads
   # it as "not green" and a missing matrix leg as "still pending".
@@ -5000,21 +5379,25 @@ jobs:
   # build, `next build`, Playwright, `--workers=3 --retries=1`), the same scripts/e2e-ratchet.mjs
   # against the same apps/console/e2e/gate-baseline.json. ci.yml decides only WHEN it runs.
   #
-  # WHEN: `detect-changes.outputs.qa_leg` — a dev PR (not a promotion, which runs all seven legs in
-  # release-gate.yml's own run; not a Mergify `mergify/merge-queue/*` build, see below; not a fork,
-  # which gets no secrets) whose diff touches the `qa_leg` paths and is not prose-only. Everything
-  # else skips it, which `CI required` counts as success.
+  # WHEN: `detect-changes.outputs.qa_leg` AND the full lane — a dev PR's full-lane run (the Mergify
+  # queue's `mergify/merge-queue/*` batch; an ordinary PR only while the fast lane is switched off)
+  # that is not a promotion (which runs all seven legs in release-gate.yml's own run) and not a fork
+  # (which gets no secrets), whose diff touches the `qa_leg` paths and is not prose-only. Everything
+  # else skips it, which `CI required` counts as success — except a full-lane run where `qa_leg` is
+  # true, which `CI required` fails if this job skipped.
   #
   # REQUIRED WHEN IT RUNS: it is a `needs:` of `CI required`. A regression the ratchet reds fails the
   # aggregator; a skip passes it. The fix for a red is the one release-gate.yml's ratchet prints —
   # repair the spec (or the product) in the same PR, or re-record the baseline entry the change
   # legitimately moved. TESTING.md has the procedure.
   #
-  # NOT IN THE MERGE QUEUE. Mergify validates a batch as a `pull_request` run on a
-  # `mergify/merge-queue/*` draft PR; `selective` is false there, so `qa_leg` is false and this job
-  # skips. Each PR already ran the leg on its own head, and a second ~10-minute run per batch is the
-  # cost this skip refuses. What that gives up, stated: two UI PRs that each pass alone and break
-  # each other merge together, and the promotion's own qa leg is where that shows.
+  # IN THE MERGE QUEUE, NOT ON THE PR (two lanes, 2026-11-27 — inverted from #7647's first form).
+  # It used to run on each PR's own head and skip the batch, which cost ~10 runner-minutes per PR
+  # push and let two UI PRs that each pass alone, and break each other, merge together. Now an
+  # ordinary PR's fast lane skips it and the batch runs it once for up to eight PRs, so the pair
+  # meets before dev, not at the promotion. What that gives up, stated: the author sees a qa-leg
+  # red when the batch fails (Mergify reports it on the PR and drops it from the queue), not on the
+  # first push. Add the `release-gate:run` label for an early answer on a PR that wants one.
   #
   # COST: one shard set (the leg's one matrix entry), ~10 runner-minutes measured on release-gate
   # runs of 2026-11-25, plus a few seconds for `legs`. ci.yml's own `concurrency`
@@ -5027,7 +5410,7 @@ jobs:
   e2e-qa-leg:
     name: E2E qa leg (release gate · affected PRs)
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.qa_leg == 'true'
+    if: needs.detect-changes.outputs.qa_leg == 'true' && needs.detect-changes.outputs.lane != 'fast'
     permissions:
       contents: read
       pull-requests: read
@@ -5054,7 +5437,75 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # TWO LANES (2026-11-27; the lane table is in `detect-changes`' comment). A fast-lane run may
+      # skip the full-lane-only jobs; a full-lane run may not — and the queue's batch, the run that
+      # decides what lands on dev, must be a full-lane run. Two checks, the first independent of the
+      # planner:
+      #
+      #   (a) THE LANE ITSELF. Recomputed here from the event, not read from the planner: only an
+      #       ordinary dev PR (a `pull_request` whose head is not `mergify/merge-queue/*` and whose base
+      #       is not main/staging) may be `fast`. A planner bug that called the batch `fast` would
+      #       otherwise skip the suite there AND excuse the skip below — so it is red, here.
+      #   (b) NO SILENT SKIP ON `full`. Each full-lane-only job's NON-lane condition is restated, and a
+      #       `skipped` result where it holds is red. `byo-users-postgres-required` always runs (its
+      #       own step judges the legs, lane included), so its `skipped` is never by design.
+      #
+      # Change a full-lane-only job's `if:` and you must change its line in `full_expected` below.
+      - name: The lane is right, and a full-lane run skipped none of the full-lane-only jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          LANE: ${{ needs.detect-changes.outputs.lane }}
+          QA_LEG: ${{ needs.detect-changes.outputs.qa_leg }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          bad=0
+          ordinary=false
+          if [ "$EVENT_NAME" = pull_request ] && [ "${HEAD_REF#mergify/merge-queue/}" = "$HEAD_REF" ] \
+            && [ "$BASE_REF" != main ] && [ "$BASE_REF" != staging ]; then
+            ordinary=true
+          fi
+          echo "lane: '${LANE}'; ordinary dev PR: $ordinary; event: $EVENT_NAME; head: ${HEAD_REF:-—}; base: ${BASE_REF:-—}"
+          case "$LANE" in
+            full) ;;
+            fast)
+              if [ "$ordinary" != true ]; then
+                echo "::error::lane=fast on a run that is not an ordinary dev PR (event $EVENT_NAME, head '${HEAD_REF}', base '${BASE_REF}') — the queue's batch, a promotion, a push, a cron and a dispatch must run the full lane"
+                bad=1
+              fi ;;
+            *) echo "::error::detect-changes reported lane '${LANE}' — expected 'fast' or 'full'"; bad=1 ;;
+          esac
+
+          # The non-lane half of each full-lane-only job's `if:`.
+          full_expected() {
+            case "$1" in
+              integration) [ "$EVENT_SCHEDULE" != "0 3 * * *" ] ;;
+              build-console) [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = workflow_dispatch ] ;;
+              byo-users-postgres-required) true ;;
+              e2e-qa-leg) [ "$QA_LEG" = true ] ;;
+              *) echo "::error::full_expected has no rule for '$1'"; bad=1; return 1 ;;
+            esac
+          }
+          if [ "$LANE" = full ]; then
+            for job in integration build-console byo-users-postgres-required e2e-qa-leg; do
+              result=$(jq -r --arg j "$job" '.[$j].result // "absent"' <<<"$NEEDS")
+              if [ "$result" = absent ]; then
+                echo "::error::$job is not a need of this job — the full-lane list and the needs list disagree"; bad=1
+              elif [ "$result" = skipped ] && full_expected "$job"; then
+                echo "::error::$job was SKIPPED on a full-lane run although its own condition says it runs — a full run that silently skipped the suite"; bad=1
+              else
+                echo "ok: $job on the full lane ($result)"
+              fi
+            done
+          fi
+          exit "$bad"
+
+      # Runs even when the lane step above is red, so one run reports both verdicts.
       - name: Every required job succeeded or was skipped by design
+        if: ${{ !cancelled() }}
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |

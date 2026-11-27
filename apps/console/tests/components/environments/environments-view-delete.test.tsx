@@ -61,8 +61,7 @@ vi.mock("@/components/classification/classification-control", () => ({
 
 import { EnvironmentsView } from "@/components/environments/environments-view";
 import { orpc } from "@/lib/rpc/client";
-import type { EnvironmentsOverview } from "@/lib/rpc/procedures/environments";
-import { DEV, PROJECT_ID, envRow, overviewOf, pageOf, seedLists } from "./fixtures";
+import { DEV, type OverviewFixture, PROJECT_ID, envRow, overviewOf, pageOf, readOf, seedLists } from "./fixtures";
 
 const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" } });
 
@@ -70,17 +69,17 @@ const KEY = orpc.environments.overview.queryKey({ input: { project: "payments" }
 const LIVE_REFUSAL = "Destroy this environment before deleting it.";
 
 /** A default environment (no delete control) and one non-default environment, `production`. */
-const OVERVIEW: EnvironmentsOverview = overviewOf();
+const OVERVIEW: OverviewFixture = overviewOf();
 
 /** Renders the page over a cache that already holds `overview`, as the route's prefetch leaves it. */
-function renderView(overview: EnvironmentsOverview = OVERVIEW) {
+function renderView(overview: OverviewFixture = OVERVIEW) {
 	const client = new QueryClient({
 		defaultOptions: {
 			queries: { retry: false, staleTime: Infinity },
 			mutations: { retry: false },
 		},
 	});
-	client.setQueryData(KEY, overview);
+	client.setQueryData(KEY, readOf(overview));
 	seedLists(client, overview);
 	return render(
 		<QueryClientProvider client={client}>
@@ -105,7 +104,7 @@ async function confirmDelete(user: ReturnType<typeof userEvent.setup>, dialog: H
 beforeEach(() => {
 	vi.clearAllMocks();
 	// The delete invalidates the page's read; the refetch answers with the same overview.
-	h.handlers["environments.overview"] = async () => OVERVIEW;
+	h.handlers["environments.overview"] = async () => readOf(OVERVIEW);
 	h.handlers["environments.page"] = async () => pageOf(OVERVIEW.envs);
 	h.handlers["environments.promotions"] = async () => ({ rows: [], nextCursor: null, facets: null, universeEmpty: true });
 });

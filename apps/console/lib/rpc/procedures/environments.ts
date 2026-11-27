@@ -15,10 +15,30 @@ import "server-only";
 //   · readPromotionPreview    ← app/server/actions/promotions.ts previewPromotion
 //   · readProtectionSummaries ← app/server/actions/protection.ts listProtectionRules
 //   · readProtectionRules     ← app/server/actions/protection.ts getProtectionRules
-// Three reads are served without moving, called IN-PROCESS (a plain function call, not a
-// server-action POST): the environment list and the consistency matrix (`getProjectEnvironments`,
-// `getEnvConsistency`, app/server/actions/projects.ts) and the reconcile badges
-// (`getEnvReconcileStates`, app/server/actions/reconcile.ts) — those modules belong to other units.
+// Two reads are served without moving, called IN-PROCESS (a plain function call, not a
+// server-action POST): the consistency matrix (`getEnvConsistency`, app/server/actions/projects.ts)
+// and the reconcile badges (`getEnvReconcileStates`, app/server/actions/reconcile.ts). Neither selects
+// the environment list for itself any more (#7895): each reads it through `projectEnvironmentsFor`,
+// this module's canonical read (`selectProjectEnvironments`), so in a render they share the select
+// the overview made instead of each issuing their own.
+//
+// ONE CANONICAL ENVIRONMENTS READ (#7877, #7895). A `[project]/environments` render used to read the
+// project's environment list six times — the topbar switcher's seed (`workspace.environments`), the
+// panels' `environments.overview`, the consistency matrix and the reconcile badges inside it, and the
+// table's `environments.page` once per distinct key — and to resolve the slug against the org once
+// per procedure. Both are now memoised PER REQUEST with React `cache()`, module-private (see
+// `selectProjectEnvironments` and `lookupProjectInOrg`):
+//   · the base list is ONE select, shared by the switcher's read (`readEnvironmentsForSlug`, the
+//     body of `workspace.environments`), the overview, the matrix and the badges it reads
+//     in-process, and every table page in the render;
+//   · the org-bound slug lookup is ONE select, shared by the overview, the table and the history.
+// On the client the switcher's `workspace.environments` entry is the canonical one: the `[project]`
+// layout seeds it, the switcher and the Elench scope chip read it, and the Environments page derives
+// WHICH environments exist — and their names, stages and default — from it
+// (components/environments/environments-view.tsx), joining each to the overview's facts by id. The
+// overview therefore carries no names or stages of its own (#7895).
+// Outside a React render (a GET from the browser, a server action) `cache()` memoises nothing and
+// each read runs its own queries, exactly as before.
 //
 // TENANCY. The actor is the one the read router bound for the request's ADDRESS (`lib/rpc/base.ts`),
 // never the session's org. Every read here is addressed by a project (a slug or an id) or a
@@ -28,16 +48,14 @@ import "server-only";
 // NOT_FOUND, exactly like an id that does not exist.
 
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { cache } from "react";
 import { z } from "zod";
-import {
-	type EnvConsistency,
-	getEnvConsistency,
-	getProjectAsFormData,
-	getProjectEnvironments,
-} from "@/app/server/actions/projects";
+import { type EnvConsistency, getEnvConsistency, getProjectAsFormData } from "@/app/server/actions/projects";
 import type { ProtectionSummary } from "@/app/server/actions/protection";
 import { type EnvReconcileState, getEnvReconcileStates } from "@/app/server/actions/reconcile";
+import { resolveProjectId, type SwitcherEnv } from "@/app/server/actions/resolve";
 import { ActionRefusal } from "@/lib/actions/result";
+import { UnauthorizedError } from "@/lib/auth/errors";
 import { getPdp } from "@/lib/authz";
 import { authorizeRead, currentActor } from "@/lib/authz/guard";
 import type { Actor } from "@/lib/authz/types";
@@ -65,15 +83,16 @@ import { type PromotionsPage, queryPromotionsPage } from "@/lib/queries/promotio
 import { diffDesigns } from "@/lib/promotions/diff";
 import { IN_FLIGHT, type PromotionRow, type ProtectionRow } from "@/lib/promotions/lifecycle";
 import { assertProjectInActorOrg, promotionInActorOrg } from "@/lib/promotions/org-binding";
+import { classifyProjectResolveFailure } from "@/lib/projects/resolve-project-or-404";
 import { query } from "@/lib/rpc/base";
 import type { ByoAdmissionNamespaceReport, GateResult, PromotionDiff } from "@/types/jsonb.types";
 
-/** One environment row as the page shows it (`updated_at` is an ISO string). */
-export interface EnvRow {
-	id: string;
-	name: string;
-	stage: string;
-	is_default: boolean;
+/**
+ * What the overview knows about one environment that the canonical list (`workspace.environments`)
+ * does not carry: the facts the panels show. Keyed by environment id in
+ * {@link EnvironmentsOverview.facts}; `updated_at` is an ISO string.
+ */
+export interface EnvFacts {
 	/** The environment's provisioning lifecycle (`project_environments.status`). */
 	status: string;
 	updated_at: string;
@@ -83,6 +102,17 @@ export interface EnvRow {
 	byo_admission_has_charts: boolean;
 	/** The setting differs from what the latest deploy carried: the next new deploy applies it. */
 	byo_admission_pending: boolean;
+}
+
+/**
+ * One environment row as the page shows it: the canonical list's identity (id, name, stage,
+ * default) joined to the overview's {@link EnvFacts} for it (components/environments/environments-view.tsx).
+ */
+export interface EnvRow extends EnvFacts {
+	id: string;
+	name: string;
+	stage: string;
+	is_default: boolean;
 }
 
 /** A promotion row projected for the client — one row of the promotions history's page. */
@@ -128,9 +158,12 @@ export interface EnvironmentsOverview {
 	canManage: boolean;
 	/** Whether the viewer may promote, approve, reject or cancel (`project:deploy`). */
 	canPromote: boolean;
-	/** EVERY environment of the project, whatever the filter bar selects. The TABLE's rows are a
-	 *  separate keyset read (`environments.page`), joined to these by id. */
-	envs: EnvRow[];
+	/** The facts the panels show (status, BYO admission) about EVERY environment of the project,
+	 *  whatever the filter bar selects, keyed by environment id. No names, stages or default: WHICH
+	 *  environments the page lists, and what they are called, come from the canonical
+	 *  `workspace.environments` entry the switcher shares (#7877, #7895), joined to these by id; the
+	 *  TABLE's rows are a separate keyset read (`environments.page`), joined the same way. */
+	facts: Record<string, EnvFacts>;
 	consistency: EnvConsistency;
 	reconcile: EnvReconcileState[];
 	/** The in-flight promotion, hydrated (gates + approval slots + diff); null when none. */
@@ -155,18 +188,141 @@ export interface PromotionPreview {
 // ── Project addressing ────────────────────────────────────────────────────────────────────────
 
 /**
+ * The id of the project `slug` names in organization `orgId`, or `null` when it names none there.
+ * Memoised PER REQUEST with React `cache()` (#7877): the overview, every table page and the
+ * promotions history each ask this about the same slug in one render, and it is one query.
+ *
+ * The actor is in the key, not only the slug: `cache()` keys on its arguments, and the answer is
+ * the addressed org's. The CALLER reads `currentActor()` on every call (never memoised here), so a
+ * call under a different actor is a different key and a fresh query. Module-private, like the memo
+ * under `resolveProjectId` (#7748): nothing outside this module can name a scope for it.
+ *
+ * `userId` does not change this query's answer (the org predicate does); it is in the key so the
+ * memo is keyed on the whole actor, as #7748's is, and an actor change of any kind is a fresh query.
+ */
+const lookupProjectInOrg = cache(
+	async (_userId: string, orgId: string, slug: string): Promise<string | null> => {
+		const [row] = await getServiceDb()
+			.select({ id: projects.id })
+			.from(projects)
+			.where(and(eq(projects.slug, slug), eq(projects.org_id, orgId)))
+			.limit(1);
+		return row?.id ?? null;
+	},
+);
+
+/**
  * The id of the project `slug` names IN THE ACTOR'S ORGANIZATION. Slugs are unique per org, so the
  * same slug can name a project in each of two orgs; the org predicate picks the addressed one, and
- * a slug with no project in this org is a NOT_FOUND.
+ * a slug with no project in this org is a NOT_FOUND. The lookup is memoised per request
+ * (`lookupProjectInOrg`); the refusal is built here, per call.
  */
 async function resolveProjectInOrg(actor: Actor, slug: string): Promise<string> {
-	const [row] = await getServiceDb()
-		.select({ id: projects.id })
-		.from(projects)
-		.where(and(eq(projects.slug, slug), eq(projects.org_id, actor.orgId)))
-		.limit(1);
-	if (!row) throw new ActionRefusal("not-found", "Project not found.");
-	return row.id;
+	const projectId = await lookupProjectInOrg(actor.userId, actor.orgId, slug);
+	if (projectId === null) throw new ActionRefusal("not-found", "Project not found.");
+	return projectId;
+}
+
+// ── The canonical environments read ───────────────────────────────────────────────────────────
+
+/**
+ * Every environment of `projectId` visible under the scope `(userId, orgId)`, oldest first: THE
+ * one base read of a project's environments (#7877). Memoised PER REQUEST with React `cache()`, so
+ * the switcher's seed, the overview, the consistency matrix and the reconcile badges it reads, and
+ * every table page in one render share one select (#7895).
+ *
+ * RLS (`withActorScope`) scopes it, exactly as the switcher's read and `getProjectEnvironments`
+ * each scoped theirs. It asks the PDP nothing — the switcher's read never did — so every caller
+ * that did ask (the overview, the table) still asks, BEFORE it reads this. The scope is in the key
+ * for the same reason as `lookupProjectInOrg`'s. Module-private: what it returns is shared between
+ * callers, so it is never mutated (sort a copy).
+ */
+const selectProjectEnvironments = cache(async (userId: string, orgId: string, projectId: string) =>
+	withActorScope({ userId, orgId }, (tx) =>
+		tx
+			.select({
+				id: projectEnvironments.id,
+				project_id: projectEnvironments.project_id,
+				name: projectEnvironments.name,
+				stage: projectEnvironments.stage,
+				is_default: projectEnvironments.is_default,
+				status: projectEnvironments.status,
+				byo_admission_enforce: projectEnvironments.byo_admission_enforce,
+				// The reconcile badges' columns (`getEnvReconcileStates`, #7895): it reads this list too.
+				auto_heal: projectEnvironments.auto_heal,
+				deployed_config_hash: projectEnvironments.deployed_config_hash,
+				last_deployed_at: projectEnvironments.last_deployed_at,
+				created_at: projectEnvironments.created_at,
+				updated_at: projectEnvironments.updated_at,
+			})
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.project_id, projectId))
+			.orderBy(projectEnvironments.created_at),
+	),
+);
+
+/** One row of the canonical read, as the database answers it. */
+type ProjectEnvironmentRow = Awaited<ReturnType<typeof selectProjectEnvironments>>[number];
+
+/**
+ * The canonical read of `projectId`'s environments for `actor`, oldest first — memoised per request,
+ * so every reader in one render shares one select. The caller has ALREADY asked the PDP (this asks
+ * nothing) and passes the actor that check answered with; RLS scopes the rows to that actor.
+ *
+ * Exported for the two in-process readers in `"use server"` modules (`getEnvConsistency`,
+ * `getEnvReconcileStates`, #7895). It takes an ACTOR, not a `(userId, orgId)` pair, and it is not
+ * itself an action: this module is not `"use server"`, so nothing here is POST-able, and the memo
+ * underneath stays module-private. The rows are shared: never mutate them (sort a copy).
+ */
+export function projectEnvironmentsFor(actor: Actor, projectId: string): Promise<ProjectEnvironmentRow[]> {
+	return selectProjectEnvironments(actor.userId, actor.orgId, projectId);
+}
+
+/** The environments with the default first, then oldest first — the order the page lists them in. */
+function defaultFirst(rows: readonly ProjectEnvironmentRow[]): ProjectEnvironmentRow[] {
+	// A copy: the memoised array is shared with every other reader in the request.
+	return [...rows].sort((a, b) => Number(b.is_default) - Number(a.is_default));
+}
+
+/**
+ * The id of the project `slug` names in the actor's scope, or `null` when it names none — through
+ * `resolveProjectId`, so the switcher's read shares the lookup the `[project]` layout and page
+ * already made in this render (#7736). A lost session is rethrown (not an empty switcher), and so is
+ * every other failure; only the not-found answer is `null`.
+ */
+async function switcherProjectId(slug: string): Promise<string | null> {
+	try {
+		return await resolveProjectId(slug);
+	} catch (error) {
+		if (!(error instanceof UnauthorizedError) && classifyProjectResolveFailure(error) === "not-found") {
+			return null;
+		}
+		throw error;
+	}
+}
+
+/**
+ * The topbar switcher's environments for the project `slug` names (the body of
+ * `workspace.environments`): `[]` when the slug names no project in the actor's scope, so the
+ * switcher hides. RLS-scoped and PDP-free, as it always was. In a render it is the canonical read
+ * (`selectProjectEnvironments`) and the shared slug lookup, so the `[project]` layout's seed costs
+ * no query the Environments page below it does not already make.
+ *
+ * Each row is the slim switcher shape ({@link SwitcherEnv}); the Environments page joins these rows
+ * to the overview's per-environment facts by id.
+ */
+export async function readEnvironmentsForSlug(slug: string): Promise<SwitcherEnv[]> {
+	const actor = await currentActor();
+	const projectId = await switcherProjectId(slug);
+	if (projectId === null) return [];
+	const rows = await projectEnvironmentsFor(actor, projectId);
+	return rows.map((e) => ({
+		id: e.id,
+		project_id: e.project_id,
+		name: e.name,
+		stage: e.stage,
+		is_default: e.is_default,
+	}));
 }
 
 /**
@@ -430,7 +586,9 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 		mayOnProject(actor, "deploy", projectId),
 	]);
 
-	const { environments } = await getProjectEnvironments(projectId);
+	// The canonical read: in a render, the same select the switcher's seed and the table made — and
+	// the one the matrix and the badges below read again through the memo, not the database (#7895).
+	const environments = defaultFirst(await projectEnvironmentsFor(actor, projectId));
 	const [consistency, reconcile, active, protectionByEnv] = await Promise.all([
 		getEnvConsistency(projectId).catch(
 			(): EnvConsistency => ({
@@ -456,17 +614,18 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 		projectId,
 		canManage,
 		canPromote,
-		envs: environments.map((e) => ({
-			id: e.id,
-			name: e.name,
-			stage: e.stage,
-			is_default: e.is_default,
-			status: e.status,
-			updated_at: e.updated_at.toISOString(),
-			byo_admission_enforce: e.byo_admission_enforce,
-			byo_admission_has_charts: byoAdmission.get(e.id)?.hasByoCharts ?? true,
-			byo_admission_pending: byoAdmission.get(e.id)?.pending ?? false,
-		})),
+		facts: Object.fromEntries(
+			environments.map((e): [string, EnvFacts] => [
+				e.id,
+				{
+					status: e.status,
+					updated_at: e.updated_at.toISOString(),
+					byo_admission_enforce: e.byo_admission_enforce,
+					byo_admission_has_charts: byoAdmission.get(e.id)?.hasByoCharts ?? true,
+					byo_admission_pending: byoAdmission.get(e.id)?.pending ?? false,
+				},
+			]),
+		),
 		consistency,
 		reconcile,
 		activePromotion,
@@ -477,8 +636,9 @@ export async function readEnvironmentsOverview(slug: string): Promise<Environmen
 /**
  * One keyset page of the Environments TABLE for the project `slug` names (LST-3 #7485): the
  * environments matching `query`, newest first, paged IN MEMORY on the server by
- * `queryEnvironmentsPage` (lib/queries/environments.ts — the source is an in-process module call,
- * not a table), with the facets over every environment of the project on the first page. Bound to
+ * `queryEnvironmentsPage` (lib/queries/environments.ts — the source is the request-memoised
+ * canonical read, `selectProjectEnvironments`), with the facets over every environment of the
+ * project on the first page. Bound to
  * the addressed org and gated on project `view` exactly as the overview is.
  */
 async function readEnvironmentsPage(
@@ -486,8 +646,10 @@ async function readEnvironmentsPage(
 	{ cursor, limit = KEYSET_DEFAULT_LIMIT, ...query }: EnvironmentsQuery & Partial<KeysetPageRequest> = {},
 ): Promise<EnvironmentsPage> {
 	const projectId = await resolveProjectInOrg(await currentActor(), slug);
-	await authorizeRead("view", { type: "project", id: projectId });
-	const { environments } = await getProjectEnvironments(projectId);
+	const actor = await authorizeRead("view", { type: "project", id: projectId });
+	// The canonical read: in a render, every table page and the overview share this one select, so a
+	// filtered link's page and the pristine page do not each fetch the unfiltered base again.
+	const environments = await projectEnvironmentsFor(actor, projectId);
 	const facts = environments.map((e) => ({
 		id: e.id,
 		name: e.name,

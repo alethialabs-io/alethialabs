@@ -26,7 +26,7 @@
 // claimed and reach pass 1: the two Elench routes (`/api/agent`, `/api/projects/[projectId]/assistant`),
 // the agent-identity route (`/api/agent/[agentId]`) and the support route for a request that names a
 // thread (`/api/support/ask`). Every other caller's hold (a support request with no thread, the
-// `colony` and `verify` actions) is unclaimed and is pass 2's.
+// `verify` action) is unclaimed and is pass 2's.
 
 import { and, isNull, lt, ne, sql } from "drizzle-orm";
 import { expireSilentTurns } from "@/lib/agent/turn-claims";
@@ -41,7 +41,7 @@ import { agentTurnClaims, aiUsageLedger } from "@/lib/db/schema";
  * - a hold a `running` turn claim names is never read by this pass (it is excluded below); its turn
  *   is bounded by `TURN_BUDGET_MS` (15 minutes) and its release by C8 in pass 1. The holds of the
  *   four chat routes on the turn claim (above) are these;
- * - every other hold (a support request with no thread, the `colony` and `verify` actions', and a
+ * - every other hold (a support request with no thread, the `verify` action's, and a
  *   turn that ran on the old process across a deploy) has NO time bound at all. For those, 60
  *   minutes is an assumption.
  *

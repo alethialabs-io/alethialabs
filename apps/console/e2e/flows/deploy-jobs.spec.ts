@@ -36,6 +36,7 @@
 // do NOT call cleanupOrg (it would wipe sibling agents' data); seeded rows are uniquely named and
 // harmless to leave behind.
 
+import type { Page } from "@playwright/test";
 import { test, expect } from "../fixtures/qa";
 import type { Owner } from "../helpers/seed";
 import {
@@ -234,24 +235,29 @@ test.describe("Deploy jobs — a finished deploy reaches every surface", () => {
 // un-shareable link.
 // ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A toolbar facet's button by its accessible name — `Status` idle, `Status: Failed` selected, or the
+ * sibling `Clear Status`. Scoped to the `FacetFilter` boxes, because the jobs table's column headers
+ * carry the same words.
+ */
+function facetTrigger(page: Page, name: string) {
+	return page.locator('[data-slot="facet-filter"]').getByRole("button", { name, exact: true });
+}
+
 test.describe("Deploy jobs — the org jobs list on the filter standard", () => {
 	test("all six filter selections render", async ({ owner }) => {
 		await visit(owner.page, `/${owner.orgSlug}/~/jobs`);
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		// `MultiCombobox` surfaces its label as the input's PLACEHOLDER (the input is the trigger),
-		// which is also the input's accessible name — so each facet is asked for BY ROLE under that
-		// name. Never `getByPlaceholder`/`getByLabel` on a filter-bar input: they match the server's
-		// hidden streamed copy of the bar too (#5777, #5800; scripts/ci/check-e2e-filter-locators.mjs).
+		// Each facet is a `FacetFilter` button named for its facet while nothing is selected
+		// (`Name ▾`, polish-wave spec §3) — so each is asked for BY ROLE under that name. Never
+		// `getByPlaceholder`/`getByLabel` on a filter-bar input: they match the server's hidden
+		// streamed copy of the bar too (#5777, #5800; scripts/ci/check-e2e-filter-locators.mjs).
 		await expect(owner.page.getByRole("textbox", { name: "Search jobs", exact: true })).toBeVisible({ timeout: 25_000 });
-		for (const facet of [
-			"All authors",
-			"All environments",
-			"All projects",
-			"All statuses",
-			"All types",
-		]) {
-			await expect(owner.page.getByRole("textbox", { name: facet, exact: true }), `${facet} facet`).toBeVisible();
+		for (const facet of ["Author", "Environment", "Project", "Status", "Type"]) {
+			await expect(facetTrigger(owner.page, facet), `${facet} facet`).toBeVisible();
 		}
+		// One row, no description line (#7738).
+		await expect(owner.page.locator('[data-slot="page-toolbar"]')).toHaveCount(0);
 	});
 
 	test("a URL-borne filter hydrates the bar and scopes the rows", async ({ owner }) => {
@@ -265,6 +271,9 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		await expect(owner.page.getByRole("button", { name: "Reset · 2" })).toBeVisible({
 			timeout: 25_000,
 		});
+		// The facet names what the link selected, and carries its own clear.
+		await expect(facetTrigger(owner.page, "Status: Failed")).toBeVisible();
+		await expect(facetTrigger(owner.page, "Clear Status")).toBeVisible();
 		// One of this project's two jobs is FAILED.
 		//
 		// 25s, LIKE EVERY OTHER ASSERTION IN THIS FILE, and this is the one that needs it most.
@@ -287,9 +296,9 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
 		).toHaveCount(2, { timeout: 25_000 });
-		// The input IS the trigger — focusing it opens the list.
-		await owner.page.getByRole("textbox", { name: "All statuses", exact: true }).click();
-		await owner.page.getByRole("button", { name: /^Failed/ }).click();
+		// The facet's button opens its option list.
+		await facetTrigger(owner.page, "Status").click();
+		await owner.page.getByRole("option", { name: /^Failed/ }).click();
 		await expect(owner.page).toHaveURL(/[?&]statuses=FAILED\b/);
 		// The URL is written synchronously; the ROWS are a debounce plus a refetch behind it, so
 		// this waits as long as its siblings rather than on the default 5s.
@@ -309,18 +318,18 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
 		).toHaveCount(2, { timeout: 25_000 });
-		await owner.page.getByRole("textbox", { name: "All statuses", exact: true }).click();
-		// An option click `preventDefault`s its mousedown to keep focus in the input, so the list
-		// stays open — which is what lets the SAME list be re-read after the selection lands.
-		await owner.page.getByRole("button", { name: /^Failed/ }).click();
+		await facetTrigger(owner.page, "Status").click();
+		// Toggling an option keeps the popover open — which is what lets the SAME list be re-read
+		// after the selection lands.
+		await owner.page.getByRole("option", { name: /^Failed/ }).click();
 		// Same debounce + refetch as its sibling above, so the same 25s.
 		await expect(
 			owner.page.getByRole("row").filter({ hasText: deployed.name }),
 		).toHaveCount(1, { timeout: 25_000 });
 		// Both are still offered even though the rows are now one status: the one just selected,
 		// and one the current filter excludes entirely.
-		await expect(owner.page.getByRole("button", { name: /^Failed/ })).toBeVisible();
-		await expect(owner.page.getByRole("button", { name: /^Success/ })).toBeVisible();
+		await expect(owner.page.getByRole("option", { name: /^Failed/ })).toBeVisible();
+		await expect(owner.page.getByRole("option", { name: /^Success/ })).toBeVisible();
 	});
 
 	test("a filter that matches nothing says so, and never says 'No jobs yet'", async ({ owner }) => {
@@ -339,7 +348,7 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		// asserted the other branch's copy from inside this one. The two are mutually exclusive
 		// arms of a single ternary, so it was implied by the assertion above and had no failing
 		// input of its own.
-		await expect(owner.page.getByText("No jobs match these filters")).toBeVisible({
+		await expect(owner.page.getByText("No jobs match these filters.", { exact: true })).toBeVisible({
 			timeout: 25_000,
 		});
 	});
@@ -352,8 +361,8 @@ test.describe("Deploy jobs — the org jobs list on the filter standard", () => 
 		).toBeVisible({ timeout: 25_000 });
 		// `projectId` overrides the Project selection server-side, so offering the facet would be
 		// offering a control that cannot change the result.
-		await expect(owner.page.getByRole("textbox", { name: "All projects", exact: true })).toHaveCount(0);
-		await expect(owner.page.getByRole("textbox", { name: "All statuses", exact: true })).toBeVisible();
+		await expect(facetTrigger(owner.page, "Project")).toHaveCount(0);
+		await expect(facetTrigger(owner.page, "Status")).toBeVisible();
 	});
 
 	test("clicking a job row opens its detail page", async ({ owner }) => {
@@ -462,9 +471,11 @@ test.describe("Deploy jobs — environments, drift and promotion gates", () => {
 	}) => {
 		await visit(owner.page, `/${owner.orgSlug}/${deployed.slug}/environments`);
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		// The list is headed by the page toolbar (its count and actions), not an in-content title:
-		// #6120 removed the "Environments N" heading (F010) — the breadcrumb names the page.
-		await expect(owner.page.locator('[data-slot="page-toolbar"]')).toBeVisible({ timeout: 25_000 });
+		// The list is headed by its one-row toolbar (search, facets, and the actions on the right), not
+		// an in-content title: #6120 removed the "Environments N" heading (F010) — the breadcrumb names
+		// the page — and #7738 removed the page toolbar's description line with the toolbar itself.
+		await expect(owner.page.locator('[data-slot="list-toolbar-end"]')).toBeVisible({ timeout: 25_000 });
+		await expect(owner.page.locator('[data-slot="page-toolbar"]')).toHaveCount(0);
 		await expect(owner.page.getByRole("heading", { name: /^Environments/ })).toHaveCount(0);
 		await expect(owner.page.getByRole("link", { name: "production" })).toBeVisible();
 	});

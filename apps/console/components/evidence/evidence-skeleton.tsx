@@ -5,11 +5,13 @@
 // draw THIS, so the two cannot disagree with each other or with the page. No "use client": the
 // route's `loading.tsx` is a server component.
 //
-// It is the loaded page's own geometry, not a sketch of it: the filter bar (search + funnel), the
+// It is the loaded page's own geometry, not a sketch of it: the one-row `ListToolbar` (search + the
+// funnel, drawn as `FunnelFilter`'s own 40px square trigger in `extra`, where the page puts it), the
 // "Environments" heading (no count beside it, #7481), the posture table drawn with the table's real header
 // cells and column widths (`evidence-layout.ts`) — one project group header and its environment
 // rows, two text lines each like the real ones — and the waivers panel below it.
 
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import {
 	Table,
@@ -71,11 +73,8 @@ function RowSkeleton() {
 export function EvidenceSkeleton({ rows = 3 }: { rows?: number }) {
 	return (
 		<div data-slot="evidence-skeleton" aria-hidden className="pb-20">
-			{/* FilterBar: the search field and the funnel trigger. */}
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-9 w-[240px] max-w-[380px] flex-1 rounded-sm" />
-				<Skeleton className="size-10 rounded-md" />
-			</div>
+			{/* The toolbar: the search field and the funnel trigger, which the page passes as `extra`. */}
+			<ListToolbarSkeleton extra="icon" />
 
 			{/* The "Environments" heading. */}
 			<div className="mb-2.5 flex items-center gap-2">

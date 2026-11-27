@@ -84,6 +84,13 @@ cd apps/runner && go test ./...
   only after you run it, which is why they are described here rather than linked: a terminal
   table, an index.html to browse locally, lcov.info, coverage-summary.json, and
   coverage-final.json — the raw statement map the ratchet reads.
+- **In CI the console suite is sharded.** `ts-test-console` runs it as `TS_CONSOLE_SHARDS` shards
+  (`vitest run --coverage --shard=i/N`). `ts-test` merges their coverage-final.json files by path
+  with `scripts/ts-coverage-shards.mjs merge` (istanbul-lib-coverage, the same merge vitest's
+  `--merge-reports` does) and then runs the ratchet on the merged file. A missing or foreign shard
+  fails the merge, and the console ratchet runs with `--merged-from-shards`, so a partial file is
+  never measured as the whole. The floors are still recorded unsharded. The `ts-shard-equivalence`
+  dispatch (`gh workflow run ci.yml -f ts_shard_equivalence=true`) proves the two agree file by file.
 - Scope: our business **logic** — `lib/**` + `app/server/actions/**` (generated migrations/seeds
   and tests excluded; see `vitest.config.ts`). Presentational `components/**` are deliberately
   **not** counted here — UI is covered by the focused `@repo/ui` component tests + e2e, so the
@@ -243,7 +250,7 @@ console, and `qa` on every such PR that touches what it measures; seven are the 
 | `qa` | `E2E qa leg (release gate · affected PRs) / Release gate (qa)` — the same leg, called from `ci.yml` (#7647); required when it runs | `Release gate (qa)` | needs `ALETHIA_QA_E2E=1` |
 | `audit` | — | `Release gate (audit)` | `UI conformance audit (console · non-required)`, nightly |
 | `audit-interaction` | — | `Release gate (audit-interaction)` | the only leg that activates destructive controls |
-| `elench-live` | — | — | `e2e-ai-nightly.yml` — real model, never gating |
+| `elench-live` | — | — | `e2e-ai-nightly.yml` — real model, never gating; also its PR jobs (the journeys a PR's AI change touches, until 2026-12-12) |
 
 `hero` and `elench-ai` are twice-homed, and their `ci.yml` copies skip themselves on a PR into
 `main` or `staging`, so a promotion does not boot the same console twice. `qa` alone matches all 26
@@ -262,18 +269,18 @@ promotion, or a dispatch. Since #7654, release-gate.yml no longer triggers on `l
 label's skipped run superseded a passing run on the same sha and kept a release PR unmergeable.
 `check-required-checks.mjs` fails if it triggers on `labeled` again.
 
-**The `qa` leg runs on the PR that can break it (#7647).** Promotions #7554 and #7608 were both
+**The `qa` leg runs before the PR that can break it lands (#7647).** Promotions #7554 and #7608 were both
 blocked by qa regressions from dev PRs that changed console behaviour and left specs stale; the leg
 ran only at promotion, so the PR that broke the spec never saw it. `ci.yml`'s `e2e-qa-leg` job now
-calls `release-gate.yml` (`workflow_call`, input `ci_legs: qa`) — the same `legs` picker, the same
+runs it in the merge queue's batch (the full lane) and calls `release-gate.yml` (`workflow_call`, input `ci_legs: qa`) — the same `legs` picker, the same
 `gate` job, the same ratchet against the same `gate-baseline.json`; nothing about the leg is copied.
 
 | question | answer |
 |---|---|
-| when does it run | `detect-changes.outputs.qa_leg`: a `dev` PR (not a promotion, not a Mergify `mergify/merge-queue/*` build, not a fork) whose diff touches the `qa_leg` paths in `ci.yml` — the console's `app/`, `components/`, `lib/`, `hooks/`, `types/`, `emails/`, `public/`, `scripts/`, `e2e/` and build config, `ee/`, every workspace package the console depends on, the lockfile, and the leg's seams — and is not prose-only |
-| is it required | **yes, when it runs.** It is a `needs:` of `CI required`: a skip passes the aggregator, a ratchet regression fails it, and a call that reports success without the `legs` job having decided to run (a vacuous green) also fails it |
-| what it costs | one shard (the leg's single matrix entry), ~10 runner-minutes per run (release-gate runs of 2026-11-25); `ci.yml`'s cancel-in-progress cancels it on a re-push |
-| what it does not do | run in the merge queue — each PR already ran it on its own head, so two UI PRs that pass alone and break each other are caught at the promotion's own qa leg, not in the queue |
+| when does it run | on the **full lane** only (two CI lanes, `CONTRIBUTING.md`): the Mergify `mergify/merge-queue/*` batch of `dev` PRs, not an ordinary PR's own fast-lane run. `detect-changes.outputs.qa_leg`: a `dev` PR or queue batch (not a promotion, not a fork) whose diff touches the `qa_leg` paths in `ci.yml` — the console's `app/`, `components/`, `lib/`, `hooks/`, `types/`, `emails/`, `public/`, `scripts/`, `e2e/` and build config, `ee/`, every workspace package the console depends on, the lockfile, and the leg's seams — and is not prose-only |
+| is it required | **yes, when it runs.** It is a `needs:` of `CI required`: a skip passes the aggregator on the fast lane, a skip on a full-lane run whose diff touches the `qa_leg` paths fails it, a ratchet regression fails it, and a call that reports success without the `legs` job having decided to run (a vacuous green) also fails it |
+| what it costs | one shard (the leg's single matrix entry), ~10 runner-minutes per queue batch of up to eight PRs (release-gate runs of 2026-11-25) |
+| what it does not do | run on your PR's own push — the author sees a qa red when the queue batch fails. Label the PR `release-gate:run` for an early answer. Because it runs on the batch, two UI PRs that pass alone and break each other now meet in the queue, not at the promotion |
 | when it is red | the spec went stale because the PR changed behaviour: repair the spec (or the product) in the same PR, or re-record the entry the change legitimately moved (`apps/console/e2e/README.md`). The report and traces are the `release-gate-qa` artifact on the `CI` run. A Dependabot PR gets no repo secrets, so the leg's capability guard fails on the empty Stripe key — push an empty commit from a maintainer account to re-run it with secrets |
 
 **A gate leg passes by ratchet, and the ledger's bar is: no `failed` entry, and every `{fixme}` cites an open issue.** Each leg fails

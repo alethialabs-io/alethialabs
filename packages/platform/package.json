@@ -1,13 +1,14 @@
 {
   "name": "@repo/platform",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Alethia platform records: enterprise contracts and the platform audit log, as Drizzle schema, enums and types.",
   "private": true,
   "exports": {
     "./schema": "./src/schema.ts",
     "./enums": "./src/enums.ts",
     "./types": "./src/types.ts",
-    "./console-refs": "./src/console-refs.ts"
+    "./console-refs": "./src/console-refs.ts",
+    "./paddle": "./src/paddle.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",

@@ -4,13 +4,13 @@
 import { and, count, countDistinct, eq, exists, inArray, max, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { ProjectListItem, ProjectWithProvider } from "@/app/server/actions/projects";
-import type { Tx } from "@/lib/db";
+import type { Db, Tx } from "@/lib/db";
 import {
 	normalizeWebhookCaConsumers,
 	type WebhookCaConsumer,
 } from "@/lib/addons/webhook-ca-consumers";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
-import { assertCloudOffered } from "@/lib/cloud-providers/availability";
+import { assertCloudOffered, CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import { claimPlacementNamespace } from "@/lib/projects/placement-namespace-claim";
 import {
 	cloudIdentities,
@@ -346,7 +346,7 @@ async function refuseClaimedPlacementNamespaces(
  * use an account at all is a different question, and each write path asks it before it gets this
  * far; this function answers only for a row it has read.
  */
-async function assertIdentityCloudOffered(tx: Tx, cloudIdentityId: string): Promise<void> {
+async function assertIdentityCloudOffered(tx: Db | Tx, cloudIdentityId: string): Promise<void> {
 	const rows = await tx
 		.select({ provider: cloudIdentities.provider })
 		.from(cloudIdentities)
@@ -363,16 +363,37 @@ async function assertIdentityCloudOffered(tx: Tx, cloudIdentityId: string): Prom
  * A project with no cloud account, and an id that matches no row the transaction can read, are not
  * refused: there is no cloud to refuse.
  *
- * The enqueue paths for plan and deploy do not call this yet. #6811 added the check; the call
- * sites are in files other units own.
+ * Every path that queues a PLAN or a DEPLOY asks it (#6964): `buildConfigSnapshot` in
+ * app/server/actions/projects.ts for the plan, deploy and build a person queues (the console, the
+ * agent and `POST /api/jobs` all go through it), and {@link projectCloudRefusal} for the deploys the
+ * system queues with nobody asking (auto-heal, a promotion, the deploy a build chains, and the build
+ * a deploy chains). A destroy plan is a plan of a teardown and is not asked.
  */
-export async function assertProjectCloudOffered(tx: Tx, projectId: string): Promise<void> {
+export async function assertProjectCloudOffered(tx: Db | Tx, projectId: string): Promise<void> {
 	const rows = await tx
 		.select({ cloud_identity_id: projects.cloud_identity_id })
 		.from(projects)
 		.where(eq(projects.id, projectId));
 	for (const row of rows) {
 		if (row.cloud_identity_id) await assertIdentityCloudOffered(tx, row.cloud_identity_id);
+	}
+}
+
+/**
+ * The refusal {@link assertProjectCloudOffered} would throw, returned instead: null when the project
+ * may be planned and deployed. For the service-role paths that queue a DEPLOY with nobody waiting on
+ * the answer, which skip or block the work rather than throw. Any other error is rethrown.
+ */
+export async function projectCloudRefusal(
+	db: Db | Tx,
+	projectId: string,
+): Promise<CloudNotOfferedError | null> {
+	try {
+		await assertProjectCloudOffered(db, projectId);
+		return null;
+	} catch (error) {
+		if (error instanceof CloudNotOfferedError) return error;
+		throw error;
 	}
 }
 

@@ -14,6 +14,7 @@ import { emitAlertEventSafe } from "@/lib/alerts/emit";
 import { PlanBindingError } from "@/lib/approvals/plan-binding";
 import { ApplyAuthorizationError } from "@/lib/approvals/types";
 import { getActiveScope } from "@/lib/auth/scope";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
 import { getPdp } from "@/lib/authz";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { actorWithCredential, personalIdentityAuthor } from "@/lib/authz/actor-credential";
@@ -635,6 +636,16 @@ export async function POST(req: Request) {
 			if (e instanceof PlanBindingError) {
 				return NextResponse.json(
 					{ error: e.code === "plan_required" ? CLI_PLAN_REQUIRED : e.message, code: e.code },
+					{ status: 409 },
+				);
+			}
+			// A PLAN or DEPLOY of a project whose cloud this deployment does not offer (#6964). A
+			// conflict with the deployment's offered set, not a server fault: the project can still be
+			// read, checked for drift and destroyed, and an operator can offer the cloud again. `code`
+			// lets a client tell it apart from the other conflicts.
+			if (e instanceof CloudNotOfferedError) {
+				return NextResponse.json(
+					{ error: e.message, code: "cloud_not_offered" },
 					{ status: 409 },
 				);
 			}

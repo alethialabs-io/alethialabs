@@ -20,7 +20,7 @@ import { ClockSlot } from "@/components/overview/clock-slot";
 import { ReleaseNotesPopover } from "@/components/runners/release-notes-popover";
 import { type RunnerRef, useRunnersQuery, useUpdateAllOutdated } from "@/lib/query/use-runners-query";
 import { formatRelative } from "@repo/format";
-import { ArrowUpCircle, Loader2 } from "lucide-react";
+import { ArrowUpCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -155,18 +155,12 @@ export function VersionsPanel() {
 									size="sm"
 									variant="outline"
 									className="h-7 text-xs"
-									disabled={updateAll.isPending}
-									aria-busy={updateAll.isPending}
+									pending={updateAll.isPending}
 									onClick={() => setConfirmOpen(true)}
 								>
-									{updateAll.isPending ? (
-										<>
-											<Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-											Updating…
-										</>
-									) : (
-										<>Update all ({updatable.length})</>
-									)}
+									{updateAll.isPending
+										? `Updating ${updatable.length} runner${updatable.length !== 1 ? "s" : ""}…`
+										: `Update all (${updatable.length})`}
 								</Button>
 							)}
 						</div>

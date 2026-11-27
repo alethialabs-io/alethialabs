@@ -33,6 +33,7 @@ vi.mock("@/components/settings/billing/invoice-preview-dialog", () => ({
 	InvoicePreviewDialog: () => null,
 }));
 
+import InvoicesLoading from "@/app/(private)/[org]/~/settings/billing/invoices/loading";
 import { invoiceStatusCounts } from "@/components/settings/billing/invoices-filters";
 import { InvoicesPanel } from "@/components/settings/billing/invoices-panel";
 import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
@@ -182,10 +183,53 @@ describe("InvoicesPanel states and counts (#7493, CON-PB2)", () => {
 
 describe("invoiceStatusCounts reads the first page's facet pass", () => {
 	it("gives every status an entry, from the server's counts", () => {
-		expect(invoiceStatusCounts(FACETS)).toEqual({ paid: 3, refunded: 0, void: 0 });
+		expect(invoiceStatusCounts(FACETS)).toEqual({ open: 0, overdue: 0, paid: 3, refunded: 0, void: 0 });
 	});
 
 	it("counts nothing before a first page has landed", () => {
-		expect(invoiceStatusCounts(null)).toEqual({ paid: 0, refunded: 0, void: 0 });
+		expect(invoiceStatusCounts(null)).toEqual({ open: 0, overdue: 0, paid: 0, refunded: 0, void: 0 });
+	});
+});
+
+/**
+ * The real toolbar row's controls in order — `facet` for a `FacetFilter`, `search` for the search,
+ * `control` for any other button (the quick range and the date range in `extra`).
+ */
+function realToolbarParts(container: HTMLElement): string[] {
+	const facet = container.querySelector('[data-slot="facet-filter"]');
+	const row = facet?.parentElement;
+	if (!row) throw new Error("the panel drew no toolbar");
+	return [...row.children].map((el) => {
+		if (el.getAttribute("data-slot") === "facet-filter") return "facet";
+		if (el.getAttribute("data-slot") === "filter-search") return "search";
+		return "control";
+	});
+}
+
+describe("the route's loading skeleton is the panel's own row (#7876)", () => {
+	it("draws the toolbar as ListToolbarSkeleton, one placeholder per real control, in order", async () => {
+		reads.invoices.mockResolvedValue(page([invoice(1)], null));
+		const real = render(tree());
+		await screen.findByText("ALE-1");
+		const realParts = realToolbarParts(real.container);
+		const realColumns = real.container.querySelectorAll("thead th").length;
+		real.unmount();
+		expect(realParts).toEqual(["facet", "control", "control"]);
+
+		const { container } = render(<InvoicesLoading />);
+		const row = container.querySelector('[data-slot="list-toolbar-skeleton"]');
+		if (!row) throw new Error("the loading skeleton drew no ListToolbarSkeleton");
+		const drawn = [...row.children].map((el) => {
+			const part = el.getAttribute("data-part");
+			return part === "extra" ? (el.getAttribute("data-size") ?? "") : (part ?? "");
+		});
+		expect(drawn).toEqual(realParts);
+		expect(container.querySelectorAll('[data-slot="data-table-skeleton"] thead th')).toHaveLength(realColumns);
+	});
+
+	it("has no count-pill placeholder and no hand-rolled filter row", () => {
+		const { container } = render(<InvoicesLoading />);
+		expect(container.querySelector(".rounded-full")).toBeNull();
+		expect(container.querySelectorAll(".flex-wrap")).toHaveLength(1);
 	});
 });

@@ -11,9 +11,9 @@ import {
 	EmptyMedia,
 	EmptyTitle,
 } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
 import { cn } from "@repo/ui/utils";
-import { LifeBuoy, SearchX } from "lucide-react";
+import { LifeBuoy } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 import { RegionError } from "@repo/ui/region-error";
@@ -24,14 +24,12 @@ import {
 	caseFacetOptions,
 	DEFAULT_SUPPORT_CASE_FILTERS,
 	normalizeSupportCaseQuery,
-	type SupportCaseFilters,
 } from "@/components/support/cases/case-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import { useKeysetList } from "@/lib/query/use-keyset-list";
 import { orpc } from "@/lib/rpc/client";
 import { readRefusalOf } from "@/lib/rpc/refusal";
-import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useSupportFilters } from "@/lib/stores/use-support-filters";
 import {
 	SUPPORT_CASE_TYPE_LABELS,
@@ -55,8 +53,8 @@ import { CaseListSkeletonRows } from "./case-list-skeleton";
  * always-visible "Load more", and the retry line on a failed page with the rows kept).
  *
  * No count anywhere: the console carries no list counts (README → "Counts"). When `seeAll`
- * (the caller holds manage_support) the list is the whole org's cases — the toolbar's line
- * says so and each foreign row shows its opener.
+ * (the caller holds manage_support) the list is the whole org's cases — each foreign row shows
+ * its opener.
  */
 export function CaseList({
 	orgSlug,
@@ -106,19 +104,11 @@ export function CaseList({
 		[facets],
 	);
 
-	const activeFilters = countActiveFilters<SupportCaseFilters>(
-		filters,
-		DEFAULT_SUPPORT_CASE_FILTERS,
-	);
-
 	return (
 		<div className="space-y-4">
-			<PageToolbar
-				description={
-					seeAll
-						? "Every support case in this organization."
-						: "Your support cases and their conversation threads."
-				}
+			<CaseFilterBar
+				severityOptions={severityOptions}
+				typeOptions={typeOptions}
 				actions={
 					<Button
 						size="sm"
@@ -128,11 +118,6 @@ export function CaseList({
 						Submit a case
 					</Button>
 				}
-			/>
-
-			<CaseFilterBar
-				severityOptions={severityOptions}
-				typeOptions={typeOptions}
 			/>
 
 			{isPending ? (
@@ -152,23 +137,8 @@ export function CaseList({
 				// survived the filters — conflating them is how a filtered list comes to
 				// look broken. `universeEmpty` is the server's answer (no case in scope at all),
 				// so a filtered link into an org with no cases still offers "Submit a case".
-				activeFilters > 0 && list.universeEmpty !== true ? (
-					<Empty className="rounded-md border">
-						<EmptyHeader>
-							<EmptyMedia variant="icon">
-								<SearchX />
-							</EmptyMedia>
-							<EmptyTitle>No cases match these filters</EmptyTitle>
-							<EmptyDescription>
-								Nothing in this view matches what you&apos;ve selected.
-							</EmptyDescription>
-						</EmptyHeader>
-						<EmptyContent>
-							<Button variant="outline" size="sm" onClick={reset}>
-								Reset filters
-							</Button>
-						</EmptyContent>
-					</Empty>
+				list.universeEmpty === false ? (
+					<FilterEmpty noun="cases" className="rounded-md border" onClear={reset} />
 				) : (
 					<Empty className="rounded-md border">
 						<EmptyHeader>

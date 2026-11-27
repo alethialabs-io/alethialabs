@@ -1,12 +1,14 @@
 {
   "name": "@repo/brand",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "description": "Alethia brand primitives: the mark and lockup, fonts, design tokens, and the icon, Open Graph and manifest routes.",
   "private": true,
   "exports": {
     "./status": "./src/brand-status.ts",
     "./lockup": "./src/lockup.tsx",
     "./loader": "./src/loader/mark-loader.tsx",
+    "./thinking-indicator": "./src/loader/thinking-indicator.tsx",
+    "./thinking-verbs": "./src/loader/thinking-verbs.ts",
     "./tokens.css": "./src/tokens.css",
     "./icon": "./src/icon.tsx",
     "./icon-svg": "./src/icon-svg.ts",

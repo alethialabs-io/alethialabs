@@ -20,6 +20,7 @@ import { VerifyBlock } from "@/components/agent/artifact-panel";
 import { applyProposal } from "@/components/design-project/canvas/ai/apply-proposal";
 import { ProposalDiff } from "@/components/design-project/canvas/ai/proposal-diff";
 import { proposeOperationInputSchema } from "@/lib/ai/operation";
+import { proposeChangesOutputSchema } from "@/lib/ai/client-tools";
 import { proposeChangesInputSchema } from "@/lib/ai/proposal";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import { Button } from "@repo/ui/button";
@@ -58,10 +59,15 @@ const planResultSchema = z.object({
 	verify_result: verifyReportSchema.nullish(),
 });
 
+/** What the user decided about one design proposal. */
+export type ProposalDecision = "accepted" | "dismissed";
+
 interface ProjectToolPartsDeps {
-	/** Accepted-proposal map (id → true) so re-renders keep the "Added" state. */
-	accepted: Record<string, boolean>;
-	setAccepted: (updater: (a: Record<string, boolean>) => Record<string, boolean>) => void;
+	/** Decided-proposal map (id → accepted | dismissed) so re-renders keep the decision. */
+	decisions: Record<string, ProposalDecision>;
+	setDecisions: (
+		updater: (d: Record<string, ProposalDecision>) => Record<string, ProposalDecision>,
+	) => void;
 	/** Feed a HITL tool's outcome back to the model so it continues after approval. */
 	addToolResult: AddToolResult;
 	/** Open the inspector panel (config/plan/cost/logs) for a project/job. */
@@ -72,13 +78,13 @@ interface ProjectToolPartsDeps {
 
 /**
  * The project-assistant tool-render lanes: design proposal → Accept (applies to the
- * canvas), plan/deploy proposal → approval card, plan result → inline elench verdict
+ * canvas) or Dismiss (leaves it as it was), plan/deploy proposal → approval card, plan result → inline elench verdict
  * (VerifyBlock), repo scan → review link, and polished tables/chips for list_* tools.
  * Extracted from the docked assistant so the shared Elench surface selects it by context.
  */
 export function projectRenderToolPart({
-	accepted,
-	setAccepted,
+	decisions,
+	setDecisions,
 	addToolResult,
 	openArtifact,
 	openGrid,
@@ -98,47 +104,74 @@ export function projectRenderToolPart({
 			return <DashboardPinnedCard part={part} openGrid={openGrid} />;
 		}
 
-		// Design proposal → accept lane (HITL: applies to the canvas, then feeds the
-		// accepted outcome back so the model continues).
+		// Design proposal → accept/dismiss lane (HITL: Accept applies to the canvas; either
+		// decision feeds its outcome back so the model continues knowing what the user chose).
 		if (part.type === "tool-propose_changes") {
 			if (part.state === "input-streaming")
 				return <ToolResultFrame part={part} title="Changes" />;
 			const parsed = proposeChangesInputSchema.safeParse(part.input);
 			if (!parsed.success) return null;
 			const proposal = { id: part.toolCallId, ...parsed.data };
-			const isAccepted = accepted[proposal.id];
+			// This mount's click wins; otherwise the stored output (a reloaded thread) decides, so a
+			// proposal already accepted or dismissed is not offered again.
+			const stored =
+				part.state === "output-available"
+					? proposeChangesOutputSchema.safeParse(part.output).data?.status
+					: undefined;
+			const decision = decisions[proposal.id] ?? stored;
 			return (
 				<ToolResultFrame part={part} title="Changes">
 					<div className="w-full border border-border">
-						<div className="flex items-center justify-between px-2.5 py-1.5">
+						<div className="flex items-center justify-between gap-2 px-2.5 py-1.5">
 							<span className="font-mono text-xs">{proposal.label}</span>
-							{isAccepted ? (
+							{decision === "accepted" ? (
 								<StatusBadge status="active" label="Applied" />
+							) : decision === "dismissed" ? (
+								<StatusBadge status="skipped" label="Dismissed" />
 							) : (
-								<Button
-									type="button"
-									size="sm"
-									className="h-6 px-2 text-ui-xs"
-									onClick={() => {
-										applyProposal(proposal);
-										setAccepted((a) => ({ ...a, [proposal.id]: true }));
-										addToolResult({
-											tool: "propose_changes",
-											toolCallId: part.toolCallId,
-											// The label is the model's; cut to the stored output's bounds.
-											output: {
-												status: "accepted",
-												label: fitClientToolText("propose_changes", proposal.label, (l) => ({
+								<div className="flex flex-none gap-1.5">
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="h-6 px-2 text-ui-xs"
+										onClick={() => {
+											// Nothing touches the canvas: the proposal is declined as a whole.
+											setDecisions((d) => ({ ...d, [proposal.id]: "dismissed" }));
+											addToolResult({
+												tool: "propose_changes",
+												toolCallId: part.toolCallId,
+												output: { status: "dismissed" },
+											});
+										}}
+									>
+										Dismiss
+									</Button>
+									<Button
+										type="button"
+										size="sm"
+										className="h-6 px-2 text-ui-xs"
+										onClick={() => {
+											applyProposal(proposal);
+											setDecisions((d) => ({ ...d, [proposal.id]: "accepted" }));
+											addToolResult({
+												tool: "propose_changes",
+												toolCallId: part.toolCallId,
+												// The label is the model's; cut to the stored output's bounds.
+												output: {
 													status: "accepted",
-													label: l,
-												})),
-											},
-										});
-									}}
-								>
-									<Check className="mr-1 h-3 w-3" />
-									Accept
-								</Button>
+													label: fitClientToolText("propose_changes", proposal.label, (l) => ({
+														status: "accepted",
+														label: l,
+													})),
+												},
+											});
+										}}
+									>
+										<Check className="mr-1 h-3 w-3" />
+										Accept
+									</Button>
+								</div>
 							)}
 						</div>
 

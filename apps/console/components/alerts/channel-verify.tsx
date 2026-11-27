@@ -12,7 +12,7 @@
 // invalidates every key that shows the channel, so its badge and "Last verified" move with it. The
 // timestamp is rendered after hydration only — it reads the browser's time zone.
 
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle2, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type VerifyChannelOutcome, verifyChannel } from "@/app/server/actions/alerts";
 import { ClockSlot } from "@/components/overview/clock-slot";
@@ -112,9 +112,9 @@ export function ChannelVerify({
 						size="sm"
 						onClick={verify}
 						disabled={busy || cooldown > 0}
+						pending={busy}
 						className="shrink-0"
 					>
-						{busy && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
 						{label}
 					</Button>
 				</DisabledReason>

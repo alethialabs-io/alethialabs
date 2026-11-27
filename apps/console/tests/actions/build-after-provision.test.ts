@@ -10,9 +10,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
+// The cloud check's SQL is integration-tested (tests/integration/cloud-availability/); here it is a
+// seam whose answer decides whether anything is queued. Default: the cloud is offered.
+vi.mock("@/lib/queries/projects", () => ({ projectCloudRefusal: vi.fn(async () => null) }));
 
 import { enqueueBuildAfterProvision } from "@/lib/jobs/finalize-build";
 import { getServiceDb } from "@/lib/db";
+import { CloudNotOfferedError } from "@/lib/cloud-providers/availability";
+import { projectCloudRefusal } from "@/lib/queries/projects";
 import { jobs } from "@/lib/db/schema";
 
 type Insert = { table: unknown; values: Record<string, unknown> | undefined };
@@ -99,6 +104,15 @@ describe("enqueueBuildAfterProvision", () => {
 		const h = mockDb([[{ ...DEPLOY, job_type: "BUILD" }]]);
 		await enqueueBuildAfterProvision("job-1");
 		expect(buildInserts(h)).toHaveLength(0);
+	});
+
+	it("queues no BUILD on a cloud this deployment no longer offers (its DEPLOY could not follow)", async () => {
+		vi.mocked(projectCloudRefusal).mockResolvedValueOnce(new CloudNotOfferedError("alibaba"));
+		const h = mockDb([[DEPLOY], [ACTIVE], [repoUnbuilt]]);
+		const res = await enqueueBuildAfterProvision("job-1");
+		expect(projectCloudRefusal).toHaveBeenCalledWith(expect.anything(), "p1");
+		expect(buildInserts(h)).toHaveLength(0);
+		expect(res).toBeUndefined();
 	});
 
 	it("does NOT insert an orphan BUILD when the env CAS loses the race", async () => {

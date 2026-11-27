@@ -53,7 +53,8 @@ const RUN_POSTURE: Record<string, string | null> = {
 	hero: "ci.yml · E2E (browser · Playwright hero path) · release-gate.yml · Release gate (hero)",
 	"elench-ai":
 		"ci.yml · E2E (browser · Elench AI journeys · scripted model) · release-gate.yml · Release gate (elench-ai)",
-	"elench-live": "e2e-ai-nightly.yml · Elench live-model journeys",
+	"elench-live":
+		"e2e-ai-nightly.yml · E2E (browser · real model) · e2e-ai-nightly.yml · Real-model journeys (the ones this PR touches)",
 	// Nightly in ci.yml (that run refreshes ui-conformance-live.json) AND a leg of the release gate,
 	// where it is REQUIRED on main by ratchet: it fails on regression against gate-baseline.json,
 	// not on absolute red — which is what lets a suite with recorded findings gate a promotion
@@ -262,11 +263,13 @@ const projects = [
 		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
 	},
 
-	// The Elench AI journeys against a REAL model (needs ANTHROPIC_API_KEY). Loose,
-	// behavior-level assertions — never merge-gating; run by the nightly workflow.
+	// The AI journeys against a REAL model (needs ANTHROPIC_API_KEY). Loose, behavior-level
+	// assertions — never merge-gating; run by the nightly workflow and, until 2026-12-12, by
+	// e2e-ai-nightly.yml on a PR that changes AI code (only the specs the diff touches, chosen by
+	// scripts/ci/ai-pr-select.mjs). `ai-live-*.spec.ts` are the per-feature specs (agent, support…).
 	{
 		name: "elench-live",
-		testMatch: /elench-live\.spec\.ts/,
+		testMatch: /(^|\/)(elench-live|ai-live-[a-z-]+)\.spec\.ts$/,
 		retries: 2,
 		dependencies: ["setup"],
 		use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },

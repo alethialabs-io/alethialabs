@@ -4,7 +4,7 @@
 // No "use client": the Activity routes' `loading.tsx` render this, and they are server components.
 
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 
 /**
@@ -29,11 +29,10 @@ export function ActivityRowsSkeleton({ rows = 8 }: { rows?: number }) {
 
 /**
  * The loading form of the Activity feed (#6129, RUBRIC B2), in the order and the boxes
- * `ActivityLog` renders: the page toolbar — the loaded-row count, one line of description and, on
- * the org feed, Export (`exportSlot`) — then the filter bar — the search box
- * (`w-[240px] max-w-[380px] flex-1`, as the feed sizes it), the quick-range and calendar controls,
- * one `h-8` control per facet (`facets`: User, Project, Events on the org feed; User and Events on a
- * project's) — then the rows.
+ * `ActivityLog` renders: the one toolbar row (`ListToolbarSkeleton`) — the search box, one control per
+ * facet (`facets`: Member, Project, Events on the org feed; Member and Events on a project's), the
+ * quick-range and calendar controls and, on the org feed, Export (`exportSlot`) on the right — then
+ * the rows.
  */
 export function ActivityFeedSkeleton({
 	facets,
@@ -46,15 +45,8 @@ export function ActivityFeedSkeleton({
 }) {
 	return (
 		<SkeletonRoot>
-			<PageToolbarSkeleton className="mb-4" actions={exportSlot ? 1 : 0} />
-			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
-				<Skeleton className="h-8 w-32 rounded-md" />
-				<Skeleton className="h-8 w-9 rounded-md" />
-				{Array.from({ length: facets }, (_, i) => (
-					<Skeleton key={i} className="h-8 w-24 rounded-md" />
-				))}
-			</div>
+			{/* The quick range is one more control than `dateRange` draws, so it counts as a facet. */}
+			<ListToolbarSkeleton facets={facets + 1} dateRange actions={exportSlot ? 1 : 0} />
 			<ActivityRowsSkeleton rows={rows} />
 		</SkeletonRoot>
 	);

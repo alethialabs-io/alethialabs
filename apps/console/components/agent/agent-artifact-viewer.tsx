@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ChevronLeft, Loader2, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, MessageSquarePlus, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ArtifactSharePopover } from "@/components/agent/artifact-share-popover";
 import { GALLERY_EMPTY } from "@/components/agent/gallery-empty";
@@ -114,43 +114,35 @@ export function AgentArtifactViewer({
 										? "Add these widgets to the open conversation's grid"
 										: "Open a conversation first"
 								}
+								pending={busy === "add"}
 								onClick={() => void run("add", onAddToChat)}
 							>
-								{busy === "add" ? (
-									<Loader2 className="h-3.5 w-3.5 animate-spin" />
-								) : (
-									<Plus className="h-3.5 w-3.5" />
-								)}
-								Add to this chat
+								<Plus className="h-3.5 w-3.5" />
+								{busy === "add" ? "Adding to chat…" : "Add to this chat"}
 							</Button>
 							<Button
 								size="sm"
 								variant="outline"
 								className="gap-1.5 rounded-none"
 								disabled={gated}
+								pending={busy === "new"}
 								onClick={() => void run("new", onOpenInNewChat)}
 							>
-								{busy === "new" ? (
-									<Loader2 className="h-3.5 w-3.5 animate-spin" />
-								) : (
-									<MessageSquarePlus className="h-3.5 w-3.5" />
-								)}
-								Open in new chat
+								<MessageSquarePlus className="h-3.5 w-3.5" />
+								{busy === "new" ? "Opening new chat…" : "Open in new chat"}
 							</Button>
 							<ArtifactSharePopover artifactId={artifact.id} />
-							<button
-								type="button"
+							<Button
+								size="icon-sm"
+								variant="ghost"
 								aria-label={`Delete artifact ${artifact.name}`}
 								disabled={gated}
+								pending={deleting}
 								onClick={onDelete}
-								className="flex size-8 items-center justify-center rounded-none text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+								className="rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
 							>
-								{deleting ? (
-									<Loader2 className="h-4 w-4 animate-spin" />
-								) : (
-									<Trash2 className="h-4 w-4" />
-								)}
-							</button>
+								<Trash2 className="h-4 w-4" />
+							</Button>
 						</>
 					) : (
 						<span className="font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground">

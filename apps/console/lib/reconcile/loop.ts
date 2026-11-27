@@ -15,6 +15,7 @@ import { paddleTransactionBackfillEnabled, runPaddleTransactionBackfill } from "
 import { runFacturaSweep } from "@/lib/billing/factura/sweeper";
 import { paddleOverageSweepEnabled, runPaddleOverageSweep } from "@/lib/billing/paddle/overage-sweeper";
 import { stripeSecretKey } from "@/lib/billing/stripe-key";
+import { runTrialNoticeSweep } from "@/lib/billing/trial/notices";
 import { getServiceDb } from "@/lib/db";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { sweepElenchDrafts } from "@/lib/elench/drafts-sweep";
@@ -52,11 +53,11 @@ const INTERVALS = {
 	// 1h — support cases 3 years after the matter closes (lib/retention/registry.ts). Hourly keeps a
 	// case inside "up to 3 years" by a margin, and the sweep is paged and stops when drained.
 	"gc-support-cases": 60 * 60_000,
-	// 15m — two kinds of hold reach this sweep. A hold the two Elench chat routes reserved is CLAIMED
+	// 15m — two kinds of hold reach this sweep. A hold one of the four chat routes on the turn claim reserved is CLAIMED
 	// (ADR 0003): it is released when its claim's 90 s lease goes silent or the attempt passes its
 	// 15-minute bound (pass 1, C8), so it waits at most 90 s plus one gap between runs here (about
 	// 17.5 minutes on this 60 s tick), and the next accept on its thread releases it sooner. Every
-	// other hold (support, agent identity, colony, verify) is unclaimed and only becomes sweepable at
+	// other hold (a support request with no thread, verify) is unclaimed and only becomes sweepable at
 	// STRANDED_HOLD_AGE_MINUTES (60m, pass 2). The tick rate sets how long past those points a
 	// stranded reservation keeps counting against the org, not whether it is found. Matched to the
 	// GCs rather than tightened: it reclaims ~$0.10 at a time.
@@ -82,6 +83,10 @@ const INTERVALS = {
 	// 24h — the `paddle_transaction` mirror backfill (#7672) lists the whole Paddle account, so it runs
 	// rarely; the webhooks keep the mirror current in between (lib/billing/events/backfill.ts).
 	"paddle-transaction-backfill": 24 * 60 * 60_000,
+	// 1h — a local trial's reminder is owed 3 days before its end (TRIAL_ENDING_LEAD_MS), so an hourly
+	// pass sends it within an hour of entering the window, and an "ended" notice within an hour of the
+	// end; a failed send is retried next pass (lib/billing/trial/notices.ts).
+	"trial-notice-sweep": 60 * 60_000,
 	// 1m — a cancelled job whose runner died holds its state lock until this releases it, and the
 	// next job on that state object waits behind it: the wait is the drain window plus at most one
 	// gap between runs here (lib/reconcile/state-locks.ts).
@@ -199,6 +204,11 @@ export async function tick(now: Date = new Date()): Promise<void> {
 			isDue("paddle-transaction-backfill", INTERVALS["paddle-transaction-backfill"], now)
 		) {
 			await runTask("paddle-transaction-backfill", () => runPaddleTransactionBackfill());
+		}
+		// Local-trial emails: the reminder 3 days before a provider-less (Paddle-era) trial ends, and the
+		// notice once it has, each claimed once per trial. A console with no local trials selects nothing.
+		if (isDue("trial-notice-sweep", INTERVALS["trial-notice-sweep"], now)) {
+			await runTask("trial-notice-sweep", () => runTrialNoticeSweep(now));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already

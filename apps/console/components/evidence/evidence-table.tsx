@@ -17,11 +17,10 @@
 //      group. `DataTable` maps one flat `getRowModel().rows` list; expressing a group header
 //      means feeding it a grouped row model plus a render hook — an API change on a component
 //      with eight other consumers.
-//   2. The filtering is SERVER-side (the filter standard: store -> key -> read procedure) and the
-//      list is deliberately not paginated: every environment in the roll-up is meant to be on
-//      screen. `DataTable` would layer a client filter + pagination row model on top of that,
-//      and its default 20-row page would silently truncate the roll-up. A table whose job is
-//      "here is everything you still have to prove" must not hide rows.
+//   2. The filtering AND the paging are SERVER-side (the filter standard: store -> key -> read
+//      procedure, walked by `useKeysetList`; #7755). A page is whole PROJECT GROUPS, so a group
+//      header is never split across two pages, and `DataTable`'s server mode pages flat rows.
+//      The caller renders `ListFooter` under this table to pull the next page.
 //
 // COLUMN WIDTHS (#6126, F019). The six posture/freshness columns carry their widths on their
 // HEADER cells (`EVIDENCE_COLUMNS`), the table lays out automatically, and the environment column

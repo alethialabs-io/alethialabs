@@ -103,6 +103,12 @@
 //       rubric's own reference implementation, which composes `FunnelFilter`) a FAIL.
 //       FAILS on a surface with no `<FilterBar>` at all, and on `lib/query/README.md`'s two named
 //       bans inside the bar region — a Radix `<Select>` and a stat-card strip.
+//       `<ListToolbar>` (`@repo/ui/list-toolbar`, #7734) IS a bar: it takes the search and the facets
+//       as DATA and renders `FilterBar`/`FilterSearch`/`FacetFilter` itself, so its region is the
+//       element's own props (by brace depth, to its `/>` — a self-closing element has no closing
+//       tag, and reading to EOF would charge it with a `<Select>` elsewhere in the file), and a
+//       `search=` or `facets=` prop counts as composing the primitives. Its `extra` slot is JSX
+//       inside that region, so a `<Select>` passed there still fails.
 //
 //   F5  NO list count: no pill, no "N of M" (INVERTED by #7482, the maintainer's 2026-11-24 ruling).
 //       It used to REQUIRE the pill. FAILS on `<CountPill>`, on `count=` on a `SectionHeading` /
@@ -1308,6 +1314,28 @@ function regionOf(text, tag) {
 	return close === -1 ? text.slice(open) : text.slice(open, close);
 }
 
+/**
+ * The props of a `<ListToolbar …/>` element (#7738): the polish-wave row is DATA handed to one
+ * element, not a `<FilterBar>` composed by hand, so its "region" is the opening tag through the line
+ * that closes it at the tag's own indentation. A one-line tag ends at its own `/>`; failing to find
+ * either, the rest of the line — never the rest of the FILE, which would pull every `<Select>` the
+ * page renders below its toolbar into the bar's ban.
+ *
+ * @param {string} text
+ * @returns {string | null}
+ */
+function listToolbarRegion(text) {
+	const open = text.search(/<ListToolbar[\s/>]/);
+	if (open === -1) return null;
+	const lineStart = text.lastIndexOf("\n", open) + 1;
+	const indent = (/^[ \t]*/.exec(text.slice(lineStart, open)) ?? [""])[0];
+	const lineEnd = text.indexOf("\n", open);
+	const firstLine = lineEnd === -1 ? text.slice(open) : text.slice(open, lineEnd);
+	if (/\/>\s*$/.test(firstLine)) return firstLine;
+	const close = text.indexOf(`\n${indent}/>`, open);
+	return close === -1 ? firstLine : text.slice(open, close);
+}
+
 /** `lib/query/README.md`'s two named bans inside a filter bar. */
 const BANNED_IN_BAR = [
 	{ re: /<Select[\s>]/, what: "a Radix `<Select>`" },
@@ -1477,11 +1505,28 @@ export function scoreSurface(surface, sources, barPrimitives) {
 					"neighbourhood takes the org and nothing else, so every filtered view shares one cache entry",
 	);
 
-	// F4 — the bar, from the shared vocabulary.
-	const barFile = neighbourhood.find((f) => /<FilterBar[\s>]/.test(sources.get(f) ?? ""));
-	const bar = barFile === undefined ? null : regionOf(sources.get(barFile) ?? "", "FilterBar");
+	// F4 — the bar, from the shared vocabulary. `<ListToolbar>` (@repo/ui/list-toolbar, #7734) IS
+	// that vocabulary composed once — FilterBar, FilterSearch, FacetFilter, FilterBarReset — so a
+	// surface on it composes the shared primitives by construction; what is still asked of it is the
+	// ban, over its props (an `extra` holding a Radix `<Select>` is still a Select in the bar).
+	const toolbarFile = neighbourhood.find((f) => /<ListToolbar[\s/>]/.test(sources.get(f) ?? ""));
+	const barFile = toolbarFile ?? neighbourhood.find((f) => /<FilterBar[\s>]/.test(sources.get(f) ?? ""));
+	const bar =
+		barFile === undefined
+			? null
+			: toolbarFile !== undefined
+				? listToolbarRegion(sources.get(toolbarFile) ?? "")
+				: regionOf(sources.get(barFile) ?? "", "FilterBar");
 	const banned = bar === null ? [] : BANNED_IN_BAR.filter((b) => b.re.test(bar)).map((b) => b.what);
-	const primitives = bar === null ? [] : [...new Set([...bar.matchAll(/<([A-Z]\w*)/g)].map((m) => m[1]))].filter((n) => barPrimitives.has(n) && n !== "FilterBar");
+	const primitives =
+		bar === null
+			? []
+			: toolbarFile !== undefined
+				? // A toolbar that carries only actions renders no filter primitive at all (#7739).
+					/\s(search|facets)=\{/.test(bar)
+					? ["ListToolbar"]
+					: []
+				: [...new Set([...bar.matchAll(/<([A-Z]\w*)/g)].map((m) => m[1]))].filter((n) => barPrimitives.has(n) && n !== "FilterBar");
 	verdict(
 		"F4",
 		bar !== null && banned.length === 0 && primitives.length > 0,
@@ -1766,12 +1811,13 @@ const BOUNDED_RULES = new Set(["page-slice", "render-window", "client-table", "k
 export const LIST_LEDGER_DIR = "apps/console/list-standard";
 
 /**
- * The ceiling on bounded decisions, counted in FILES. The epic names seven bounded lists (roles, SSO
+ * The ceiling on bounded decisions, counted in FILES. The epic named seven bounded lists (roles, SSO
  * providers, alert policies, alert channels, classification dimensions, the connectors catalog,
- * evidence's per-environment roll-up) plus the agent suggestion carousel measured here. A NINTH
- * bounded list is a reviewed line here.
+ * evidence's per-environment roll-up) plus the agent suggestion carousel measured here. Evidence's
+ * roll-up left the set when its posture table moved onto the keyset contract (#7755), and the
+ * ceiling came down with it. An EIGHTH bounded list is a reviewed line here.
  */
-export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 8 });
+export const LIST_STANDARD_CEILINGS = /** @type {const} */ ({ bounded: 7 });
 
 /** The paging primitives themselves — they implement the machinery the census bans elsewhere. */
 const LIST_PRIMITIVES = new Set([
@@ -2761,8 +2807,58 @@ export function positiveControl() {
 		(v) => v.F4.verdict === "FAIL",
 	);
 	drive(
+		"F4 passes on a ListToolbar, the shared row as data (#7738)",
+		{ [CLIENT]: clean.readFile(CLIENT).replace(/<FilterBar>.*<\/FilterBar>/, "<ListToolbar\n\tsearch={search}\n\tfacets={facets}\n/>") },
+		(v) => v.F4.verdict === "PASS",
+	);
+	drive(
+		"F4 fires on a Radix Select in a ListToolbar's extra",
+		{ [CLIENT]: clean.readFile(CLIENT).replace(/<FilterBar>.*<\/FilterBar>/, "<ListToolbar\n\tsearch={search}\n\textra={<Select />}\n/>") },
+		(v) => v.F4.verdict === "FAIL",
+	);
+	drive(
+		"F4 does not read a Select BELOW a ListToolbar as inside it",
+		{ [CLIENT]: clean.readFile(CLIENT).replace(/<FilterBar>.*<\/FilterBar>/, "<ListToolbar\n\tsearch={search}\n/>\n<Select />") },
+		(v) => v.F4.verdict === "PASS",
+	);
+	drive(
 		"F4 fires on a Radix Select inside the bar",
 		{ [CLIENT]: clean.readFile(CLIENT).replace("<FacetFilter />", "<FacetFilter /><Select />") },
+		(v) => v.F4.verdict === "FAIL",
+	);
+	drive(
+		"F4 accepts a ListToolbar built from config (#7734): its search and facets are the primitives",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace(
+					/<FilterBar>.*<\/FilterBar>/,
+					'<ListToolbar search={{ value: q, onChange: (v) => set("search", v) }} facets={[{ label: "Kind" }]} reset={{ count: n, onReset: reset }} />',
+				),
+		},
+		(v) => v.F4.verdict === "PASS",
+	);
+	drive(
+		"F4 fires on a Radix Select passed through a ListToolbar's `extra`",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace(/<FilterBar>.*<\/FilterBar>/, '<ListToolbar facets={[{ label: "Kind" }]} extra={<Select value={k} />} />'),
+		},
+		(v) => v.F4.verdict === "FAIL",
+	);
+	drive(
+		"F4 does NOT charge a self-closing ListToolbar with a Select further down the file",
+		{
+			[CLIENT]: clean
+				.readFile(CLIENT)
+				.replace(/<FilterBar>.*<\/FilterBar>/, '<ListToolbar facets={[{ label: "Kind" }]} />\n<RowEditor><Select value={role} /></RowEditor>'),
+		},
+		(v) => v.F4.verdict === "PASS",
+	);
+	drive(
+		"F4 fires on a ListToolbar that carries only actions — no filter at all",
+		{ [CLIENT]: clean.readFile(CLIENT).replace(/<FilterBar>.*<\/FilterBar>/, "<ListToolbar actions={<Button>New</Button>} />") },
 		(v) => v.F4.verdict === "FAIL",
 	);
 	drive(

@@ -12,7 +12,8 @@
 // A docked card on the workspace rail (opened from the chart node's scan chip), not a modal
 // Sheet: the verdict reads beside the chart it is about.
 
-import { Loader2, RotateCw, ShieldCheck } from "lucide-react";
+import { RotateCw, ShieldCheck } from "lucide-react";
+import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { cn } from "@repo/ui/utils";
@@ -242,12 +243,19 @@ export function ChartScanBody({
 		>
 			<div>
 					{scanning || scanStatus === "scanning" ? (
-						<EmptyState
-							className="px-0 py-16 md:px-0 md:py-16"
-							icon={<Loader2 className="animate-spin" />}
-							title="Running security checks…"
-							description="Rendering the chart and evaluating it for privileged access, host mounts, missing resource limits, and over-broad RBAC."
-						/>
+						<div className="flex flex-col items-center gap-1 pb-6">
+							{/* A wait of unknown length: the mark, with a status line of the facts the card
+							    already holds (which chart, at which path and ref) — never a percentage. */}
+							<MarkLoader
+								size="region"
+								label="Running security checks"
+								status={`Scanning · ${chartId} · /${chartPath.replace(/^\/+/, "")} · ${chartRef}`}
+							/>
+							<p className="max-w-sm text-center text-ui-xs leading-relaxed text-text-tertiary">
+								Rendering the chart and evaluating it for privileged access, host mounts, missing
+								resource limits, and over-broad RBAC.
+							</p>
+						</div>
 					) : report && verdict ? (
 						<div className="flex flex-col gap-4">
 							{/* Verdict */}

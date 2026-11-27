@@ -42,7 +42,7 @@
 // after it in the same `audit-interaction` project and counts the controls each list renders; rows
 // left behind here would move that count. `cleanFilterFixtures()` deletes exactly the ids it wrote.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { db } from "./db";
 import { seedCloudIdentity, seedJob, seedProject, type Owner, type SeededProject } from "./seed";
@@ -62,6 +62,8 @@ export interface FilterFixtures {
 	grantIds: string[];
 	ssoProviderIds: string[];
 	invoiceIds: string[];
+	serviceTokenIds: string[];
+	approvalIds: string[];
 }
 
 /**
@@ -88,6 +90,8 @@ export const SEEDED_ROUTES: readonly string[] = [
 	"/[org]/~/settings/billing/invoices",
 	"/[org]/~/settings/activity",
 	"/[org]/[project]/settings/activity",
+	"/[org]/~/settings/tokens",
+	"/[org]/~/approvals",
 ];
 
 /**
@@ -115,6 +119,8 @@ export async function seedFilterFixtures(owner: Owner): Promise<FilterFixtures> 
 		grantIds: [],
 		ssoProviderIds: [],
 		invoiceIds: [],
+		serviceTokenIds: [],
+		approvalIds: [],
 	};
 	try {
 		await seedRows(owner, stamp, written);
@@ -349,6 +355,72 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
 	};
 	await activity(owner.userId, "update", true);
 	await activity(randomUUID(), "delete", false);
+
+	// Service tokens (`/[org]/~/settings/tokens`, #7628): differ on STATUS, the bar's one facet —
+	// one active, one revoked (the list keeps revoked rows for their audit trail). Without them the
+	// family-B org rendered the first-run empty state where the route's skeleton draws a table (B2).
+	// The hash is of random bytes nobody keeps, so no client can ever present either token; the
+	// prefix has the real `alethia_sat_` + 8 shape so the row reads as a real one. The active token
+	// is scoped to THIS project and has no auto-approve environments, so it could not queue a deploy
+	// on anything even if it could be presented.
+	/** Insert one service token limited to this project, recording its id; revoked when `revoked` is set. */
+	const serviceToken = async (name: string, revoked: boolean) => {
+		const secret = randomBytes(24).toString("hex");
+		const [row] = await sql<{ id: string }[]>`
+			insert into cli_service_tokens ${sql({
+				organization_id: owner.orgId,
+				name,
+				token_hash: createHash("sha256").update(secret).digest("hex"),
+				token_prefix: `alethia_sat_${secret.slice(0, 8)}`,
+				created_by: owner.userId,
+				revoked_at: revoked ? new Date() : null,
+			})}
+			returning id`;
+		// A separate statement so the array carries an explicit `uuid[]` cast; recorded first, so a
+		// failure here still leaves an id `cleanFilterFixtures` removes.
+		written.serviceTokenIds.push(row.id);
+		await sql`update cli_service_tokens set project_ids = array[${project.projectId}::uuid] where id = ${row.id}`;
+		return row.id;
+	};
+	const ciToken = await serviceToken(`filters-ci-${stamp}`, false);
+	await serviceToken(`filters-old-${stamp}`, true);
+
+	// Approvals (`/[org]/~/approvals`, #7629): both WAITING, differing on the CREDENTIAL that asked —
+	// the shape the product writes: a pipeline's request through the service token above, and a
+	// person's own console request (`session`, no credential ref). Both must be waiting because the
+	// list opens on Status: Waiting (`DEFAULT_APPROVALS_FILTERS`), and F8–F10 count the list a bare
+	// link opens on: a pending + rejected pair rendered ONE row there, so the audit had nothing to
+	// narrow (#7922). "Requested through" is the facet that splits them; Status cannot, since picking
+	// a second status WIDENS the default view. Two live requests on one plan are allowed because they
+	// differ on the credential (`uq_apply_approvals_live_request`). Both name the SUCCESS PLAN job
+	// above in this project's default environment, which `apply_approvals_bind_target` requires. Both
+	// are DEPLOYS: a destroy approval needs a destroy-mode plan, which this file does not write. Each
+	// expires in 24 hours, the longest TTL an org can set, so a restored family-B run still reads them
+	// live. No background loop reads `apply_approvals` (`lib/reconcile/` consumes none), and a pending
+	// approval is consumed only by a request that presents it. `cleanFilterFixtures()` deletes both by
+	// id before the jobs they name (the FK would cascade anyway).
+	/** Insert one waiting deploy approval on the seeded plan job. */
+	const approval = async (row: { credential: "service_token" | "session"; ref: string | null; reason: string }) => {
+		const [inserted] = await sql<{ id: string }[]>`
+			insert into apply_approvals ${sql({
+				org_id: owner.orgId,
+				project_id: project.projectId,
+				environment_id: project.envId,
+				operation: "deploy",
+				plan_job_id: written.jobIds[0],
+				plan_sha256: createHash("sha256").update(`filters-plan-${stamp}`).digest("hex"),
+				requester_user_id: owner.userId,
+				requester_credential: row.credential,
+				requester_credential_ref: row.ref,
+				reason: row.reason,
+				status: "pending",
+				expires_at: new Date(Date.now() + 24 * 60 * 60_000),
+			})}
+			returning id`;
+		return inserted.id;
+	};
+	written.approvalIds.push(await approval({ credential: "service_token", ref: ciToken, reason: "Deploy from CI (e2e filter fixture)" }));
+	written.approvalIds.push(await approval({ credential: "session", ref: null, reason: "Manual deploy (e2e filter fixture)" }));
 }
 
 /**
@@ -359,6 +431,8 @@ async function seedRows(owner: Owner, stamp: number, written: FilterFixtures): P
  */
 export async function cleanFilterFixtures(f: FilterFixtures): Promise<void> {
 	const sql = db();
+	if (f.approvalIds.length > 0) await sql`delete from apply_approvals where id in ${sql(f.approvalIds)}`;
+	if (f.serviceTokenIds.length > 0) await sql`delete from cli_service_tokens where id in ${sql(f.serviceTokenIds)}`;
 	if (f.invoiceIds.length > 0) await sql`delete from invoice where id in ${sql(f.invoiceIds)}`;
 	if (f.ssoProviderIds.length > 0) await sql`delete from sso_provider where id in ${sql(f.ssoProviderIds)}`;
 	if (f.grantIds.length > 0) await sql`delete from grants where id in ${sql(f.grantIds)}`;

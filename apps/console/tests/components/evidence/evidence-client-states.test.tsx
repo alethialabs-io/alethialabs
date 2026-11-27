@@ -10,7 +10,7 @@
 
 import { ORPCError } from "@orpc/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FakeCall, FakeHandler } from "@/tests/helpers/fake-orpc";
@@ -29,13 +29,13 @@ vi.mock("next/navigation", () => ({
 
 const { EvidenceClient } = await import("@/components/evidence/evidence-client");
 const { useEvidenceFilters } = await import("@/lib/stores/use-evidence-filters");
-import type { EvidenceResult } from "@/lib/rpc/procedures/evidence";
+import type { EvidencePosturePage } from "@/lib/queries/evidence-posture";
 
-/** The key the route prefetches for a link with no filters — what the client reads first. */
-const FIRST_KEY = [["evidence", "page"], { input: {}, type: "query" }];
+/** The infinite key the route prefetches for a link with no filters — what the client reads first. */
+const FIRST_KEY = [["evidence", "page"], { input: {}, type: "infinite" }];
 
-/** A result listing one environment ("payments-prod") with no proof yet. */
-function result(environments: number): EvidenceResult {
+/** Page one of the posture walk: one environment ("payments-prod") with no proof yet, or none. */
+function result(environments: number): EvidencePosturePage {
 	const rows =
 		environments === 0
 			? []
@@ -55,34 +55,22 @@ function result(environments: number): EvidenceResult {
 					},
 				];
 	return {
-		groups: rows.length ? [{ key: "p1", label: "payments", rows, provider: "aws" }] : [],
-		resultCount: rows.length,
-		total: rows.length,
-		waivers: [],
-		summary: {
-			environments: rows.length,
-			verified: 0,
-			warning: 0,
-			failing: 0,
-			notEvaluable: 0,
-			unverified: rows.length,
-			inSync: 0,
-			drifted: 0,
-			driftUnknown: rows.length,
-			activeWaivers: 0,
-			criticalHighVulns: 0,
-			securityUnknown: rows.length,
-		},
-		statusOptions: [],
-		stageOptions: [],
-		providerOptions: [],
+		rows: rows.length ? [{ id: "p1", key: "p1", label: "payments", rows, provider: "aws", waivers: [] }] : [],
+		nextCursor: null,
+		facets: { statusOptions: [], stageOptions: [], providerOptions: [] },
+		universeEmpty: rows.length === 0,
 	};
 }
 
+/** The infinite query's cached shape for a walk that has read `pages`. */
+function walked(...pages: EvidencePosturePage[]) {
+	return { pages, pageParams: pages.map((_, i) => (i === 0 ? null : `cursor-${i}`)) };
+}
+
 /** Renders the page under the console's query defaults; `seed` plays the route's hydration. */
-function renderPage(seed?: EvidenceResult) {
+function renderPage(seed?: EvidencePosturePage) {
 	const qc = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: false } } });
-	if (seed) qc.setQueryData(FIRST_KEY, seed);
+	if (seed) qc.setQueryData(FIRST_KEY, walked(seed));
 	const wrapper = ({ children }: { children: ReactNode }) => (
 		<QueryClientProvider client={qc}>{children}</QueryClientProvider>
 	);
@@ -150,6 +138,18 @@ describe("EvidenceClient — four renders, never confused", () => {
 		expect(screen.queryByText("No environments yet")).toBeNull();
 	});
 
+	it("the filters are one ListToolbar row: the search, then the funnel, with no Reset while nothing is set", async () => {
+		rpc.handlers["evidence.page"] = () => new Promise(() => {});
+		renderPage(result(1));
+		await settle();
+		const search = screen.getByRole("textbox", { name: "Filter by project or environment…" });
+		const row = search.closest('[data-slot="filter-search"]')?.parentElement;
+		expect(row).not.toBeNull();
+		// The funnel rides in the same row as the page's `extra`, after the search.
+		expect(row?.contains(screen.getByRole("button", { name: "Filter & sort" }))).toBe(true);
+		expect(screen.queryByRole("button", { name: /^Reset ·/ })).toBeNull();
+	});
+
 	it("zero environments is onboarding", async () => {
 		renderPage(result(0));
 		await settle();
@@ -167,5 +167,41 @@ describe("EvidenceClient — four renders, never confused", () => {
 		expect(screen.getByRole("button", { name: "payments-prod" })).toBeInTheDocument();
 		expect(await screen.findByText(/Couldn't refresh/, undefined, { timeout: 4000 })).toBeInTheDocument();
 		expect(screen.queryByText("Couldn't load evidence")).toBeNull();
+	});
+});
+
+describe("EvidenceClient — the posture table pages (#7755)", () => {
+	/** Page one again, with a cursor to a second page holding the "billing" project. */
+	function pageOne(): EvidencePosturePage {
+		return { ...result(1), nextCursor: "cursor-1" };
+	}
+
+	/** The second page: one more project group, the end of the walk. */
+	function pageTwo(): EvidencePosturePage {
+		const [group] = result(1).rows;
+		if (!group) throw new Error("fixture has no group");
+		const row = { ...group.rows[0], projectId: "p2", projectName: "billing", environmentId: "e2", environmentName: "billing-prod" };
+		return {
+			rows: [{ ...group, id: "p2", key: "p2", label: "billing", rows: [{ ...row, stage: "production" as const }] }],
+			nextCursor: null,
+			facets: null,
+			universeEmpty: null,
+		};
+	}
+
+	it("Load more reads the next page with the cursor and appends its project group", async () => {
+		rpc.handlers["evidence.page"] = async () => pageTwo();
+		renderPage(pageOne());
+		await settle();
+		expect(screen.getByRole("button", { name: "payments-prod" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "billing-prod" })).toBeNull();
+
+		fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+		expect(await screen.findByRole("button", { name: "billing-prod" })).toBeInTheDocument();
+		// Page one stays; the walk asked for page two by its cursor, never by a page number.
+		expect(screen.getByRole("button", { name: "payments-prod" })).toBeInTheDocument();
+		expect(rpc.calls.filter((c) => c.path === "evidence.page").map((c) => c.input)).toEqual([{ cursor: "cursor-1" }]);
+		// The end is nothing: no further "Load more".
+		expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
 	});
 });

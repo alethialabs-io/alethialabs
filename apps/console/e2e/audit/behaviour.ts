@@ -1392,6 +1392,11 @@ async function captureFrame(page: Page, mode: "tag" | "fresh"): Promise<{ captur
 		const boxOf = (el: Element) => {
 			const style = window.getComputedStyle(el);
 			if (style.visibility === "hidden" || style.display === "none" || Number(style.opacity) < 0.05) return null;
+			// A VISUALLY-HIDDEN node paints nothing, wherever its box is: `clip-path: inset(50%)` (Base UI's
+			// and Tailwind 4's `sr-only`) or `clip: rect(0 0 0 0)` (the older form). Base UI's Select puts its
+			// hidden input at `position: fixed; top: 0; left: 0`, so counting it pinned every page with a
+			// select to the viewport's origin and failed five routes on an outline nobody can see.
+			if (/^inset\(50%\)/.test(style.clipPath) || /^rect\(0(px)?,? 0(px)?,? 0(px)?,? 0(px)?\)$/.test(style.clip)) return null;
 			const r = el.getBoundingClientRect();
 			const x0 = Math.max(0, r.left);
 			const y0 = Math.max(0, r.top);
@@ -1545,6 +1550,7 @@ export const B_CONTROL_MODES = [
 	"swap-height",
 	"swap-list",
 	"swap-bars",
+	"swap-hidden-input",
 	"action-page-read",
 	"cold-shell",
 	"layout-rpc-refetch",
@@ -1692,7 +1698,9 @@ if (MODE.indexOf("swap-") === 0) {
 					? '<div class="listframe">' + rows(['alpha', 'beta']) + '</div>'
 					: MODE === "swap-bars"
 						? '<div style="height:320px"><p>alpha</p><p>beta</p><p>gamma</p></div>'
-						: '<div class="frame"><p style="margin:16px">alpha</p></div>';
+						: MODE === "swap-hidden-input"
+							? '<div class="frame"><p style="margin:16px">alpha</p><input aria-hidden="true" tabindex="-1" style="position:fixed;top:0;left:0;width:1px;height:1px;margin:0;padding:0;border:0;overflow:hidden;white-space:nowrap;clip-path:inset(50%)"></div>'
+							: '<div class="frame"><p style="margin:16px">alpha</p></div>';
 	window.next = { router: {
 		prefetch: function (href) { fetch(href, { headers: { 'RSC': '1', 'Next-Router-Prefetch': '1' } }); },
 		push: function (href) {
@@ -1950,6 +1958,10 @@ export async function behaviourControl(browser: Browser): Promise<BControlResult
 			["swap-list", "PASS"],
 			// Bars only — no block-sized element — over a taller page: only the whole-skeleton block sees it.
 			["swap-bars", "FAIL"],
+			// The matching page plus a visually-hidden input pinned at the viewport's origin — the one
+			// Base UI's Select renders (`position: fixed; top: 0; left: 0; clip-path: inset(50%)`). It
+			// paints nothing, so it moves nothing: B2 must not read the page's outline as starting at 0,0.
+			["swap-hidden-input", "PASS"],
 		];
 		for (const [mode, want] of swaps) {
 			const page = await context.newPage();

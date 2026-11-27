@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Overview toolbar — the console filter standard, as the clusters and environments bars draw it:
-// the search, the shared CloudFilter, a Repository FacetFilter and the mono Reset; then the sort
-// order (Activity / Name), the card/table view toggle and a Create menu. It used to fold the two
+// Overview toolbar — the console filter standard on the one-row `ListToolbar` (polish-wave spec
+// §3, #7738): the search, the Cloud and Repository facets and the mono Reset; then, pushed right,
+// the card/table view toggle (`view`), the sort order (Activity / Name) and the Create menu. It used to fold the two
 // facets and the sort into one bespoke funnel popover, so the overview's filters looked and worked
 // unlike every other list's (R6 B-24). All state is owned by the page (URL search params) — the
 // console filter standard's blessed URL→RSC variant — so this component only emits `onChange`.
@@ -13,7 +13,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownUp, GitBranch, Plus } from "lucide-react";
+import { ArrowDownUp, Cloud, GitBranch, Plus } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import {
   DropdownMenu,
@@ -24,11 +24,8 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
-import { FacetFilter } from "@repo/ui/facet-filter";
-import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
-import { FilterSearch } from "@repo/ui/filter-search";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { ViewToggle } from "@repo/ui/view-toggle";
-import { CloudFilter } from "@/components/filters/cloud-filter";
 import type { ProjectsFacets } from "@/lib/queries/projects";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import type { OverviewState } from "@/components/overview/overview-state";
@@ -36,6 +33,7 @@ import { providerLabel } from "@/components/overview/project-cloud";
 import { overviewUsageQuery } from "@/components/overview/usage-card";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { CLOUD_ACCOUNT, ORGANIZATION, PROJECT, sentenceStart } from "@/lib/copy/vocabulary";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { globalHref } from "@/lib/routing";
 
@@ -53,6 +51,10 @@ const FILTER_DEFAULTS = {
   repos: Array<string>(),
 };
 
+/**
+ * The overview's one toolbar row. Mounted once per page: it binds `/` to its search. The search
+ * box answers at once; the URL (and so the server query) follows on a 300ms debounce.
+ */
 export function OverviewToolbar({
   orgSlug,
   state,
@@ -83,55 +85,64 @@ export function OverviewToolbar({
     return () => clearTimeout(id);
   }, [draft, state.q, onChange]);
 
+  const { inputRef, shortcut } = useListSearchShortcut();
+
   return (
-    <FilterBar
-      end={
-        <div className="flex items-center gap-2.5">
-          <SortMenu sort={state.sort} onChange={onChange} />
-          <ViewToggle
-            value={state.view}
-            onChange={(view) => onChange({ view })}
-          />
-          <CreateMenu orgSlug={orgSlug} createProjectReason={createProjectReason} />
-        </div>
-      }
-    >
-      <FilterSearch
-        value={draft}
-        onChange={setDraft}
-        placeholder="Search projects…"
-        ariaLabel="Search projects"
-        className="min-w-[200px] flex-1"
-      />
-      <CloudFilter
-        value={state.clouds}
-        onChange={(clouds) => onChange({ clouds })}
-        options={facets.clouds.map((c) => ({
-          value: c.value,
-          label: providerLabel(c.value),
-          count: c.count,
-        }))}
-      />
-      <FacetFilter
-        label="Repository"
-        icon={GitBranch}
-        searchPlaceholder="Search repositories…"
-        options={facets.repos.map((r) => ({
-          value: r.url,
-          label: r.label,
-          count: r.count,
-        }))}
-        value={state.repos}
-        onChange={(repos) => onChange({ repos })}
-      />
-      <FilterBarReset
-        count={countActiveFilters(
+    <ListToolbar
+      search={{
+        value: draft,
+        onChange: setDraft,
+        placeholder: "Search projects…",
+        ariaLabel: "Search projects",
+        inputRef,
+        shortcut,
+      }}
+      facets={[
+        {
+          label: "Cloud",
+          icon: Cloud,
+          options: facets.clouds.map((c) => ({
+            value: c.value,
+            label: providerLabel(c.value),
+            count: c.count,
+          })),
+          value: state.clouds,
+          onChange: (clouds) => onChange({ clouds }),
+          formatValue: providerLabel,
+        },
+        {
+          label: "Repository",
+          icon: GitBranch,
+          searchPlaceholder: "Search repositories…",
+          options: facets.repos.map((r) => ({
+            value: r.url,
+            label: r.label,
+            count: r.count,
+          })),
+          value: state.repos,
+          onChange: (repos) => onChange({ repos }),
+        },
+      ]}
+      reset={{
+        count: countActiveFilters(
           { q: state.q, clouds: state.clouds, repos: state.repos },
           FILTER_DEFAULTS,
-        )}
-        onReset={() => onChange({ q: "", clouds: [], repos: [] })}
-      />
-    </FilterBar>
+        ),
+        onReset: () => onChange({ q: "", clouds: [], repos: [] }),
+      }}
+      view={
+        <ViewToggle
+          value={state.view}
+          onChange={(view) => onChange({ view })}
+        />
+      }
+      actions={
+        <>
+          <SortMenu sort={state.sort} onChange={onChange} />
+          <CreateMenu orgSlug={orgSlug} createProjectReason={createProjectReason} />
+        </>
+      }
+    />
   );
 }
 

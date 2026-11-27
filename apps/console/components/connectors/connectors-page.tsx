@@ -28,7 +28,7 @@ import {
 	ConnectorsDisconnectDialog,
 	type DisconnectTarget,
 } from "@/components/connectors/connectors-disconnect-dialog";
-import { ConnectorsFilterBar } from "@/components/connectors/connectors-filter-bar";
+import { connectorToolbarFacets } from "@/components/connectors/connectors-facets";
 import { gitLinkFailureMessage } from "@/components/connectors/connectors-link-error";
 import {
 	CONNECTOR_SEARCH_MAX,
@@ -52,11 +52,14 @@ import { hrefWithParamPatch, readViewParam } from "@/lib/query/view-url-params";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useHydrated } from "@repo/ui/use-hydrated";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import { Button } from "@repo/ui/button";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { EmptyState } from "@repo/ui/empty";
-import { PageToolbar } from "@repo/ui/page-toolbar";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { Sheet, SheetContent } from "@repo/ui/sheet";
 import {
 	Table,
@@ -69,7 +72,7 @@ import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
 import { cn } from "@repo/ui/utils";
 import { authClient } from "@/lib/auth/client";
 import { track, captureException } from "@/lib/analytics/track";
-import { BookOpen, CircleAlert, Plug, SearchX } from "lucide-react";
+import { BookOpen, CircleAlert, Plug } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -192,8 +195,10 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 	// ── The console filter standard (lib/query/README.md → "Server-side filters") ──────────
 	// store → URL sync → debounce → normalize → the read's input (its key).
 	const filters = useConnectorFilters((s) => s.filters);
+	const setFilter = useConnectorFilters((s) => s.set);
 	const patchFilters = useConnectorFilters((s) => s.patch);
 	const resetFilters = useConnectorFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const urlRead = useFilterUrlSync(useConnectorFilters, DEFAULT_CONNECTOR_FILTERS);
 	// `urlRead`: a search the link carried lands at once; only typing is debounced (#5861).
 	const debouncedSearch = useDebouncedValue(filters.search, 250, { urlRead });
@@ -429,14 +434,6 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 	return (
 		<>
 			<div className="space-y-6">
-				{/* No title — the sidebar entry you clicked and the breadcrumb both say
-				    "Connectors". What is left is the line that says what a connector IS, which the
-				    breadcrumb does not carry. No count: the catalog is a bounded list
-				    (list-standard/connectors.json) and the standard draws no list-size pill. */}
-				<PageToolbar
-					description={`Credentials Alethia acts through — ${CLOUD_ACCOUNT.many}, git providers, registries, chart repos, secret stores, observability sinks and DNS.`}
-				/>
-
 				{/* Said once for the page: every Connect below is drawn disabled for this viewer, and a
 				    column of disabled buttons with the reason behind a hover is not how a person should
 				    find out that the board is read-only for them. */}
@@ -454,22 +451,39 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 				    hydration then resets — the search the user typed (or a facet they opened) would be
 				    silently dropped. Native `disabled` on the fieldset covers every control in the bar. */}
 				<fieldset disabled={!hydrated} className="m-0 min-w-0 border-0 p-0">
-					<ConnectorsFilterBar
-						facets={facets}
-						end={
-							<>
-								<ViewToggle value={viewMode} onChange={setViewMode} />
-								<a
-									href="/docs/concepts/connectors"
-									target="_blank"
-									rel="noopener noreferrer"
-									title="What are connectors?"
-									aria-label="What are connectors?"
-									className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
-								>
-									<BookOpen className="size-4" aria-hidden />
-								</a>
-							</>
+					{/* One row (polish-wave spec §3): search, Status · Group · Vendor, Reset · N, then
+					    the view toggle and the docs link on the far right. No title, no description
+					    line and no count: the breadcrumb names the page, and the catalog is a bounded
+					    list (list-standard/connectors.json) the standard draws no list-size pill for. */}
+					<ListToolbar
+						search={{
+							value: filters.search,
+							onChange: (value) => setFilter("search", value),
+							placeholder: "Filter connectors…",
+							// "Search connectors" — the ACCESSIBLE NAME is the stable e2e hook, and the
+							// connector specs target it. Placeholder copy is presentation and may move; the
+							// a11y name must not, or a copy edit silently reds the gating hero path.
+							ariaLabel: "Search connectors",
+							inputRef,
+							shortcut,
+						}}
+						facets={connectorToolbarFacets(filters, setFilter, facets)}
+						reset={{
+							count: countActiveFilters(filters, DEFAULT_CONNECTOR_FILTERS),
+							onReset: resetFilters,
+						}}
+						view={<ViewToggle value={viewMode} onChange={setViewMode} />}
+						actions={
+							<a
+								href="/docs/concepts/connectors"
+								target="_blank"
+								rel="noopener noreferrer"
+								title="What are connectors?"
+								aria-label="What are connectors?"
+								className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<BookOpen className="size-4" aria-hidden />
+							</a>
 						}
 					/>
 				</fieldset>
@@ -611,17 +625,7 @@ export function ConnectorsPage({ orgSlug }: ConnectorsPageProps) {
 					    so it says what a connector is and offers a re-read instead of a Reset that
 					    would change nothing. */}
 					{rows.length === 0 && (filtered || total > 0) && (
-						<EmptyState
-							className="border"
-							icon={<SearchX />}
-							title="No connectors match"
-							description="None of the connectors in the catalog match these filters."
-							action={
-								<Button variant="outline" onClick={resetFilters}>
-									Reset filters
-								</Button>
-							}
-						/>
+						<FilterEmpty className="border" noun="connectors" onClear={resetFilters} />
 					)}
 					{rows.length === 0 && !filtered && total === 0 && (
 						<EmptyState

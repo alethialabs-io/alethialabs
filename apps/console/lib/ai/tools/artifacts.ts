@@ -11,17 +11,20 @@ import {
 import { artifactSpecSchema } from "@/lib/ai/artifact-spec";
 
 /**
- * Saved-artifact tools (in-app only): artifacts are named, org-scoped widget/dashboard
- * specs the user promoted from a chat's grid; any later chat can @-reference, load, and
- * edit them. `update_artifact` writes server-side (precedent: scan_repo's in-app write)
- * — the blast radius is a display spec, org-scoped by RLS, so no HITL pause; the client
- * lane syncs open widgets after the edit.
+ * Saved-artifact tools (in-app only): artifacts are named widget/dashboard specs the user
+ * promoted from a chat's grid, PRIVATE to that user (app/server/actions/artifacts.ts reads them
+ * under withOwnerScope; sharing goes through the separate shares ACL, which these tools do not
+ * read). Any later chat of the same user can @-reference, load, and edit them. `update_artifact`
+ * writes server-side (precedent: scan_repo's in-app write) — the blast radius is the caller's own
+ * display spec, owner-scoped by RLS, so no HITL pause; the client lane syncs open widgets after
+ * the edit. The descriptions below say "the user's own" because they once said "the org's", which
+ * told the model teammates could see an artifact that only its creator can.
  */
 export function artifactTools() {
 	return {
 		list_artifacts: tool({
 			description:
-				"List the org's saved artifacts (named widget/dashboard specs promoted from chat grids). PDP/RLS-scoped read.",
+				"List the user's own saved artifacts (named widget/dashboard specs they promoted from chat grids). Artifacts are private to their creator; artifacts teammates shared are not listed here. RLS-scoped read.",
 			inputSchema: z.object({}),
 			execute: async () => {
 				const rows = await listArtifacts();
@@ -39,7 +42,7 @@ export function artifactTools() {
 
 		get_artifact: tool({
 			description:
-				"Load one saved artifact by id or exact name — returns its full widget spec so you can discuss or edit it. Use when the user @-references an artifact. PDP/RLS-scoped read.",
+				"Load one of the user's own saved artifacts by id or exact name — returns its full widget spec so you can discuss or edit it. Use when the user @-references an artifact. RLS-scoped read.",
 			inputSchema: z.object({ idOrName: z.string() }),
 			execute: async ({ idOrName }) => {
 				const a = await getArtifact(idOrName);
@@ -56,7 +59,7 @@ export function artifactTools() {
 
 		update_artifact: tool({
 			description:
-				"Replace a saved artifact's spec (widgets + layout) after the user asked you to edit it. Load it with get_artifact first, modify the spec (same schema as pin_widget blocks/sources + position/size), and write it back whole. Org-scoped; display data only.",
+				"Replace a saved artifact's spec (widgets + layout) after the user asked you to edit it. Load it with get_artifact first, modify the spec (same schema as pin_widget blocks/sources + position/size), and write it back whole in the SAME turn. The user's edit request is the go-ahead: do not stop to ask for confirmation. Never reply to an add/remove/replace request with a question or options instead of calling this. An 'add a widget' request adds one, even when a widget showing the same data is already in the artifact (the user said add, and can remove it; mention the duplicate after writing); keep every existing widget unless they asked to change or remove it. Only the user's own artifacts; display data only.",
 			inputSchema: z.object({
 				artifactId: z.string().uuid(),
 				spec: artifactSpecSchema,

@@ -7,6 +7,10 @@
 // the one exception: it is @repo/org-slug, a shared package both apps read, not a console internal.) Authenticated with the DEDICATED PLATFORM_PROVISION_SECRET bearer.
 
 import { env } from "next-runtime-env";
+import {
+	type LinkPaddleCustomerResponse,
+	linkPaddleCustomerResponseSchema,
+} from "./paddle-customer-link";
 
 /** The console's own origin, reachable from the admin container. Defaults to the shared prod URL. */
 function consoleOrigin(): string {
@@ -143,4 +147,18 @@ export function takePrivacyStep(
 	input: { actorUserId: string; reason?: string },
 ): Promise<unknown> {
 	return post(`/privacy/cases/${encodeURIComponent(reference)}/${step}`, input);
+}
+
+/**
+ * Store an org's Paddle customer id via the console's billing writer. `replace` is the stored id the
+ * operator confirmed replacing (null when none was stored). The console re-checks the shape and the
+ * confirmation, asks Paddle (read-only) whether the customer exists when Paddle is configured there,
+ * and refuses with a reason instead of overwriting a value that changed meanwhile.
+ */
+export async function linkPaddleCustomer(input: {
+	orgId: string;
+	customerId: string;
+	replace: string | null;
+}): Promise<LinkPaddleCustomerResponse> {
+	return linkPaddleCustomerResponseSchema.parse(await post<unknown>("/link-paddle-customer", input));
 }

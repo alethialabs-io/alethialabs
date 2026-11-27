@@ -20,7 +20,6 @@ import {
 	CircleAlert,
 	CircleX,
 	Info,
-	Loader2,
 } from "lucide-react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
@@ -163,9 +162,10 @@ interface DuplicateVariables {
 
 /**
  * `tryDuplicateProjectForProvider` in the mutation contract's shape (ADR 0005 D4). Its refusals are
- * sentences about the NAME (taken, or no schema accepts it) or about a stored credential, all shown
- * beside the name field — so they travel as a `validation` error on `projectName` and reach the
- * field, not a toast. A failure thrown out of the `"use server"` export is a digest in a production
+ * sentences about the NAME (taken, or no schema accepts it), shown beside the name field, or about
+ * the source project or the target account (a stored credential, a cloud this deployment does not
+ * offer), shown above the buttons. The action names which (`field`); both travel as a `validation`
+ * error and reach the form, not a toast. A failure thrown out of the `"use server"` export is a digest in a production
  * build; it becomes `unexpected`, toasted once with that digest as its reference.
  */
 async function duplicateAction({
@@ -182,9 +182,13 @@ async function duplicateAction({
 			values.projectName,
 		);
 		if (!res.ok) {
+			// The action says where its refusal belongs. A key outside SERVER_FIELDS is shown above
+			// the buttons (`FormRootError`), so a refusal about the target account never sits beside
+			// the name field.
+			const key = res.field === "project_name" ? "projectName" : "form";
 			return {
 				ok: false,
-				error: { kind: "validation", message: res.error, fields: { projectName: [res.error] } },
+				error: { kind: "validation", message: res.error, fields: { [key]: [res.error] } },
 			};
 		}
 		return { ok: true, data: { newProjectSlug: res.newProjectSlug, warnings: res.warnings } };
@@ -606,16 +610,10 @@ function OpenDuplicateProjectDialog({
 							</Button>
 							<Button
 								type="submit"
-								disabled={isSubmitting || !cloudIdentityId || !region}
+								disabled={!cloudIdentityId || !region}
+								pending={isSubmitting}
 							>
-								{isSubmitting ? (
-									<>
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-										Duplicating…
-									</>
-								) : (
-									"Duplicate"
-								)}
+								{isSubmitting ? "Duplicating…" : "Duplicate"}
 							</Button>
 						</DialogFooter>
 					</form>

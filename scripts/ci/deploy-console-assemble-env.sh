@@ -375,6 +375,10 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   echo "AUTH_EMAIL_FROM=$AUTH_FROM"
   echo "EMAIL_FROM=$GENERAL_FROM"
   echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"
+  # The admin image's tag. This deploy's own tag by default; on the box, a tag the web
+  # repo's deploy recorded in admin.image.env replaces it (see the REMOTE block below),
+  # so a console deploy never moves admin to an image the web repo did not ship.
+  echo "ALETHIA_ADMIN_IMAGE_TAG=$IMAGE_TAG"
 } > env.deploy
 
 SSHOPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
@@ -386,6 +390,16 @@ ssh $SSHOPTS "root@${HOST}" 'df -h /; docker image prune -af || true; docker bui
 scp $SSHOPTS env.deploy "root@${HOST}:/opt/alethia/.env.new"
 rm -f env.deploy
 
+# Registry login for the pull, with THIS job's short-lived token (GHCR_PULL_TOKEN, the job's
+# github.token with packages:read). Needed once an image is private: the staff app's image is,
+# since it moved to the private alethialabs-io/web repo. The token goes over ssh's STDIN, never
+# into an argument or a log line, and the box is logged out again when this script exits for any
+# reason, so no registry credential outlives the deploy on the box. Public images pull as before.
+if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
+  printf '%s' "$GHCR_PULL_TOKEN" | ssh $SSHOPTS "root@${HOST}" 'docker login ghcr.io -u github-actions --password-stdin >/dev/null'
+  trap 'ssh $SSHOPTS "root@${HOST}" "docker logout ghcr.io >/dev/null 2>&1" || true' EXIT
+fi
+
 # On the box: checkout the built SHA, swap in .env, render s3.json from the
 # same storage creds (checkout -f resets that tracked file), compose up behind
 # the tunnel. `bash -s` gets IMAGE_TAG + the apps build verdict from the ssh env.
@@ -395,6 +409,20 @@ cd /opt/alethia
 git fetch origin main
 git checkout -f "$IMAGE_TAG"
 mv -f .env.new .env
+# admin.image.env is untracked and written only by alethialabs-io/web's deploy: one
+# line, ALETHIA_ADMIN_IMAGE_TAG=<that repo's sha>. When it is there, its tag replaces
+# the default written above. Anything else in the file refuses the deploy, so the file
+# can move admin's image tag and nothing else.
+if [ -f admin.image.env ]; then
+  admin_line="$(grep -E '^ALETHIA_ADMIN_IMAGE_TAG=[0-9a-f]{7,40}$' admin.image.env || true)"
+  if [ "$(grep -cv '^[[:space:]]*$' admin.image.env)" != 1 ] || [ -z "$admin_line" ]; then
+    echo "admin.image.env must hold exactly one line ALETHIA_ADMIN_IMAGE_TAG=<sha>; refusing to deploy" >&2
+    exit 1
+  fi
+  grep -v '^ALETHIA_ADMIN_IMAGE_TAG=' .env > .env.admin-tag && mv -f .env.admin-tag .env
+  echo "$admin_line" >> .env
+  echo "admin image tag from admin.image.env: ${admin_line#*=}"
+fi
 AK="$(grep -m1 '^ALETHIA_STORAGE_ACCESS_KEY_ID=' .env | cut -d= -f2-)"
 SK="$(grep -m1 '^ALETHIA_STORAGE_SECRET_ACCESS_KEY=' .env | cut -d= -f2-)"
 cat > deploy/seaweedfs/s3.json <<JSON

@@ -19,12 +19,12 @@
 import { PanelSkeleton } from "@/components/skeletons/page-skeletons";
 import { SkeletonRoot } from "@/components/skeleton/skeleton-root";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
-import { PageToolbarSkeleton } from "@repo/ui/page-toolbar";
+import { ListToolbarSkeleton } from "@repo/ui/list-toolbar";
 import { Skeleton } from "@repo/ui/skeleton";
 import { PeopleListSkeleton, PeopleUpsellSkeleton } from "./people-skeleton";
 
 /**
- * Members: the toolbar (count, one line, Invite), the filter bar (search, Status, Role) and the
+ * Members: the one toolbar row (search, Status, Role, then Invite on the right) and the
  * table — Member, Role, Teams, Status, Last active, plus the select and actions columns an org with
  * the `organizations` entitlement gets (the entitlement `members.gate` answers `canManage` from).
  */
@@ -34,9 +34,9 @@ export function MembersRouteSkeleton() {
 }
 
 /**
- * Teams: with the `teams` entitlement, the toolbar (count, one line, Create team), the filter bar
- * (search, Size) and the table (Team, Members, the row menu); without it, the toolbar and the
- * upsell's box (F021).
+ * Teams: with the `teams` entitlement, the one toolbar row (search, Size, then Create team on the
+ * right) and the table (Team, Members, the row menu); without it, the row with Create team alone and
+ * the upsell's box (F021).
  */
 export function TeamsRouteSkeleton() {
 	const teams = useEntitlement("teams");
@@ -44,8 +44,8 @@ export function TeamsRouteSkeleton() {
 }
 
 /**
- * Access: with the `customRoles` entitlement, the inheritance note, the toolbar (count, one line,
- * Add grant), the filter bar (search, Scope, Roles, Effect) and the table (Principal, Role, Scope,
+ * Access: with the `customRoles` entitlement, the inheritance note, the one toolbar row (search,
+ * Scope, Effect, Roles, then Add grant on the right) and the table (Principal, Role, Scope,
  * Effective reach, Granted, the row menu); without it, the note and the upsell (F021).
  */
 export function AccessRouteSkeleton() {
@@ -58,8 +58,8 @@ export function AccessRouteSkeleton() {
 }
 
 /**
- * SSO: with the `sso` entitlement, the manager — the toolbar (count, one line, Connect provider),
- * the filter bar (search, Protocol, Status), the provider rail beside the detail pane, and the SCIM
+ * SSO: with the `sso` entitlement, the manager — the one toolbar row (search, Protocol, Status,
+ * then Connect provider on the right), the provider rail beside the detail pane, and the SCIM
  * card under them (R6 E-22: it used to be one plain panel, so the page jumped into a split and grew a
  * card when it arrived); without it the page's whole body is the upsell, so the skeleton is the
  * upsell's box alone (#6132, F021).
@@ -71,12 +71,7 @@ export function SsoRouteSkeleton() {
 	if (sso === false) return <PeopleUpsellSkeleton toolbar={false} />;
 	return (
 		<SkeletonRoot>
-			<PageToolbarSkeleton className="mb-4" actions={1} />
-			<div aria-hidden className="mb-4 flex flex-wrap items-center gap-2.5">
-				<Skeleton className="h-8 w-[240px] max-w-[380px] flex-1 rounded-md" />
-				<Skeleton className="h-8 w-28 rounded-md" />
-				<Skeleton className="h-8 w-28 rounded-md" />
-			</div>
+			<ListToolbarSkeleton facets={2} actions={1} />
 			<div aria-hidden className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
 				<div className="space-y-1 rounded-lg border border-border bg-surface p-2 shadow-sm">
 					{[0, 1].map((i) => (

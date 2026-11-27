@@ -51,11 +51,16 @@ test.describe("Deploy jobs — negative & empty states", () => {
 		const ghost = "00000000-0000-4000-8000-000000000000";
 		await visit(owner.page, `/${owner.orgSlug}/~/jobs/${ghost}`);
 		await expect(owner.page).not.toHaveURL(/\/login/);
-		// A real heading, not a bare paragraph: this is `EmptyState level={2}`, so a reader moving
-		// by heading lands on the thing that went wrong.
+		// The segment's `not-found.tsx` (#7875): `JobDetail` hands a settled no-job read to
+		// notFound(), so this is the same 404 an id that cannot be a job gets — a real heading, then
+		// the reason line that says the JOB is what is missing (exact, so no other 404's line can
+		// match), so a reader moving by heading lands on the thing that went wrong.
 		await expect(
-			owner.page.getByRole("heading", { name: "Job not found." }),
+			owner.page.getByRole("heading", { name: "Nothing here.", exact: true }),
 		).toBeVisible({ timeout: 25_000 });
+		await expect(
+			owner.page.getByText("This job doesn't exist, or it belongs to another organization.", { exact: true }),
+		).toBeVisible();
 		// An empty state with nowhere to go from it is the defect the shared component replaced.
 		//
 		// ROLE `link`. This assertion used to read `getByRole("button")`, deliberately: the action
@@ -103,16 +108,18 @@ test.describe("Deploy jobs — negative & empty states", () => {
 	}) => {
 		await visit(owner.page, `/${owner.orgSlug}/${singleEnvProject.slug}/environments`);
 		// No in-content page title since #6120 (F010): the breadcrumb names the page, and the page
-		// opens with its toolbar. Its count pill went in LST-3 (#7541: no count pills anywhere); the
-		// one environment is the one rendered list item (`data-list-item`, #7673) — a single-environment
+		// opens with its one-row toolbar (#7738: search, facets, and the actions on the right; no
+		// description line). Its count pill went in LST-3 (#7541: no count pills anywhere); the one
+		// environment is the one rendered list item (`data-list-item`, #7673) — a single-environment
 		// project has no promotions, so nothing else on the page is a list item.
-		const toolbar = owner.page.locator('[data-slot="page-toolbar"]');
-		await expect(toolbar).toBeVisible({ timeout: 25_000 });
+		const actions = owner.page.locator('[data-slot="list-toolbar-end"]');
+		await expect(actions).toBeVisible({ timeout: 25_000 });
+		await expect(owner.page.locator('[data-slot="page-toolbar"]')).toHaveCount(0);
 		await expect(owner.page.locator("main [data-list-item]")).toHaveCount(1);
-		await expect(toolbar.locator('[data-slot="count-pill"]')).toHaveCount(0);
+		await expect(owner.page.locator('main [data-slot="count-pill"]')).toHaveCount(0);
 		// Promote stays in the toolbar at every count (#6120, so the route skeleton can reserve the
 		// row exactly) but cannot be pressed with one environment — there is nothing to promote to.
-		await expect(owner.page.getByRole("button", { name: /^Promote$/i })).toBeDisabled();
+		await expect(actions.getByRole("button", { name: /^Promote$/i })).toBeDisabled();
 		// But New Environment is always available — a one-environment project is exactly the one
 		// that needs it.
 		await expect(owner.page.getByRole("button", { name: /New Environment/i })).toBeEnabled();

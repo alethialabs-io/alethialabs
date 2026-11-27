@@ -94,8 +94,24 @@ was `dev` — restarted ~9 workflows on every queue merge (220 cancelled runs in
   unless you label it `release-gate:run`, with one exception: its **`qa` leg** runs on every `dev` PR
   that touches the console UI, its e2e specs or the packages it renders (`ci.yml`'s `e2e-qa-leg`,
   which calls `release-gate.yml`; #7647), and it is **required when it runs** — a `needs:` of
-  `CI required`, so a skip passes and a ratchet regression blocks the merge. It is about ten runner
-  minutes, not in the merge queue, and documented in `TESTING.md`. See the promotion checklist below.
+  `CI required`, so a ratchet regression blocks the merge. It is about ten runner minutes, runs in
+  the merge queue's batch (the full lane, below), and is documented in `TESTING.md`. See the
+  promotion checklist below.
+
+- **Two CI lanes: a fast one on your PR, the full suite in the queue.** `ci.yml`'s `detect-changes`
+  job sets `lane`. An ordinary PR into `dev` runs the **fast lane**: lint and types, the affected
+  unit suites and coverage ratchets, the build smoke, Go for the affected modules, the guards,
+  docs prose, the secret scan, `capabilities-security`, the gate ledger and the path-conditional
+  observe-only E2Es. The **full lane** adds the jobs that gate through `CI required` but are too slow
+  for a first answer — `Build console images (no push)`, `Integration (real Postgres + RLS)`, the
+  `BYO users SQL — real Postgres` legs and the `qa` leg above — and runs on the Mergify queue's
+  batch (`mergify/merge-queue/*`), on promotions, on pushes and on the schedule. Nothing reaches
+  `dev` without the batch's full-lane `CI required` passing, and that job fails a full-lane run in
+  which any of those jobs skipped when it should have run, or a run that calls itself `fast` but is
+  not an ordinary dev PR. So a red in one of those jobs shows up when the batch fails (Mergify
+  reports it on your PR and drops it from the queue), not on your first push. The lane table and the
+  reason for each job is the `TWO LANES` comment in `ci.yml`. Setting `AFFECTED_ONLY_ARMED` to
+  `"false"` in that job turns the fast lane off, so every PR runs the full lane again.
 
 - **Why the promotion head is pinned.** The old `dev → staging` promotion PR lived as a DRAFT
   between promotions, because a draft does not fire the release gate. Its head was an integration

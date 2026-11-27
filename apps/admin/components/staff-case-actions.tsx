@@ -14,7 +14,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   ChevronDown,
-  Loader2,
   RotateCcw,
   UserMinus,
   UserPlus,
@@ -47,6 +46,8 @@ const ACTION_META: Record<
   StaffAction,
   {
     label: string;
+    /** The progressive verb the menu trigger shows while this action is in flight. */
+    pending: string;
     run: (id: string) => Promise<void>;
     icon: typeof CheckCircle2;
     success: string;
@@ -54,30 +55,35 @@ const ACTION_META: Record<
 > = {
   assign: {
     label: "Assign to me",
+    pending: "Assigning…",
     run: assignCaseToMe,
     icon: UserPlus,
     success: "Case assigned to you",
   },
   unassign: {
     label: "Unassign",
+    pending: "Unassigning…",
     run: unassignCase,
     icon: UserMinus,
     success: "Case unassigned",
   },
   resolve: {
     label: "Mark resolved",
+    pending: "Marking resolved…",
     run: staffResolveCase,
     icon: CheckCircle2,
     success: "Case marked resolved",
   },
   reopen: {
     label: "Reopen case",
+    pending: "Reopening…",
     run: staffReopenCase,
     icon: RotateCcw,
     success: "Case reopened",
   },
   close: {
     label: "Close case",
+    pending: "Closing…",
     run: staffCloseCase,
     icon: XCircle,
     success: "Case closed",
@@ -131,11 +137,9 @@ export function StaffCaseActions({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" size="sm" disabled={mutation.isPending}>
-            {mutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : null}
-            Actions
+          <Button variant="outline" size="sm" pending={mutation.isPending}>
+            {/* While an action runs the trigger names IT, not the menu: "Assigning…". */}
+            {mutation.isPending && mutation.variables ? ACTION_META[mutation.variables].pending : "Actions"}
             <ChevronDown className="size-4" />
           </Button>
         }

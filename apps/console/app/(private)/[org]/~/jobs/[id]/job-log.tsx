@@ -2,13 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { formatDate, formatMinutes } from "@repo/format";
+import { MARK_LOADER_PX } from "@repo/brand/loader";
+import { formatDate, formatDuration, formatMinutes } from "@repo/format";
 import { Button } from "@repo/ui/button";
-import { EmptyState } from "@repo/ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyState, EmptyTitle } from "@repo/ui/empty";
+import { MarkGlyph } from "@repo/ui/spinner";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { useHydrated } from "@repo/ui/use-hydrated";
 import { cn } from "@repo/ui/utils";
-import { ArrowDown, Clock, Loader2, Terminal } from "lucide-react";
+import { ArrowDown, Clock, Terminal } from "lucide-react";
 import Link from "next/link";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { useSecondsClock } from "@/components/jobs/columns";
@@ -109,31 +111,90 @@ function QueuedWait({ createdAt, org }: { createdAt: string | Date | null; org: 
 }
 
 /**
+ * A job a runner holds that has printed nothing yet: the region-sized `[·]` mark over what is
+ * happening, with a mono line of facts the page already has — the job's short id and how long ago
+ * it was queued. Never a percentage: nothing here knows how far along the run is.
+ *
+ * The mark is DECORATIVE here, not a `MarkLoader`: the strip above the pane is the log's one
+ * `role="status"` region and already announces where the stream stands, so a second live region
+ * would make a screen reader hear the wait twice — and its elapsed line would be re-announced every
+ * second. The title and sentence below the mark are ordinary text.
+ */
+function LogWaiting({
+	title,
+	description,
+	jobId,
+	createdAt,
+}: {
+	title: string;
+	description: string;
+	jobId: string | undefined;
+	createdAt: string | Date | null;
+}) {
+	const now = useSecondsClock();
+	const queuedAgo = now === null || createdAt === null ? null : now - new Date(createdAt).getTime();
+	const facts = [jobId ? jobId.slice(0, 8) : null, queuedAgo === null ? null : `queued ${formatDuration(queuedAgo)} ago`]
+		.filter((fact): fact is string => fact !== null)
+		.join(" · ");
+	return (
+		<Empty className="min-h-[40dvh] font-sans" data-state="log-waiting">
+			<EmptyHeader>
+				<EmptyMedia>
+					<MarkGlyph
+						width={MARK_LOADER_PX.region}
+						height={MARK_LOADER_PX.region}
+						className="text-text-tertiary"
+						aria-hidden="true"
+					/>
+				</EmptyMedia>
+				<EmptyTitle>{title}</EmptyTitle>
+				<EmptyDescription>{description}</EmptyDescription>
+			</EmptyHeader>
+			{facts ? (
+				<p className="font-mono text-ui-xs tabular-nums text-text-tertiary" data-slot="log-waiting-facts">
+					{facts}
+				</p>
+			) : null}
+		</Empty>
+	);
+}
+
+/**
  * What the pane says while a job has written nothing. One sentence per status, because they are
  * different situations: queued is a wait for a runner (and, past a threshold, a pointer at the
  * runners); claimed and running are a job that HAS a runner and has not printed yet. Saying
  * "waiting for a runner" over a job a runner is already running sent readers to look for a problem
  * that was not there.
  */
-function LogEmpty({ status, createdAt, org }: { status: string; createdAt: string | Date | null; org: string }) {
+function LogEmpty({
+	status,
+	createdAt,
+	org,
+	jobId,
+}: {
+	status: string;
+	createdAt: string | Date | null;
+	org: string;
+	jobId: string | undefined;
+}) {
 	if (status === "QUEUED") return <QueuedWait createdAt={createdAt} org={org} />;
 	if (status === "CLAIMED") {
 		return (
-			<EmptyState
-				className="min-h-[40dvh] font-sans"
-				icon={<Loader2 className="animate-spin" />}
+			<LogWaiting
 				title="A runner has claimed this job"
 				description="It is preparing the run. Output appears here when it starts."
+				jobId={jobId}
+				createdAt={createdAt}
 			/>
 		);
 	}
 	if (status === "PROCESSING") {
 		return (
-			<EmptyState
-				className="min-h-[40dvh] font-sans"
-				icon={<Loader2 className="animate-spin" />}
+			<LogWaiting
 				title="Running — no output yet"
 				description="The job has started. Its output appears here as the runner writes it."
+				jobId={jobId}
+				createdAt={createdAt}
 			/>
 		);
 	}
@@ -197,6 +258,8 @@ export interface JobLogProps {
 	active: boolean;
 	createdAt: string | Date | null;
 	org: string;
+	/** The job's id, for the facts line under the wait while it has printed nothing. */
+	jobId?: string;
 	/** The log stream's state; null when there is none (`useJobLogStream`). */
 	stream: EventStreamState | null;
 	onReconnect: () => void;
@@ -218,7 +281,7 @@ export interface JobLogProps {
  * extends the bottom and never pulls the lines they are reading out from under them. Line numbers
  * are the line's place in the whole log, whatever the window.
  */
-export function JobLog({ logs, status, active, createdAt, org, stream, onReconnect }: JobLogProps) {
+export function JobLog({ logs, status, active, createdAt, org, jobId, stream, onReconnect }: JobLogProps) {
 	const hydrated = useHydrated();
 	const scroller = useRef<HTMLDivElement>(null);
 	const [following, setFollowing] = useState(true);
@@ -291,7 +354,7 @@ export function JobLog({ logs, status, active, createdAt, org, stream, onReconne
 				className="min-h-0 flex-1 overflow-y-auto p-6 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
 			>
 				{logs.length === 0 ? (
-					<LogEmpty status={status} createdAt={createdAt} org={org} />
+					<LogEmpty status={status} createdAt={createdAt} org={org} jobId={jobId} />
 				) : (
 					<div className="pb-10">
 						{first > 0 && (

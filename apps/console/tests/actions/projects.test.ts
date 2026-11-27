@@ -32,6 +32,9 @@ vi.mock("@/lib/db", () => ({
 	getServiceDb: vi.fn(),
 }));
 vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
+// The environments domain's canonical list read (#7895): `getEnvConsistency` reads its environments
+// through it (lazily imported) instead of selecting them itself.
+vi.mock("@/lib/rpc/procedures/environments", () => ({ projectEnvironmentsFor: vi.fn(async () => []) }));
 // `readDuplicateTargets` lives with the other projects reads in lib/rpc/procedures/projects.ts
 // (#6131); that module also serves the import flow, whose git-account and model readers are not
 // this file's subject and would otherwise load Better Auth and the AI SDK here.
@@ -83,6 +86,7 @@ import { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { configurationHashOf, PlanBindingError, resolveReviewedPlan } from "@/lib/approvals/plan-binding";
 import { ProjectNameTakenError } from "@/lib/queries/projects";
+import { projectEnvironmentsFor } from "@/lib/rpc/procedures/environments";
 import { readDuplicateTargets } from "@/lib/rpc/procedures/projects";
 import {
 	type DestroyTreeSubject,
@@ -91,7 +95,9 @@ import {
 } from "@/lib/queries/destroy-tree";
 import {
 	addEnvironment,
+	buildProject,
 	duplicateEnvironment,
+	queueDriftDetection,
 	tryDestroyProject,
 	tryPlanProject,
 	tryProvisionProject,
@@ -127,6 +133,7 @@ import { assertProjectInActorOrg } from "@/lib/promotions/org-binding";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed, UsageLimitError } from "@/lib/billing/usage-guard";
 import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
+import { CloudNotOfferedError, withHiddenClouds } from "@/lib/cloud-providers/availability";
 import { CredentialKnobRefusedError } from "@/lib/cloud-providers/credential-knobs";
 import { CloudIdentityRefusedError } from "@/lib/cloud-providers/design-identities";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
@@ -2062,10 +2069,15 @@ describe("planProject", () => {
 					]),
 				),
 			});
-			await expect(planProject("p1")).rejects.toThrow(reason);
-			await expect(planProject("p1")).rejects.toThrow(
-				/Turn IAM authentication off/,
-			);
+			// Alibaba is not offered by default (#6964 refuses its plan first); the operator setting
+			// offers it here, because this test is about the keyless gate behind that refusal.
+			const offered = provider === "alibaba" ? (["alibaba"] as const) : ([] as const);
+			await withHiddenClouds(offered, async () => {
+				await expect(planProject("p1")).rejects.toThrow(reason);
+				await expect(planProject("p1")).rejects.toThrow(
+					/Turn IAM authentication off/,
+				);
+			});
 			expect(notifyScaler).not.toHaveBeenCalled();
 		},
 	);
@@ -3565,7 +3577,7 @@ describe("tryDuplicateProjectForProvider", () => {
 			"ci-target",
 			"europe-west1",
 		);
-		expect(res).toEqual({ ok: false, error: TOO_LONG });
+		expect(res).toEqual({ ok: false, error: TOO_LONG, field: "project_name" });
 	});
 
 	it("returns the taken-name sentence when the org already holds it", async () => {
@@ -3697,12 +3709,58 @@ describe("getProjectEnvironments", () => {
 });
 
 describe("getEnvConsistency", () => {
-	it("uses the read check for itself and for the list it reads, never the recording one", async () => {
+	/** The actor the `view` check answers with — what the canonical read must be asked as. */
+	const CHECKED = { userId: "user-1", orgId: "org-checked", credential: "session" as const };
+
+	/** One row of the canonical environments read, as `projectEnvironmentsFor` answers it. */
+	type CanonicalRow = Awaited<ReturnType<typeof projectEnvironmentsFor>>[number];
+
+	/** One row of the canonical environments read; the test names what it is about. */
+	function canonicalEnv(over: Pick<CanonicalRow, "id" | "name" | "stage" | "is_default">): CanonicalRow {
+		const at = new Date("2026-10-01T00:00:00Z");
+		return {
+			project_id: "p1",
+			status: "ACTIVE",
+			byo_admission_enforce: false,
+			auto_heal: false,
+			deployed_config_hash: null,
+			last_deployed_at: null,
+			created_at: at,
+			updated_at: at,
+			...over,
+		};
+	}
+
+	it("uses the read check, never the recording one", async () => {
 		setupDb({ select: new Map([[projectEnvironments, []]]) });
 		const r = await getEnvConsistency("p1");
 		expect(r).toEqual({ envs: [], rows: [] });
 		expect(authorizeRead).toHaveBeenCalledWith("view", { type: "project", id: "p1" });
 		expect(authorize).not.toHaveBeenCalled();
+	});
+
+	it("reads its environments through the canonical read, as the checked actor, AFTER the check (#7895)", async () => {
+		setupDb({ select: new Map([[projectEnvironments, []]]) });
+		const order: string[] = [];
+		vi.mocked(authorizeRead).mockImplementationOnce(async () => {
+			order.push("check");
+			return CHECKED;
+		});
+		vi.mocked(projectEnvironmentsFor).mockImplementationOnce(async () => {
+			order.push("list");
+			return [
+				canonicalEnv({ id: "env-b", name: "prod", stage: "production", is_default: false }),
+				canonicalEnv({ id: "env-a", name: "dev", stage: "development", is_default: true }),
+			];
+		});
+		const r = await getEnvConsistency("p1");
+		expect(order).toEqual(["check", "list"]);
+		expect(projectEnvironmentsFor).toHaveBeenCalledWith(CHECKED, "p1");
+		// The default first, then the canonical (oldest-first) order.
+		expect(r.envs).toEqual([
+			{ id: "env-a", name: "dev", stage: "development" },
+			{ id: "env-b", name: "prod", stage: "production" },
+		]);
 	});
 });
 
@@ -4316,6 +4374,7 @@ describe("a credential in provider_config is refused at the write (#5565)", () =
 		expect(res).toEqual({
 			ok: false,
 			error: expect.stringContaining('database "orders": rds_extra_credentials'),
+			field: "form",
 		});
 		expect(res).toHaveProperty("error", expect.stringContaining("Remove the stored value"));
 	});
@@ -4498,5 +4557,73 @@ describe("design writes name only cloud identities the caller may use", () => {
 		});
 		await expect(planProject("p1")).resolves.toEqual({ jobId: "job-1" });
 		expect(insertSpy).toHaveBeenCalledWith(jobs);
+	});
+});
+
+// ============================================================
+// A project on a cloud this deployment does not offer (#6964)
+// ============================================================
+
+// #6811 made `assertProjectCloudOffered`; #6964 calls it from `buildConfigSnapshot` for the three
+// job kinds that put something new on the project's cloud (plan, deploy, and a build, whose success
+// chains a deploy). Everything else stays open for such a project, so both halves are pinned here:
+// the refusals, and a drift check, a destroy and a destroy plan that still queue. The cloud is read
+// from the stored account row (`cloudIdentities` below), never from the caller.
+describe("a project on a cloud this deployment does not offer (#6964)", () => {
+	/** The snapshot fixture with the project's account on Alibaba, which is not offered by default. */
+	const onAlibaba = () =>
+		snapshotSelect(
+			new Map<unknown, RowsResolver>([[cloudIdentities, [{ id: "ci-1", provider: "alibaba" }]]]),
+		);
+	const REFUSAL = "Alibaba Cloud is not available in this release.";
+
+	it("refuses a plan, and queues nothing", async () => {
+		const { insertSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-1" }]]]) });
+		await expect(planProject("p1")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("returns the refusal as a value to the console, naming the cloud", async () => {
+		setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-1" }]]]) });
+		await expect(tryPlanProject("p1")).resolves.toEqual({ ok: false, error: REFUSAL });
+		await expect(tryProvisionProject("p1", "plan-3")).resolves.toEqual({ ok: false, error: REFUSAL });
+	});
+
+	it("refuses a deploy before its plan is even looked up", async () => {
+		const { insertSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-7" }]]]) });
+		await expect(provisionProject("p1", "plan-3")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(resolveReviewedPlan).not.toHaveBeenCalled();
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+	});
+
+	it("refuses a build, whose success would chain a deploy", async () => {
+		const { insertSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-b" }]]]) });
+		await expect(buildProject("p1")).rejects.toBeInstanceOf(CloudNotOfferedError);
+		expect(insertSpy).not.toHaveBeenCalledWith(jobs);
+	});
+
+	it("still queues a drift check", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-d" }]]]) });
+		await expect(queueDriftDetection("p1")).resolves.toEqual({ jobId: "job-d" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DETECT_DRIFT" });
+	});
+
+	it("still queues a destroy", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-x" }]]]) });
+		await destroyProject("p1");
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DESTROY" });
+	});
+
+	it("still queues a destroy plan, the teardown's review", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-p" }]]]) });
+		await expect(planProject("p1", null, null, null, { destroy: true })).resolves.toEqual({ jobId: "job-p" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN", destroy_plan: true });
+	});
+
+	it("plans it once the operator setting offers the cloud again", async () => {
+		const { valuesSpy } = setupDb({ select: onAlibaba(), insert: new Map([[jobs, [{ id: "job-1" }]]]) });
+		await expect(withHiddenClouds(["alibaba"], () => planProject("p1"))).resolves.toEqual({ jobId: "job-1" });
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN" });
 	});
 });

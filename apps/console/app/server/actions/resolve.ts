@@ -115,8 +115,8 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
 /**
  * The id of the project `projectSlug` names under the scope `(userId, orgId)`, or `null` when it
  * names none there. Memoised PER REQUEST with React `cache()`: the `[project]` layout, the page
- * below it and the topbar's environment switcher read (`getEnvironmentsForSlug`) each ask this
- * question about the same slug in one render, and it is now one query instead of three (#7736).
+ * below it and the topbar's environment switcher read each ask this question about the same slug in
+ * one render, and it is now one query instead of three (#7736).
  *
  * WHY THE SCOPE IS IN THE KEY, NOT ONLY THE SLUG. `cache()` keys on its arguments, and the answer
  * depends on the actor as much as on the slug: RLS (`withActorScope`) is what scopes the lookup to
@@ -124,6 +124,11 @@ export async function resolveOrgScope(orgSlug: string): Promise<ResolvedOrg> {
  * every call — never memoised here — so a call made under a different actor (an injected actor, an
  * org the address names differently) is a different key and a fresh, correctly scoped query. Two
  * strings and a slug are compared by value, so equal scopes share one entry.
+ *
+ * The switcher's GET read (`readEnvironmentsForSlug`, lib/rpc/procedures/environments.ts) reaches
+ * it through `resolveProjectId`, so the `[project]` layout's switcher seed shares it too (#7877). It
+ * is the ONE switcher-list read: the server action that duplicated it for the Elench scope chip is
+ * gone, and the chip reads `workspace.environments` like the switcher (#7895).
  *
  * NOT EXPORTED, deliberately: this module is `"use server"`, so every export is also a POST-able
  * action endpoint, and one taking a caller-chosen `(userId, orgId)` would let a client name any
@@ -253,37 +258,11 @@ export async function getProjectSlug(projectId: string): Promise<string | null> 
 	});
 }
 
+/** One environment as the switcher lists it (`workspace.environments`, the canonical client entry). */
 export interface SwitcherEnv {
 	id: string;
 	project_id: string;
 	name: string;
 	stage: string;
 	is_default: boolean;
-}
-
-/**
- * Lists a project's environments resolved by project slug (for the EnvSwitcher).
- * Returns [] if the slugs don't resolve in the active scope (the switcher hides).
- */
-export async function getEnvironmentsForSlug(
-	projectSlug: string,
-): Promise<SwitcherEnv[]> {
-	const actor = await currentActor();
-	// The same per-request lookup `resolveProjectId` uses, so the `[project]` layout's switcher
-	// prefetch does not resolve the slug a second time (#7736).
-	const projectId = await lookupProjectIdInScope(actor.userId, actor.orgId, projectSlug);
-	if (projectId === null) return [];
-	return withActorScope(actor, async (tx) =>
-		tx
-			.select({
-				id: projectEnvironments.id,
-				project_id: projectEnvironments.project_id,
-				name: projectEnvironments.name,
-				stage: projectEnvironments.stage,
-				is_default: projectEnvironments.is_default,
-			})
-			.from(projectEnvironments)
-			.where(eq(projectEnvironments.project_id, projectId))
-			.orderBy(projectEnvironments.created_at),
-	);
 }

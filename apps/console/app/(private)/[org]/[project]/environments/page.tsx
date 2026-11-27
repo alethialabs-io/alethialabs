@@ -47,6 +47,13 @@ export async function generateMetadata() {
  * The slug is resolved once per request: the `[project]` layout asks the same question with the
  * same slug, and `resolveProjectOr404` is memoised with React `cache()`.
  *
+ * ONE ENVIRONMENTS READ PER RENDER (#7877). The canonical list the view derives its environments
+ * from is `workspace.environments`, which the `[project]` layout already prefetched and handed down
+ * through its own boundary, so it is not prefetched or dehydrated again here. On the server the
+ * layout's seed, the overview and every table page read the project's environments through one
+ * request-memoised select, and resolve the slug against the org through one memoised lookup
+ * (lib/rpc/procedures/environments.ts).
+ *
  * An unresolvable slug is a real 404 here, inside this segment's children slot (see the
  * `[project]` layout). A read that fails is NOT rendered here: the failed query does not dehydrate,
  * so the client renders the read's own failed or refused state (RUBRIC B4) — never an empty list.
@@ -68,13 +75,11 @@ export default async function ProjectEnvironmentsPage({
 		queryClient.prefetchQuery(overview),
 		prefetchEnvironmentsLists(queryClient, project, paramReader(await searchParams)),
 	]);
-	const envs = queryClient.getQueryData(overview.queryKey)?.envs;
-	if (envs !== undefined) {
-		await prefetchClassificationOfList(
-			queryClient,
-			"project_environment",
-			envs.map((e) => e.id),
-		);
+	// The overview's facts are keyed by environment id, in the order the view lists them (the default
+	// first, then oldest first — #7895), so their keys are the view's batch key exactly.
+	const facts = queryClient.getQueryData(overview.queryKey)?.facts;
+	if (facts !== undefined) {
+		await prefetchClassificationOfList(queryClient, "project_environment", Object.keys(facts));
 	}
 
 	return (

@@ -7,9 +7,10 @@
 // feeds a filter-in-key TanStack query (server-side filtering), the table dims while
 // a refetch is in flight. No result count beside the Environments heading: the console carries no
 // list counts (#7481; the status facet's option counts are where the numbers live). The posture table
-// is deliberately unpaged — one row per visible environment, a roll-up that must not truncate; that
-// bound is recorded in apps/console/list-standard/evidence.json. The recorded-waivers panel below it
-// is a list of its own, read page by page (evidence-waivers.tsx). Read-only: the data is produced by
+// pages on the console list standard (#7755): `useKeysetList` walks the server's pages of PROJECT
+// GROUPS, ordered worst-first over the whole filtered roll-up before the cut (lib/queries/
+// evidence-posture.ts), and `ListFooter` pulls the next one. The recorded-waivers panel below it is a
+// list of its own, read page by page too (evidence-waivers.tsx). Read-only: the data is produced by
 // the PLAN/DEPLOY + drift jobs.
 //
 // FOUR RENDERS, NEVER CONFUSED (#6126): the rows (or onboarding / no-match when there are none);
@@ -20,13 +21,17 @@
 
 import { ORPCError } from "@orpc/client";
 import { useParams, useSearchParams } from "next/navigation";
-import { useMemo } from "react";
 import { toast } from "sonner";
+import { ListFooter } from "@/components/list/list-footer";
 import { StaleRefreshNotice } from "@/components/list/stale-refresh-notice";
+import { FilterEmpty } from "@repo/ui/filter-bar";
+import { ListToolbar } from "@repo/ui/list-toolbar";
 import { SectionHeading } from "@repo/ui/section-heading";
 import { RegionError } from "@repo/ui/region-error";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import type { EvidenceWaiver } from "@/lib/queries/evidence";
+import type { EvidenceGroupRow } from "@/lib/queries/evidence-posture";
 import { useEvidenceQuery } from "@/lib/query/use-evidence-query";
 import {
 	hrefWithParamPatch,
@@ -34,12 +39,13 @@ import {
 	selectionFromUrl,
 	selectionPatch,
 } from "@/lib/query/view-url-params";
+import { useListSearchShortcut } from "@/lib/shortcuts/use-list-search-shortcut";
 import { countActiveFilters } from "@/lib/stores/create-filter-store";
 import { useEvidenceFilters } from "@/lib/stores/use-evidence-filters";
 import { EvidenceDrawer } from "./drawer/evidence-drawer";
 import type { EvidenceEnvRow } from "./evidence-derive";
-import { EvidenceForbidden, EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
-import { EvidenceFilterBar } from "./evidence-filter-bar";
+import { EVIDENCE_EMPTY_CARD, EvidenceForbidden, EvidenceOnboarding } from "./evidence-empty";
+import { EvidenceFunnel } from "./evidence-funnel";
 import { EvidenceSkeleton } from "./evidence-skeleton";
 import { EvidenceTable } from "./evidence-table";
 import { EvidenceWaivers } from "./evidence-waivers";
@@ -76,6 +82,18 @@ function defaultTab(row: EvidenceEnvRow): string {
 	return "drift";
 }
 
+/** The loaded row a `?selected=` id names, with its project's in-force waivers — or null. */
+function findDrawerRow(
+	groups: readonly EvidenceGroupRow[],
+	environmentId: string | null,
+): { row: EvidenceEnvRow; waivers: EvidenceWaiver[] } | null {
+	for (const g of groups) {
+		const row = g.rows.find((r) => r.environmentId === environmentId);
+		if (row) return { row, waivers: g.waivers };
+	}
+	return null;
+}
+
 /** Whether a read failed because the read router REFUSED it (a typed FORBIDDEN, lib/rpc/base.ts). */
 function isForbiddenRead(error: unknown): boolean {
 	return error instanceof ORPCError && error.defined && error.code === "FORBIDDEN";
@@ -85,15 +103,13 @@ function isForbiddenRead(error: unknown): boolean {
 export function EvidenceClient() {
 	const { org } = useParams<{ org: string }>();
 	const filters = useEvidenceFilters((s) => s.filters);
+	const set = useEvidenceFilters((s) => s.set);
 	const reset = useEvidenceFilters((s) => s.reset);
+	const { inputRef, shortcut } = useListSearchShortcut();
 	const urlRead = useFilterUrlSync(useEvidenceFilters, DEFAULT_EVIDENCE_FILTERS);
-	const {
-		data: result,
-		isPlaceholderData,
-		isError,
-		error,
-		refetch,
-	} = useEvidenceQuery(urlRead);
+	const list = useEvidenceQuery(urlRead);
+	const { rows: groups, facets, universeEmpty, isPlaceholderData } = list;
+	const { isError, error, refetch } = list.query;
 
 	// Row interaction. The open drawer (`?selected=`) and its tab are URL state (R6 C-32), so a link to an
 	// environment's evidence opens on it and Back/refresh keep what was open.
@@ -101,14 +117,10 @@ export function EvidenceClient() {
 	const drawerId = selectionFromUrl(searchParams);
 	const urlTab = searchParams.get(EVIDENCE_TAB_PARAM);
 
-	// The drawer opens only on a currently-visible row, so it's always in the grouped set.
-	const drawerRow = useMemo(() => {
-		for (const g of result?.groups ?? []) {
-			const row = g.rows.find((r) => r.environmentId === drawerId);
-			if (row) return row;
-		}
-		return null;
-	}, [result?.groups, drawerId]);
+	// The drawer opens on a LOADED row (a row of a page the walk has read), with the in-force waivers
+	// of its project — which the group carries, so the drawer needs nothing the page does not hold.
+	const drawer = findDrawerRow(groups, drawerId);
+	const drawerRow = drawer?.row ?? null;
 	const drawerTab = isDrawerTab(urlTab) ? urlTab : drawerRow ? defaultTab(drawerRow) : "report";
 
 	/** Opens the detail drawer — every row opens it; empty tabs show explained states. */
@@ -133,7 +145,8 @@ export function EvidenceClient() {
 		}
 	};
 
-	if (!result) {
+	// No first page yet (or it failed): `facets` and `universeEmpty` land with page one only.
+	if (facets === null || universeEmpty === null) {
 		// A refusal is its own render: not empty, not a failure, and not worth a retry.
 		if (isError && isForbiddenRead(error)) return <EvidenceForbidden />;
 		// A failed read must not render as a blank page or fall through to onboarding.
@@ -150,9 +163,9 @@ export function EvidenceClient() {
 		return <EvidenceSkeleton />;
 	}
 
-	const filtersActive =
-		countActiveFilters(filters, DEFAULT_EVIDENCE_FILTERS) > 0;
-	const onboarding = result.summary.environments === 0;
+	const activeFilters = countActiveFilters(filters, DEFAULT_EVIDENCE_FILTERS);
+	const filtersActive = activeFilters > 0;
+	const onboarding = universeEmpty;
 
 	return (
 		<div className="pb-20">
@@ -160,10 +173,23 @@ export function EvidenceClient() {
 				<EvidenceOnboarding org={org} />
 			) : (
 				<>
-					<EvidenceFilterBar
-						statusOptions={result.statusOptions}
-						stageOptions={result.stageOptions}
-						providerOptions={result.providerOptions}
+					{/* One row: search, the Cloud / Stage / Status funnel (the page's `extra`), Reset · N. */}
+					<ListToolbar
+						search={{
+							value: filters.search,
+							onChange: (value) => set("search", value),
+							placeholder: "Filter by project or environment…",
+							inputRef,
+							shortcut,
+						}}
+						extra={
+							<EvidenceFunnel
+								statusOptions={facets.statusOptions}
+								stageOptions={facets.stageOptions}
+								providerOptions={facets.providerOptions}
+							/>
+						}
+						reset={{ count: activeFilters, onReset: reset }}
 					/>
 
 					{isError && (
@@ -184,10 +210,13 @@ export function EvidenceClient() {
 					>
 						<SectionHeading className="mb-2.5" level={2} title="Environments" />
 
-						{result.resultCount === 0 && filtersActive ? (
-							<EvidenceNoMatch onClear={reset} />
+						{groups.length === 0 && filtersActive ? (
+							<FilterEmpty className={EVIDENCE_EMPTY_CARD} noun="environments" onClear={reset} />
 						) : (
-							<EvidenceTable groups={result.groups} onOpen={openDrawer} />
+							<>
+								<EvidenceTable groups={groups} onOpen={openDrawer} />
+								<ListFooter list={list} />
+							</>
 						)}
 
 						<div className="mt-6">
@@ -200,7 +229,7 @@ export function EvidenceClient() {
 			<EvidenceDrawer
 				org={org}
 				row={drawerRow}
-				waivers={result.waivers}
+				waivers={drawer?.waivers ?? []}
 				tab={drawerTab}
 				onTab={(tab) => patchUrl({ [EVIDENCE_TAB_PARAM]: tab })}
 				onClose={() => patchUrl({ ...selectionPatch(null), [EVIDENCE_TAB_PARAM]: null })}

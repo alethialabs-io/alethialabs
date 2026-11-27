@@ -58,7 +58,6 @@ import {
 	ChevronRight,
 	Cloud,
 	Layers,
-	Loader2,
 	Rocket,
 	Server,
 } from "lucide-react";
@@ -417,17 +416,11 @@ function DeployForm({
 		);
 	};
 
-	const submitDisabled = !form.formState.isValid || deploy.isPending;
-	const submitLabel = (
-		<>
-			{deploy.isPending ? (
-				<Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-			) : (
-				<Rocket className="mr-2 h-3.5 w-3.5" />
-			)}
-			{deploy.isPending ? "Deploying…" : "Deploy runner"}
-		</>
-	);
+	const submitDisabled = !form.formState.isValid;
+	// Not a fragment: `<Button pending>` swaps its LEADING ICON for the [·] mark, and it can only
+	// see that icon among its direct children.
+	const submitIcon = <Rocket className="mr-2 h-3.5 w-3.5" />;
+	const submitLabel = deploy.isPending ? "Deploying runner…" : "Deploy runner";
 
 	return (
 		<FormProvider {...form}>
@@ -566,18 +559,20 @@ function DeployForm({
 					// why, rather than opening a picker whose only choice is a job nothing can claim.
 					<DisabledReason reason={gateReason} className="w-full">
 						<Button type="button" className="w-full">
+							{submitIcon}
 							{submitLabel}
 						</Button>
 					</DisabledReason>
 				) : (
 					<RunnerSelectPopover
 						trigger={
-							<Button type="button" className="w-full" disabled={submitDisabled} aria-busy={deploy.isPending}>
+							<Button type="button" className="w-full" disabled={submitDisabled} pending={deploy.isPending}>
+								{submitIcon}
 								{submitLabel}
 							</Button>
 						}
 						onConfirm={handleDeploy}
-						disabled={submitDisabled}
+						disabled={submitDisabled || deploy.isPending}
 					/>
 				)}
 			</form>
@@ -742,15 +737,11 @@ alethia runner start`}
 				<Button
 					type="submit"
 					className="w-full"
-					disabled={!form.formState.isValid || form.formState.isSubmitting}
-					aria-busy={form.formState.isSubmitting}
+					disabled={!form.formState.isValid}
+					pending={form.formState.isSubmitting}
 				>
-					{form.formState.isSubmitting ? (
-						<Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-					) : (
-						<Server className="mr-2 h-3.5 w-3.5" />
-					)}
-					{form.formState.isSubmitting ? "Registering…" : "Register runner"}
+					<Server className="mr-2 h-3.5 w-3.5" />
+					{form.formState.isSubmitting ? "Registering runner…" : "Register runner"}
 				</Button>
 			</form>
 		</FormProvider>
