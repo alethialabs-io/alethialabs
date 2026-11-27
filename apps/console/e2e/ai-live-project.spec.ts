@@ -3,8 +3,8 @@
 
 // The PROJECT assistant (Elench opened inside a project → POST /api/projects/[projectId]/assistant,
 // `buildProjectAgentTools`) against a REAL model — the AI soak's project lane (epic "AI feature soak
-// before 2026-12-12"). Runs in the `elench-live` project: nightly at Haiku, and across the AI tiers
-// from the soak jobs in e2e-ai-nightly.yml until the promotional credit expires.
+// before 2026-12-12", #7840). Runs in the `elench-live` project: nightly at Haiku, and on a PR that
+// changes the project assistant (e2e-ai-nightly.yml on the PR, until 2026-12-12).
 //
 // Behaviour, never wording:
 //   · a cost question reaches `estimate_cost` (which prices the live canvas the panel sends) and
@@ -129,6 +129,20 @@ test.describe(`Project assistant with a REAL model · ${soakTier()}`, () => {
 			})}
 			returning id`;
 		stagingEnvId = env.id;
+		// ONE card on the default environment's board, for the Dismiss journey to count before and
+		// after. `seedProject` writes only `project_network` + `project_cluster`, and since W2 the board
+		// draws neither (they are environment settings, not cards — canvas-flow.tsx), so its board is
+		// the empty-board guide. A database is drawn as a card "Database <name>" (the same reasoning
+		// as e2e/audit/fixtures-destructive.ts's `audit-db`).
+		await db()`
+			insert into project_databases ${db()({
+				project_id: project.projectId,
+				org_id: owner.orgId,
+				environment_id: project.envId,
+				name: "soak-db",
+				engine_family: "postgres",
+				status: "PENDING",
+			})}`;
 		// Every journey asks about this project from inside it. If the console cannot open its board,
 		// each would fail as a model problem when it is a fixture problem — say so here instead.
 		await page.goto(`/${orgSlug}/${project.slug}/architecture`);
@@ -148,6 +162,9 @@ test.describe(`Project assistant with a REAL model · ${soakTier()}`, () => {
 
 	test("a design change comes back as a proposal, and Dismiss leaves the board unchanged", async ({ page }) => {
 		await openProjectAssistant(page);
+		// `count()` does not wait, so wait for the seeded card to be drawn before counting.
+		const seededCard = page.locator(".react-flow").getByRole("group", { name: /soak-db/ });
+		await expect(seededCard, "the seeded board draws its database card").toBeVisible({ timeout: 30_000 });
 		const before = await boardCards(page).count();
 		expect(before, "the seeded board draws its cards").toBeGreaterThan(0);
 

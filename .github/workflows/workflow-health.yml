@@ -80,7 +80,7 @@ jobs:
             # they are read positionally downstream — deriving them from two separate queries would
             # let them fall out of step and silently attribute one run's job state to another's
             # conclusion.
-            runs="$(gh run list --workflow="$wf" --limit 5 --json databaseId,conclusion \
+            runs="$(gh run list --workflow="$wf" --limit 5 --json databaseId,conclusion,event \
                      -q '[.[] | select(.conclusion != null)]' 2>/dev/null || echo '[]')"
             [ -z "$runs" ] && runs='[]'
             c="$(printf '%s' "$runs" | jq -c '[.[].conclusion]')"
@@ -97,8 +97,12 @@ jobs:
             if [ -n "$sub" ]; then
               subj="$(printf '%s' "$sub" | jq -Rc .)"
               states="$(
-                printf '%s' "$runs" | jq -r '.[].databaseId' | while read -r id; do
+                printf '%s' "$runs" | jq -r '.[] | "\(.databaseId) \(.event)"' | while read -r id event; do
                   [ -n "$id" ] || continue
+                  # A PR run of a workflow that ALSO runs on a schedule (e2e-ai-nightly's PR jobs,
+                  # #7840) skips the scheduled substantive job by design. That skip is not evidence
+                  # the job stopped running, so it is `absent`, not `skipped`.
+                  if [ "$event" = "pull_request" ]; then echo absent; continue; fi
                   st="$(gh run view "$id" --json jobs 2>/dev/null \
                         | jq -r --arg n "$sub" '[.jobs[] | select(.name == $n) | .conclusion] | .[0] // "absent"' \
                         2>/dev/null || echo absent)"

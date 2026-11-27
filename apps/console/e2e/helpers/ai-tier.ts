@@ -27,7 +27,7 @@ export type SoakTier = "ai_free" | "ai_plus" | "ai_max";
  * person: `getActiveScope` answers `{ orgId: userId }` whatever org the URL names
  * (lib/auth/scope.ts), so every row the app reads is scoped by `org_id = <user id>`, and there is
  * no AI tier to grant — `organization_billing.organization_id` must name a real organization, and
- * the personal scope is not one. The nightly runs community; the soak runs enterprise.
+ * the personal scope is not one. The nightly and the PR run (its pull_request jobs) run community; the removed soak jobs ran enterprise.
  */
 export function isCommunityEdition(): boolean {
 	return process.env.ALETHIA_EDITION === "community";
