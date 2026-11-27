@@ -22,6 +22,14 @@ const names = (a: Array<{ name: string }> | undefined) =>
 	(a ?? []).map((x) => x.name);
 
 /**
+ * The `projectId` parameter's description. The real model (Haiku, AI soak 2026-11-26) passed a
+ * project's NAME as its id — `get_project({ projectId: "soak-shop-…" })` — got the generic tool
+ * error back, and concluded the project did not exist. The id is a UUID that only `list_projects`
+ * returns, and saying so where the model reads the parameter is what steers it there first.
+ */
+const PROJECT_ID_HINT = "The project's id — a UUID from `list_projects`, never the project's name or slug.";
+
+/**
  * Read tools — each wraps an existing PDP-gated server action (the actor was
  * already authorized by the route; the actions re-check their own verb). Returns
  * are TRIMMED and SECRET-FREE (never argocd passwords, tokens, or credentials).
@@ -35,8 +43,8 @@ export function readTools(opts?: { environmentId?: string | null }) {
 	return {
 		get_project: tool({
 			description:
-				"Get one project's full configuration (components + sizes) by id. PDP-gated read.",
-			inputSchema: z.object({ projectId: z.string() }),
+				"Get one project's full configuration (components + sizes) by id. When the user names a project, call `list_projects` first and pass that project's `id` — a name is not an id. PDP-gated read.",
+			inputSchema: z.object({ projectId: z.string().describe(PROJECT_ID_HINT) }),
 			execute: async ({ projectId }) => {
 				const { project, cloudProvider, components } = await getProject(projectId);
 				const c = components.cluster;
@@ -175,9 +183,9 @@ export function readTools(opts?: { environmentId?: string | null }) {
 
 		get_drift_posture: tool({
 			description:
-				"Get a project's latest day-2 drift posture: whether the live infrastructure is in sync with what was provisioned, and which resources drifted. PDP-gated read.",
+				"Get a project's latest day-2 drift posture: whether the live infrastructure is in sync with what was provisioned, and which resources drifted. When the user names a project, call `list_projects` first and pass that project's `id`. PDP-gated read.",
 			inputSchema: z.object({
-				projectId: z.string(),
+				projectId: z.string().describe(PROJECT_ID_HINT),
 				environmentId: z.string().optional(),
 			}),
 			execute: async ({ projectId, environmentId }) => {
