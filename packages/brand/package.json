@@ -7,6 +7,8 @@
     "./status": "./src/brand-status.ts",
     "./lockup": "./src/lockup.tsx",
     "./loader": "./src/loader/mark-loader.tsx",
+    "./thinking-indicator": "./src/loader/thinking-indicator.tsx",
+    "./thinking-verbs": "./src/loader/thinking-verbs.ts",
     "./tokens.css": "./src/tokens.css",
     "./icon": "./src/icon.tsx",
     "./icon-svg": "./src/icon-svg.ts",
