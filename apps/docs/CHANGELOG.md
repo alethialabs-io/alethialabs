@@ -1,5 +1,15 @@
 # docs
 
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies [9ff6629]
+- Updated dependencies [d1ba621]
+- Updated dependencies [2518979]
+  - @repo/ui@0.4.0
+  - @repo/brand@0.3.0
+
 ## 0.0.5
 
 ### Patch Changes
