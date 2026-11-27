@@ -28,9 +28,11 @@
 #
 # #4104 found seven excluded files with their own dedicated suites: filter-bar.tsx,
 # filter-chip.tsx, filter-search.tsx, multi-combobox.tsx, popover.tsx, select.tsx and utils.ts.
-# They are now in the coverage scope. The eleven remaining tier entries are ten vendored
-# primitives reached through composed-component suites plus the count helper those suites render;
-# their weaker tier-separation claim remains explicit and machine-checked. The primitives are
+# They are now in the coverage scope. The remaining tier entries are mostly vendored primitives
+# reached through composed-component suites, plus the count helper those suites render and the few
+# components another suite mounts for real (the funnel filter, through list-toolbar's skeleton guard,
+# #7876). Count them in `tier_separation:` itself; this header used to state a number and drifted.
+# Their weaker tier-separation claim remains explicit and machine-checked. The primitives are
 # named by considered `exclude:` lines, so that decision survives independently of this prose.
 #
 # The count helper remains coverage-epic debt under #2649. The guard REQUIRES an `issue:` field on
@@ -89,6 +91,12 @@ tier_separation:
     symbols: [Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, EmptyState]
     issue: "#7734"
     reason: RegionError is built on the Empty primitives, and the error-state suite mounts it for real and asserts its alert role, data-state, title and retry (#7734, moved from the console). FilterEmpty is built on EmptyState, and the filter-bar suite mounts it and asserts its title, heading level and Clear filters action (#7737).
+
+  - path: src/funnel-filter.tsx
+    suite: [tests/list-toolbar.test.tsx]
+    symbols: [FunnelFilter]
+    issue: "#2649"
+    reason: The list-toolbar suite mounts a real FunnelFilter and asserts its trigger is the 40px square (h-10 w-10) that ListToolbarSkeleton's `icon` extra part draws (#7876). Only the trigger is executed, not the popover's facet, group or sort menus, so the file stays outside the coverage scope under #2649.
 
   # ── vendored primitives the composed-filter suites mount for real ─────────────────────────────
   #
@@ -297,12 +305,6 @@ baseline:
     issue: "#2649"
     state: no-test
     reason: The react-hook-form bindings every console form is required to use, and the hook behind them, are named by no suite in this package.
-
-  - path: src/funnel-filter.tsx
-    symbols: [FunnelFilter]
-    issue: "#2649"
-    state: no-test
-    reason: The funnel filter is named by no suite in this package, unlike its four sibling filters.
 
   - path: src/hover-card.tsx
     symbols: [HoverCard, HoverCardContent, HoverCardTrigger]
