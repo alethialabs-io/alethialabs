@@ -96,13 +96,14 @@ test.describe("Cross-cutting — unauthenticated access is bounced to /login", (
 		// exists from one that does not.
 		const slug = owner.orgSlug;
 		// THE BOUNCE IS THE WHOLE ASSERTION, and `expectBounced` already carries the failing input.
-		// This test used to add `expect(getByText("Job not found.")).toHaveCount(0)` after it, which
+		// This test used to add a count-is-zero check on the job's not-found heading after it, which
 		// could not fail: `expectBounced` has already awaited `waitForURL(/\/login/)`, so the job
 		// page is gone by construction and that count is 0 either way. The check that DOES bite is
 		// `waitForURL` itself — `deploy-jobs.negative.spec.ts` pins that an AUTHED visitor to this
-		// exact uuid gets the "Job not found." heading, so a guard that resolved the job before
-		// checking the session would render that state to an anonymous visitor and never reach
-		// /login, and this test would time out there.
+		// exact uuid gets the job's not-found state (its heading and reason line are asserted there,
+		// and only there, so this comment cannot drift from them), so a guard that resolved the job
+		// before checking the session would render that state to an anonymous visitor and never
+		// reach /login, and this test would time out there.
 		//
 		// What is deliberately NOT claimed: a guard that resolved the job and THEN redirected is
 		// indistinguishable from this one to a client, and no assertion here can separate them. The

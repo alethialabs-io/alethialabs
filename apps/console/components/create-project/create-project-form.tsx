@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ArrowRight, Loader2, Sparkles, Users } from "lucide-react";
+import { ArrowRight, Sparkles, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -30,10 +30,10 @@ export function CreateProjectForm({ orgSlug, canCollaborate }: CreateProjectForm
 	const { openUpgrade } = useUpgradeSheet();
 	const [prompt, setPrompt] = useState("");
 	const [launching, setLaunching] = useState(false);
-	// `launching` spins the button until the agent surface is up. Once that surface CLOSES the
+	// `launching` holds the button pending until the agent surface is up. Once that surface CLOSES the
 	// button must come back: without this it stayed spinning and disabled for the life of the page
 	// (#4996). Adjusted during render, not in an effect, so no committed frame shows a closed modal
-	// behind a still-spinning button.
+	// behind a still-pending button.
 	const elenchOpen = useElenchStore((s) => s.open);
 	if (launching && !elenchOpen) setLaunching(false);
 
@@ -107,14 +107,10 @@ export function CreateProjectForm({ orgSlug, canCollaborate }: CreateProjectForm
 						size="icon"
 						className="size-9"
 						onClick={onAskAgent}
-						disabled={launching}
-						aria-label="Design with the agent"
+						pending={launching}
+						aria-label={launching ? "Opening the design agent…" : "Design with the agent"}
 					>
-						{launching ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<ArrowRight className="size-4" />
-						)}
+						<ArrowRight className="size-4" />
 					</Button>
 				</div>
 			</div>
