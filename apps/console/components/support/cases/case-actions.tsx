@@ -12,7 +12,6 @@ import {
 import {
   CheckCircle2,
   ChevronDown,
-  Loader2,
   RotateCcw,
   XCircle,
 } from "lucide-react";
@@ -43,14 +42,22 @@ const ACTION_META: Record<
   CaseAction,
   {
     label: string;
+    /** The progressive verb the control shows while this transition is in flight. */
+    pending: string;
     done: string;
     run: (input: { id: string }) => Promise<ActionResult<{ id: string }>>;
     icon: typeof CheckCircle2;
   }
 > = {
-  resolve: { label: "Mark resolved", done: "Case marked resolved", run: resolveCase, icon: CheckCircle2 },
-  reopen: { label: "Reopen case", done: "Case reopened", run: reopenCase, icon: RotateCcw },
-  close: { label: "Close case", done: "Case closed", run: closeCase, icon: XCircle },
+  resolve: {
+    label: "Mark resolved",
+    pending: "Marking resolved…",
+    done: "Case marked resolved",
+    run: resolveCase,
+    icon: CheckCircle2,
+  },
+  reopen: { label: "Reopen case", pending: "Reopening…", done: "Case reopened", run: reopenCase, icon: RotateCcw },
+  close: { label: "Close case", pending: "Closing…", done: "Case closed", run: closeCase, icon: XCircle },
 };
 
 /**
@@ -88,11 +95,11 @@ export function CaseActions({
         size="sm"
         variant="outline"
         className="mt-1"
-        disabled={mutation.isPending}
+        pending={mutation.isPending}
         onClick={() => mutation.mutate("reopen")}
       >
-        {mutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-        Reopen case
+        <RotateCcw className="size-4" />
+        {mutation.isPending ? ACTION_META.reopen.pending : ACTION_META.reopen.label}
       </Button>
     );
   }
@@ -104,11 +111,9 @@ export function CaseActions({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="outline" size="sm" disabled={mutation.isPending}>
-            {mutation.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : null}
-            Actions
+          <Button variant="outline" size="sm" pending={mutation.isPending}>
+            {/* While a transition runs the trigger names IT, not the menu: "Closing…". */}
+            {mutation.isPending && mutation.variables ? ACTION_META[mutation.variables].pending : "Actions"}
             <ChevronDown className="size-4" />
           </Button>
         }

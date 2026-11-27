@@ -22,6 +22,7 @@ import { useCommandSearch } from "@repo/ui/command-search";
 import { Input } from "@repo/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import { Skeleton } from "@repo/ui/skeleton";
+import { INLINE_PX, INLINE_STROKE, MarkGlyph } from "@repo/ui/spinner";
 import {
   Select,
   SelectContent,
@@ -640,7 +641,18 @@ export function RepositorySelector({
                         )}
                       </div>
                     ) : fetchingRepos ? (
-                      "Fetching repositories..."
+                      // The inline [·] mark beside the words, decorative: the trigger's own text
+                      // already names the wait, and a status region inside the button would read
+                      // it twice as the button's name.
+                      <span className="flex items-center gap-2">
+                        <MarkGlyph
+                          width={INLINE_PX}
+                          height={INLINE_PX}
+                          bracketStroke={INLINE_STROKE}
+                          aria-hidden="true"
+                        />
+                        Fetching repositories...
+                      </span>
                     ) : repositories.length === 0 ? (
                       "No repositories found"
                     ) : (
@@ -715,14 +727,13 @@ export function RepositorySelector({
             onClick={() =>
               selectedProvider && fetchRepositories(selectedProvider)
             }
-            disabled={fetchingRepos || !selectedProvider}
+            disabled={!selectedProvider}
+            pending={fetchingRepos}
             className="h-9 w-9 shrink-0"
             title="Refresh repositories"
-            aria-label="Refresh repositories"
+            aria-label={fetchingRepos ? "Refreshing repositories…" : "Refresh repositories"}
           >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${fetchingRepos ? "animate-spin" : ""}`}
-            />
+            <RefreshCw className="w-3.5 h-3.5" />
           </Button>
         )}
         {/* Manual entry stays reachable once a provider is connected. It used to be offered only

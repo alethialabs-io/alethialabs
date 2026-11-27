@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Button } from "@repo/ui/button";
-import { Loader2 } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import type { KeysetList } from "@/lib/query/use-keyset-list";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
@@ -16,7 +15,7 @@ export type ListFooterState = Pick<
 
 /**
  * How far below the viewport the sentinel starts the next page (polish-wave spec §3, #7737): about
- * a screen of rows ahead, so a reader scrolling at reading speed does not meet the spinner.
+ * a screen of rows ahead, so a reader scrolling at reading speed does not meet the loader.
  */
 const AUTO_LOAD_MARGIN = "0px 0px 400px 0px";
 
@@ -59,8 +58,8 @@ function usePrefersReducedData(): boolean {
  *   fallback for old browsers only — it is how a keyboard or screen-reader user, or anyone the
  *   observer never fires for, reaches the next page at all. Under `prefers-reduced-data` the
  *   sentinel stands down and the button is the only way on;
- * - **loading**: the button stays where it was, disabled and `aria-busy`, with a spinner — the
- *   row the reader is looking at does not jump;
+ * - **loading**: the button stays where it was, `<Button pending>` — disabled, `aria-busy`, at its
+ *   resting width, with the inline `[·]` mark — so the row the reader is looking at does not jump;
  * - **failed**: one line under the rows, "Couldn't load more · Try again". The loaded rows STAY: a
  *   failed later page is not a failed list (the Activity log's E-26 rule);
  * - **the end**: `END OF LIST`, in mono, once there are rows (an empty list is its empty state's
@@ -91,9 +90,8 @@ export function ListFooter({ list }: { list: ListFooterState }) {
 			>
 				<span>Couldn&apos;t load more</span>
 				<span aria-hidden>·</span>
-				<Button variant="outline" size="sm" disabled={loadingMore} onClick={loadMore}>
-					{loadingMore && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
-					Try again
+				<Button variant="outline" size="sm" pending={loadingMore} onClick={loadMore}>
+					{loadingMore ? "Retrying…" : "Try again"}
 				</Button>
 			</p>
 		);
@@ -115,8 +113,9 @@ export function ListFooter({ list }: { list: ListFooterState }) {
 		<div data-slot="list-footer" data-state={loadingMore ? "loading" : "more"} className="flex justify-center pt-1">
 			{/* Invisible tail sentinel that drives the auto-load-on-scroll. */}
 			<div ref={sentinelRef} aria-hidden className="h-px w-px" />
-			<Button variant="outline" size="sm" disabled={loadingMore} aria-busy={loadingMore || undefined} onClick={loadMore}>
-				{loadingMore && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+			{/* The label stays "Load more" while the page loads: the inline mark says it is under way,
+			    and every list's tests and the reader's eye find the same control where it was. */}
+			<Button variant="outline" size="sm" pending={loadingMore} onClick={loadMore}>
 				Load more
 			</Button>
 		</div>

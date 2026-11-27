@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Small shared bits for the classification surface: an info hint (icon + tooltip that explains
-// the *why*) and a spinner for pending buttons.
+// the *why*) and the inline `[·]` mark for pending buttons.
 
+import { INLINE_STROKE, MarkGlyph } from "@repo/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
-import { Info, Loader2 } from "lucide-react";
+import { Info } from "lucide-react";
 import type { ReactNode } from "react";
 
 /** An unobtrusive info icon that reveals an explanation on hover/focus. */
@@ -44,9 +45,11 @@ export function InfoHint({
   );
 }
 
-/** A spinning loader for in-flight buttons. */
+/**
+ * The inline `[·]` mark for a button whose action is in flight — the same glyph `<Button pending>`
+ * draws. Decorative: the button it sits in carries the state. A caller that can move to
+ * `<Button pending>` with a progressive verb should, and drop this.
+ */
 export function Spinner({ size = 14 }: { size?: number }) {
-  return (
-    <Loader2 className="animate-spin" style={{ width: size, height: size }} />
-  );
+  return <MarkGlyph width={size} height={size} bracketStroke={INLINE_STROKE} aria-hidden="true" />;
 }

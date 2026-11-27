@@ -10,13 +10,14 @@
 // once — and the promotion is `promoteEnvironment` through `useActionMutation` (ADR 0005 D4).
 
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Loader2, MinusCircle, PencilLine, PlusCircle } from "lucide-react";
+import { ArrowRight, MinusCircle, PencilLine, PlusCircle } from "lucide-react";
 import { useId, useState } from "react";
 import { promoteEnvironment } from "@/app/server/actions/promotions";
 import { RegionError } from "@repo/ui/region-error";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
 import { orpc } from "@/lib/rpc/client";
 import type { ComponentChange } from "@/types/jsonb.types";
+import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -92,6 +93,10 @@ export function PromoteDialog({
 		(c) => c.op !== "DELETE" || includeRemovals,
 	);
 	const nothingToDo = !!diff && (shown?.length ?? 0) === 0;
+	// What the preview is comparing, for the line under the loader: the two environments by name,
+	// and whether removals are counted.
+	const envName = (id: string): string => envs.find((e) => e.id === id)?.name ?? id;
+	const previewFacts = `Computing changes · ${envName(sourceId)} → ${envName(targetId)}${includeRemovals ? " · with removals" : ""}`;
 
 	const promote = useActionMutation(promoteEnvironment, {
 		// A promotion writes the target's design and records itself: the page's read (the promotions
@@ -190,9 +195,14 @@ export function PromoteDialog({
 				{/* Diff preview */}
 				<div className="min-h-[3rem]">
 					{previewing ? (
-						<div className="flex items-center gap-2 text-sm text-muted-foreground">
-							<Loader2 className="h-4 w-4 animate-spin" /> Computing changes…
-						</div>
+						// A diff of unknown size computed on the server: the region mark, with the pair it
+						// is comparing as the facts line — never a percentage, nothing knows how far along it is.
+						<MarkLoader
+							size="region"
+							label="Computing changes"
+							status={previewFacts}
+							className="py-4"
+						/>
 					) : previewFailed ? (
 						// A failed preview is not "nothing to promote" and not "pick a pair" (RUBRIC B4).
 						<RegionError
@@ -293,15 +303,10 @@ export function PromoteDialog({
 					<Button
 						onClick={submit}
 						aria-describedby={refusal ? refusalId : undefined}
-						disabled={submitting || !sourceId || !targetId || sourceId === targetId || nothingToDo}
+						pending={submitting}
+						disabled={!sourceId || !targetId || sourceId === targetId || nothingToDo}
 					>
-						{submitting ? (
-							<>
-								<Loader2 className="mr-2 h-4 w-4 animate-spin" /> Promoting…
-							</>
-						) : (
-							"Promote"
-						)}
+						{submitting ? "Promoting…" : "Promote"}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -195,11 +194,9 @@ export function ApiKeyConnection({ provider, onDone }: ApiKeyConnectionProps) {
 					<Button
 						type="submit"
 						className="h-9 w-full text-xs font-medium"
-						aria-busy={save.isPending}
-						disabled={save.isPending}
+						pending={save.isPending}
 					>
-						{save.isPending && <Loader2 className="mr-1.5 size-3.5 animate-spin" aria-hidden />}
-						Connect
+						{save.isPending ? "Connecting…" : "Connect"}
 					</Button>
 				</form>
 			</Form>

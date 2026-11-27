@@ -33,7 +33,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useId, useLayoutEffect, useState } from "react";
 import { type Control, Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -300,9 +300,8 @@ export function ProtectionRulesDialog({
 						<Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
 							Close
 						</Button>
-						<Button type="submit" size="sm" disabled={!ready || save.isPending}>
-							{save.isPending && <Loader2 className="size-3.5 animate-spin" />}
-							Save rules
+						<Button type="submit" size="sm" disabled={!ready} pending={save.isPending}>
+							{save.isPending ? "Saving rules…" : "Save rules"}
 						</Button>
 					</div>
 				</form>

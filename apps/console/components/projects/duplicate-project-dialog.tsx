@@ -20,7 +20,6 @@ import {
 	CircleAlert,
 	CircleX,
 	Info,
-	Loader2,
 } from "lucide-react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQuery } from "@tanstack/react-query";
@@ -611,16 +610,10 @@ function OpenDuplicateProjectDialog({
 							</Button>
 							<Button
 								type="submit"
-								disabled={isSubmitting || !cloudIdentityId || !region}
+								disabled={!cloudIdentityId || !region}
+								pending={isSubmitting}
 							>
-								{isSubmitting ? (
-									<>
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-										Duplicating…
-									</>
-								) : (
-									"Duplicate"
-								)}
+								{isSubmitting ? "Duplicating…" : "Duplicate"}
 							</Button>
 						</DialogFooter>
 					</form>

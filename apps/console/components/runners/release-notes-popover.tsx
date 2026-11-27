@@ -15,7 +15,7 @@ import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
 import { orpc } from "@/lib/rpc/client";
 import { useQuery } from "@tanstack/react-query";
 import { formatRelative } from "@repo/format";
-import { ArrowUpCircle, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowUpCircle, ExternalLink } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -177,18 +177,9 @@ export function ReleaseNotesPopover({
               </Button>
             )}
             {isOutdated && runnerId && (
-              <Button size="sm" disabled={updateRunner.isPending} onClick={handleUpdate}>
-                {updateRunner.isPending ? (
-                  <>
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    Updating…
-                  </>
-                ) : (
-                  <>
-                    <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" />
-                    Update runner
-                  </>
-                )}
+              <Button size="sm" pending={updateRunner.isPending} onClick={handleUpdate}>
+                <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" />
+                {updateRunner.isPending ? "Updating runner…" : "Update runner"}
               </Button>
             )}
           </div>
