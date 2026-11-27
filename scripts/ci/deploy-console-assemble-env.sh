@@ -386,6 +386,16 @@ ssh $SSHOPTS "root@${HOST}" 'df -h /; docker image prune -af || true; docker bui
 scp $SSHOPTS env.deploy "root@${HOST}:/opt/alethia/.env.new"
 rm -f env.deploy
 
+# Registry login for the pull, with THIS job's short-lived token (GHCR_PULL_TOKEN, the job's
+# github.token with packages:read). Needed once an image is private: the staff app's image is,
+# since it moved to the private alethialabs-io/web repo. The token goes over ssh's STDIN, never
+# into an argument or a log line, and the box is logged out again when this script exits for any
+# reason, so no registry credential outlives the deploy on the box. Public images pull as before.
+if [ -n "${GHCR_PULL_TOKEN:-}" ]; then
+  printf '%s' "$GHCR_PULL_TOKEN" | ssh $SSHOPTS "root@${HOST}" 'docker login ghcr.io -u github-actions --password-stdin >/dev/null'
+  trap 'ssh $SSHOPTS "root@${HOST}" "docker logout ghcr.io >/dev/null 2>&1" || true' EXIT
+fi
+
 # On the box: checkout the built SHA, swap in .env, render s3.json from the
 # same storage creds (checkout -f resets that tracked file), compose up behind
 # the tunnel. `bash -s` gets IMAGE_TAG + the apps build verdict from the ssh env.
