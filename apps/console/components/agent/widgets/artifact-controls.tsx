@@ -153,7 +153,7 @@ export function SaveArtifactButton({
 }
 
 /**
- * Artifact browser: lists the org's saved artifacts; "Open on grid" materializes one
+ * Artifact browser: lists the user's own saved artifacts; "Open on grid" materializes one
  * onto the active thread's grid (fresh linked rows, shifted below existing widgets).
  */
 export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
