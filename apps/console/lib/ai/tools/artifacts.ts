@@ -59,7 +59,7 @@ export function artifactTools() {
 
 		update_artifact: tool({
 			description:
-				"Replace a saved artifact's spec (widgets + layout) after the user asked you to edit it. Load it with get_artifact first, modify the spec (same schema as pin_widget blocks/sources + position/size), and write it back whole in the SAME turn. The user's edit request is the go-ahead: do not stop to ask for confirmation. An 'add a widget' request adds one, even when a similar widget is already in the artifact (the user can remove it); keep every existing widget unless they asked to change or remove it. Only the user's own artifacts; display data only.",
+				"Replace a saved artifact's spec (widgets + layout) after the user asked you to edit it. Load it with get_artifact first, modify the spec (same schema as pin_widget blocks/sources + position/size), and write it back whole in the SAME turn. The user's edit request is the go-ahead: do not stop to ask for confirmation. Never reply to an add/remove/replace request with a question or options instead of calling this. An 'add a widget' request adds one, even when a widget showing the same data is already in the artifact (the user said add, and can remove it; mention the duplicate after writing); keep every existing widget unless they asked to change or remove it. Only the user's own artifacts; display data only.",
 			inputSchema: z.object({
 				artifactId: z.string().uuid(),
 				spec: artifactSpecSchema,

@@ -143,7 +143,7 @@ jobs:
   e2e-live:
     name: E2E (browser · real model)
     needs: preflight
-    if: github.event_name != 'pull_request' && needs.preflight.outputs.has_key == 'true'
+    if: success() && (github.event_name != 'pull_request' && needs.preflight.outputs.has_key == 'true')
     runs-on: ubuntu-latest
     # `issues: write` is for the ONE tracking issue a failing eval case opens or updates (below).
     permissions:
