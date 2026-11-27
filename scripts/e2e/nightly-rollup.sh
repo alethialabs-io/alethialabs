@@ -2,9 +2,10 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# nightly-rollup.sh — derive the 5-cloud verdict for one E2E-nightly run. PURE: no network, no gh,
-# no token. Proofs directory + the run's job list in; step-summary table, per-leg verdicts, issue
-# titles and issue bodies out. Every `gh issue create|edit|close` stays in e2e-nightly.yml, driven
+# nightly-rollup.sh — derive the per-cloud verdict for one E2E-nightly run, scored on the clouds
+# the catalog offers (scripts/e2e/lib/offered-clouds.sh). PURE: no network, no gh, no token.
+# Proofs directory + the run's job list in; step-summary table, per-leg verdicts, issue titles and
+# issue bodies out. Every `gh issue create|edit|close` stays in e2e-nightly.yml, driven
 # by what this writes. That seam is the point: all the CONTENT is testable offline, and only the
 # API calls — which have no logic left in them — stay untested.
 #
@@ -46,6 +47,10 @@
 #   IMAGER_LEAK_MIN_AGE_HOURS (default 12) — how old an `hcloud-upload-image-*` server must be,
 #                 at the moment the hetzner receipt was measured, before it is reported as a LEAK
 #                 rather than a possibly in-flight image build. See imager_leak_rows.
+#   CATALOG       (default packages/core/catalog/catalog.json beside this script) — the source of
+#                 the SCORED clouds: provisionable and `available` (#6959). Missing, unreadable, or
+#                 offering nothing ⇒ REFUSED: exit 2, an ::error::, and no state.env. Set only by
+#                 the self-test; the workflow never passes it.
 #   E2E_DIMENSION one of resolve-dimension.sh's DIMENSIONS (`--dimensions` prints them; plus the
 #                 legacy `byo`, an alias of `gitops`) — which dimension this run proved. Every
 #                 one is dispatchable; only `floor` is scheduled. Absent ⇒ `floor`, matching that
@@ -76,8 +81,15 @@ set -uo pipefail
 # shellcheck source=scripts/e2e/resolve-dimension.sh
 . "$(dirname "${BASH_SOURCE[0]}")/resolve-dimension.sh"
 
-PROVIDERS="hetzner aws gcp azure alibaba"
-TOTAL=5
+# THE SCORED CLOUDS ARE THE CATALOG'S, read on every derive (#6959). This line used to be
+# `PROVIDERS="hetzner aws gcp azure alibaba"` and `TOTAL=5`; when the catalog retired alibaba
+# (#6766) a scheduled run would have kept scoring it — an inert leg, and coverage "4 of 5" over a
+# set nobody offers. derive() now asks scripts/e2e/lib/offered-clouds.sh, which reads
+# packages/core/catalog/catalog.json and REFUSES (exit 2, nothing scored) when it cannot. CATALOG is
+# overridable so the self-test can drive a fixture catalog; nothing in the workflow sets it.
+# shellcheck source=scripts/e2e/lib/offered-clouds.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/offered-clouds.sh"
+CATALOG="${CATALOG:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/packages/core/catalog/catalog.json}"
 
 # The provision matrix's display name. Cross-checking existence means depending on it, and a rename
 # would silently return us to "absence means never enabled" — so a jobs payload that contains jobs
@@ -321,6 +333,33 @@ summary_for() {
 		$(scan_summaries "$PROOFS_DIR")
 	EOF
 	return 1
+}
+
+# unscored_run_providers <run_id> <scored list> — every cloud THIS run has a leg for (a bundle whose
+# run_tag names this run, or a provision matrix job) that is NOT in the scored list, space-separated
+# and sorted. (#6959)
+#
+# The scored list is the catalog's offered set, so this is the dispatch-only case: a maintainer
+# drives a hidden cloud by hand and the rollup still runs. Without it that leg's verdict would be
+# invisible — a red on it filed nowhere — because derive() only iterates what it scores. Both
+# sources are read, for the same reason existence has two sources everywhere else in this file: a
+# leg that died before its capture leaves a job and no bundle. Only slug-shaped names are taken, so
+# a malformed bundle cannot inject a table row or an issue title.
+unscored_run_providers() {
+	local run_id="$1" scored="$2" path prov tag rest found=""
+	while IFS="$(printf '\t')" read -r path prov tag rest; do
+		case "$tag" in "nightly-${run_id}-"*) ;; *) continue ;; esac
+		found="${found} ${prov}"
+	done <<-EOF
+		$(scan_summaries "$PROOFS_DIR")
+	EOF
+	found="${found} $(jobs_payload 2>/dev/null | jq -r --arg pre "$PROVISION_JOB_PREFIX" '
+		(.jobs // [])[] | .name | select(startswith($pre)) | capture("\\((?<p>[^()]*)\\)$")?.p // empty
+	' 2>/dev/null | tr '\n' ' ')"
+	# shellcheck disable=SC2086  # deliberate word splitting over the collected slugs.
+	printf '%s\n' $found | grep -E '^[a-z0-9][a-z0-9-]*$' | LC_ALL=C sort -u | while IFS= read -r prov; do
+		in_list "$scored" "$prov" || printf '%s ' "$prov"
+	done | sed 's/ $//'
 }
 
 # jobs_payload — normalize the GitHub API's two valid shapes into one object. Plain `gh api`
@@ -601,6 +640,22 @@ imager_leak_table() {
 
 derive() {
 	local run_id="${RUN_ID:?RUN_ID is required — it is what scopes a bundle to this run}"
+	# The scored set, from the catalog (#6959). A catalog that cannot be read is a REFUSAL: nothing is
+	# rendered, no state.env is written, and the step goes red — so the workflow cannot go on to post
+	# a coverage of 0/0, close the coverage issue as "full", or file nothing for a red leg.
+	local PROVIDERS TOTAL refusal
+	if ! PROVIDERS="$(offered_clouds "$CATALOG" 2>/dev/null)"; then
+		refusal="$(offered_clouds "$CATALOG" 2>&1 >/dev/null)"
+		echo "::error::nightly-rollup ${refusal:-REFUSED: the scored cloud set could not be read from ${CATALOG}} — no verdict is derived, because a coverage score over an unknown set of clouds is not a measurement."
+		return 2
+	fi
+	# shellcheck disable=SC2086  # deliberate word splitting over the catalog's slugs.
+	TOTAL="$(printf '%s\n' $PROVIDERS | grep -c .)"
+	# Legs of THIS run for a cloud the catalog does not score — a dispatch-only (hidden) cloud driven
+	# by hand. Still derived and reported, so a red on it is filed like any other; never counted in
+	# TOTAL or in the inert list, because coverage is a claim about the OFFERED clouds only.
+	local unscored
+	unscored="$(unscored_run_providers "$run_id" "$PROVIDERS")"
 	local out="${OUT_DIR:-${RUNNER_TEMP:-}}"
 	[ -n "$out" ] || out="$(mktemp -d)"
 	mkdir -p "$out"
@@ -629,7 +684,7 @@ derive() {
 	fi
 
 	{
-		echo "## E2E nightly — 5-cloud verdict rollup"
+		echo "## E2E nightly — ${TOTAL}-cloud verdict rollup"
 		echo
 		echo "matrix result: \`${MATRIX_RESULT:-unknown}\` · [run](${RUN_URL:-})"
 		echo
@@ -637,7 +692,7 @@ derive() {
 		echo "|---|---|---|"
 	} >"$out/summary.md"
 
-	for p in $PROVIDERS; do
+	for p in $PROVIDERS $unscored; do
 		hit="$(summary_for "$p" "$run_id" || true)"
 		exists="$(job_exists "$p")"
 		if [ -n "$hit" ]; then
@@ -676,7 +731,8 @@ derive() {
 			elif [ "$outcome" = "skipped" ] && gate_off_bundle "$path" "$run_id"; then
 				# Provably the gate-off emitter's own bundle: correct, inert, nothing to report.
 				status="SKIP"
-				skips="$skips $p"
+				# An unscored (dispatch-only) cloud's gate-off is not an inert OFFERED leg (#6959).
+				in_list "$unscored" "$p" || skips="$skips $p"
 			elif [ "$outcome" = "skipped" ]; then
 				# `outcome:skipped` from the CAPTURE path — the leg's gate was on and it died before
 				# the harness started (a credentials/CLI-install step failed, so every later step
@@ -703,7 +759,7 @@ derive() {
 		else
 			status="SKIP"
 			detail="gate off — no secret/var wired"
-			skips="$skips $p"
+			in_list "$unscored" "$p" || skips="$skips $p"
 		fi
 		# ── Teardown outcome (#2330). Asked for every leg that RAN, independent of pass/fail:
 		#    a green leg whose sweep was killed is still billing, and a red leg that never
@@ -735,6 +791,11 @@ derive() {
 				td_unmeasured="$td_unmeasured $p"
 				;;
 			esac
+		fi
+		if in_list "$unscored" "$p"; then
+			# Outside the score. Its SKIP (if any) was kept out of `skips` above, so it neither counts
+			# against coverage nor lands in the coverage issue's "needs" table.
+			detail="${detail} — not scored: the catalog does not offer ${p}, so this leg is outside the coverage count"
 		fi
 		detail="${detail//|/\\|}"
 		echo "| ${p} | ${status} | ${detail} |" >>"$out/summary.md"
@@ -921,6 +982,8 @@ derive() {
 			gcp) printf '%s\n' "| gcp | \`E2E_GCP_WIF_PROVIDER\` **and** \`E2E_GCP_SA_EMAIL\` — from \`infra/gcp-e2e\` |" ;;
 			azure) printf '%s\n' "| azure | \`E2E_AZURE_CLIENT_ID\`, \`E2E_AZURE_TENANT_ID\`, \`E2E_AZURE_SUBSCRIPTION_ID\`, \`ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID\` — from \`infra/azure-e2e\` |" ;;
 			alibaba) printf '%s\n' "| alibaba | \`E2E_ALIBABA_ROLE_ARN\` **and** \`E2E_ALIBABA_OIDC_PROVIDER_ARN\` — from \`infra/alibaba-e2e\` |" ;;
+			# A cloud the catalog newly offers, before anyone wrote its row: still NAMED, never dropped.
+			*) printf '%s\n' "| ${s} | its gate secret/var — see the gate \`case\` in \`.github/workflows/e2e-nightly.yml\` |" ;;
 			esac
 		done
 		printf '\n%s\n' "Procedure (apply the stack → dispatch that cloud alone → kill-drill → set the gate var): \`docs/testing/e2e-nightly-enablement.md\`."
@@ -1233,11 +1296,33 @@ run_self_test() {
 		fails=$((fails + 1))
 	fi; }
 
+	# write_catalog <file> <slug=availability...> — a fixture catalog in the real file's two-half
+	# shape: `.providers[]` (provisionable, in argument order) and `.live.providers.<slug>`.
+	write_catalog() {
+		local f="$1" spec slug av provs="" live=""
+		shift
+		for spec in "$@"; do
+			slug="${spec%%=*}" av="${spec#*=}"
+			provs="${provs}{\"slug\":\"${slug}\"},"
+			live="${live}\"${slug}\":{\"slug\":\"${slug}\",\"availability\":\"${av}\"},"
+		done
+		printf '{"version":1,"providers":[%s],"live":{"providers":{%s}}}\n' "${provs%,}" "${live%,}" >"$f"
+	}
+
+	# THE HISTORICAL WORLD. Every case below #6959 was written when the scored set was the literal
+	# "hetzner aws gcp azure alibaba", and their expectations name that set in that order. They are
+	# about discovery and classification, not about which clouds are offered — so they run against a
+	# FIXTURE catalog offering exactly those five, and the catalog-derivation cases further down
+	# change the catalog and nothing else. The real catalog is pinned separately (C0).
+	local five_catalog="$tmp/catalog-five.json"
+	write_catalog "$five_catalog" hetzner=available aws=available gcp=available azure=available alibaba=available
+
 	# Runs one derivation in an isolated dir and echoes "<reds>|<skips>|<enabled_n>".
 	_derive() { # <case-dir>
 		local d="$1" out="$1/out"
 		rm -rf "$out"
 		(
+			CATALOG="${CASE_CATALOG:-$five_catalog}" \
 			PROOFS_DIR="$d/proofs" OUT_DIR="$out" JOBS_JSON="$d/jobs.json" \
 				RUN_ID="${CASE_RUN_ID:-777}" RUN_ATTEMPT="${CASE_RUN_ATTEMPT:-1}" \
 				MATRIX_RESULT="${CASE_MATRIX:-failure}" RUN_URL="http://x" \
@@ -2271,6 +2356,107 @@ run_self_test() {
 	_a "aws	PASS
 gcp	FAIL" "$(cut -f1,2 "$c/out/ledger.tsv")" \
 		"(P7) the parity ledger keeps aws PASS while the table calls it FAIL — two different questions"
+
+	# ── THE SCORED SET IS THE CATALOG'S (#6959). ──
+	#
+	# (C0) The REAL catalog, against an INDEPENDENT reader. test/e2e/generated/programme.json's
+	#      `clouds` is written by Go (`Catalog.OfferedProviders` ∩ `Providers`, TestProgrammeExport),
+	#      not by this file's jq, so agreement is two implementations meeting — not a value compared
+	#      with itself. A drift in either is a red here.
+	local root real want
+	root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+	real="$(offered_clouds "$root/packages/core/catalog/catalog.json" 2>&1)"
+	want="$(jq -r '.clouds | join(" ")' "$root/test/e2e/generated/programme.json" 2>/dev/null || echo "<unreadable programme.json>")"
+	_a "$want" "$real" "(C0) the real catalog's scored set equals the Go mirror's \`clouds\`"
+	_a "absent" "$(in_list "$real" alibaba && echo PRESENT || echo absent)" \
+		"(C0) …and alibaba, which the catalog marks hidden, is not scored"
+
+	# (C1) A RETIRED cloud leaves the score. The fixture is the five-cloud world with alibaba marked
+	#      hidden and NOTHING else changed: no alibaba leg ran (it is off the schedule), all four
+	#      offered legs passed. Coverage is 4 of 4, not 4 of 5, and alibaba is not an inert leg.
+	local retired_catalog="$tmp/catalog-retired.json"
+	write_catalog "$retired_catalog" hetzner=available aws=available gcp=available azure=available alibaba=hidden
+	c="$tmp/c1-retired"
+	for p in hetzner aws gcp azure; do write_summary "$c/proofs/$p/stamp" "$p" "nightly-777-1" success; done
+	write_jobs "$c/jobs.json" hetzner=success aws=success gcp=success azure=success
+	_a "||4" "$(CASE_CATALOG="$retired_catalog" CASE_MATRIX=success _derive "$c")" \
+		"(C1) a retired cloud is not an inert leg: every offered leg green ⇒ no skips"
+	_a "4" "$(_state "$c/out" TOTAL)" "(C1) TOTAL is the catalog's count (4), not the old literal 5"
+	_a "e2e nightly: 0 of 4 clouds are not enabled" "$(_state "$c/out" COV_TITLE)" \
+		"(C1) the coverage title counts offered clouds only"
+	_a "0" "$(grep -c '^| alibaba |' "$c/out/summary.md")" "(C1) no table row for a retired cloud that did not run"
+	_a "1" "$(grep -c '4/4 clouds enabled' "$c/out/summary.md")" "(C1) the summary says 4/4"
+
+	# (C2) A retired cloud DISPATCHED BY HAND and red. Its verdict must still be derived and filed —
+	#      dropping it because it is unscored would make a dispatched red invisible — but it is
+	#      outside the count, and the four offered clouds (no leg this run) are the inert ones.
+	c="$tmp/c2-dispatched-red"
+	write_summary "$c/proofs/e2e-proof-alibaba-777/s" alibaba "nightly-777-1" failure applying
+	write_jobs "$c/jobs.json" alibaba
+	_a "alibaba|hetzner aws gcp azure|0" "$(CASE_CATALOG="$retired_catalog" _derive "$c")" \
+		"(C2) a dispatched retired cloud's red is still a red, and still outside the count"
+	_a "4" "$(_state "$c/out" TOTAL)" "(C2) …TOTAL stays the offered count"
+	_a "e2e nightly: alibaba RED (floor)" "$(cat "$c/out/issue-red-alibaba.title" 2>/dev/null)" \
+		"(C2) …and its red issue is rendered"
+	_a "1" "$(grep -c '^| alibaba | FAIL | .*not scored' "$c/out/summary.md")" \
+		"(C2) …and its row says it is not scored"
+
+	# (C3) A retired cloud dispatched with its gate OFF: an inert, unscored leg. Not in SKIPS — the
+	#      coverage issue's "needs" table is for offered clouds — and not a red.
+	c="$tmp/c3-dispatched-gate-off"
+	write_gate_off "$c/proofs" alibaba 777 1
+	write_jobs "$c/jobs.json" alibaba=success
+	_a "|hetzner aws gcp azure|0" "$(CASE_CATALOG="$retired_catalog" CASE_MATRIX=success _derive "$c")" \
+		"(C3) an unscored gate-off leg is neither a skip nor a red"
+	_a "0" "$(grep -c '| alibaba |' "$c/out/issue-body-coverage.md")" \
+		"(C3) …and the coverage issue does not ask anyone to wire a retired cloud"
+
+	# (C4) A cloud the catalog NEWLY offers is scored with no edit here, and the coverage issue still
+	#      names it (the `*)` row) rather than silently dropping a row it has no copy for.
+	c="$tmp/c4-new-cloud"
+	local new_catalog="$tmp/catalog-new.json"
+	write_catalog "$new_catalog" hetzner=available aws=available oracle=available
+	write_summary "$c/proofs/aws/stamp" aws "nightly-777-1" success
+	write_jobs "$c/jobs.json" aws=success
+	_a "|hetzner oracle|1" "$(CASE_CATALOG="$new_catalog" CASE_MATRIX=success _derive "$c")" \
+		"(C4) a newly offered cloud is scored from the catalog alone"
+	_a "1" "$(grep -c '^| oracle |' "$c/out/issue-body-coverage.md")" \
+		"(C4) …and the coverage issue names it"
+
+	# (C5–C8) THE FAILURE BRANCH IS THE MAIN BRANCH. Each unreadable catalog must REFUSE: exit 2,
+	#      an ::error:: naming REFUSED, and NO state.env — because the workflow sources state.env and
+	#      posts from it, and any state.env at all (0/0, or the old five) is a score over a set nobody
+	#      read. A zero here would read as "nothing to prove"; a pass as "everything proven".
+	printf '{not json' >"$tmp/catalog-garbage.json"
+	write_catalog "$tmp/catalog-none-offered.json" alibaba=hidden aws=hidden
+	printf '{"version":1,"providers":[{"slug":"aws"}]}\n' >"$tmp/catalog-no-live.json"
+	# _derive_rc <case-dir> <catalog> — derive() against that catalog; echoes its exit status, with
+	# its output in <case-dir>/stdout. A function, like _derive, so the subshell stays isolated.
+	_derive_rc() {
+		(
+			CATALOG="$2" PROOFS_DIR="$1/proofs" OUT_DIR="$1/out" JOBS_JSON="$1/jobs.json" \
+				RUN_ID=777 RUN_ATTEMPT=1 MATRIX_RESULT=success RUN_URL="http://x" E2E_DIMENSION=floor \
+				derive >"$1/stdout" 2>&1
+		)
+		echo "$?"
+	}
+	local label cat_path rc
+	for label in missing garbage none-offered no-live; do
+		case "$label" in
+		missing) cat_path="$tmp/does-not-exist.json" ;;
+		*) cat_path="$tmp/catalog-${label}.json" ;;
+		esac
+		c="$tmp/c-refuse-${label}"
+		write_summary "$c/proofs/aws/stamp" aws "nightly-777-1" success
+		write_jobs "$c/jobs.json" aws=success
+		rc="$(_derive_rc "$c" "$cat_path")"
+		_a "2" "$rc" "(C-refuse ${label}) an unreadable catalog exits 2"
+		_a "1" "$(grep -c '::error::nightly-rollup REFUSED' "$c/stdout")" "(C-refuse ${label}) …and says REFUSED"
+		_a "absent" "$([ -e "$c/out/state.env" ] && echo PRESENT || echo absent)" \
+			"(C-refuse ${label}) …and writes no state.env for the workflow to post"
+	done
+	_a "" "$(offered_clouds "$tmp/catalog-garbage.json" 2>/dev/null)" \
+		"(C-refuse) offered_clouds prints NOTHING on stdout when it refuses — never a partial list"
 
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"
