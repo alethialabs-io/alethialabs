@@ -39,6 +39,18 @@ variable "github_environment" {
   default     = "production"
 }
 
+variable "web_deploy_repo" {
+  description = "The private repo that deploys the staff app (apps/admin) to the production box. Its deploy job reads the box's ssh key from the prod secret through alethia-deploy-reader ONLY (never the state/ECR/ECS roles). See infra/aws-oidc/README.md."
+  type        = string
+  default     = "alethialabs-io/web"
+}
+
+variable "web_deploy_environment" {
+  description = "GitHub Actions environment the web repo's deploy job selects. It must be restricted to that repo's main branch (deployment-branch policy), so the sub cannot be minted from a PR or another branch."
+  type        = string
+  default     = "production"
+}
+
 variable "cli_release_environment" {
   description = "GitHub Actions environment selected by the CLI release job so its TAG-triggered run can present a trustable OIDC sub. Adds an exact `repo:<repo>:environment:<this>` sub to alethia-deploy-reader ONLY (never to the state/ECR/ECS roles). The environment must be restricted to the `cli-v*` TAG pattern - see infra/github/environments.tf."
   type        = string

@@ -267,3 +267,18 @@ check "e2e_broker_trust_absent_when_unset" {
     error_message = "with e2e_broker_issuer_url unset there must be no E2EBrokerAssertion statement and no broker OIDC provider."
   }
 }
+
+# ── The web repo's staff-app deploy: trusted by the reader, and by nothing that can write ──
+check "deploy_reader_trusts_the_web_deploy_environment" {
+  assert {
+    condition     = strcontains(data.aws_iam_policy_document.deploy_reader_trust.json, local.web_deploy_sub)
+    error_message = "alethia-deploy-reader must trust ${local.web_deploy_sub} - without it the staff app cannot deploy from alethialabs-io/web."
+  }
+}
+
+check "web_deploy_sub_does_not_reach_the_write_roles" {
+  assert {
+    condition     = !strcontains(data.aws_iam_policy_document.deployer_trust.json, local.web_deploy_sub)
+    error_message = "the ${local.web_deploy_sub} subject must NOT be in the shared deployer_trust - a second repo must never reach alethia-cp-deployer (state + secret write) or alethia-runner-release-deployer (ECR + ECS)."
+  }
+}

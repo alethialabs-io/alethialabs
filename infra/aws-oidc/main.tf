@@ -43,9 +43,14 @@ locals {
   # trade this design exists to avoid — see the environment's own comment.
   cli_release_sub = "repo:${var.github_repo}:environment:${var.cli_release_environment}"
 
+  # The staff app deploys from its own private repo (alethialabs-io/web) and needs the same
+  # one READ: the box's ssh key in the prod secret. Same reasoning as cli_release_sub: an exact
+  # environment sub, granted to the reader ALONE, never to deployer_trust's write roles.
+  web_deploy_sub = "repo:${var.web_deploy_repo}:environment:${var.web_deploy_environment}"
+
   # Every subject the reader admits, in one place, so checks.tf can assert over the whole set
   # rather than over the half it happens to know about.
-  deploy_reader_subs = concat(local.oidc_subs, [local.cli_release_sub])
+  deploy_reader_subs = concat(local.oidc_subs, [local.cli_release_sub, local.web_deploy_sub])
 }
 
 data "aws_caller_identity" "current" {}

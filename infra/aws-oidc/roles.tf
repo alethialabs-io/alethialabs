@@ -150,6 +150,27 @@ data "aws_iam_policy_document" "deploy_reader_trust" {
       values   = [local.cli_release_sub]
     }
   }
+
+  # The web repo's staff-app deploy (see local.web_deploy_sub): one more exact sub, same shape.
+  statement {
+    sid     = "GithubOIDCWebAdminDeploy"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [local.oidc_provider_arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = [local.web_deploy_sub]
+    }
+  }
 }
 
 resource "aws_iam_role" "deploy_reader" {
