@@ -7,14 +7,15 @@
 // ── WHY THIS RESOLVES IN MEMORY ─────────────────────────────────────────────────────────────
 //
 // The list is not read here. `readEnvironmentsPage()` (lib/rpc/procedures/environments.ts) gets a
-// project's environments from `getProjectEnvironments`, an in-process call into the projects unit's
-// module — a composed source, not a table this builder can put a `WHERE` on — and the narrowing
-// happens here, over that list: the arrangement the runners and clusters lists have.
+// project's environments from the canonical environments read (`selectProjectEnvironments`, #7877),
+// which is memoised PER REQUEST and shared with the switcher's seed and the overview — so this
+// builder narrows a list already in memory rather than putting a `WHERE` on a second select. A
+// filtered link's page and the pristine page in one render therefore cost one base read, not two.
 //
 // ── PAGED IN MEMORY, ON THE SERVER ──────────────────────────────────────────────────────────
 //
 // The list standard's keyset contract (lib/query/README.md → "Paging"; LST-3 #7485). A SQL keyset
-// is impossible over an in-process module call, so the composed list is paged here through
+// is impossible over a list that is already in memory, so it is paged here through
 // `keysetPageInMemory`: the same order (creation instant truncated to ms, then id, both
 // descending) and the same strictly-after cursor as a SQL builder, one page to the browser at a
 // time. Not a `bounded` decision: nothing in the product caps how many environments a project
