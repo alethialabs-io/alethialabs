@@ -96,7 +96,7 @@ Material gaps before a credible audit:
   retention periods, DPO/data protection contact, pricing terms, SLA, liability cap, and dispute venue.
 - The docs currently acknowledge that the activity/audit log has no dedicated RLS policy or WORM retention
   guarantee. That should be closed or explicitly scoped before SOC 2 fieldwork.
-- `demos/DEMO-READINESS.md` states that the newer multi-cloud work is not yet hosted and real cloud apply is
+- The internal demo-readiness notes state that the newer multi-cloud work is not yet hosted and real cloud apply is
   still unproven. A SOC 2 auditor will sample production operation, not planned architecture.
 - Formal company controls are not visible in the repo: risk register, asset inventory, vendor register, access
   review records, policy approvals, employee/contractor onboarding, offboarding, training, background-check

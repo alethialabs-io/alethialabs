@@ -113,8 +113,8 @@ function readPlanCost(raw: unknown): PlanOutcome["cost"] {
 }
 
 // What the counts depend on, checked STRICTLY. `parsePlanJSON` is lenient at every level by design
-// (lib/plan/parse-plan.ts: a truncated plan "degrades to no changes") — right for the Plan tab's
-// resource list, wrong here, where the result is a SENTENCE: a garbled `plan_result` would read as
+// (lib/plan/parse-plan.ts: a truncated plan "degrades to no changes") — right for a resource
+// list, wrong here, where the result is a SENTENCE: a garbled `plan_result` would read as
 // "No changes", a finding the plan never made. So a plan whose changes or actions are not where
 // OpenTofu puts them is unreadable, and only a plan that passes this is counted.
 //

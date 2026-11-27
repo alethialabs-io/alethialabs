@@ -17,7 +17,6 @@
 
 import {
 	AlertDialog,
-	AlertDialogAction,
 	AlertDialogCancel,
 	AlertDialogContent,
 	AlertDialogDescription,
@@ -26,6 +25,7 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { Spinner } from "@repo/ui/spinner";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { EmptyState } from "@repo/ui/empty";
 import { SectionHeading } from "@repo/ui/section-heading";
@@ -69,7 +69,6 @@ import {
 	type ClassificationTemplate,
 } from "./classification-templates";
 import { ClassificationBodySkeleton } from "./classification-skeleton";
-import { Spinner } from "./classification-ui";
 import { DimensionDetail } from "./dimension-detail";
 import { DimensionEditorSheet } from "./dimension-editor-sheet";
 import { slugifyOrEmpty } from "@/lib/utils/slugify";
@@ -287,6 +286,7 @@ export function ClassificationManager() {
 				{/* No count pill: the list standard draws none (#7481). The taxonomy is read whole and
 				    unpaged because it is bounded on the server: CLASSIFICATION_DIMENSIONS_MAX per org
 				    and CLASSIFICATION_VALUES_MAX per dimension, enforced by the create actions. */}
+				{/* A control fetching: the inline mark, which announces itself ("Loading"). */}
 				{searching && isFetching ? (
 					<span className="text-text-tertiary">
 						<Spinner size={13} />
@@ -427,17 +427,15 @@ export function ClassificationManager() {
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={(e) => {
-								// Stay open while the delete is in flight; `onSuccess` closes it.
-								e.preventDefault();
-								confirmDelete();
-							}}
-							disabled={deleting}
-						>
-							{deleting && <Spinner />}
-							Delete
-						</AlertDialogAction>
+						{/* A plain Button, not AlertDialogAction: that one closes the dialog on click, and
+						    the dialog stays open while the delete is in flight (`onSuccess` closes it). */}
+						<Button pending={deleting} onClick={confirmDelete}>
+							{deleting
+								? deleteTarget?.kind === "value"
+									? "Deleting value…"
+									: "Deleting dimension…"
+								: "Delete"}
+						</Button>
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>

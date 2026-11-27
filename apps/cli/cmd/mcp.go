@@ -19,6 +19,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/clierr"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/cmdmeta"
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
+	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -209,7 +210,19 @@ func serveMCP(ctx context.Context, set mcp.ToolSet, in io.Reader, out io.Writer)
 	return server.Serve(ctx, in, out)
 }
 
+// markMCPToolRequests marks every request this process sends as made for an `alethia mcp` tool call
+// when the server started it for one (mcp.ToolEnv, set by the server on each child it runs). The
+// console then holds those requests to the org's agent policy and records them with the other agent
+// tool calls. The mark only narrows what the credential may do there; a process without it sends
+// exactly what it always did.
+func markMCPToolRequests(lookup func(string) string) {
+	if tool := strings.TrimSpace(lookup(mcp.ToolEnv)); tool != "" {
+		api.SetAgentTool(tool)
+	}
+}
+
 func init() {
+	markMCPToolRequests(os.Getenv)
 	mcpCmd.Flags().StringVar(&mcpToolSet, "tools", string(mcp.ToolSetStandard),
 		"Which commands to offer: read-only, standard or destructive (asked on a terminal)")
 	mcpCmd.Flags().DurationVar(&mcpCallTimeout, "call-timeout", mcpDefaultCallTimeout,
