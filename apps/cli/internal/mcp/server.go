@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -22,12 +23,33 @@ import (
 // The stdio transport is newline-delimited JSON-RPC 2.0 in every one of them. The 2025 revisions
 // open with `initialize`; 2026-07-28 makes `server/discover` mandatory and lets a client skip the
 // handshake. Both are answered, and tools/list and tools/call do not wait for either.
+//
+// A request is in the 2026-07-28 era when its `params._meta` names a protocol version (the
+// envelope claim), exactly as the MCP SDK classifies it. A claim naming a revision outside
+// modernVersions is refused with -32022 before the method is looked at; a claim this server speaks
+// gets results carrying that revision's result metadata (see stampModern).
 var (
+	// modernVersions are the revisions a request's envelope may name, newest first.
+	modernVersions = []string{"2026-07-28"}
 	// handshakeVersions are the revisions `initialize` negotiates, newest first.
 	handshakeVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26"}
 	// supportedVersions are every revision `server/discover` advertises, newest first.
-	supportedVersions = append([]string{"2026-07-28"}, handshakeVersions...)
+	supportedVersions = append(slices.Clone(modernVersions), handshakeVersions...)
 )
+
+// Reserved `_meta` keys of the 2026-07-28 revision.
+const (
+	// metaProtocolVersion is the envelope key whose presence makes a request a 2026-07-28 one.
+	metaProtocolVersion = "io.modelcontextprotocol/protocolVersion"
+	// metaClientCapabilities is the other envelope key the revision requires.
+	metaClientCapabilities = "io.modelcontextprotocol/clientCapabilities"
+	// metaServerInfo is the result key that carries the server's identity.
+	metaServerInfo = "io.modelcontextprotocol/serverInfo"
+)
+
+// cacheableMethods are the methods whose 2026-07-28 results carry `ttlMs` and `cacheScope` (the
+// SDK's CACHEABLE_RESULT_METHODS, narrowed to the methods this server answers).
+var cacheableMethods = []string{"tools/list", "server/discover"}
 
 // Instructions is the server's `instructions`. Its first sentences stand on their own, because a
 // client may show only the start: the order of work, that a person approves deploys and destroys,
@@ -46,6 +68,8 @@ const (
 	codeInvalidRequest = -32600
 	codeMethodNotFound = -32601
 	codeInvalidParams  = -32602
+	// codeUnsupportedVersion is the 2026-07-28 UnsupportedProtocolVersion error.
+	codeUnsupportedVersion = -32022
 )
 
 // maxMessage bounds one incoming line. Tool arguments are small; a line past this is not a message
@@ -110,6 +134,7 @@ type request struct {
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // response is one outgoing JSON-RPC response.
@@ -190,17 +215,34 @@ func (s *Server) handle(ctx context.Context, line []byte, calls *sync.WaitGroup)
 		return
 	}
 
+	modern := false
+	if version, claimed, rpcErr := envelopeVersion(req.Params); claimed {
+		if rpcErr != nil {
+			s.reply(req.ID, nil, rpcErr)
+			return
+		}
+		if !slices.Contains(modernVersions, version) {
+			s.reply(req.ID, nil, unsupportedVersion(version))
+			return
+		}
+		modern = true
+	}
+	// server/discover exists only in the 2026-07-28 revision, so its answer is always that era's.
+	if req.Method == "server/discover" {
+		modern = true
+	}
+
 	switch req.Method {
 	case "initialize":
-		s.reply(req.ID, s.initialize(req.Params), nil)
+		s.answer(req, modern, s.initialize(req.Params))
 	case "server/discover":
-		s.reply(req.ID, s.discover(), nil)
+		s.answer(req, modern, s.discover())
 	case "ping":
-		s.reply(req.ID, map[string]any{}, nil)
+		s.answer(req, modern, map[string]any{})
 	case "tools/list":
-		s.reply(req.ID, s.listTools(), nil)
+		s.answer(req, modern, s.listTools())
 	case "tools/call":
-		s.startCall(ctx, req, calls)
+		s.startCall(ctx, req, modern, calls)
 	default:
 		s.reply(req.ID, nil, &rpcError{Code: codeMethodNotFound, Message: "method not found: " + req.Method})
 	}
@@ -223,6 +265,94 @@ func (s *Server) notify(req request) {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// envelopeVersion reports whether params carry the 2026-07-28 envelope claim (the protocol-version
+// key in `_meta`) and the revision it names. A claim is checked as the MCP SDK checks it before the
+// revision is: an envelope missing its client capabilities, or naming a version that is not a
+// string, is refused -32602 with the key and the problem.
+func envelopeVersion(params json.RawMessage) (string, bool, *rpcError) {
+	var p struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return "", false, nil
+	}
+	raw, ok := p.Meta[metaProtocolVersion]
+	if !ok {
+		return "", false, nil
+	}
+	if _, ok := p.Meta[metaClientCapabilities]; !ok {
+		return "", true, invalidEnvelope(metaClientCapabilities, "missing")
+	}
+	var version string
+	if json.Unmarshal(raw, &version) != nil {
+		return "", true, invalidEnvelope(metaProtocolVersion, "expected a protocol version string")
+	}
+	return version, true, nil
+}
+
+// invalidEnvelope is the -32602 refusal of a malformed 2026-07-28 envelope, naming the key at fault
+// and its problem in the SDK's message and data shape.
+func invalidEnvelope(key, problem string) *rpcError {
+	return &rpcError{
+		Code:    codeInvalidParams,
+		Message: "Invalid _meta envelope for protocol revision 2026-07-28: " + key + ": " + problem,
+		Data:    map[string]any{"envelope": map[string]any{"key": key, "problem": problem}},
+	}
+}
+
+// unsupportedVersion is the -32022 refusal of a request whose envelope names a revision this
+// server does not speak. Its message and data are the MCP SDK's, so a client reads the same
+// refusal here as from the remote route: the revisions it may retry with, and the one it sent.
+func unsupportedVersion(requested string) *rpcError {
+	return &rpcError{
+		Code:    codeUnsupportedVersion,
+		Message: "Unsupported protocol version: " + requested,
+		Data:    map[string]any{"supported": modernVersions, "requested": requested},
+	}
+}
+
+// stampModern adds the result metadata the 2026-07-28 revision requires to a result, in the order
+// the MCP SDK's encode contract applies it: `resultType` "complete" when the result names none,
+// `ttlMs` 0 and `cacheScope` "private" on a cacheable method's complete result when it names
+// neither, and the server's identity under `_meta` unless the result already carries one.
+func (s *Server) stampModern(method string, result map[string]any) map[string]any {
+	out := maps.Clone(result)
+	if out == nil {
+		out = map[string]any{}
+	}
+	if _, ok := out["resultType"]; !ok {
+		out["resultType"] = "complete"
+	}
+	if out["resultType"] == "complete" && slices.Contains(cacheableMethods, method) {
+		if _, ok := out["ttlMs"]; !ok {
+			out["ttlMs"] = 0
+		}
+		if _, ok := out["cacheScope"]; !ok {
+			out["cacheScope"] = "private"
+		}
+	}
+	switch meta := out["_meta"].(type) {
+	case nil:
+		out["_meta"] = map[string]any{metaServerInfo: s.serverInfo()}
+	case map[string]any:
+		if _, ok := meta[metaServerInfo]; !ok {
+			merged := maps.Clone(meta)
+			merged[metaServerInfo] = s.serverInfo()
+			out["_meta"] = merged
+		}
+	}
+	return out
+}
+
+// answer replies to req with result, stamped with the 2026-07-28 result metadata when the request
+// is in that era.
+func (s *Server) answer(req request, modern bool, result map[string]any) {
+	if modern {
+		result = s.stampModern(req.Method, result)
+	}
+	s.reply(req.ID, result, nil)
 }
 
 // serverInfo is the server's self-description.
@@ -261,7 +391,6 @@ func (s *Server) discover() map[string]any {
 		"supportedVersions": supportedVersions,
 		"capabilities":      capabilities(),
 		"instructions":      Instructions,
-		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": s.serverInfo()},
 	}
 }
 
@@ -281,8 +410,9 @@ func (s *Server) listTools() map[string]any {
 }
 
 // startCall runs a tools/call in its own goroutine, so a long command does not hold up a ping or a
-// cancellation, and answers it when the command ends.
-func (s *Server) startCall(ctx context.Context, req request, calls *sync.WaitGroup) {
+// cancellation, and answers it when the command ends. modern says whether the request is in the
+// 2026-07-28 era, whose results carry that revision's metadata.
+func (s *Server) startCall(ctx context.Context, req request, modern bool, calls *sync.WaitGroup) {
 	var p struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -299,7 +429,7 @@ func (s *Server) startCall(ctx context.Context, req request, calls *sync.WaitGro
 	argv, err := tool.Argv(p.Arguments)
 	if err != nil {
 		// An argument the model can fix is a tool error it reads, not a protocol error.
-		s.reply(req.ID, errorResult(err.Error()), nil)
+		s.answer(req, modern, errorResult(err.Error()))
 		return
 	}
 
@@ -325,11 +455,11 @@ func (s *Server) startCall(ctx context.Context, req request, calls *sync.WaitGro
 		case s.sem <- struct{}{}:
 			defer func() { <-s.sem }()
 		case <-callCtx.Done():
-			s.reply(req.ID, errorResult("the call was cancelled before it started"), nil)
+			s.answer(req, modern, errorResult("the call was cancelled before it started"))
 			return
 		}
 		res, err := s.opts.Runner.Run(WithTool(callCtx, tool.Name), argv)
-		s.reply(req.ID, s.callResult(callCtx, tool, res, err), nil)
+		s.answer(req, modern, s.callResult(callCtx, tool, res, err))
 	}()
 }
 
