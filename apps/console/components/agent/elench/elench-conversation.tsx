@@ -29,7 +29,10 @@ import {
 	setMessageFeedback,
 } from "@/app/server/actions/agent-feedback";
 import { orgRenderToolPart } from "@/components/agent/render-tool-parts/org-tool-parts";
-import { projectRenderToolPart } from "@/components/agent/render-tool-parts/project-tool-parts";
+import {
+	type ProposalDecision,
+	projectRenderToolPart,
+} from "@/components/agent/render-tool-parts/project-tool-parts";
 import { ChatRouteError, TurnRefusedError, useAgentChat } from "@/components/agent/use-agent-chat";
 import { pendingClientToolCalls } from "@/lib/agent/turn-key";
 import {
@@ -937,19 +940,19 @@ export function ElenchConversation({
 			onClose={() => useElenchStore.getState().setMainView("chat")}
 		/>
 	);
-	const [accepted, setAccepted] = useState<Record<string, boolean>>({});
+	const [decisions, setDecisions] = useState<Record<string, ProposalDecision>>({});
 	const renderToolPart = useMemo(
 		() =>
 			isOrg
 				? orgRenderToolPart({ openArtifact, openGrid, addToolResult })
 				: projectRenderToolPart({
-						accepted,
-						setAccepted,
+						decisions,
+						setDecisions,
 						addToolResult,
 						openArtifact,
 						openGrid,
 					}),
-		[isOrg, openArtifact, openGrid, accepted, addToolResult],
+		[isOrg, openArtifact, openGrid, decisions, addToolResult],
 	);
 
 	// Empty only once the thread list has resolved (while loading, the chrome shows the

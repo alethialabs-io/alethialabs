@@ -270,6 +270,11 @@ describe("parseClientToolOutput", () => {
 			parseClientToolOutput("propose_changes", { status: "accepted", label: "Add a database" })
 				.ok,
 		).toBe(true);
+		// The card's Dismiss: the tool promises the model "accept or dismiss", so both reach it.
+		expect(parseClientToolOutput("propose_changes", { status: "dismissed" })).toEqual({
+			ok: true,
+			output: { status: "dismissed" },
+		});
 	});
 
 	it("refuses an output that fails its schema", () => {
