@@ -6,7 +6,6 @@ import {
 	BookOpen,
 	ChevronDown,
 	FileText,
-	Loader2,
 	Lock,
 	Pencil,
 	Plus,
@@ -23,6 +22,7 @@ import {
 import { ConfirmAction } from "@/components/confirm/confirm-action";
 import { KNOWLEDGE_LIMIT } from "@/lib/ai/knowledge-limits";
 import type { KnowledgeDoc } from "@/types/jsonb.types";
+import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
@@ -37,9 +37,7 @@ import { randomUuid } from "@/lib/random-id";
  * The shared component is sized for a page — `p-6 md:p-12` around a `text-lg` headline over a
  * `text-sm/relaxed` line. This panel's copy is a 13px headline over a 12px line, so BOTH slots
  * are tuned: tuning only the title leaves the description at 14px, larger than the headline it
- * sits under. The border is not in here because it belongs to the boxed docs affordance, not to
- * the transient loading line — which otherwise renders at a different scale from the state it
- * flashes before.
+ * sits under. The border is not in here because it belongs to the boxed docs affordance alone.
  */
 const KNOWLEDGE_EMPTY =
 	"gap-3 p-8 md:p-8 [&_[data-slot=empty-title]]:text-ui-md [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-description]]:text-xs";
@@ -248,7 +246,16 @@ export function AgentKnowledgePanel({
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="mx-auto max-w-[760px] space-y-7 p-5">
 					{loading ? (
-						<EmptyState className={KNOWLEDGE_EMPTY} title="Loading…" />
+						<MarkLoader
+							size="region"
+							label={`Loading ${scope.toLowerCase()} knowledge`}
+							status={
+								projectId
+									? `${scope} · instructions · documents · project facts`
+									: `${scope} · instructions · documents`
+							}
+							className="text-muted-foreground"
+						/>
 					) : (
 						<>
 							{/* Read-only notice: this member can't edit the shared knowledge. */}
@@ -425,13 +432,10 @@ export function AgentKnowledgePanel({
 													data-testid="knowledge-doc-save"
 													className="rounded-none"
 													disabled={!editing.title.trim()}
+													pending={state === "saving"}
 													onClick={commitDoc}
 												>
-													{state === "saving" ? (
-														<Loader2 className="h-3.5 w-3.5 animate-spin" />
-													) : (
-														"Save document"
-													)}
+													{state === "saving" ? "Saving document…" : "Save document"}
 												</Button>
 											</span>
 										</div>

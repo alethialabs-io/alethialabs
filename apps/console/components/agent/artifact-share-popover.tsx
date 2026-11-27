@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Building2, Check, Loader2, Share2, Shield, Users } from "lucide-react";
+import { Building2, Check, Share2, Shield, Users } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { MarkLoader } from "@repo/brand/loader";
 import {
   type ArtifactShareAccess,
   type ShareScopeType,
@@ -155,8 +156,8 @@ export function ArtifactSharePopover({ artifactId }: { artifactId: string }) {
           </div>
           {loading ? (
             <div className="flex items-center gap-2 px-3 py-4 text-ui-sm text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Loading…
+              <MarkLoader size="inline" label="Loading who has access" />
+              <span aria-hidden="true">Loading who has access…</span>
             </div>
           ) : (
             <div className="max-h-[320px] overflow-y-auto py-1">
@@ -254,6 +255,7 @@ function ShareRow({
       // label, so WCAG 2.5.3 holds.
       aria-label={checked ? `Stop sharing with ${label}` : `Share with ${label}`}
       disabled={busy}
+      aria-busy={busy || undefined}
       onClick={onClick}
       className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-muted disabled:opacity-60"
     >
@@ -264,26 +266,38 @@ function ShareRow({
         <span className="block truncate text-ui-md text-foreground">
           {label}
         </span>
-        {sub && (
+        {busy ? (
+          // `checked` has already flipped optimistically, so it names the direction in flight.
           <span className="block text-ui-2xs text-muted-foreground">
-            {sub}
+            {checked ? "Sharing…" : "Revoking access…"}
           </span>
+        ) : (
+          sub && (
+            <span className="block text-ui-2xs text-muted-foreground">
+              {sub}
+            </span>
+          )
         )}
       </span>
-      <span
-        className={
-          "flex size-4 flex-none items-center justify-center border transition-colors " +
-          (checked
-            ? "border-foreground bg-foreground text-background"
-            : "border-border")
-        }
-      >
-        {busy ? (
-          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-        ) : checked ? (
-          <Check className="h-3 w-3" />
-        ) : null}
-      </span>
+      {busy ? (
+        // The inline [·] mark takes the check box's 16px slot while the change is in flight.
+        <MarkLoader
+          size="inline"
+          label={checked ? `Sharing with ${label}` : `Revoking access for ${label}`}
+          className="flex-none text-muted-foreground"
+        />
+      ) : (
+        <span
+          className={
+            "flex size-4 flex-none items-center justify-center border transition-colors " +
+            (checked
+              ? "border-foreground bg-foreground text-background"
+              : "border-border")
+          }
+        >
+          {checked ? <Check className="h-3 w-3" /> : null}
+        </span>
+      )}
     </button>
   );
 }
