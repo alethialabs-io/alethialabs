@@ -8,7 +8,8 @@
 //   (`router.refresh()`) and re-renders it (`reset()`) — and a mono `ref <digest>`.
 // - ROUTE form, the org and project boundaries and the root one: "Something broke on our side.",
 //   "Nothing in your cloud changed.", Try again / Contact support, and `ref <digest> · <UTC time>`.
-// - 404 form for the org fallback: "Nothing here.", the likely reason, the way back.
+// - 404 form (#7875): `[ 404 ]` in the mark's brackets, "Nothing here.", a SPECIFIC reason line,
+//   the way back. Every console 404 is rendered below, and each is told apart by its reason line.
 //
 // Every boundary is imported statically, so a deleted one fails this file at import, not silently.
 
@@ -43,6 +44,11 @@ import ProjectError from "@/app/(private)/[org]/[project]/error";
 import ProjectJobsError from "@/app/(private)/[org]/[project]/jobs/error";
 import OrgError from "@/app/(private)/[org]/error";
 import OrgNotFound from "@/app/(private)/[org]/not-found";
+import ProjectNotFound from "@/app/(private)/[org]/[project]/not-found";
+import JobNotFound from "@/app/(private)/[org]/~/jobs/[id]/not-found";
+import SupportCaseNotFound from "@/app/(private)/[org]/~/support/cases/[id]/not-found";
+import PrivateNotFound from "@/app/(private)/not-found";
+import RootNotFound from "@/app/not-found";
 import AppError from "@/app/error";
 
 /** What Next hands an `error.tsx`. */
@@ -149,12 +155,27 @@ describe("route boundaries (#7741)", () => {
 	});
 });
 
-describe("the org 404 fallback (#7741)", () => {
-	it("says nothing is here, why that may be, and leads back to the org's projects", () => {
-		render(<OrgNotFound />);
-		expect(screen.getByText("404", { exact: true })).toBeInTheDocument();
+/** A 404 boundary component, as Next renders it: no props. */
+type NotFoundBoundary = () => ReactNode;
+
+const NOT_FOUNDS: Array<[name: string, NotFoundBoundary, reason: string, link: string, href: string]> = [
+	["root", RootNotFound, "There's no page at this address. The link may be out of date, or the page has moved.", "Go home", "/"],
+	["org", PrivateNotFound, "This organization doesn't exist, or you don't have access to it.", "Go home", "/"],
+	["org fallback", OrgNotFound, "There's no page at this address in acme, or you don't have access to it.", "Back to projects", "/acme"],
+	["project", ProjectNotFound, "This project doesn't exist in acme, or you don't have access to it.", "All projects", "/acme"],
+	["job", JobNotFound, "This job doesn't exist, or it belongs to another organization.", "Back to jobs", "/acme/~/jobs"],
+	["support case", SupportCaseNotFound, "This support case doesn't exist, or you don't have access to it.", "Back to cases", "/acme/~/support/my-cases"],
+];
+
+describe("the 404 boundaries (#7875)", () => {
+	it.each(NOT_FOUNDS)("the %s 404 says nothing is here, exactly why, and the way out", (_, NotFound, reason, link, href) => {
+		const { container } = render(<NotFound />);
+		// `[ 404 ]`: the code as its own text, inside the bracketed slot.
+		expect(screen.getByText("404", { exact: true }).closest('[data-slot="error-state-code"]')).toBe(
+			container.querySelector('[data-slot="error-state-code"]'),
+		);
 		expect(screen.getByRole("heading", { level: 1, name: "Nothing here." })).toBeInTheDocument();
-		expect(screen.getByText(/^The address may be mistyped/)).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "Back to projects" })).toHaveAttribute("href", "/acme");
+		expect(screen.getByText(reason, { exact: true })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: link })).toHaveAttribute("href", href);
 	});
 });
