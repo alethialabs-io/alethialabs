@@ -176,7 +176,9 @@ conflict-free dev PR **with no unresolved review threads**, and squash-merges it
 **required checks** pass (`CI required` — ci.yml's aggregator, whose `needs:` list is the set of
 CI jobs that gate — plus `contribution-legal`), validating each PR on its own branch — so you never merge against a
 `dev` that moved under you. Keep WIP as a draft. On a conflict, rebase onto `origin/dev` and push;
-it re-queues itself.
+it re-queues itself. Your PR's own run is CI's **fast lane**; the slow gating jobs (console images,
+Integration, BYO Postgres, the qa leg) run only in the queue's batch, so their red arrives as a
+dequeue, not on your push (`CONTRIBUTING.md`, "Two CI lanes").
 
 **An unresolved review finding keeps a PR out of the queue, and RESOLVING IS A SEPARATE STEP FROM
 FIXING.** A review is not a required check, so before #3498 the review and the merge raced by
