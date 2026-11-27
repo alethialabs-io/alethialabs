@@ -1,5 +1,13 @@
 # marketing
 
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies [d66abe1]
+  - @repo/ui@0.4.1
+  - @repo/brand@0.3.1
+
 ## 0.1.6
 
 ### Patch Changes
