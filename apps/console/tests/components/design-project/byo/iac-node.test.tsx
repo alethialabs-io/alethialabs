@@ -101,6 +101,32 @@ describe("IacNode", () => {
 	it("reflects the scan status in the chip", () => {
 		renderNode(makeSource({ scanStatus: "failed", scanReport: null }));
 		expect(screen.getByText("Scan failed")).toBeInTheDocument();
+		expect(screen.getByTitle("IaC safety scan").querySelector(".vx-status--failed")).not.toBeNull();
+	});
+
+	// "Scanning…" is a STATUS, not a wait (#7873): a StatusBadge in its pending tier — the haloed
+	// dot and a mono label — with no spinning icon anywhere on the chip.
+	it("renders a running scan as a pending StatusBadge, not a spinner", () => {
+		renderNode(makeSource({ scanStatus: "scanning", scanReport: null }));
+		const chip = screen.getByTitle("IaC safety scan");
+		const badge = chip.querySelector(".vx-status");
+		expect(badge).not.toBeNull();
+		expect(badge).toHaveClass("vx-status--pending");
+		expect(badge).toHaveTextContent("Scanning…");
+		expect(chip.querySelector(".animate-spin")).toBeNull();
+		expect(chip.querySelector("svg")).toBeNull();
+	});
+
+	it("reads a clean scan as the active tier and an unscanned module as idle", () => {
+		const { unmount } = renderNode(makeSource());
+		expect(screen.getByTitle("IaC safety scan").querySelector(".vx-status--active")).toHaveTextContent(
+			"Clean",
+		);
+		unmount();
+		renderNode(makeSource({ scanStatus: "unscanned", scanReport: null }));
+		expect(screen.getByTitle("IaC safety scan").querySelector(".vx-status--idle")).toHaveTextContent(
+			"Not scanned",
+		);
 	});
 
 	it("renders a finding count when the scan found issues", () => {
@@ -116,6 +142,8 @@ describe("IacNode", () => {
 			}),
 		);
 		expect(screen.getByText("1 finding")).toBeInTheDocument();
+		// A not-ok scan reads as the failed tier — by the dot's shape, not by a red label.
+		expect(screen.getByTitle("IaC safety scan").querySelector(".vx-status--failed")).not.toBeNull();
 	});
 
 	it("opens the scan card on the workspace rail when the chip is clicked", async () => {

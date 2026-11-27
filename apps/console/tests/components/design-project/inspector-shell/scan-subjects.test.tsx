@@ -104,7 +104,13 @@ describe("a chart's safety scan, as a subject", () => {
 			/>,
 		);
 		expect(screen.queryByRole("button", { name: "Rescan" })).not.toBeInTheDocument();
-		expect(screen.getByText(/running security checks/i)).toBeInTheDocument();
+		// The wait is the [·] mark loader, announced as what is running, with the chart's own
+		// coordinates as its status line rather than a spinner.
+		const loader = screen.getByRole("status");
+		expect(loader).toHaveAttribute("data-slot", "mark-loader");
+		expect(loader).toHaveTextContent(/running security checks/i);
+		expect(loader.querySelector(".ah-loader__status")?.textContent).toMatch(/^Scanning · web · \//);
+		expect(document.querySelector(".animate-spin")).toBeNull();
 	});
 });
 

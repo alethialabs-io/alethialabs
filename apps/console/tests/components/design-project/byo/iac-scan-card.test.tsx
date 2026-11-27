@@ -70,9 +70,19 @@ describe("IacScanBody", () => {
 		expect(screen.getByText("git::https://github.com/acme/mod.git")).toBeInTheDocument();
 	});
 
-	it("shows a spinner while scanning", () => {
-		render(<IacScanBody {...baseProps} scanStatus="scanning" scanning report={null} />);
-		expect(screen.getByText(/scanning the module/i)).toBeInTheDocument();
+	it("shows the [·] mark loader with a status line of real facts while scanning", () => {
+		const { container } = render(
+			<IacScanBody {...baseProps} scanStatus="scanning" scanning report={null} />,
+		);
+		const loader = screen.getByRole("status");
+		expect(loader).toHaveAttribute("data-slot", "mark-loader");
+		expect(loader).toHaveAttribute("data-size", "region");
+		expect(loader).toHaveTextContent(/scanning the module/i);
+		// The status line names the module's path and ref — never a percentage.
+		expect(screen.getByText("Scanning · /infra/prod · main")).toBeInTheDocument();
+		expect(loader.textContent).not.toMatch(/%/);
+		// No ad-hoc spinner beside it.
+		expect(container.querySelector(".animate-spin")).toBeNull();
 	});
 
 	it("shows the unscanned empty state with a scan action", () => {
