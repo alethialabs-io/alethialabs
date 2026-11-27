@@ -375,6 +375,10 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   echo "AUTH_EMAIL_FROM=$AUTH_FROM"
   echo "EMAIL_FROM=$GENERAL_FROM"
   echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"
+  # The admin image's tag. This deploy's own tag by default; on the box, a tag the web
+  # repo's deploy recorded in admin.image.env replaces it (see the REMOTE block below),
+  # so a console deploy never moves admin to an image the web repo did not ship.
+  echo "ALETHIA_ADMIN_IMAGE_TAG=$IMAGE_TAG"
 } > env.deploy
 
 SSHOPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
@@ -395,6 +399,20 @@ cd /opt/alethia
 git fetch origin main
 git checkout -f "$IMAGE_TAG"
 mv -f .env.new .env
+# admin.image.env is untracked and written only by alethialabs-io/web's deploy: one
+# line, ALETHIA_ADMIN_IMAGE_TAG=<that repo's sha>. When it is there, its tag replaces
+# the default written above. Anything else in the file refuses the deploy, so the file
+# can move admin's image tag and nothing else.
+if [ -f admin.image.env ]; then
+  admin_line="$(grep -E '^ALETHIA_ADMIN_IMAGE_TAG=[0-9a-f]{7,40}$' admin.image.env || true)"
+  if [ "$(grep -cv '^[[:space:]]*$' admin.image.env)" != 1 ] || [ -z "$admin_line" ]; then
+    echo "admin.image.env must hold exactly one line ALETHIA_ADMIN_IMAGE_TAG=<sha>; refusing to deploy" >&2
+    exit 1
+  fi
+  grep -v '^ALETHIA_ADMIN_IMAGE_TAG=' .env > .env.admin-tag && mv -f .env.admin-tag .env
+  echo "$admin_line" >> .env
+  echo "admin image tag from admin.image.env: ${admin_line#*=}"
+fi
 AK="$(grep -m1 '^ALETHIA_STORAGE_ACCESS_KEY_ID=' .env | cut -d= -f2-)"
 SK="$(grep -m1 '^ALETHIA_STORAGE_SECRET_ACCESS_KEY=' .env | cut -d= -f2-)"
 cat > deploy/seaweedfs/s3.json <<JSON
