@@ -11,9 +11,9 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import type { ConnectorState } from "@/components/connectors/connectors-query";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
-import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
+import { INLINE_PX, INLINE_STROKE, MarkGlyph } from "@repo/ui/spinner";
 import { cn } from "@repo/ui/utils";
 import { RefreshCw } from "lucide-react";
 
@@ -114,9 +114,17 @@ export function ConnectorAction({
 	if (isConnected) return manage;
 
 	if (integration.cloud_health === "testing") {
-		// The state label beside it already says "Verifying…"; the inline mark names what it waits on
-		// for a screen reader, which cannot see that the label and the mark belong to one row.
-		return <MarkLoader size="inline" label={`Verifying ${integration.name}`} className="text-muted-foreground" />;
+		// The state label beside it already says "Verifying…", so the inline [·] mark is decorative:
+		// a status region here would say the same wait a second time.
+		return (
+			<MarkGlyph
+				width={INLINE_PX}
+				height={INLINE_PX}
+				bracketStroke={INLINE_STROKE}
+				className="text-muted-foreground"
+				aria-hidden="true"
+			/>
+		);
 	}
 
 	if (integration.cloud_health === "failed") {
