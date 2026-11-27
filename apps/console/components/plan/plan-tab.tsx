@@ -4,6 +4,7 @@
 
 
 import { formatMonthlyRate } from "@repo/format";
+import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { EmptyState } from "@repo/ui/empty";
@@ -22,7 +23,6 @@ import type { JobLogEntry } from "@/hooks/use-job-log-stream";
 import {
 	AlertCircle,
 	ChevronDown,
-	Loader2,
 	RefreshCw,
 	Rocket,
 } from "lucide-react";
@@ -120,11 +120,15 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 	}
 
 	if (phase === "generating") {
+		// A plan runs on a runner for as long as tofu takes: the region mark, with the job it is
+		// waiting on as the facts line. Never a percentage — nothing here knows how far along it is.
 		return (
-			<div className="flex flex-col items-center justify-center py-16 gap-3">
-				<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-				<p className="text-sm text-muted-foreground">Generating infrastructure plan...</p>
-			</div>
+			<MarkLoader
+				size="region"
+				label="Generating the infrastructure plan"
+				status={plan.planJobId ? `Planning · job ${plan.planJobId.slice(0, 8)}` : "Planning · queuing the job"}
+				className="py-16 text-muted-foreground"
+			/>
 		);
 	}
 
@@ -150,12 +154,12 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 
 	if (phase === "applying") {
 		return (
-			<div className="flex flex-col items-center justify-center py-16 gap-3">
-				<Loader2 className="h-6 w-6 animate-spin" />
-				<p className="text-sm text-muted-foreground">
-					Queuing deployment...
-				</p>
-			</div>
+			<MarkLoader
+				size="region"
+				label="Queuing the deployment"
+				status={plan.planJobId ? `Queuing the deploy · from plan ${plan.planJobId.slice(0, 8)}` : "Queuing the deploy"}
+				className="py-16 text-muted-foreground"
+			/>
 		);
 	}
 

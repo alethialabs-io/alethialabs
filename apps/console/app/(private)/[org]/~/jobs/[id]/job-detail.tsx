@@ -19,7 +19,7 @@ import { Fact, FactList } from "@/components/settings/usage/usage-primitives";
 import { useHydrated } from "@repo/ui/use-hydrated";
 import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import { useActionMutation } from "@/lib/actions/use-action-mutation";
-import { JOB_ACTION } from "@/lib/copy/vocabulary";
+import { IN_FLIGHT, JOB_ACTION } from "@/lib/copy/vocabulary";
 import { type RerunRoute, rerunRouteOf } from "@/lib/jobs/operation";
 import { qk } from "@/lib/query/keys";
 import { orpc } from "@/lib/rpc/client";
@@ -39,7 +39,7 @@ import { StatusBadge } from "@repo/ui/status-badge";
 import { TooltipProvider } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import { type QueryKey, useQuery } from "@tanstack/react-query";
-import { Ban, ChevronRight, Loader2, RefreshCw, Rocket, XCircle } from "lucide-react";
+import { Ban, ChevronRight, RefreshCw, Rocket, XCircle } from "lucide-react";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -348,13 +348,10 @@ export function JobDetail({
 												className="h-8 text-destructive hover:text-destructive"
 												onClick={() => setConfirmCancel(true)}
 												disabled={actionLoading}
+												pending={cancel.isPending}
 											>
-												{actionLoading ? (
-													<Loader2 className="mr-1.5 size-3.5 animate-spin" />
-												) : (
-													<Ban className="mr-1.5 size-3.5" />
-												)}
-												Cancel
+												<Ban className="mr-1.5 size-3.5" />
+												{cancel.isPending ? "Cancelling…" : "Cancel"}
 											</Button>
 										</DisabledReason>
 									)}
@@ -363,9 +360,9 @@ export function JobDetail({
 										(job.can.deploy ? (
 											<RunnerSelectPopover
 												trigger={
-													<Button size="sm" className="h-8" disabled={actionLoading}>
+													<Button size="sm" className="h-8" disabled={actionLoading} pending={apply.isPending}>
 														<Rocket className="mr-1.5 size-3.5" />
-														{JOB_ACTION.deploy}
+														{apply.isPending ? `${IN_FLIGHT.deploy}…` : JOB_ACTION.deploy}
 													</Button>
 												}
 												onConfirm={(runnerId) => apply.submit({ planJobId: job.id, runnerId })}
@@ -387,13 +384,10 @@ export function JobDetail({
 												className="h-8"
 												onClick={() => setConfirmRerun(true)}
 												disabled={actionLoading}
+												pending={rerun.isPending}
 											>
-												{actionLoading ? (
-													<Loader2 className="mr-1.5 size-3.5 animate-spin" />
-												) : (
-													<RefreshCw className="mr-1.5 size-3.5" />
-												)}
-												Re-run
+												<RefreshCw className="mr-1.5 size-3.5" />
+												{rerun.isPending ? "Re-running…" : "Re-run"}
 											</Button>
 										</DisabledReason>
 									)}
@@ -453,6 +447,7 @@ export function JobDetail({
 				active={isActive}
 				createdAt={job.created_at}
 				org={org}
+				jobId={job.id}
 				stream={log.state}
 				onReconnect={log.reconnect}
 			/>

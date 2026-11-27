@@ -104,7 +104,17 @@ describe("ListFooter", () => {
 		const button = screen.getByRole("button", { name: "Load more" });
 		expect(button).toBeDisabled();
 		expect(button).toHaveAttribute("aria-busy", "true");
+		// The product's one loader — the inline [·] mark Button pending draws — never a spun glyph.
+		expect(button.querySelector('[data-slot="button-pending-mark"]')).not.toBeNull();
+		expect(button.querySelector(".animate-spin")).toBeNull();
 		expect(io.observed).toHaveLength(0);
+	});
+
+	it("a retry in flight says so on its own button", () => {
+		render(<ListFooter list={state({ loadMoreFailed: true, loadingMore: true })} />);
+		const button = screen.getByRole("button", { name: "Retrying…" });
+		expect(button).toBeDisabled();
+		expect(button).toHaveAttribute("aria-busy", "true");
 	});
 
 	it("failed: one status line with Try again, and no auto-retry from the sentinel", () => {

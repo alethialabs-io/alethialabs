@@ -11,10 +11,11 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import type { ConnectorState } from "@/components/connectors/connectors-query";
 import { MANAGE_DENIED_REASON } from "@/components/errors/manage-gate";
+import { MarkLoader } from "@repo/brand/loader";
 import { Button } from "@repo/ui/button";
 import { DisabledReason } from "@repo/ui/disabled-reason";
 import { cn } from "@repo/ui/utils";
-import { Loader2, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 interface ConnectorActionProps {
 	integration: ConnectorWithConnection;
@@ -100,16 +101,12 @@ export function ConnectorAction({
 			<Button
 				size="sm"
 				className="h-7 px-2.5 text-xs"
-				aria-label={`Reconnect ${integration.name}`}
-				disabled={isConnecting}
+				aria-label={isConnecting ? `Reconnecting ${integration.name}…` : `Reconnect ${integration.name}`}
+				pending={isConnecting}
 				onClick={onConnect}
 			>
-				{isConnecting ? (
-					<Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
-				) : (
-					<RefreshCw className="mr-1 size-3.5" aria-hidden />
-				)}
-				Reconnect
+				<RefreshCw className="mr-1 size-3.5" aria-hidden />
+				{isConnecting ? "Reconnecting…" : "Reconnect"}
 			</Button>
 		);
 	}
@@ -117,8 +114,9 @@ export function ConnectorAction({
 	if (isConnected) return manage;
 
 	if (integration.cloud_health === "testing") {
-		// The state label beside it already says "Verifying…"; the mark only moves.
-		return <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden />;
+		// The state label beside it already says "Verifying…"; the inline mark names what it waits on
+		// for a screen reader, which cannot see that the label and the mark belong to one row.
+		return <MarkLoader size="inline" label={`Verifying ${integration.name}`} className="text-muted-foreground" />;
 	}
 
 	if (integration.cloud_health === "failed") {
@@ -132,16 +130,12 @@ export function ConnectorAction({
 					<Button
 						size="sm"
 						className="h-7 px-2.5 text-xs"
-						aria-label={`Re-verify ${integration.name}`}
-						disabled={isConnecting}
+						aria-label={isConnecting ? `Re-verifying ${integration.name}…` : `Re-verify ${integration.name}`}
+						pending={isConnecting}
 						onClick={onReverify}
 					>
-						{isConnecting ? (
-							<Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
-						) : (
-							<RefreshCw className="mr-1 size-3.5" aria-hidden />
-						)}
-						Re-verify
+						<RefreshCw className="mr-1 size-3.5" aria-hidden />
+						{isConnecting ? "Re-verifying…" : "Re-verify"}
 					</Button>
 				</DisabledReason>
 			</div>
@@ -155,12 +149,11 @@ export function ConnectorAction({
 			<Button
 				size="sm"
 				className="h-7 px-2.5 text-xs"
-				aria-label={`Connect ${integration.name}`}
-				disabled={isConnecting}
+				aria-label={isConnecting ? `Connecting ${integration.name}…` : `Connect ${integration.name}`}
+				pending={isConnecting}
 				onClick={onConnect}
 			>
-				{isConnecting && <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />}
-				Connect
+				{isConnecting ? "Connecting…" : "Connect"}
 			</Button>
 		</DisabledReason>
 	);
