@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.12.0...runner-v0.13.0) (2026-11-27)
+
+
+### Features
+
+* **agents:** a destroy approval binds to a destroy-mode plan ([#7764](https://github.com/alethialabs-io/alethialabs/issues/7764)) ([165cc3c](https://github.com/alethialabs-io/alethialabs/commit/165cc3cdc622f86b6134d1cc189115ddd208b6cf))
+* **runner:** apply plan metadata keeps only each resource's identity, actions and planned values ([#7800](https://github.com/alethialabs-io/alethialabs/issues/7800)) ([7252786](https://github.com/alethialabs-io/alethialabs/commit/7252786f79b793245def2e8b8eec2513d5427bd7)), closes [#7798](https://github.com/alethialabs-io/alethialabs/issues/7798)
+
 ## [0.12.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.11.0...runner-v0.12.0) (2026-11-25)
 
 
