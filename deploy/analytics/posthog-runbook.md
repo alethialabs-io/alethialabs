@@ -136,7 +136,7 @@ and React error boundaries call `captureException(error, {boundary})`. Server ex
 deliberately disabled in `lib/analytics/server.ts`; operational errors remain in the first-party logging
 stack. A replay is attached only where the user separately consented to replay.
 
-## 12. LLM analytics (Elench, Ask-AI, verify, colony)
+## 12. LLM analytics (Elench, Ask-AI, verify)
 
 AI usage remains metered in the first-party billing database, but prompts, outputs, and `$ai_generation`
 events are not sent to PostHog. Build cost and usage reporting from first-party aggregate records, with
