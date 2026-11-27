@@ -93,4 +93,18 @@ describe("MultiCombobox", () => {
 		expect(screen.getByRole("button", { name: "AWS, 2" })).toHaveAttribute("aria-pressed", "true");
 		expect(screen.getByRole("button", { name: "Hetzner" })).toHaveAttribute("aria-pressed", "false");
 	});
+
+	// #7871: the fetching state is the inline [·] mark, not a spinning lucide Loader2, and the row is
+	// one status a screen reader hears as "Loading options…".
+	it("shows the inline [·] mark while its options are loading", async () => {
+		const user = userEvent.setup();
+		const { container } = render(
+			<MultiCombobox options={[]} value={[]} onChange={() => {}} placeholder="All authors" loading />,
+		);
+		await user.click(screen.getByPlaceholderText("All authors"));
+
+		expect(screen.getByRole("status")).toHaveTextContent("Loading options…");
+		expect(container.ownerDocument.querySelector('[data-slot="mark-glyph"]')).not.toBeNull();
+		expect(container.ownerDocument.querySelector(".animate-spin")).toBeNull();
+	});
 });

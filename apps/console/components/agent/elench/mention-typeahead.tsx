@@ -23,7 +23,6 @@ import {
 	Cpu,
 	KeyRound,
 	LayoutDashboard,
-	Loader2,
 	type LucideIcon,
 	PlugZap,
 	ScrollText,
@@ -32,6 +31,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { MentionResult, MentionType } from "@/lib/ai/mentions";
+import { MarkLoader } from "@repo/brand/loader";
 import { cn } from "@repo/ui/utils";
 import { $createMentionNode } from "./mention-node";
 import { useMentionSearch } from "./use-mentions";
@@ -143,7 +143,7 @@ export function MentionTypeaheadPlugin({
 					>
 						<div className="vx-eyebrow flex flex-none items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-ui-3xs">
 							Tag a resource
-							{loading && <Loader2 className="h-3 w-3 animate-spin" />}
+							{loading && <MarkLoader size="inline" label="Searching resources" />}
 						</div>
 						<ul
 							data-testid="mention-menu-list"

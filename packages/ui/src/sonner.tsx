@@ -6,13 +6,15 @@
 import {
   CircleCheckIcon,
   InfoIcon,
-  Loader2Icon,
   OctagonXIcon,
   TriangleAlertIcon,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
+import { INLINE_STROKE, MarkGlyph } from "./spinner"
+
+/** The app's toast host: sonner themed to the design system, with the [·] mark as its loading icon. */
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()
 
@@ -25,7 +27,15 @@ const Toaster = ({ ...props }: ToasterProps) => {
         info: <InfoIcon className="size-4" />,
         warning: <TriangleAlertIcon className="size-4" />,
         error: <OctagonXIcon className="size-4" />,
-        loading: <Loader2Icon className="size-4 animate-spin" />,
+        // The inline [·] mark. Decorative: the toast's own text says what is running and sonner's
+        // live region announces it, so a second "Loading" status here would only repeat it.
+        loading: (
+          <MarkGlyph
+            aria-hidden="true"
+            className="size-4"
+            bracketStroke={INLINE_STROKE}
+          />
+        ),
       }}
       style={
         {

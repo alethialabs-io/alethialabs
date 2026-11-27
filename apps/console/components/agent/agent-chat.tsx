@@ -7,12 +7,12 @@ import {
 	Check,
 	CopyIcon,
 	HelpCircle,
-	Loader2,
 	RefreshCcwIcon,
 	ThumbsDown,
 	ThumbsUp,
 } from "lucide-react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
+import { ThinkingIndicator } from "@repo/brand/thinking-indicator";
 import { Action, Actions } from "@/components/ai-elements/actions";
 import { ChatError } from "@/components/agent/chat-error";
 import {
@@ -424,9 +424,8 @@ export function AgentChat({
 							})}
 
 							{status === "submitted" && (
-								<div className="agent-thinking-in flex items-center gap-2 text-xs text-muted-foreground">
-									<Loader2 className="h-3 w-3 animate-spin" />
-									Thinking…
+								<div className="agent-thinking-in flex items-center">
+									<ThinkingIndicator />
 								</div>
 							)}
 							{error &&
