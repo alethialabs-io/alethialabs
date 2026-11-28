@@ -438,7 +438,11 @@ export async function backfillAuditRows(db: BackfillDb, opts: BackfillOptions): 
 /** Minimal typed handle for the postgres-js client. */
 type Sql = ReturnType<typeof postgres>;
 
-/** The pass's operations over a postgres-js transaction. */
+/**
+ * The pass's operations over a postgres-js transaction. A value to write is bound as TEXT and cast
+ * (`${text}::text::jsonb`): bound straight to `::jsonb`, postgres-js types the parameter as jsonb and
+ * JSON-encodes the string, which stores a JSON string holding the document instead of the document.
+ */
 function postgresTx(sql: postgres.ISql): BackfillTx {
 	return {
 		selectPlanRows: (cursor, limit) => sql<PlanRow[]>`
@@ -448,7 +452,7 @@ function postgresTx(sql: postgres.ISql): BackfillTx {
 			 order by id limit ${limit}`,
 		updatePlanResult: async (id, expected, text) => {
 			const written = await sql`
-				update jobs set execution_metadata = jsonb_set(execution_metadata, '{plan_result}', ${text}::jsonb)
+				update jobs set execution_metadata = jsonb_set(execution_metadata, '{plan_result}', ${text}::text::jsonb)
 				 where id = ${id} and (execution_metadata->'plan_result')::text = ${expected}`;
 			return written.count === 1;
 		},
@@ -459,7 +463,7 @@ function postgresTx(sql: postgres.ISql): BackfillTx {
 			 order by id limit ${limit}`,
 		updateAuditSnapshot: async (row, text, sig) => {
 			const written = await sql`
-				update jobs set config_snapshot = ${text}::jsonb, config_snapshot_sig = ${sig}
+				update jobs set config_snapshot = ${text}::text::jsonb, config_snapshot_sig = ${sig}
 				 where id = ${row.id}
 				   and config_snapshot::text = ${row.config_snapshot}
 				   and config_snapshot_sig is not distinct from ${row.config_snapshot_sig}
