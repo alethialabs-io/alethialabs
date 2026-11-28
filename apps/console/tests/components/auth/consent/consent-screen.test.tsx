@@ -39,6 +39,7 @@ function org(id: string, extra: Partial<ConsentOrgView> = {}): ConsentOrgView {
 	return {
 		id,
 		name: id,
+		slug: id,
 		role: "admin",
 		roleLabel: "Admin",
 		personal: false,
@@ -73,7 +74,7 @@ function ready(extra: Partial<ReadyConsent> = {}): ReadyConsent {
 
 /** Renders the screen for `view`. */
 function show(view: ConsentView) {
-	return render(<ConsentScreen view={view} account={ACCOUNT} oauthQuery={QUERY} manageHref="/dashboard/settings/connected" />);
+	return render(<ConsentScreen view={view} account={ACCOUNT} oauthQuery={QUERY} />);
 }
 
 const allow = (name: RegExp | string = /^Allow$/) => screen.getByRole("button", { name });
@@ -111,6 +112,25 @@ describe("1 · default, verified app, two orgs", () => {
 		expect(checkbox("Ask to destroy").getAttribute("aria-checked")).toBe("false");
 		expect(allow().hasAttribute("disabled")).toBe(false);
 		expect(screen.getByText("Untick anything you don't want to allow.")).toBeTruthy();
+	});
+});
+
+describe("organization names", () => {
+	it("shows each org's slug muted beside its name, so two orgs with one name can be told apart", () => {
+		show(ready({ orgs: [org("a1", { name: "Acme", slug: "acme" }), org("a2", { name: "Acme", slug: "acme-eu" })] }));
+		const orgs = screen.getByRole("radiogroup", { name: "Organization" });
+		expect(within(orgs).getAllByText("Acme")).toHaveLength(2);
+		for (const slug of ["acme", "acme-eu"]) {
+			const el = within(orgs).getByText(slug);
+			expect(el.className).toContain("text-text-tertiary");
+			expect(el.className).not.toMatch(/text-[a-z-]+\/\d/);
+		}
+	});
+
+	it("shows no slug for an org that has none", () => {
+		show(ready({ orgs: [org("acme", { name: "Acme", slug: null })] }));
+		const row = screen.getByRole("radio", { name: /Acme/ }).closest("label");
+		expect(row?.textContent).toBe("AcmeYour role: Admin");
 	});
 });
 
@@ -344,8 +364,31 @@ describe("15–18 · submitting, network error, denied, allowed", () => {
 			),
 		).toBeTruthy();
 		expect(screen.getByRole("link", { name: "Return to Claude Code" }).getAttribute("href")).toBe("https://app.example/cb?code=c");
-		expect(screen.getByRole("link", { name: "Manage connections" }).getAttribute("href")).toBe("/dashboard/settings/connected");
+		expect(screen.getByRole("link", { name: "Manage connections" }).getAttribute("href")).toBe("/acme/~/settings/connected");
 		expect(h.navigate).toHaveBeenCalledWith("https://app.example/cb?code=c");
+	});
+
+	it("18 · Manage connections opens the connected apps of the org just granted, not the active one", async () => {
+		h.answer.mockResolvedValue({ ok: true, data: { outcome: "redirect", url: "https://app.example/cb?code=c" } });
+		show(ready());
+		fireEvent.click(screen.getByRole("radio", { name: /globex/ }));
+		await act(async () => fireEvent.click(allow()));
+		expect(screen.getByRole("link", { name: "Manage connections" }).getAttribute("href")).toBe("/globex/~/settings/connected");
+	});
+
+	it("18 · Manage connections opens the personal workspace's connected apps", async () => {
+		h.answer.mockResolvedValue({ ok: true, data: { outcome: "redirect", url: "https://app.example/cb?code=c" } });
+		show(ready({ orgs: [org("user-1", { name: "Personal", slug: null, personal: true, roleLabel: "Owner", projects: [] })] }));
+		await act(async () => fireEvent.click(allow()));
+		expect(screen.getByRole("link", { name: "Manage connections" }).getAttribute("href")).toBe("/~/~/settings/connected");
+	});
+
+	it("18 · offers no Manage connections link for an org with no address, rather than another org's", async () => {
+		h.answer.mockResolvedValue({ ok: true, data: { outcome: "redirect", url: "https://app.example/cb?code=c" } });
+		show(ready({ orgs: [org("acme", { slug: null })] }));
+		await act(async () => fireEvent.click(allow()));
+		expect(screen.getByRole("link", { name: "Return to Claude Code" })).toBeTruthy();
+		expect(screen.queryByRole("link", { name: "Manage connections" })).toBeNull();
 	});
 
 	it("never sends a tick left over from an org whose role allowed more", async () => {
@@ -361,6 +404,27 @@ describe("15–18 · submitting, network error, denied, allowed", () => {
 		fireEvent.click(checkbox("See your projects"));
 		expect(screen.getByText("Choose at least one, or deny.")).toBeTruthy();
 		expect(allow().hasAttribute("disabled")).toBe(true);
+	});
+});
+
+describe("closing the page", () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("says the tab can be closed when no script opened it, since the browser would ignore the button", () => {
+		vi.stubGlobal("opener", null);
+		show({ state: "expired" });
+		expect(screen.getByText("You can close this tab now.")).toBeTruthy();
+		expect(screen.queryByRole("button", { name: "Close this page" })).toBeNull();
+	});
+
+	it("offers Close this page when a script opened the tab", () => {
+		const close = vi.fn();
+		vi.stubGlobal("opener", {});
+		vi.stubGlobal("close", close);
+		show({ state: "answered" });
+		expect(screen.queryByText("You can close this tab now.")).toBeNull();
+		fireEvent.click(screen.getByRole("button", { name: "Close this page" }));
+		expect(close).toHaveBeenCalled();
 	});
 });
 

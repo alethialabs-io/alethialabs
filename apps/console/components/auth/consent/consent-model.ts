@@ -11,6 +11,7 @@
 
 import type { ConsentContext, ConsentOrg } from "@/lib/agents/consent-context";
 import { AGENT_SCOPES, type AgentScope } from "@/lib/approvals/scopes";
+import { globalHref, PERSONAL_ORG_SLUG } from "@/lib/routing";
 
 /** One organization on the screen: the read's answer plus the role's display name. */
 export interface ConsentOrgView extends ConsentOrg {
@@ -168,6 +169,19 @@ export function allowBlockers(org: ConsentOrgView | undefined, scopes: readonly 
 /** True when any blocker holds. */
 export function isAllowBlocked(b: AllowBlockers): boolean {
 	return b.refused || b.noneTicked || b.noProject || b.noOrg;
+}
+
+/**
+ * Where "Manage connections" goes once `org` is granted: that org's own connected-apps page, never
+ * the active org's (#7866, item 7). Arriving at `/{org}/~/…` is the console's org switch — the
+ * `[org]` layout resolves the scope the URL names and makes it the active org, exactly as the org
+ * switcher does — so an org that is not the active one is switched to first. An org with no slug
+ * has no address to go to (the switcher disables such an org for the same reason), so it gets null
+ * and the screen offers no link rather than one to some other organization.
+ */
+export function connectedAppsHref(org: Pick<ConsentOrg, "slug" | "personal">): string | null {
+	if (org.personal) return globalHref(PERSONAL_ORG_SLUG, "settings/connected");
+	return org.slug ? globalHref(org.slug, "settings/connected") : null;
 }
 
 /** The Allow button's words. */
