@@ -44,7 +44,6 @@ export default async function OAuthConsentPage({ searchParams }: OAuthConsentPag
 				view={view}
 				account={{ name: viewer.name, email: viewer.email, image: viewer.image }}
 				oauthQuery={oauthQuery}
-				manageHref="/dashboard/settings/connected"
 			/>
 		</AuthShell>
 	);

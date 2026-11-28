@@ -13,7 +13,7 @@
 
 import { LogIn, TriangleAlert } from "lucide-react";
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
@@ -28,7 +28,7 @@ import { clearAllWizardDrafts } from "@/lib/wizard/draft";
 import { COPY, EYEBROW, EYEBROW_CONNECTED, MESSAGES } from "./consent-copy";
 import { type ConsentAccount, type ConsentChoice, ConsentForm } from "./consent-form";
 import { ConsentHeading } from "./consent-heading";
-import type { ConsentView, ReadyConsent } from "./consent-model";
+import { type ConsentView, connectedAppsHref, type ReadyConsent } from "./consent-model";
 
 /** How long "You denied {App}" stays up before the redirect back to the app (SPEC §5b, case 17). */
 export const DENIED_REDIRECT_MS = 1500;
@@ -38,14 +38,18 @@ type ConsentPhase =
 	| { kind: "form" }
 	| { kind: "switch" }
 	| { kind: "denied"; url: string }
-	| { kind: "allowed"; url: string; orgName: string }
+	| { kind: "allowed"; url: string; orgName: string; manageHref: string | null }
 	| { kind: "ended"; why: "expired" | "answered" | "invalid" };
 
 /** The answer an action gave, as the phase to show next (or null to stay on the form). */
-function phaseForAnswer(answer: ConsentAnswer, accept: boolean, orgName: string): ConsentPhase {
+function phaseForAnswer(
+	answer: ConsentAnswer,
+	accept: boolean,
+	granted: { orgName: string; manageHref: string | null },
+): ConsentPhase {
 	switch (answer.outcome) {
 		case "redirect":
-			return accept ? { kind: "allowed", url: answer.url, orgName } : { kind: "denied", url: answer.url };
+			return accept ? { kind: "allowed", url: answer.url, ...granted } : { kind: "denied", url: answer.url };
 		case "expired":
 			return { kind: "ended", why: "expired" };
 		case "answered":
@@ -60,17 +64,15 @@ interface ConsentScreenProps {
 	account: ConsentAccount;
 	/** The signed request, handed back to Better Auth on submit. */
 	oauthQuery: string;
-	/** Where "Manage connections" goes. */
-	manageHref: string;
 }
 
 /** The consent screen. */
-export function ConsentScreen({ view, account, oauthQuery, manageHref }: ConsentScreenProps) {
+export function ConsentScreen({ view, account, oauthQuery }: ConsentScreenProps) {
 	if (view.state !== "ready") {
 		if (view.state === "missing") return <Message title={MESSAGES.none.title} body={MESSAGES.none.body} />;
 		return <Ended why={view.state === "malformed" ? "invalid" : view.state} />;
 	}
-	return <ReadyScreen consent={view} account={account} oauthQuery={oauthQuery} manageHref={manageHref} />;
+	return <ReadyScreen consent={view} account={account} oauthQuery={oauthQuery} />;
 }
 
 /** The request is readable: decide it, or one of the states that follow a decision. */
@@ -78,12 +80,10 @@ function ReadyScreen({
 	consent,
 	account,
 	oauthQuery,
-	manageHref,
 }: {
 	consent: ReadyConsent;
 	account: ConsentAccount;
 	oauthQuery: string;
-	manageHref: string;
 }) {
 	const appName = consent.identity.name;
 	const [phase, setPhase] = useState<ConsentPhase>({ kind: "form" });
@@ -122,8 +122,13 @@ function ReadyScreen({
 			else setNetworkError(true);
 			return;
 		}
-		const orgName = consent.orgs.find((o) => o.id === choice?.orgId)?.name ?? "";
-		setPhase(phaseForAnswer(result.data, accept, orgName));
+		const granted = consent.orgs.find((o) => o.id === choice?.orgId);
+		setPhase(
+			phaseForAnswer(result.data, accept, {
+				orgName: granted?.name ?? "",
+				manageHref: granted ? connectedAppsHref(granted) : null,
+			}),
+		);
 	};
 
 	/** Signs out and comes back to this request after signing in as someone else. */
@@ -156,9 +161,11 @@ function ReadyScreen({
 					<Button nativeButton={false} render={<a href={phase.url} />}>
 						{m.ret}
 					</Button>
-					<Button variant="outline" nativeButton={false} render={<a href={manageHref} />}>
-						{m.manage}
-					</Button>
+					{phase.manageHref ? (
+						<Button variant="outline" nativeButton={false} render={<a href={phase.manageHref} />}>
+							{m.manage}
+						</Button>
+					) : null}
 				</div>
 			</Message>
 		);
@@ -252,11 +259,31 @@ function Message({
 				{body}
 			</ConsentHeading>
 			{children}
-			{closable ? (
-				<Button variant="outline" onClick={() => window.close()}>
-					{COPY.close}
-				</Button>
-			) : null}
+			{closable ? <ClosePage /> : null}
 		</div>
+	);
+}
+
+/** Nothing to subscribe to: whether a script opened the tab does not change while it is open. */
+const subscribeNever = () => () => {};
+
+/** True when a script opened this tab, the only case in which `window.close()` is honoured. */
+const openedByScript = () => window.opener != null;
+
+/** The server cannot know who opened the tab, so it — and the hydrating client — render the text. */
+const notOpenedOnServer = () => false;
+
+/**
+ * "Close this page" where the browser will honour it — a tab a script opened (`window.opener`) —
+ * and "You can close this tab now." everywhere else (#7866, item 8). `window.opener` is read on the
+ * client after hydration, so the server's markup and the first client render agree.
+ */
+function ClosePage() {
+	const closable = useSyncExternalStore(subscribeNever, openedByScript, notOpenedOnServer);
+	if (!closable) return <p className="text-ui-md text-text-tertiary">{COPY.closeTab}</p>;
+	return (
+		<Button variant="outline" onClick={() => window.close()}>
+			{COPY.close}
+		</Button>
 	);
 }
