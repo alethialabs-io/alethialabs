@@ -76,6 +76,7 @@
     "check:tfvars-safety": "node scripts/check-tfvars-safety.mjs",
     "check:templates-refresh-safe": "node scripts/check-templates-refresh-safe.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",
+    "check:public-surface": "node scripts/check-public-surface.mjs && node scripts/check-public-surface.mjs --self-test",
     "legal:check-ip-activation": "node scripts/legal/activate-company-ip.mjs --check-markers",
     "legal:check-cla-gate": "node scripts/legal/cla-check-selftest.mjs",
     "legal:check-cla-hashes": "node scripts/legal/check-cla-hashes.mjs",
