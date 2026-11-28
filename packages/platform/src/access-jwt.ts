@@ -14,7 +14,7 @@
 // "no staff identity". The SUPPORT_ADMIN_DEV_EMAIL stand-in exists for local development only and
 // is never consulted when NODE_ENV=production.
 //
-// Two callers, one rule. apps/admin/lib/auth/staff.ts verifies the token Access delivered to it.
+// Two callers, one rule. The staff app (alethialabs-io/web: apps/admin/lib/auth/staff.ts) verifies the token Access delivered to it.
 // The console's platform privacy routes (apps/console/lib/auth/staff-access.ts) verify the same
 // token again when the staff app forwards it in {@link STAFF_ACCESS_TOKEN_HEADER}: the acting staff
 // member a privacy step records is the one the token names, not one the caller states.

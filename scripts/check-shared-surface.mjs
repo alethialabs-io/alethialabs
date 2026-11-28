@@ -100,7 +100,7 @@
 //                  hooks}. Intl writes the symbol itself, so none of the three money shapes above
 //                  can see it (#4176: the billing emails divided every invoice by a fixed 100
 //                  through one). NOT read: `packages/format`, which owns the sanctioned copy, and
-//                  `apps/admin`, which no console scope reaches. A DEFAULTED currency parameter is
+//                  the staff app, which moved to a private repo. A DEFAULTED currency parameter is
 //                  also not matched here: `formatMoney`'s own default is gone and the type checker
 //                  now refuses a one-argument call, while the defaults that remain
 //                  (`useLivePlanPrice`, `formatMonthlyRate`) wait on #4176's currency policy.
@@ -919,8 +919,8 @@ const RULES = [
 				// money formatter, so it is the whole shape. Measured before adding it: zero hits
 				// in apps/console once the emails went through `formatMoney`, so it enters with no
 				// allowlist entry. It does NOT read `packages/format`, which is where the one
-				// sanctioned copy lives, nor `apps/admin`, which `console_code` does not reach and
-				// which still carries two (#4176 names them).
+				// sanctioned copy lives, nor the staff app, which moved to the private
+				// alethialabs-io/web repo and still carries two (#4176 names them).
 				scope: "console_code",
 				re: /\bstyle\s*:\s*["'`]currency["'`]/g,
 				say: "builds its own currency formatter with `Intl.NumberFormat`. Use `formatMoney` (it takes CENTS and divides by the currency's real Stripe divisor) or `formatMonthlyRate` — they fix the locale and the symbol, so an email and the billing page cannot disagree about one invoice.",

@@ -25,7 +25,7 @@ declare global {
  * lib/realtime/index.ts. The lock pool opens only while a purchase or a Stripe webhook delivery
  * runs, and closes after `idleTimeout`. The bundled Postgres in docker-compose.yml sets no `max_connections`, so the
  * Postgres default of 100 applies: with the defaults, one console process reaches 32 of them,
- * and the admin app (apps/admin/lib/db.ts) builds pools of its own on top. Several console
+ * and the admin app (alethialabs-io/web:apps/admin/lib/db.ts) builds pools of its own on top. Several console
  * replicas against one database multiply the 3 × `poolMax`: size `ALETHIA_DB_POOL_MAX` against
  * the database's `max_connections` divided by the replica count.
  */

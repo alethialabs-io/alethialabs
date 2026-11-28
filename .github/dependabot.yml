@@ -105,7 +105,7 @@ updates:
         patterns: ["react", "react-dom", "@types/react", "@types/react-dom", "zod"]
         update-types: [minor, patch]
       # Next.js moves as ONE unit across every workspace, in its own PR (#7736). `next` is pinned to
-      # the same exact version in apps/console, apps/marketing, apps/blog, apps/docs, apps/admin and
+      # the same exact version in apps/console, apps/marketing, apps/blog, apps/docs and
       # packages/brand (dev dependency), with `eslint-config-next` and `@next/eslint-plugin-next`
       # (packages/eslint-config) pinned beside it. A bump that lands in some apps and not others
       # leaves the rest on the old release while looking done, which matters most for a security

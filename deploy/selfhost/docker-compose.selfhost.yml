@@ -85,11 +85,9 @@ services:
     image: "ghcr.io/alethialabs-io/blog:${ALETHIA_VERSION:?ALETHIA_VERSION is not set. Pin the release to run, see deploy/selfhost/README.md}"
     pull_policy: always
 
-  # Hosted-only. Moved to a profile this layout never enables, so COMPOSE_PROFILES=marketing or
-  # =admin does not start them on a self-hosted instance.
+  # Hosted-only. Moved to a profile this layout never enables, so COMPOSE_PROFILES=marketing does
+  # not start it on a self-hosted instance. (The staff dashboard is not in the base file at all.)
   marketing:
-    profiles: !override ["hosted-only"]
-  admin:
     profiles: !override ["hosted-only"]
 
   postgres:

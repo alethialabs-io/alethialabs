@@ -80,7 +80,7 @@ gen_if_absent ALETHIA_STORAGE_SECRET_ACCESS_KEY "$(b64)"
 gen_if_absent ALETHIA_RUNNER_BOOTSTRAP_TOKEN "$(hex)"
 gen_if_absent ALETHIA_CRON_SECRET "$(hex)"
 gen_if_absent RELEASE_API_SECRET "$(hex)"
-# Dedicated bearer between apps/admin (operator plane) and the console provisioning routes — a
+# Dedicated bearer between the staff app (operator plane, alethialabs-io/web) and the console provisioning routes — a
 # DISTINCT secret from ALETHIA_CRON_SECRET (minting orgs / granting ownership is higher blast
 # radius than a sweep). Both containers read the same assembled .env, so one shared value works.
 gen_if_absent PLATFORM_PROVISION_SECRET "$(hex)"

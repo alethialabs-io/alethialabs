@@ -59,17 +59,39 @@ services:
     profiles: ["marketing"]
     image: "ghcr.io/alethialabs-io/marketing:${ALETHIA_IMAGE_TAG:-latest}"
     pull_policy: always
-  # Admin internal staff dashboard — self-hosted behind Cloudflare Access.
-  # Inactive unless the operator runs with COMPOSE_PROFILES=admin AND enables the
-  # `import admin*.caddy` line in deploy/prod/Caddyfile.
+  # The internal staff dashboard at admin.<domain>, behind Cloudflare Access (Caddyfile.tunnel
+  # routes the host; the app verifies the Access token against CF_ACCESS_TEAM_DOMAIN +
+  # CF_ACCESS_AUD, then checks SUPPORT_STAFF_EMAILS). Hosted-only: its source and its image live
+  # in the private alethialabs-io/web repo, and the image is private, so this service exists
+  # only in the prod overlay and never in the base compose file or the self-host layout.
+  # Started by COMPOSE_PROFILES=admin, which the console deploy writes into the box's .env.
   admin:
     profiles: ["admin"]
-    # Its own tag, not ALETHIA_IMAGE_TAG: the staff app is moving to the private
-    # alethialabs-io/web repo, which deploys it on its own schedule. The console deploy
-    # (scripts/ci/deploy-console-assemble-env.sh) sets this to its own tag unless the box
-    # holds /opt/alethia/admin.image.env, which only the web repo's deploy writes.
-    image: "ghcr.io/alethialabs-io/admin:${ALETHIA_ADMIN_IMAGE_TAG:-latest}"
+    # Its own tag, not ALETHIA_IMAGE_TAG: alethialabs-io/web deploys admin on its own schedule
+    # and records the tag in /opt/alethia/admin.image.env; the console deploy
+    # (scripts/ci/deploy-console-assemble-env.sh) copies it into .env and refuses to deploy
+    # without it. No usable default on purpose: an unset tag pulls `admin:unset`, which fails
+    # loudly, where `latest` would silently run whatever image last carried that label.
+    image: "ghcr.io/alethialabs-io/admin:${ALETHIA_ADMIN_IMAGE_TAG:-unset}"
     pull_policy: always
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      # Internal service URLs (like `app`): staff read the shared service DB cross-tenant
+      # (RLS-bypass) and presign attachment downloads from the same object store. The staff
+      # allowlist + NEXT_PUBLIC_CONSOLE_URL come from .env (env_file above).
+      ALETHIA_DATABASE_URL: "postgres://${ALETHIA_DB_USER:-alethia}:${ALETHIA_DB_PASSWORD:?ALETHIA_DB_PASSWORD is not set in .env. Every instance secret is generated per install (deploy/install.sh; for local development, scripts/dev-env.sh); see deploy/selfhost/secrets.manifest}@postgres:5432/${ALETHIA_DB_NAME:-alethia}"
+      ALETHIA_STORAGE_ENDPOINT: "http://seaweedfs:8333"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
   # One-shot migrate — the console Dockerfile's `migrate` target (shares all
   # build cache with console; the final stage is the only difference).
   migrate:

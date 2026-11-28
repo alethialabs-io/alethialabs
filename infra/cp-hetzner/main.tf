@@ -124,7 +124,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "cp" {
       hostname = "www.${var.domain}"
       service  = "http://caddy:80"
     }
-    # Internal staff support dashboard (apps/admin). Also forwards to Caddy, which host-routes
+    # Internal staff support dashboard (the staff app, alethialabs-io/web). Also forwards to Caddy, which host-routes
     # admin.<domain> → the admin container; Cloudflare Access gates who may reach it.
     ingress_rule {
       hostname = "admin.${var.domain}"

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The break-glass AUTH BOUNDARY — deliberately SEPARATE from both the read-only support-staff gate
-// (apps/admin, SUPPORT_STAFF_EMAILS behind Cloudflare Access) and every product route. Being able
+// (alethialabs-io/web:apps/admin, SUPPORT_STAFF_EMAILS behind Cloudflare Access) and every product route. Being able
 // to READ cross-tenant is not being able to ACT; this is its own gate with its own allowlist.
 //
 // A caller is an authorized operator iff ALL of these hold (fail-closed on any doubt):
@@ -19,7 +19,7 @@
 //           and never when NODE_ENV=production — see `breakglassDevEmail`).
 //   3. that email is on the BREAKGLASS_OPERATORS allowlist.
 //
-// Why the proxy secret (spoofing defense): apps/admin takes the staff identity from the `email`
+// Why the proxy secret (spoofing defense): alethialabs-io/web:apps/admin takes the staff identity from the `email`
 // claim of the Cloudflare Access application token, and only once that token verifies against the
 // team's keys, issuer and the Access app's AUD (packages/platform/src/access-jwt.ts). This console
 // origin is NOT behind CF Access, so a raw header could be spoofed.

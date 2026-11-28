@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The staff identity on a call from the staff app (apps/admin) to a console platform route.
+// The staff identity on a call from the staff app (alethialabs-io/web: apps/admin) to a console platform route.
 //
 // The staff app forwards the staff member's Cloudflare Access application token in
 // STAFF_ACCESS_TOKEN_HEADER. This module verifies it with the SAME verifier the staff app uses
@@ -11,7 +11,7 @@
 //
 // The rule is the staff app's, unchanged: in production a missing setting, a missing token or a token
 // that does not verify means no identity. Outside production, with Access unconfigured or no token
-// sent, SUPPORT_ADMIN_DEV_EMAIL stands in, as it does in apps/admin/lib/auth/staff.ts.
+// sent, SUPPORT_ADMIN_DEV_EMAIL stands in, as it does in the staff app's lib/auth/staff.ts.
 
 import { resolveStaffEmail, STAFF_ACCESS_TOKEN_HEADER } from "@repo/platform/access-jwt";
 

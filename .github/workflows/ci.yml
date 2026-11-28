@@ -161,7 +161,7 @@ jobs:
   # cross-read added later is not seen by this job — that is the bound, stated.
   #
   #   · Go `[]`          — every changed file is a `.md`, or under a TS-only app/package no Go
-  #                        source names (marketing, admin, blog, ee, and the @repo/* packages other
+  #                        source names (marketing, blog, ee, and the @repo/* packages other
   #                        than format).
   #   · Go `[apps/cli]`  — the above plus apps/cli, apps/docs (the CLI tests read the docs pages)
   #                        and packages/format (the CLI tests read its conformance cases). apps/cli
@@ -206,7 +206,7 @@ jobs:
   # sees them, on the PR.
   #
   #   FULL LANE ONLY (each a `needs:` of `CI required`):
-  #     · `build-console` — Build console images (no push). 14.3 min median, seven Docker builds; a
+  #     · `build-console` — Build console images (no push). 14.3 min median (measured over seven Docker builds; six since admin moved out); a
   #       PR author's first answer comes from `ts-build`'s `next build` smoke, which stays.
   #     · `integration` — Integration (real Postgres + RLS). 13.0 min median. The query builders'
   #       unit tests and types stay in the fast lane; the real-database pass runs in the batch.
@@ -403,7 +403,6 @@ jobs:
             ts:
               - 'apps/console/**'
               - 'apps/marketing/**'
-              - 'apps/admin/**'
               - 'apps/docs/**'
               - 'apps/blog/**'
               - 'apps/e2e-issuer/**'
@@ -464,7 +463,6 @@ jobs:
             console_images:
               - 'apps/console/**'
               - 'apps/marketing/**'
-              - 'apps/admin/**'
               - 'apps/docs/**'
               - 'apps/blog/**'
               - 'packages/**'
@@ -490,7 +488,6 @@ jobs:
               - '**'
               - '!**/*.md'
               - '!apps/marketing/**'
-              - '!apps/admin/**'
               - '!apps/blog/**'
               - '!ee/**'
               - '!packages/assets/**'
@@ -517,7 +514,6 @@ jobs:
               - '!apps/docs/**'
               - '!packages/format/**'
               - '!apps/marketing/**'
-              - '!apps/admin/**'
               - '!apps/blog/**'
               - '!ee/**'
               - '!packages/assets/**'
@@ -543,7 +539,6 @@ jobs:
               - '!**/*.mdx'
               - '!apps/console/**'
               - '!apps/marketing/**'
-              - '!apps/admin/**'
               - '!apps/docs/**'
               - '!apps/blog/**'
               - '!apps/cli/**'
@@ -5331,7 +5326,7 @@ jobs:
               docker build -f "$file" --build-arg VERSION="$VERSION" -t "validate-${name}:pr" .
             fi
             echo "::endgroup::"
-            # Reclaim before the next image: seven Next.js images do not fit on a hosted runner.
+            # Reclaim before the next image: six Next.js images do not fit on a hosted runner.
             docker image rm "validate-${name}:pr" >/dev/null 2>&1 || true
           }
 
@@ -5339,7 +5334,6 @@ jobs:
           build console-migrate  apps/console/Dockerfile           migrate
           build console-community apps/console/Dockerfile.community
           build marketing        apps/marketing/Dockerfile
-          build admin            apps/admin/Dockerfile
           build docs             apps/docs/Dockerfile
           build blog             apps/blog/Dockerfile
 

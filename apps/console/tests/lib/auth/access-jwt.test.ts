@@ -1,5 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+// @vitest-environment node
+
+// The shared Cloudflare Access verifier (@repo/platform/access-jwt), case by case. It lives here
+// because the console is the verifier's caller in this repo (lib/auth/staff-access.ts); the staff
+// app that also calls it moved to alethialabs-io/web.
 
 import { exportJWK, generateKeyPair, SignJWT, type CryptoKey, type JWK } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

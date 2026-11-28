@@ -3,7 +3,7 @@
 
 // Platform-internal: the Postgres-derived funnel (REL-L12, #6913) for the staff app's `/funnel`
 // page. The staff app reaches console data through these routes rather than importing console
-// internals (apps/admin/lib/platform/console-client.ts), and the console owns the schema the query
+// internals (alethialabs-io/web:apps/admin/lib/platform/console-client.ts), and the console owns the schema the query
 // reads. The answer is aggregate counts only — see lib/queries/funnel.ts. Guarded by the dedicated
 // PLATFORM_PROVISION_SECRET; fails closed (unset → 503, wrong bearer → 401).
 

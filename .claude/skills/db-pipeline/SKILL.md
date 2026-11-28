@@ -78,7 +78,7 @@ Form/input schemas live in `apps/console/lib/validations/`; reusable typed query
 ## Two traps
 
 - **Schema you edit may not be owned here.** `apps/console/lib/db/schema/platform.ts` is a
-  one-line re-export of `@repo/platform/schema`; those tables are owned by `apps/admin` and are
+  one-line re-export of `@repo/platform/schema`; those tables are owned by the staff app (private `alethialabs-io/web`) and are
   re-exported only so drizzle-kit sees them. Edit the package, not the re-export. `@repo/support`
   is the same shape.
 - **Changing a function's return type needs an explicit drop.** Postgres raises `42P13` on
