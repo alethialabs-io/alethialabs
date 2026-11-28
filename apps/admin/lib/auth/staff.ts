@@ -5,7 +5,7 @@
 // dashboard sits behind CLOUDFLARE ACCESS — the same pattern as the Umami dashboard.
 // Access authenticates the request and signs an application token for it; the staff
 // email is the `email` claim of that token once it VERIFIES against the team's keys,
-// issuer and this application's AUD (./access-jwt.ts). The SUPPORT_STAFF_EMAILS allowlist
+// issuer and this application's AUD (@repo/platform/access-jwt). The SUPPORT_STAFF_EMAILS allowlist
 // then AUTHORIZES it. Verified token + allowlist is the entire trust boundary: staff operate
 // CROSS-TENANT (they view/answer every org's cases via getServiceDb, bypassing RLS), so
 // there's no org membership or PDP grant to key on. Used by the pages (redirect/403), every
@@ -20,13 +20,24 @@ import {
 	ACCESS_JWT_COOKIE,
 	ACCESS_JWT_HEADER,
 	resolveStaffEmail,
-} from "./access-jwt";
+} from "@repo/platform/access-jwt";
 
 /** The identity of an authenticated support-staff member. */
 export interface SupportStaff {
 	userId: string;
 	email: string;
 	name: string;
+}
+
+/**
+ * The Cloudflare Access application token on the current request (header, else cookie), unverified,
+ * or null when none was sent. It is what {@link getStaffEmail} verifies, and what the console client
+ * forwards on its platform privacy calls so the console can verify the same staff identity itself.
+ */
+export async function getStaffAccessToken(): Promise<string | null> {
+	const h = await headers();
+	const c = await cookies();
+	return h.get(ACCESS_JWT_HEADER) || c.get(ACCESS_JWT_COOKIE)?.value || null;
 }
 
 /**
@@ -37,10 +48,8 @@ export interface SupportStaff {
  * `SUPPORT_ADMIN_DEV_EMAIL`. Returns null when no identity can be established.
  */
 export async function getStaffEmail(): Promise<string | null> {
-	const h = await headers();
-	const c = await cookies();
 	return resolveStaffEmail({
-		token: h.get(ACCESS_JWT_HEADER) || c.get(ACCESS_JWT_COOKIE)?.value || null,
+		token: await getStaffAccessToken(),
 		teamDomain: env("CF_ACCESS_TEAM_DOMAIN"),
 		audience: env("CF_ACCESS_AUD"),
 		devEmail: env("SUPPORT_ADMIN_DEV_EMAIL"),

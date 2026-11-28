@@ -1,6 +1,6 @@
 {
   "name": "@repo/platform",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Alethia platform records: enterprise contracts and the platform audit log, as Drizzle schema, enums and types.",
   "private": true,
   "exports": {
@@ -8,14 +8,16 @@
     "./enums": "./src/enums.ts",
     "./types": "./src/types.ts",
     "./console-refs": "./src/console-refs.ts",
-    "./paddle": "./src/paddle.ts"
+    "./paddle": "./src/paddle.ts",
+    "./access-jwt": "./src/access-jwt.ts"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "drizzle-orm": "^0.45.4"
+    "drizzle-orm": "^0.45.4",
+    "jose": "^6.2.17"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",

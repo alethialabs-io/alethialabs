@@ -6,7 +6,9 @@
 // the console and the operator plane holds only the sales/contract/audit layer. (The slug's SHAPE is
 // the one exception: it is @repo/org-slug, a shared package both apps read, not a console internal.) Authenticated with the DEDICATED PLATFORM_PROVISION_SECRET bearer.
 
+import { STAFF_ACCESS_TOKEN_HEADER } from "@repo/platform/access-jwt";
 import { env } from "next-runtime-env";
+import { getStaffAccessToken } from "@/lib/auth/staff";
 import {
 	type LinkPaddleCustomerResponse,
 	linkPaddleCustomerResponseSchema,
@@ -48,11 +50,27 @@ async function readResponse(path: string, res: Response): Promise<unknown> {
 	return text ? JSON.parse(text) : {};
 }
 
-/** POSTs a JSON body to a console platform route with the provisioning bearer. */
-async function post<T>(path: string, body: unknown): Promise<T> {
+/**
+ * The header that carries the current staff member's Cloudflare Access token to the console, for the
+ * privacy routes, which verify it themselves and take the acting staff member from it. Empty when the
+ * request carried no token: the console then refuses in production, and outside production applies
+ * the same dev stand-in this app does.
+ */
+async function staffIdentityHeaders(): Promise<Record<string, string>> {
+	const token = await getStaffAccessToken();
+	return token ? { [STAFF_ACCESS_TOKEN_HEADER]: token } : {};
+}
+
+/** POSTs a JSON body to a console platform route with the provisioning bearer (and any extra headers). */
+async function post<T>(
+	path: string,
+	body: unknown,
+	extraHeaders: Record<string, string> = {},
+): Promise<T> {
 	const res = await fetch(`${consoleOrigin()}/api/internal/platform${path}`, {
 		method: "POST",
 		headers: {
+			...extraHeaders,
 			"content-type": "application/json",
 			authorization: `Bearer ${provisionSecret()}`,
 		},
@@ -63,13 +81,16 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 /**
- * GETs a console platform route with the provisioning bearer. Answers `unknown` on purpose: a read
+ * GETs a console platform route with the provisioning bearer (and any extra headers). Answers `unknown` on purpose: a read
  * crosses a service boundary, so the caller validates the body (zod) instead of trusting a type.
  */
-async function get(path: string): Promise<unknown> {
+async function get(
+	path: string,
+	extraHeaders: Record<string, string> = {},
+): Promise<unknown> {
 	const res = await fetch(`${consoleOrigin()}/api/internal/platform${path}`, {
 		method: "GET",
-		headers: { authorization: `Bearer ${provisionSecret()}` },
+		headers: { ...extraHeaders, authorization: `Bearer ${provisionSecret()}` },
 		cache: "no-store",
 	});
 	return readResponse(path, res);
@@ -115,38 +136,44 @@ export function setOrgPlan(input: {
  * The privacy register (#7222): every open case, the overdue ones and the recently decided. The
  * body is unvalidated here; app/privacy/data.ts parses it.
  */
-export function getPrivacyCases(): Promise<unknown> {
-	return get("/privacy/cases");
+export async function getPrivacyCases(): Promise<unknown> {
+	return get("/privacy/cases", await staffIdentityHeaders());
 }
 
 /** One privacy case and its ledger. Unvalidated here; app/privacy/data.ts parses it. */
-export function getPrivacyCase(reference: string): Promise<unknown> {
-	return get(`/privacy/cases/${encodeURIComponent(reference)}`);
+export async function getPrivacyCase(reference: string): Promise<unknown> {
+	return get(`/privacy/cases/${encodeURIComponent(reference)}`, await staffIdentityHeaders());
 }
 
 /**
  * Records a privacy request that arrived by email, its clock starting at `receivedAt`. The address
- * is hashed by the console and never stored in the clear. Unvalidated here; the caller parses it.
+ * is hashed by the console and never stored in the clear. The acting staff member is the one the
+ * forwarded Access token names; the console takes it from there. Unvalidated here; the caller
+ * parses it.
  */
-export function openPrivacyCase(input: {
-	actorUserId: string;
+export async function openPrivacyCase(input: {
 	kind: string;
 	email: string;
 	receivedAt: string;
 }): Promise<unknown> {
-	return post("/privacy/cases", input);
+	return post("/privacy/cases", input, await staffIdentityHeaders());
 }
 
 /**
- * Takes one handling step on a privacy case as `actorUserId` — the console runs the same step its
- * own server action runs. Answers the step's outcome, unvalidated; the caller parses it.
+ * Takes one handling step on a privacy case as the staff member the forwarded Access token names —
+ * the console runs the same step its own server action runs. Answers the step's outcome,
+ * unvalidated; the caller parses it.
  */
-export function takePrivacyStep(
+export async function takePrivacyStep(
 	reference: string,
 	step: "verify" | "extend" | "hold" | "fulfil-erasure" | "refuse",
-	input: { actorUserId: string; reason?: string },
+	input: { reason?: string } = {},
 ): Promise<unknown> {
-	return post(`/privacy/cases/${encodeURIComponent(reference)}/${step}`, input);
+	return post(
+		`/privacy/cases/${encodeURIComponent(reference)}/${step}`,
+		input,
+		await staffIdentityHeaders(),
+	);
 }
 
 /**

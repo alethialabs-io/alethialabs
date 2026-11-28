@@ -1,5 +1,12 @@
 # console
 
+## 0.1.8
+
+### Patch Changes
+
+- Updated dependencies [6a4ad00]
+  - @repo/platform@0.4.0
+
 ## 0.1.7
 
 ### Patch Changes
