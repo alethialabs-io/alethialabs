@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Static validation for the infra/assets-cdn stack (assets.alethialabs.io: an R2 bucket, its custom
+# domain and the zone's cache rule). Credential-free by design: the stack is APPLIED MANUALLY by the
+# maintainer with a scoped Cloudflare token (infra/assets-cdn/README.md), so there is deliberately NO apply job
+# here and no Cloudflare or state credential ever touches a run (safe on contributor PRs).
+#
+# iac-checks runs `tofu test` because the stack ships checks.tftest.hcl — mocked providers, which is
+# where every validation, precondition and check in the stack is shown to FIRE.
+
+name: Infra - Assets CDN
+
+on:
+  pull_request:
+    paths:
+      - "infra/assets-cdn/**"
+      - "infra/.trivyignore"
+      - "infra/.tflint.hcl"
+      - "infra/.trivy.yaml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/assets-cdn/**"
+
+# `github.ref`, not the PR number: this also fires on `push`, where the number renders empty and every
+# push to `main` would share one group (infra-aws-oidc.yml records the same trap).
+concurrency:
+  group: infra-assets-cdn-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TF_DIR: infra/assets-cdn
+  TOFU_VERSION: "1.10.10"
+
+jobs:
+  validate:
+    name: Validate + IaC checks (no backend, no secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: OpenTofu validate
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          tofu init -backend=false
+          tofu validate
+
+      - name: IaC checks (fmt + tflint + Trivy + tofu test)
+        uses: ./.github/actions/iac-checks
+        with:
+          working-directory: ${{ env.TF_DIR }}
