@@ -8,7 +8,9 @@
 // Every act: assertPlatformAdmin() (Cloudflare Access + PLATFORM_ADMIN_EMAILS — the act-capable
 // allowlist, not the read-only support one) → withPlatformAudit (a committed attempt row with the
 // required reason, then a result row) → the console's platform route, which runs the SAME step the
-// console's own server action runs (apps/console/lib/privacy/case-steps.ts). Nothing here writes a
+// console's own server action runs (apps/console/lib/privacy/case-steps.ts). The console takes the
+// acting staff member from the staff member's Access token, which the console client forwards and
+// the console verifies itself; this file names no actor id on the wire. Nothing here writes a
 // privacy table: the console owns them, and the deadline arithmetic and the
 // verified-before-destroyed rule exist once, there.
 //
@@ -138,7 +140,6 @@ export async function openEmailedPrivacyCase(form: unknown): Promise<PrivacyActi
 			async () =>
 				openAnswer.parse(
 					await openPrivacyCase({
-						actorUserId: staff.userId,
 						kind,
 						email,
 						receivedAt,
@@ -172,7 +173,7 @@ export async function verifyPrivacyIdentity(form: unknown): Promise<PrivacyActio
 			null,
 			`${ref}: identity verified — ${how}`,
 			{},
-			() => takePrivacyStep(ref, "verify", { actorUserId: staff.userId }),
+			() => takePrivacyStep(ref, "verify"),
 		);
 		refresh(ref);
 		return { ok: true, message: "Identity verified." };
@@ -197,7 +198,7 @@ export async function extendPrivacyRequest(form: unknown): Promise<PrivacyAction
 			{},
 			async () =>
 				extendAnswer.parse(
-					await takePrivacyStep(ref, "extend", { actorUserId: staff.userId, reason }),
+					await takePrivacyStep(ref, "extend", { reason }),
 				),
 		);
 		refresh(ref);
@@ -216,7 +217,7 @@ export async function holdPrivacyRequest(form: unknown): Promise<PrivacyActionRe
 
 	try {
 		await withPlatformAudit(staff.email, "privacy_legal_hold", null, `${ref}: ${reason}`, {}, () =>
-			takePrivacyStep(ref, "hold", { actorUserId: staff.userId, reason }),
+			takePrivacyStep(ref, "hold", { reason }),
 		);
 		refresh(ref);
 		return { ok: true, message: "Legal hold applied. The request is paused, not refused." };
@@ -234,7 +235,7 @@ export async function refusePrivacyRequest(form: unknown): Promise<PrivacyAction
 
 	try {
 		await withPlatformAudit(staff.email, "privacy_refuse", null, `${ref}: ${reason}`, {}, () =>
-			takePrivacyStep(ref, "refuse", { actorUserId: staff.userId, reason }),
+			takePrivacyStep(ref, "refuse", { reason }),
 		);
 		refresh(ref);
 		return { ok: true, message: "Refused. Tell the subject the grounds and their right to complain." };
@@ -265,7 +266,7 @@ export async function fulfilPrivacyErasure(form: unknown): Promise<PrivacyAction
 			{},
 			async () =>
 				erasureAnswer.parse(
-					await takePrivacyStep(ref, "fulfil-erasure", { actorUserId: staff.userId }),
+					await takePrivacyStep(ref, "fulfil-erasure"),
 				),
 		);
 		refresh(ref);

@@ -4,9 +4,13 @@
 
 // The staff app's privacy routes (#7222). They act on any case in the deployment, including
 // performing an erasure, so the assertions are about what is NOT reached: an unset secret or a wrong
-// bearer reads no case and takes no step; a decided case takes no further step; the subject never
-// decides their own request; an actor id that names no account writes nothing. The steps themselves
-// are the console's (lib/privacy/case-steps.ts) and are tested where they live.
+// bearer reads no case and takes no step; no verified staff identity reads and writes nothing; a body
+// that names its own actor is refused; a decided case takes no further step; the subject never
+// decides their own request; a staff email with no account writes nothing. The acting staff member
+// is the one the verified Access token names: the verifier is mocked here (lib/auth/staff-access.ts
+// is tested against real tokens in tests/lib/auth/staff-access.test.ts), and every assertion about
+// the actor checks it reached the step as the token's account. The steps themselves are the
+// console's (lib/privacy/case-steps.ts) and are tested where they live.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,8 +26,10 @@ const steps = vi.hoisted(() => ({
 	queryControllerCaseList: vi.fn(),
 	queryOverdueCases: vi.fn(),
 	refuseCase: vi.fn(),
-	userExists: vi.fn(),
 }));
+/** The verified-staff-email seam: what the forwarded Access token names, after verification. */
+const identity = vi.hoisted(() => ({ verifiedStaffEmail: vi.fn() }));
+vi.mock("@/lib/auth/staff-access", () => identity);
 /** The steps' refusal type, standing in for the real module's (hoisted with the mock). */
 const { PrivacyStepRefusal } = vi.hoisted(() => ({
 	PrivacyStepRefusal: class PrivacyStepRefusal extends Error {},
@@ -54,13 +60,24 @@ import { STEP_FAILED } from "@/app/api/internal/platform/privacy/shared";
 
 const SECRET = "s3cret";
 const STAFF = "99999999-9999-4999-8999-999999999999";
+const STAFF_EMAIL = "staff@alethialabs.io";
 const SUBJECT = "11111111-1111-4111-8111-111111111111";
+const SUBJECT_EMAIL = "former.user@example.com";
+
+/** The accounts `accountIdForEmail` knows: the staff member's and the subject's. */
+async function accountFor(email: string): Promise<string | null> {
+	const e = email.trim().toLowerCase();
+	if (e === STAFF_EMAIL) return STAFF;
+	if (e === SUBJECT_EMAIL) return SUBJECT;
+	return null;
+}
 const REF = "DSR-ABCD1234";
 
 const original = process.env.PLATFORM_PROVISION_SECRET;
 beforeEach(() => {
 	process.env.PLATFORM_PROVISION_SECRET = SECRET;
-	steps.userExists.mockResolvedValue(true);
+	identity.verifiedStaffEmail.mockResolvedValue(STAFF_EMAIL);
+	steps.accountIdForEmail.mockImplementation(accountFor);
 	steps.caseByReference.mockResolvedValue(caseRow());
 });
 afterEach(() => {
@@ -116,7 +133,6 @@ function nothingReached(): boolean {
 
 describe("the operator-plane gate", () => {
 	it("503s with the secret unset and 401s on a wrong or missing bearer, reaching nothing", async () => {
-		steps.userExists.mockReset();
 		steps.caseByReference.mockReset();
 		delete process.env.PLATFORM_PROVISION_SECRET;
 		expect((await getList(req("/cases", undefined, "x"))).status).toBe(503);
@@ -129,22 +145,81 @@ describe("the operator-plane gate", () => {
 				(await getCase(req(`/cases/${REF}`, undefined, bearer), { params: Promise.resolve({ reference: REF }) }))
 					.status,
 			).toBe(401);
-			expect((await takeStep(req(`/cases/${REF}/fulfil-erasure`, { actorUserId: STAFF }, bearer), ctx("fulfil-erasure"))).status).toBe(401);
+			expect((await takeStep(req(`/cases/${REF}/fulfil-erasure`, {}, bearer), ctx("fulfil-erasure"))).status).toBe(401);
 		}
 		expect(nothingReached()).toBe(true);
+		expect(identity.verifiedStaffEmail).not.toHaveBeenCalled();
+	});
+});
+
+describe("the acting staff member", () => {
+	it("401s every route when no staff identity verifies, reading and writing nothing", async () => {
+		steps.caseByReference.mockReset();
+		identity.verifiedStaffEmail.mockResolvedValue(null);
+		expect((await getList(req("/cases"))).status).toBe(401);
+		expect(
+			(await openCase(req("/cases", { kind: "erasure", email: SUBJECT_EMAIL, receivedAt: "2026-11-20T00:00:00.000Z" })))
+				.status,
+		).toBe(401);
+		expect(
+			(await getCase(req(`/cases/${REF}`), { params: Promise.resolve({ reference: REF }) })).status,
+		).toBe(401);
+		const res = await takeStep(req(`/cases/${REF}/fulfil-erasure`, {}), ctx("fulfil-erasure"));
+		expect(res.status).toBe(401);
+		expect(await res.json()).toEqual({
+			error: "the staff member's Access token is missing or did not verify",
+		});
+		expect(nothingReached()).toBe(true);
+	});
+
+	it("verifies the identity from the request itself", async () => {
+		steps.queryControllerCaseList.mockResolvedValue({ open: [], decided: [] });
+		steps.queryOverdueCases.mockResolvedValue([]);
+		const request = req("/cases");
+		await getList(request);
+		expect(identity.verifiedStaffEmail).toHaveBeenCalledWith(request);
+	});
+
+	it("refuses a body that names its own actor, even a real one, taking no step", async () => {
+		steps.caseByReference.mockResolvedValue(caseRow({ identityVerifiedAt: new Date() }));
+		const step = await takeStep(
+			req(`/cases/${REF}/fulfil-erasure`, { actorUserId: STAFF }),
+			ctx("fulfil-erasure"),
+		);
+		expect(step.status).toBe(400);
+		expect(await step.json()).toEqual({
+			error: "actorUserId is not accepted: the acting staff member is taken from the Access token",
+		});
+		const open = await openCase(
+			req("/cases", {
+				actorUserId: SUBJECT,
+				kind: "erasure",
+				email: SUBJECT_EMAIL,
+				receivedAt: "2026-11-20T00:00:00.000Z",
+			}),
+		);
+		expect(open.status).toBe(400);
+		expect(steps.performErasure).not.toHaveBeenCalled();
+		expect(steps.insertPrivacyCase).not.toHaveBeenCalled();
+	});
+
+	it("403s a verified staff email that has no account, before loading the case", async () => {
+		identity.verifiedStaffEmail.mockResolvedValue("nobody@alethialabs.io");
+		const res = await takeStep(req(`/cases/${REF}/verify`, {}), ctx("verify"));
+		expect(res.status).toBe(403);
+		expect(steps.caseByReference).not.toHaveBeenCalled();
+		expect(steps.markIdentityVerified).not.toHaveBeenCalled();
 	});
 });
 
 describe("POST /privacy/cases — record an emailed request", () => {
 	const body = {
-		actorUserId: STAFF,
 		kind: "erasure",
 		email: "Former.User@Example.com",
 		receivedAt: "2026-11-20T00:00:00.000Z",
 	};
 
-	it("opens a controller-level case linked to the matching account, its clock at receipt", async () => {
-		steps.accountIdForEmail.mockResolvedValue(SUBJECT);
+	it("opens a controller-level case linked to the matching account, as the token's staff member", async () => {
 		steps.insertPrivacyCase.mockResolvedValue({ reference: REF });
 		const res = await openCase(req("/cases", body));
 		expect(res.status).toBe(201);
@@ -160,12 +235,12 @@ describe("POST /privacy/cases — record an emailed request", () => {
 		);
 	});
 
-	it("refuses a receipt time in the future, and an actor with no account, opening nothing", async () => {
+	it("refuses a receipt time in the future, and a staff email with no account, opening nothing", async () => {
 		const future = new Date(Date.now() + 86_400_000).toISOString();
 		expect((await openCase(req("/cases", { ...body, receivedAt: future }))).status).toBe(400);
 
-		steps.userExists.mockResolvedValue(false);
-		expect((await openCase(req("/cases", body))).status).toBe(400);
+		identity.verifiedStaffEmail.mockResolvedValue("nobody@alethialabs.io");
+		expect((await openCase(req("/cases", body))).status).toBe(403);
 		expect(steps.insertPrivacyCase).not.toHaveBeenCalled();
 	});
 
@@ -176,11 +251,11 @@ describe("POST /privacy/cases — record an emailed request", () => {
 });
 
 describe("POST /privacy/cases/<ref>/<step>", () => {
-	it("runs the erasure as the acting staff member", async () => {
+	it("runs the erasure as the staff member the token names", async () => {
 		steps.caseByReference.mockResolvedValue(caseRow({ identityVerifiedAt: new Date() }));
 		steps.performErasure.mockResolvedValue({ outcome: "paused_by_legal_hold", reason: "hold" });
 		const res = await takeStep(
-			req(`/cases/${REF}/fulfil-erasure`, { actorUserId: STAFF }),
+			req(`/cases/${REF}/fulfil-erasure`, {}),
 			ctx("fulfil-erasure"),
 		);
 		expect(res.status).toBe(200);
@@ -198,7 +273,7 @@ describe("POST /privacy/cases/<ref>/<step>", () => {
 		);
 		for (const step of ["verify", "extend", "hold", "fulfil-erasure", "refuse"]) {
 			const res = await takeStep(
-				req(`/cases/${REF}/${step}`, { actorUserId: STAFF, reason: "x".repeat(30) }),
+				req(`/cases/${REF}/${step}`, { reason: "x".repeat(30) }),
 				ctx(step),
 			);
 			expect(res.status).toBe(409);
@@ -209,32 +284,23 @@ describe("POST /privacy/cases/<ref>/<step>", () => {
 	});
 
 	it("never lets the subject decide their own request", async () => {
-		const res = await takeStep(
-			req(`/cases/${REF}/verify`, { actorUserId: SUBJECT }),
-			ctx("verify"),
-		);
+		identity.verifiedStaffEmail.mockResolvedValue(SUBJECT_EMAIL);
+		const res = await takeStep(req(`/cases/${REF}/verify`, {}), ctx("verify"));
 		expect(res.status).toBe(403);
 		expect(steps.markIdentityVerified).not.toHaveBeenCalled();
 	});
 
-	it("refuses an actor with no account before loading the case", async () => {
-		steps.userExists.mockResolvedValue(false);
-		const res = await takeStep(req(`/cases/${REF}/verify`, { actorUserId: STAFF }), ctx("verify"));
-		expect(res.status).toBe(400);
-		expect(steps.caseByReference).not.toHaveBeenCalled();
-	});
-
 	it("answers an unknown step, a malformed reference and an unknown case without acting", async () => {
 		expect(
-			(await takeStep(req(`/cases/${REF}/delete`, { actorUserId: STAFF }), ctx("delete"))).status,
+			(await takeStep(req(`/cases/${REF}/delete`, {}), ctx("delete"))).status,
 		).toBe(404);
 		expect(
-			(await takeStep(req("/cases/nope/verify", { actorUserId: STAFF }), ctx("verify", "nope")))
+			(await takeStep(req("/cases/nope/verify", {}), ctx("verify", "nope")))
 				.status,
 		).toBe(400);
 		steps.caseByReference.mockResolvedValue(null);
 		expect(
-			(await takeStep(req(`/cases/${REF}/verify`, { actorUserId: STAFF }), ctx("verify"))).status,
+			(await takeStep(req(`/cases/${REF}/verify`, {}), ctx("verify"))).status,
 		).toBe(404);
 		expect(steps.markIdentityVerified).not.toHaveBeenCalled();
 	});
@@ -242,7 +308,7 @@ describe("POST /privacy/cases/<ref>/<step>", () => {
 	it("refuses to verify twice, and carries a step's own refusal back as a 409", async () => {
 		steps.caseByReference.mockResolvedValue(caseRow({ identityVerifiedAt: new Date() }));
 		expect(
-			(await takeStep(req(`/cases/${REF}/verify`, { actorUserId: STAFF }), ctx("verify"))).status,
+			(await takeStep(req(`/cases/${REF}/verify`, {}), ctx("verify"))).status,
 		).toBe(409);
 		expect(steps.markIdentityVerified).not.toHaveBeenCalled();
 
@@ -250,7 +316,7 @@ describe("POST /privacy/cases/<ref>/<step>", () => {
 			new PrivacyStepRefusal("only one extension is available."),
 		);
 		const res = await takeStep(
-			req(`/cases/${REF}/extend`, { actorUserId: STAFF, reason: "complex request" }),
+			req(`/cases/${REF}/extend`, { reason: "complex request" }),
 			ctx("extend"),
 		);
 		expect(res.status).toBe(409);
@@ -263,7 +329,7 @@ describe("POST /privacy/cases/<ref>/<step>", () => {
 			new Error('relation "privacy_case" violates constraint at 10.0.0.5'),
 		);
 		const res = await takeStep(
-			req(`/cases/${REF}/fulfil-erasure`, { actorUserId: STAFF }),
+			req(`/cases/${REF}/fulfil-erasure`, {}),
 			ctx("fulfil-erasure"),
 		);
 		expect(res.status).toBe(409);

@@ -64,7 +64,8 @@ REQ_STORAGE_ACCESS_KEY_ID="$(val ALETHIA_STORAGE_ACCESS_KEY_ID)"
 [ -n "$REQ_STORAGE_ACCESS_KEY_ID" ] || { echo "::error::ALETHIA_STORAGE_ACCESS_KEY_ID is required: docker-compose.yml refuses to render without it."; exit 1; }
 REQ_STORAGE_SECRET_ACCESS_KEY="$(val ALETHIA_STORAGE_SECRET_ACCESS_KEY)"
 [ -n "$REQ_STORAGE_SECRET_ACCESS_KEY" ] || { echo "::error::ALETHIA_STORAGE_SECRET_ACCESS_KEY is required: docker-compose.yml refuses to render without it."; exit 1; }
-# The Cloudflare Access verification apps/admin performs (apps/admin/lib/auth/access-jwt.ts, #7765).
+# The Cloudflare Access verification apps/admin performs (packages/platform/src/access-jwt.ts, #7765),
+# and the console repeats on the token admin forwards to its privacy routes (#7951).
 # With either value empty the admin app admits NOBODY in production, so an absent key is not a
 # degraded admin but a locked-out one, and the staff support surface goes with it. Refused here and
 # in the preflight, through deploy/prod/required-vault-keys.txt, before any image is built — the
@@ -342,7 +343,7 @@ emit() { printf '%s=%s\n' "$1" "$(val "${2:-$1}")"; }
   emit SUPPORT_SLACK_WEBHOOK_URL
   # Admin staff dashboard @ admin.alethialabs.io (apps/admin): the staff allowlist
   # (apps/admin/lib/auth/staff.ts), the Cloudflare Access team domain + application AUD the app
-  # verifies the Access token against (apps/admin/lib/auth/access-jwt.ts — both empty ⇒ admin
+  # verifies the Access token against (packages/platform/src/access-jwt.ts — both empty ⇒ admin
   # admits nobody in production), and the console URL its case deep-links target.
   # COMPOSE_PROFILES activates the profiled `admin` service on the box (docker compose reads it
   # from this .env).
