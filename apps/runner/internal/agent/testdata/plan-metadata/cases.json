@@ -1,0 +1,229 @@
+{
+  "_comment": "Shared by apps/runner/internal/agent/plan_metadata_fixture_test.go and apps/console/tests/scripts/backfill-plan-metadata.test.ts. Each case's `stored` is a plan_result an earlier runner recorded (the resource_changes of the plan, or the whole plan document when it had none); `want` is what the current runner records for that plan. The Go test feeds `stored` through the runner's plan path, the TypeScript test through the backfill's reduction, and both must produce `want`.",
+  "cases": [
+    {
+      "name": "apply plan with masked, unknown and prior values",
+      "stored": {
+        "resource_changes": [
+          {
+            "address": "aws_db_instance.main",
+            "mode": "managed",
+            "type": "aws_db_instance",
+            "name": "main",
+            "provider_name": "registry.opentofu.org/hashicorp/aws",
+            "change": {
+              "actions": ["update"],
+              "before": { "password": "value-not-kept-before", "engine": "postgres" },
+              "before_sensitive": { "password": true },
+              "after": {
+                "engine": "postgres",
+                "port": 5432,
+                "password": "value-not-kept-top",
+                "settings": { "token": "value-not-kept-nested", "region": "eu-west-1" },
+                "users": [{ "name": "app" }, { "name": "admin", "key": "value-not-kept-element" }],
+                "credentials": { "user": "value-not-kept-object" },
+                "arn": "value-not-kept-unknown"
+              },
+              "after_sensitive": {
+                "password": true,
+                "settings": { "token": true },
+                "users": [{}, { "key": true }],
+                "credentials": true
+              },
+              "after_unknown": { "arn": true, "endpoint": true }
+            }
+          }
+        ]
+      },
+      "want": {
+        "resource_changes": [
+          {
+            "address": "aws_db_instance.main",
+            "mode": "managed",
+            "type": "aws_db_instance",
+            "name": "main",
+            "provider_name": "registry.opentofu.org/hashicorp/aws",
+            "change": {
+              "actions": ["update"],
+              "after": {
+                "engine": "postgres",
+                "port": 5432,
+                "settings": { "region": "eu-west-1" },
+                "users": [{ "name": "app" }, { "name": "admin" }]
+              },
+              "after_unknown": { "arn": true, "endpoint": true }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "no-change plan document keeps only its format_version",
+      "stored": {
+        "format_version": "1.2",
+        "terraform_version": "1.8.0",
+        "variables": { "db_password": { "value": "value-not-kept-variable" } },
+        "prior_state": { "values": { "x": "value-not-kept-state" } },
+        "configuration": { "root_module": {} }
+      },
+      "want": { "format_version": "1.2" }
+    },
+    {
+      "name": "no-change plan document without a format_version records an empty result",
+      "stored": { "planned_values": { "root_module": {} } },
+      "want": {}
+    },
+    {
+      "name": "delete, create and module entries keep identity and actions",
+      "stored": {
+        "resource_changes": [
+          {
+            "address": "module.net.aws_subnet.a[0]",
+            "module_address": "module.net",
+            "mode": "managed",
+            "type": "aws_subnet",
+            "name": "a",
+            "index": 0,
+            "provider_name": "registry.opentofu.org/hashicorp/aws",
+            "action_reason": "delete_because_count_index",
+            "change": {
+              "actions": ["delete"],
+              "before": { "cidr_block": "10.0.0.0/24", "tags": { "owner": "value-not-kept-tag" } },
+              "after": null,
+              "after_unknown": {},
+              "before_sensitive": {},
+              "after_sensitive": false,
+              "replace_paths": [["cidr_block"]]
+            }
+          },
+          {
+            "address": "random_id.suffix[\"a\"]",
+            "mode": "managed",
+            "type": "random_id",
+            "name": "suffix",
+            "index": "a",
+            "provider_name": "registry.opentofu.org/hashicorp/random",
+            "change": {
+              "actions": ["delete", "create", 7, null],
+              "before": null,
+              "after": { "byte_length": 4, "keepers": null, "hex": "value-not-kept-unknown" },
+              "after_unknown": { "hex": true, "b64_url": true },
+              "after_sensitive": {}
+            }
+          },
+          "not-a-resource-change",
+          { "address": "data.aws_caller_identity.me", "mode": "data", "change": "not-a-change-object" }
+        ]
+      },
+      "want": {
+        "resource_changes": [
+          {
+            "address": "module.net.aws_subnet.a[0]",
+            "module_address": "module.net",
+            "mode": "managed",
+            "type": "aws_subnet",
+            "name": "a",
+            "index": 0,
+            "provider_name": "registry.opentofu.org/hashicorp/aws",
+            "change": { "actions": ["delete"], "after_unknown": {} }
+          },
+          {
+            "address": "random_id.suffix[\"a\"]",
+            "mode": "managed",
+            "type": "random_id",
+            "name": "suffix",
+            "index": "a",
+            "provider_name": "registry.opentofu.org/hashicorp/random",
+            "change": {
+              "actions": ["delete", "create"],
+              "after": { "byte_length": 4, "keepers": null },
+              "after_unknown": { "hex": true, "b64_url": true }
+            }
+          },
+          {
+            "address": "data.aws_caller_identity.me",
+            "mode": "data",
+            "change": { "actions": [] }
+          }
+        ]
+      }
+    },
+    {
+      "name": "masks that do not fit the value drop it, array positions are kept",
+      "stored": {
+        "resource_changes": [
+          {
+            "address": "x.y",
+            "change": {
+              "actions": ["create"],
+              "after": {
+                "scalar_with_object_mask": "value-not-kept-shape",
+                "object_with_array_mask": { "a": "value-not-kept-shape" },
+                "array_with_object_mask": ["value-not-kept-shape"],
+                "list": ["a", "value-not-kept-element", "c"],
+                "wholly_unknown": { "k": "value-not-kept-unknown" },
+                "plain": true,
+                "nothing": null
+              },
+              "after_sensitive": {
+                "scalar_with_object_mask": { "a": true },
+                "object_with_array_mask": [true],
+                "list": [false, true]
+              },
+              "after_unknown": {
+                "array_with_object_mask": { "a": true },
+                "wholly_unknown": true,
+                "flags": [false, "not-a-flag", 7, true],
+                "note": "not-a-flag"
+              }
+            }
+          }
+        ]
+      },
+      "want": {
+        "resource_changes": [
+          {
+            "address": "x.y",
+            "change": {
+              "actions": ["create"],
+              "after": {
+                "list": ["a", null, "c"],
+                "plain": true,
+                "nothing": null
+              },
+              "after_unknown": {
+                "array_with_object_mask": { "a": true },
+                "wholly_unknown": true,
+                "flags": [false, null, null, true]
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "a wholly masked after and a non-mask after_unknown are dropped",
+      "stored": {
+        "resource_changes": [
+          {
+            "address": "x.whole",
+            "change": {
+              "actions": ["update"],
+              "after": { "k": "value-not-kept-whole" },
+              "after_sensitive": true,
+              "after_unknown": "not-a-mask"
+            }
+          }
+        ]
+      },
+      "want": {
+        "resource_changes": [{ "address": "x.whole", "change": { "actions": ["update"] } }]
+      }
+    },
+    {
+      "name": "resource_changes that is not a list records an empty list",
+      "stored": { "resource_changes": { "not": "a list" } },
+      "want": { "resource_changes": [] }
+    }
+  ]
+}

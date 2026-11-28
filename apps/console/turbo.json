@@ -32,6 +32,7 @@
 				"$TURBO_ROOT$/apps/docs/generated/abuse-limits.json",
 				"$TURBO_ROOT$/apps/marketing/Dockerfile",
 				"$TURBO_ROOT$/apps/marketing/app/consumer-rights/page.tsx",
+				"$TURBO_ROOT$/apps/runner/internal/agent/testdata/plan-metadata/cases.json",
 				"$TURBO_ROOT$/deploy/prod/Caddyfile.tunnel",
 				"$TURBO_ROOT$/deploy/prod/docker-compose.prod.yml",
 				"$TURBO_ROOT$/deploy/selfhost/secrets.manifest",
