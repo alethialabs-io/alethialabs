@@ -19,6 +19,10 @@ When a file carries its own SPDX identifier, that file-level identifier controls
 The default AGPL licence applies only when no more specific repository exception
 or third-party notice applies.
 
+What may live in this repository at all — the product, its contributor tooling and `ee/`, but
+not the company's own finance, marketing, infrastructure or operations — is stated in
+`docs/public-surface.md` and enforced by `pnpm check:public-surface`.
+
 ### Repositories outside this monorepo
 
 The map above covers paths in this repository only. Other public repositories in
