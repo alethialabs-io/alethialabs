@@ -346,3 +346,21 @@ describe("parseArgs", () => {
 		expect(parseArgs(["--aply"])).toMatchObject({ error: expect.stringContaining("--aply") });
 	});
 });
+
+describe("the postgres writes", () => {
+	// postgres-js types a parameter from its cast: `${text}::jsonb` JSON-encodes the string and stores a
+	// JSON string holding the document. The first production run did exactly that (#7962).
+	const source = readFileSync(
+		fileURLToPath(new URL("../../scripts/backfill-plan-metadata.ts", import.meta.url)),
+		"utf8",
+	);
+
+	it("never binds a value straight to jsonb", () => {
+		expect(source).not.toMatch(/\$\{[^}]+\}::jsonb/);
+	});
+
+	it("binds both written values as text, then casts", () => {
+		expect(source).toMatch(/jsonb_set\(execution_metadata, '\{plan_result\}', \$\{text\}::text::jsonb\)/);
+		expect(source).toMatch(/set config_snapshot = \$\{text\}::text::jsonb,/);
+	});
+});
