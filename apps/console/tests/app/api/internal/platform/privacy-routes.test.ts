@@ -180,16 +180,20 @@ describe("the acting staff member", () => {
 		expect(identity.verifiedStaffEmail).toHaveBeenCalledWith(request);
 	});
 
-	it("refuses a body that names its own actor, even a real one, taking no step", async () => {
-		steps.caseByReference.mockResolvedValue(caseRow({ identityVerifiedAt: new Date() }));
+	it("ignores a body that names its own actor: the token's staff member acts, never the body's", async () => {
+		// A transition shape (../shared.ts): a staff app built for the console before this one still
+		// sends actorUserId. Naming the SUBJECT is the case that matters — were the field read, the
+		// separation-of-duty check would compare the subject with themself and the ledger would
+		// record the subject as the decider.
+		steps.caseByReference.mockResolvedValue(caseRow());
 		const step = await takeStep(
-			req(`/cases/${REF}/fulfil-erasure`, { actorUserId: STAFF }),
-			ctx("fulfil-erasure"),
+			req(`/cases/${REF}/verify`, { actorUserId: SUBJECT }),
+			ctx("verify"),
 		);
-		expect(step.status).toBe(400);
-		expect(await step.json()).toEqual({
-			error: "actorUserId is not accepted: the acting staff member is taken from the Access token",
-		});
+		expect(step.status).toBe(200);
+		expect(steps.markIdentityVerified).toHaveBeenCalledWith(expect.anything(), STAFF, expect.any(Date));
+
+		steps.insertPrivacyCase.mockResolvedValue({ reference: REF });
 		const open = await openCase(
 			req("/cases", {
 				actorUserId: SUBJECT,
@@ -198,9 +202,10 @@ describe("the acting staff member", () => {
 				receivedAt: "2026-11-20T00:00:00.000Z",
 			}),
 		);
-		expect(open.status).toBe(400);
-		expect(steps.performErasure).not.toHaveBeenCalled();
-		expect(steps.insertPrivacyCase).not.toHaveBeenCalled();
+		expect(open.status).toBe(201);
+		expect(steps.insertPrivacyCase).toHaveBeenCalledWith(
+			expect.objectContaining({ actorUserId: STAFF }),
+		);
 	});
 
 	it("403s a verified staff email that has no account, before loading the case", async () => {

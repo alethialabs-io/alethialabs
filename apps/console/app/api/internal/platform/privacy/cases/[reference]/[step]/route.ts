@@ -26,7 +26,6 @@ import {
 import {
 	actingStaff,
 	fresh,
-	refuseCallerNamedActor,
 	refusePlatformCaller,
 	stepRefusal,
 } from "../../../shared";
@@ -61,8 +60,6 @@ export async function POST(
 		return NextResponse.json({ error: "Not a privacy request reference." }, { status: 400 });
 	}
 	const rawBody: unknown = await req.json().catch(() => null);
-	const namedActor = refuseCallerNamedActor(rawBody);
-	if (namedActor) return namedActor;
 	const body = stepBody.safeParse(rawBody);
 	if (!body.success) {
 		return NextResponse.json(

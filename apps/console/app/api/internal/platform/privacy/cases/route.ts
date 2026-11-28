@@ -15,7 +15,7 @@ import {
 	queryControllerCaseList,
 	queryOverdueCases,
 } from "@/lib/privacy/case-steps";
-import { actingStaff, fresh, refuseCallerNamedActor, refusePlatformCaller } from "../shared";
+import { actingStaff, fresh, refusePlatformCaller } from "../shared";
 
 export const dynamic = "force-dynamic";
 
@@ -76,8 +76,6 @@ export async function POST(req: Request): Promise<NextResponse> {
 	if (acting.refused) return acting.refused;
 
 	const raw: unknown = await req.json().catch(() => null);
-	const namedActor = refuseCallerNamedActor(raw);
-	if (namedActor) return namedActor;
 	const parsed = openBody.safeParse(raw);
 	if (!parsed.success) {
 		return NextResponse.json(

@@ -17,7 +17,11 @@
 // staff member's Cloudflare Access token, and this side verifies it with the same verifier and
 // settings the staff app uses (lib/auth/staff-access.ts); the verified email, mapped to its account,
 // becomes the ledger actor and, for a decision, `decided_by_user_id`. A body that still names an
-// `actorUserId` is refused rather than ignored, so a caller that thinks it chose the actor finds out.
+// `actorUserId` is IGNORED (the body schemas strip it), never read: the token's staff member acts.
+// It is ignored rather than refused for one release only — the staff app deploys from
+// alethialabs-io/web on its own schedule, and the console before this one REQUIRES that field, so the
+// staff app sends it until this console is live everywhere. Restoring the 400 is the last step of
+// that transition, once the staff app stops sending it (#7964).
 // In production a missing or unverifiable token is a 401; outside production the staff app's dev
 // stand-in (SUPPORT_ADMIN_DEV_EMAIL) applies. The email must name a real account, because the
 // ledger's actor column is a foreign key and a step that updated the case and then failed to write
@@ -83,21 +87,6 @@ export async function actingStaff(
 		};
 	}
 	return { staff: { userId, email } };
-}
-
-/**
- * Refuses a body that names its own actor; null when it names none. The actor is the one the Access
- * token names ({@link actingStaff}), so an `actorUserId` in the body is a caller that has not caught
- * up — answered with a 400 rather than silently overridden.
- */
-export function refuseCallerNamedActor(body: unknown): NextResponse | null {
-	if (typeof body === "object" && body !== null && "actorUserId" in body) {
-		return NextResponse.json(
-			{ error: "actorUserId is not accepted: the acting staff member is taken from the Access token" },
-			{ status: 400 },
-		);
-	}
-	return null;
 }
 
 /** A case as the staff app reads it. The subject's address hash is not part of it. */
