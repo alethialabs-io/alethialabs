@@ -13,19 +13,25 @@
 // the staff app has. Fail-closed: unset → 503, wrong or missing bearer → 401, and in neither case is
 // a case read.
 //
-// The acting staff member's user id travels in the body and becomes the ledger actor and, for a
-// decision, `decided_by_user_id`. It is trusted because the bearer is; it is still required to name
-// a real account, because the ledger's actor column is a foreign key and a step that updated the
-// case and then failed to write its ledger line would leave a change with no record of who made it.
+// THE ACTOR. The acting staff member is not something the caller states. The staff app forwards the
+// staff member's Cloudflare Access token, and this side verifies it with the same verifier and
+// settings the staff app uses (lib/auth/staff-access.ts); the verified email, mapped to its account,
+// becomes the ledger actor and, for a decision, `decided_by_user_id`. A body that still names an
+// `actorUserId` is refused rather than ignored, so a caller that thinks it chose the actor finds out.
+// In production a missing or unverifiable token is a 401; outside production the staff app's dev
+// stand-in (SUPPORT_ADMIN_DEV_EMAIL) applies. The email must name a real account, because the
+// ledger's actor column is a foreign key and a step that updated the case and then failed to write
+// its ledger line would leave a change with no record of who made it.
 
 import { NextResponse } from "next/server";
-import { ZodError, z } from "zod";
+import { ZodError } from "zod";
 import { isPlatformProvisionAuthorized } from "@/lib/auth/internal-auth";
+import { verifiedStaffEmail } from "@/lib/auth/staff-access";
 import { log } from "@/lib/observability/log";
 import {
+	accountIdForEmail,
 	type PrivacyCaseRow,
 	PrivacyStepRefusal,
-	userExists,
 } from "@/lib/privacy/case-steps";
 
 /**
@@ -44,13 +50,54 @@ export function refusePlatformCaller(req: Request): NextResponse | null {
 	return null;
 }
 
-/** The acting staff member, as every mutation's body names them. */
-export const actorBody = z.object({ actorUserId: z.string().uuid() });
+/** The staff member a platform privacy call acts as, established from the verified Access token. */
+export interface ActingStaff {
+	userId: string;
+	email: string;
+}
 
-/** Refuses an actor id that names no account; null when it names one. */
-export async function refuseUnknownActor(actorUserId: string): Promise<NextResponse | null> {
-	if (await userExists(actorUserId)) return null;
-	return NextResponse.json({ error: "the acting staff member has no account" }, { status: 400 });
+/**
+ * Establishes the acting staff member from the forwarded, verified Access token and its account.
+ * Answers the staff member, or the refusal to return: 401 when no identity can be established, 403
+ * when the verified email has no account.
+ */
+export async function actingStaff(
+	req: Request,
+): Promise<{ staff: ActingStaff; refused?: never } | { staff?: never; refused: NextResponse }> {
+	const email = await verifiedStaffEmail(req);
+	if (!email) {
+		return {
+			refused: NextResponse.json(
+				{ error: "the staff member's Access token is missing or did not verify" },
+				{ status: 401 },
+			),
+		};
+	}
+	const userId = await accountIdForEmail(email);
+	if (!userId) {
+		return {
+			refused: NextResponse.json(
+				{ error: "the acting staff member has no account" },
+				{ status: 403 },
+			),
+		};
+	}
+	return { staff: { userId, email } };
+}
+
+/**
+ * Refuses a body that names its own actor; null when it names none. The actor is the one the Access
+ * token names ({@link actingStaff}), so an `actorUserId` in the body is a caller that has not caught
+ * up — answered with a 400 rather than silently overridden.
+ */
+export function refuseCallerNamedActor(body: unknown): NextResponse | null {
+	if (typeof body === "object" && body !== null && "actorUserId" in body) {
+		return NextResponse.json(
+			{ error: "actorUserId is not accepted: the acting staff member is taken from the Access token" },
+			{ status: 400 },
+		);
+	}
+	return null;
 }
 
 /** A case as the staff app reads it. The subject's address hash is not part of it. */
