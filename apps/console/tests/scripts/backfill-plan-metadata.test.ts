@@ -360,6 +360,7 @@ describe("the postgres writes", () => {
 	});
 
 	it("binds both written values as text, then casts", () => {
-		expect(source.match(/\$\{text\}::text::jsonb/g)).toHaveLength(2);
+		expect(source).toMatch(/jsonb_set\(execution_metadata, '\{plan_result\}', \$\{text\}::text::jsonb\)/);
+		expect(source).toMatch(/set config_snapshot = \$\{text\}::text::jsonb,/);
 	});
 });
