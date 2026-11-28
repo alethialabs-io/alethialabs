@@ -8,7 +8,7 @@ import {
 	resetAccessKeyCache,
 	resolveStaffEmail,
 	type StaffIdentityInput,
-} from "../../../lib/auth/access-jwt";
+} from "@repo/platform/access-jwt";
 
 const TEAM = "example-team.cloudflareaccess.com";
 const ISSUER = `https://${TEAM}`;

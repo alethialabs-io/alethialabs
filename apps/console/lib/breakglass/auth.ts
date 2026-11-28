@@ -21,7 +21,7 @@
 //
 // Why the proxy secret (spoofing defense): apps/admin takes the staff identity from the `email`
 // claim of the Cloudflare Access application token, and only once that token verifies against the
-// team's keys, issuer and the Access app's AUD (apps/admin/lib/auth/access-jwt.ts). This console
+// team's keys, issuer and the Access app's AUD (packages/platform/src/access-jwt.ts). This console
 // origin is NOT behind CF Access, so a raw header could be spoofed.
 // We therefore refuse to trust the CF-Access email UNLESS the dedicated break-glass Access
 // app/proxy also injects a secret header (BREAKGLASS_ACCESS_PROXY_SECRET) that a direct-to-console

@@ -4,7 +4,8 @@
 // Platform-internal (#7222): one handling step on a privacy case, taken by a platform admin from
 // the staff app — verify identity, extend, apply a legal hold, fulfil an erasure, refuse. Each runs
 // the SAME step the console's server action runs (lib/privacy/case-steps.ts); only the authority
-// differs. Gate and authority: ../../../shared.ts.
+// differs. Gate, authority and the acting staff member (from the forwarded Access token):
+// ../../../shared.ts.
 //
 // A DECIDED case takes no further step here. The console's actions do not check this, and they do
 // not need to: nothing in the console offers a step on a decided case. This route is reached by a
@@ -23,10 +24,10 @@ import {
 	refuseCase,
 } from "@/lib/privacy/case-steps";
 import {
-	actorBody,
+	actingStaff,
 	fresh,
+	refuseCallerNamedActor,
 	refusePlatformCaller,
-	refuseUnknownActor,
 	stepRefusal,
 } from "../../../shared";
 
@@ -35,7 +36,7 @@ export const dynamic = "force-dynamic";
 /** The steps this route takes, by the path segment that names each. */
 const STEPS = ["verify", "extend", "hold", "fulfil-erasure", "refuse"] as const;
 
-const stepBody = actorBody.extend({
+const stepBody = z.object({
 	/** The extension's reason, the hold's basis or the refusal's grounds; unused by the others. */
 	reason: z.string().max(2000).default(""),
 });
@@ -47,6 +48,8 @@ export async function POST(
 ): Promise<NextResponse> {
 	const refused = refusePlatformCaller(req);
 	if (refused) return refused;
+	const acting = await actingStaff(req);
+	if (acting.refused) return acting.refused;
 
 	const raw = await params;
 	const step = z.enum(STEPS).safeParse(raw.step);
@@ -57,16 +60,16 @@ export async function POST(
 	if (!reference.success) {
 		return NextResponse.json({ error: "Not a privacy request reference." }, { status: 400 });
 	}
-	const body = stepBody.safeParse(await req.json().catch(() => null));
+	const rawBody: unknown = await req.json().catch(() => null);
+	const namedActor = refuseCallerNamedActor(rawBody);
+	if (namedActor) return namedActor;
+	const body = stepBody.safeParse(rawBody);
 	if (!body.success) {
 		return NextResponse.json(
 			{ error: body.error.issues[0]?.message ?? "invalid request body" },
 			{ status: 400 },
 		);
 	}
-	const unknownActor = await refuseUnknownActor(body.data.actorUserId);
-	if (unknownActor) return unknownActor;
-
 	const c = await caseByReference(reference.data);
 	if (!c) return NextResponse.json({ error: "no such privacy request" }, { status: 404 });
 	if (c.decidedAt) {
@@ -79,14 +82,14 @@ export async function POST(
 	// Separation of duty, as the console's `authorizeCase` has it: the subject is never the second
 	// party to their own request. A platform admin who is also the subject — their own erasure
 	// request — has it decided by a different admin.
-	if (c.subjectUserId && c.subjectUserId === body.data.actorUserId) {
+	if (c.subjectUserId && c.subjectUserId === acting.staff.userId) {
 		return NextResponse.json(
 			{ error: "This request is about your own account; another platform admin has to decide it." },
 			{ status: 403 },
 		);
 	}
 
-	const actor = body.data.actorUserId;
+	const actor = acting.staff.userId;
 	const { reason } = body.data;
 	const now = new Date();
 	try {

@@ -10,7 +10,7 @@ import {
 	caseEventsWithActors,
 	referenceSchema,
 } from "@/lib/privacy/case-steps";
-import { fresh, refusePlatformCaller, serializeCase } from "../../shared";
+import { actingStaff, fresh, refusePlatformCaller, serializeCase } from "../../shared";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +21,8 @@ export async function GET(
 ): Promise<NextResponse> {
 	const refused = refusePlatformCaller(req);
 	if (refused) return refused;
+	const acting = await actingStaff(req);
+	if (acting.refused) return acting.refused;
 
 	const reference = referenceSchema.safeParse((await params).reference);
 	if (!reference.success) {

@@ -1,21 +1,26 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Cloudflare Access application-token verification for the staff app.
+// Cloudflare Access application-token verification, shared by the staff app and the console.
 //
-// Access signs a JWT for every request it lets through and delivers it in the
+// Access signs a JWT for every request it lets through to the staff app and delivers it in the
 // `Cf-Access-Jwt-Assertion` header (and the `CF_Authorization` cookie). The staff identity is the
 // `email` claim of THAT token, and only once the token verifies: RS256 signature against the team's
 // published keys (https://<team>.cloudflareaccess.com/cdn-cgi/access/certs, cached by jose's
-// remote key set), `iss` equal to the team URL, `aud` containing this Access application's AUD tag,
+// remote key set), `iss` equal to the team URL, `aud` containing the staff app's Access AUD tag,
 // and `exp`/`nbf` honoured. Nothing else on the request is read as identity.
 //
 // Fail-closed in production: no configuration, no token or a token that does not verify all mean
 // "no staff identity". The SUPPORT_ADMIN_DEV_EMAIL stand-in exists for local development only and
 // is never consulted when NODE_ENV=production.
 //
-// This module is pure (no next/headers) so the decision can be unit-tested; staff.ts feeds it the
-// request's token and the environment.
+// Two callers, one rule. apps/admin/lib/auth/staff.ts verifies the token Access delivered to it.
+// The console's platform privacy routes (apps/console/lib/auth/staff-access.ts) verify the same
+// token again when the staff app forwards it in {@link STAFF_ACCESS_TOKEN_HEADER}: the acting staff
+// member a privacy step records is the one the token names, not one the caller states.
+//
+// This module is pure (no next/headers) so the decision can be unit-tested; each caller feeds it
+// the request's token and the environment.
 
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 
@@ -24,6 +29,13 @@ export const ACCESS_JWT_HEADER = "cf-access-jwt-assertion";
 
 /** The cookie Cloudflare Access sets with the same signed application token. */
 export const ACCESS_JWT_COOKIE = "CF_Authorization";
+
+/**
+ * The request header the staff app forwards the staff member's Access token in, on its calls to
+ * the console's platform privacy routes. Deliberately not `Cf-Access-Jwt-Assertion`: that name is
+ * Cloudflare's, and this hop is a service call the staff app makes, not a request Access admitted.
+ */
+export const STAFF_ACCESS_TOKEN_HEADER = "x-alethia-staff-access-token";
 
 /** A validated Access configuration: the token issuer (team URL) and the application AUD tag. */
 export interface AccessConfig {

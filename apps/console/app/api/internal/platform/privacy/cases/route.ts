@@ -15,14 +15,14 @@ import {
 	queryControllerCaseList,
 	queryOverdueCases,
 } from "@/lib/privacy/case-steps";
-import { actorBody, fresh, refusePlatformCaller, refuseUnknownActor } from "../shared";
+import { actingStaff, fresh, refuseCallerNamedActor, refusePlatformCaller } from "../shared";
 
 export const dynamic = "force-dynamic";
 
 /** How far ahead of this server's clock a receipt time may be: clock skew, not a future request. */
 const RECEIPT_SKEW_MS = 5 * 60_000;
 
-const openBody = actorBody.extend({
+const openBody = z.object({
 	kind: z.enum(PRIVACY_CASE_KINDS),
 	/** The address the request came from. Hashed on the way in; never stored in the clear. */
 	email: z.string().trim().email(),
@@ -46,6 +46,8 @@ function listRow(r: Awaited<ReturnType<typeof queryControllerCaseList>>["open"][
 export async function GET(req: Request): Promise<NextResponse> {
 	const refused = refusePlatformCaller(req);
 	if (refused) return refused;
+	const acting = await actingStaff(req);
+	if (acting.refused) return acting.refused;
 
 	const now = new Date();
 	const [{ open, decided }, overdue] = await Promise.all([
@@ -64,13 +66,19 @@ export async function GET(req: Request): Promise<NextResponse> {
  *
  * The case is linked to the account the address belongs to, when there is one, so an erasure has
  * rows to match — and is NOT marked verified: an address in a From header is exactly the evidence
- * the separate identity step exists to weigh. A controller-level request has no organization.
+ * the separate identity step exists to weigh. A controller-level request has no organization. The
+ * recording staff member is the one the forwarded Access token names (../shared.ts).
  */
 export async function POST(req: Request): Promise<NextResponse> {
 	const refused = refusePlatformCaller(req);
 	if (refused) return refused;
+	const acting = await actingStaff(req);
+	if (acting.refused) return acting.refused;
 
-	const parsed = openBody.safeParse(await req.json().catch(() => null));
+	const raw: unknown = await req.json().catch(() => null);
+	const namedActor = refuseCallerNamedActor(raw);
+	if (namedActor) return namedActor;
+	const parsed = openBody.safeParse(raw);
 	if (!parsed.success) {
 		return NextResponse.json(
 			{ error: parsed.error.issues[0]?.message ?? "invalid request body" },
@@ -84,9 +92,6 @@ export async function POST(req: Request): Promise<NextResponse> {
 			{ status: 400 },
 		);
 	}
-	const unknownActor = await refuseUnknownActor(parsed.data.actorUserId);
-	if (unknownActor) return unknownActor;
-
 	const subjectUserId = await accountIdForEmail(parsed.data.email);
 	const { reference } = await insertPrivacyCase({
 		kind: parsed.data.kind,
@@ -95,7 +100,7 @@ export async function POST(req: Request): Promise<NextResponse> {
 		organizationId: null,
 		receivedAt,
 		receivedHow: "Request received by email and recorded by staff",
-		actorUserId: parsed.data.actorUserId,
+		actorUserId: acting.staff.userId,
 	});
 	return fresh({ reference, linkedAccount: subjectUserId !== null }, 201);
 }
