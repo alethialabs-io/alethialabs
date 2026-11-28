@@ -63,6 +63,7 @@
     "db:migrate": "node scripts/migrate.mjs",
     "db:reset": "node scripts/reset.mjs && node scripts/migrate.mjs",
     "db:reencrypt": "tsx scripts/reencrypt-secrets.ts",
+    "db:backfill-plan-metadata": "tsx scripts/backfill-plan-metadata.ts",
     "db:studio": "drizzle-kit studio",
     "stripe:setup": "tsx scripts/stripe-setup.ts",
     "stripe:check": "tsx scripts/stripe-check.ts",

@@ -102,6 +102,9 @@ export const COPY = {
 
 	deny: "Deny",
 	close: "Close this page",
+	// Browsers ignore `window.close()` in a tab no script opened, so there the button is replaced by
+	// this sentence (maintainer ruling on #7866, item 8).
+	closeTab: "You can close this tab now.",
 	back: "Back",
 	setupGuide: "Setup guide",
 } as const;

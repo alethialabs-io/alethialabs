@@ -36,6 +36,9 @@ import { viewableProjectIds } from "@/lib/jobs/visibility";
 export interface ConsentOrg {
 	id: string;
 	name: string;
+	/** The org's URL segment, shown beside the name so two orgs with one name differ; null for the
+	 * personal workspace and for an org that has none (`organization.slug` is nullable). */
+	slug: string | null;
 	/** The person's role there, as the membership row names it (`owner`, `admin`, …, or a custom role). */
 	role: string;
 	/** True for the person's own workspace (no organization). */
@@ -80,21 +83,30 @@ function redirectHostOf(oauthQuery: string): string | null {
 	}
 }
 
+/** One membership the read starts from. */
+interface Membership {
+	id: string;
+	name: string;
+	slug: string | null;
+	role: string;
+	personal: boolean;
+}
+
 /** The organizations `userId` is a member of, or their personal workspace when they have none. */
-async function membershipsOf(userId: string): Promise<{ id: string; name: string; role: string; personal: boolean }[]> {
+async function membershipsOf(userId: string): Promise<Membership[]> {
 	const rows = await getServiceDb()
-		.select({ id: organization.id, name: organization.name, role: member.role })
+		.select({ id: organization.id, name: organization.name, slug: organization.slug, role: member.role })
 		.from(member)
 		.innerJoin(organization, eq(member.organizationId, organization.id))
 		.where(eq(member.userId, userId));
-	if (rows.length === 0) return [{ id: userId, name: "Personal", role: "owner", personal: true }];
-	return rows.map((r) => ({ id: r.id, name: r.name, role: r.role, personal: false }));
+	if (rows.length === 0) return [{ id: userId, name: "Personal", slug: null, role: "owner", personal: true }];
+	return rows.map((r) => ({ id: r.id, name: r.name, slug: r.slug, role: r.role, personal: false }));
 }
 
 /** One org's half of the read, for `userId`; null when the person is not an active member there. */
 async function consentOrg(
 	userId: string,
-	org: { id: string; name: string; role: string; personal: boolean },
+	org: Membership,
 	clientId: string,
 	requested: readonly AgentScope[],
 ): Promise<ConsentOrg | null> {
@@ -117,6 +129,7 @@ async function consentOrg(
 	return {
 		id: org.id,
 		name: org.name,
+		slug: org.slug,
 		role: org.role,
 		personal: org.personal,
 		refusal,

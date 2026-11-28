@@ -445,7 +445,10 @@ function OrgField({ consent, orgId, orgQuery, onQuery, onChoose, disabled, hintI
 								className="size-3.5 accent-[var(--ink)]"
 							/>
 							<span className="min-w-0 flex-1">
-								<span className="block truncate text-ui-md font-medium text-text-primary">{o.name}</span>
+								<span className="flex min-w-0 items-baseline gap-1.5">
+									<span className="truncate text-ui-md font-medium text-text-primary">{o.name}</span>
+									{o.slug ? <span className="shrink-0 font-mono text-ui-sm text-text-tertiary">{o.slug}</span> : null}
+								</span>
 								<span className="block text-ui-sm text-text-tertiary">{many ? o.roleLabel : COPY.yourRole(o.roleLabel)}</span>
 							</span>
 							{o.refusal === "client_not_allowed" ? (

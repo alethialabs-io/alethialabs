@@ -37,10 +37,11 @@
 #                tofu|terraform state rm|mv|push|replace-provider, init -migrate-state|-force-copy,
 #                workspace delete: the module's local state is copied, or when it has none,
 #                `state pull` (of that workspace) is written to the backup by the hook itself.
-#     B-DB       db:reset / db:migrate / db:reencrypt / drizzle-kit push|drop|migrate|up / the
-#                reset|migrate scripts against a NON-LOCAL ALETHIA_DATABASE_URL: pg_dump
-#                (custom format) of that database. Under `pnpm creds <profile> --` the dump runs
-#                under the same profile. A local URL runs as before, with no dump.
+#     B-DB       db:reset / db:migrate / db:reencrypt / db:backfill-* / drizzle-kit
+#                push|drop|migrate|up / the reset|migrate scripts against a NON-LOCAL
+#                ALETHIA_DATABASE_URL: pg_dump (custom format) of that database. Under
+#                `pnpm creds <profile> --` the dump runs under the same profile. A local URL runs
+#                as before, with no dump.
 #     B-DOCKER   docker volume rm of an alethia volume, docker volume prune, docker system prune
 #                --volumes, docker rm -v of an alethia container: each alethia volume it would
 #                remove is tarred through a throwaway container.
@@ -692,7 +693,7 @@ rule_db() {
 	# Only a program that can RUN the script: a commit message or a grep naming db:reset is text.
 	case "${TOK[0]##*/}" in pnpm | npm | yarn | npx | pnpx | bun | bunx | node | tsx | drizzle-kit) ;; *) return 0 ;; esac
 	case " $SEG " in
-	*" db:reset"* | *" db:migrate"* | *" db:reencrypt"* | *"drizzle-kit push"* | *"drizzle-kit drop"* | *"drizzle-kit migrate"* | *"drizzle-kit up"* | *"scripts/reset.mjs"* | *"scripts/migrate.mjs"* | *"reencrypt-secrets"*) ;;
+	*" db:reset"* | *" db:migrate"* | *" db:reencrypt"* | *" db:backfill-"* | *"drizzle-kit push"* | *"drizzle-kit drop"* | *"drizzle-kit migrate"* | *"drizzle-kit up"* | *"scripts/reset.mjs"* | *"scripts/migrate.mjs"* | *"reencrypt-secrets"*) ;;
 	*) return 0 ;;
 	esac
 	env_lookup ALETHIA_DATABASE_URL
@@ -2526,6 +2527,8 @@ JSON
 	bk db 1 "$wt" 'pnpm creds prod-env -- pnpm -F console db:migrate'
 	has 'a brokered migrate is dumped through the broker' db.dump PGDMP
 	check 'the brokered dump ran under that profile' grep -q '^creds prod-env -- ' "$tmp/calls.log"
+	bk db 1 "$wt" 'pnpm creds prod-env -- pnpm -C apps/console run db:backfill-plan-metadata --apply'
+	has 'a brokered backfill is dumped through the broker' db.dump PGDMP
 	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@localhost:5432/a pnpm -F console db:reset'
 	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@127.0.0.1:5432/a pnpm -C apps/console run db:migrate'
 	bk db 0 "$wt" 'ALETHIA_DATABASE_URL=postgres://u:p@[::1]:5432/a pnpm -F console db:reset'

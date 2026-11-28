@@ -10,6 +10,7 @@ import {
 	allowBlockers,
 	allowLabel,
 	type ConsentOrgView,
+	connectedAppsHref,
 	consentChanges,
 	defaultOrgId,
 	defaultProjects,
@@ -26,6 +27,7 @@ function org(extra: Partial<ConsentOrgView> = {}): ConsentOrgView {
 	return {
 		id: "org-acme",
 		name: "acme",
+		slug: "acme",
 		role: "admin",
 		roleLabel: "Admin",
 		personal: false,
@@ -152,5 +154,19 @@ describe("signedOAuthQuery", () => {
 	it("passes a query that names no signed parameters whole", () => {
 		expect(new URLSearchParams(signedOAuthQuery({ client_id: "c", sig: "s", exp: "1" })).get("client_id")).toBe("c");
 		expect(signedOAuthQuery({})).toBe("");
+	});
+});
+
+describe("Manage connections", () => {
+	it("goes to the granted org's own connected apps, whose [org] route makes it the active org", () => {
+		expect(connectedAppsHref(org({ slug: "globex" }))).toBe("/globex/~/settings/connected");
+	});
+
+	it("goes to the personal workspace's connected apps for the personal workspace", () => {
+		expect(connectedAppsHref(org({ slug: null, personal: true }))).toBe("/~/~/settings/connected");
+	});
+
+	it("has nowhere to go for an org with no slug", () => {
+		expect(connectedAppsHref(org({ slug: null }))).toBeNull();
 	});
 });

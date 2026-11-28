@@ -85,7 +85,7 @@ describe("readConsentContext", () => {
 	it("reads the app, the split scopes and each org's answer", async () => {
 		// The client row, then the memberships.
 		h.selects.push([{ name: "cursor-mcp", icon: null, discovery: "https://cursor.com/c.json" }]);
-		h.selects.push([{ id: ORG, name: "acme", role: "viewer" }]);
+		h.selects.push([{ id: ORG, name: "acme", slug: "acme", role: "viewer" }]);
 		const context = await readConsentContext(USER, query(300), NOW);
 		expect(context.state).toBe("ready");
 		if (context.state !== "ready") return;
@@ -94,7 +94,7 @@ describe("readConsentContext", () => {
 		expect(context.redirectHost).toBe("cursor.com");
 		expect(context.requested).toEqual({ agent: ["read", "plan", "apply"], oidc: ["openid"], unknown: ["billing:write"] });
 		expect(context.orgs).toEqual([
-			expect.objectContaining({ id: ORG, role: "viewer", refusal: null, agentsKeptOffProduction: true, roleAllows: ["read", "plan"], grantable: ["read", "plan"], projects: [] }),
+			expect.objectContaining({ id: ORG, slug: "acme", role: "viewer", refusal: null, agentsKeptOffProduction: true, roleAllows: ["read", "plan"], grantable: ["read", "plan"], projects: [] }),
 		]);
 	});
 
@@ -102,13 +102,13 @@ describe("readConsentContext", () => {
 		h.selects.push([{ name: null, icon: null, discovery: null }]);
 		h.selects.push([]);
 		const context = await readConsentContext(USER, query(300), NOW);
-		expect(context.state === "ready" && context.orgs.map((o) => ({ id: o.id, personal: o.personal }))).toEqual([{ id: USER, personal: true }]);
+		expect(context.state === "ready" && context.orgs.map((o) => ({ id: o.id, slug: o.slug, personal: o.personal }))).toEqual([{ id: USER, slug: null, personal: true }]);
 		expect(context.state === "ready" && context.verified).toBe(false);
 	});
 
 	it("leaves out an org the person is not an active member of", async () => {
 		h.selects.push([{ name: null, icon: null, discovery: null }]);
-		h.selects.push([{ id: ORG, name: "acme", role: "viewer" }]);
+		h.selects.push([{ id: ORG, name: "acme", slug: "acme", role: "viewer" }]);
 		h.scope.mockResolvedValue({ userId: USER, orgId: USER });
 		const context = await readConsentContext(USER, query(300), NOW);
 		expect(context.state === "ready" && context.orgs).toEqual([]);
