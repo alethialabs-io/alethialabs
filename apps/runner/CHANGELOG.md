@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.13.0...runner-v0.14.0) (2026-11-28)
+
+
+### Features
+
+* **console:** backfill: bring stored plan metadata to the current shape ([#7949](https://github.com/alethialabs-io/alethialabs/issues/7949)) ([#7953](https://github.com/alethialabs-io/alethialabs/issues/7953)) ([a1b7d67](https://github.com/alethialabs-io/alethialabs/commit/a1b7d6750c8f21d4a7a1dc6c8ddd98e34f3b9bd5))
+
 ## [0.13.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.12.0...runner-v0.13.0) (2026-11-27)
 
 
