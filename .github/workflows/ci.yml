@@ -2026,6 +2026,9 @@ jobs:
       - name: Repository-wide open-core boundary and community image contract
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:open-core
+      - name: Public surface (no new company content in the public repo)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:public-surface
       - name: No @theme inline variable is overridden (inert responsive ladder)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:theme-inline
